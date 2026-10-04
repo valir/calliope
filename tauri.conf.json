@@ -3,7 +3,7 @@
   "productName": "calliope-gui",
   "identifier": "app.calliope.gui",
   "build": {
-    "frontendDist": "src/ui"
+    "frontendDist": "dist"
   },
   "app": {
     "security": {

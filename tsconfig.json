@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["svelte", "vite/client", "node"],
+    "paths": { "$lib": ["./src/ui/lib"], "$lib/*": ["./src/ui/lib/*"] }
+  },
+  "include": ["src/ui/**/*.ts", "src/ui/**/*.svelte", "vite.config.ts"]
+}

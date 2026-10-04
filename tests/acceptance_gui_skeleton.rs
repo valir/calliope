@@ -46,12 +46,12 @@ fn req3_tauri_is_used() {
 #[test]
 fn ac2_static_gui_content_and_wiring() {
     let html = std::fs::read_to_string(Path::new(ROOT).join("src/ui/index.html")).unwrap();
-    assert!(html.contains("hello from calliope"));
+    assert!(html.contains("<title>calliope</title>"));
     let conf: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(Path::new(ROOT).join("tauri.conf.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(conf["build"]["frontendDist"], "src/ui");
+    assert_eq!(conf["build"]["frontendDist"], "dist");
     assert_eq!(conf["app"]["windows"].as_array().unwrap().len(), 1);
     // GUI is only started for no-arg; args never reach it (no window for CLI paths).
     let main = std::fs::read_to_string(Path::new(ROOT).join("src/main.rs")).unwrap();

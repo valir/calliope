@@ -1,0 +1,37 @@
+{
+  "name": "calliope-gui",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build:app": "vite build && cargo build --release",
+    "app": "vite build && cargo run",
+    "dev:app": "tauri dev --config tauri.dev.conf.json",
+    "dev:ui": "vite --port 5173 --strictPort --host localhost",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "test:ui": "vitest run",
+    "test": "npm run check && npm run test:ui && npm run build && cargo test && cargo clippy --all-targets -- -D warnings",
+    "test:gui": "npm run build && cargo test --test gui_smoke --test gui_e2e -- --ignored --test-threads=1"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.1"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/cli": "^2.12.1",
+    "@testing-library/svelte": "^5.4.2",
+    "@types/node": "^22.20.5",
+    "jsdom": "^30.1.2",
+    "svelte": "^5.57.1",
+    "svelte-check": "^4.7.6",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3"
+  }
+}

@@ -6,16 +6,10 @@ fn root() -> &'static Path {
 }
 
 #[test]
-fn index_html_says_hello() {
-    let html = fs::read_to_string(root().join("src/ui/index.html")).unwrap();
-    assert!(html.contains("hello from calliope"));
-}
-
-#[test]
 fn tauri_conf_points_at_frontend() {
     let text = fs::read_to_string(root().join("tauri.conf.json")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["build"]["frontendDist"], "src/ui");
+    assert_eq!(v["build"]["frontendDist"], "dist");
     assert_eq!(v["productName"], "calliope-gui");
     assert_eq!(v["app"]["windows"].as_array().unwrap().len(), 1);
 }
@@ -34,7 +28,10 @@ fn tauri_conf_has_strict_csp() {
 #[test]
 fn index_html_has_no_inline_code() {
     let html = fs::read_to_string(root().join("src/ui/index.html")).unwrap();
-    assert!(!html.contains("<script"));
+    for part in html.split("<script").skip(1) {
+        let tag = &part[..part.find('>').unwrap()];
+        assert!(tag.contains("src="), "inline <script> found: <script{tag}>");
+    }
     assert!(!html.contains("<style"));
     assert!(!html.contains("style="));
 }
