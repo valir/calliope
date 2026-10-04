@@ -106,7 +106,7 @@ tester for the features.
 
 ## Feature roadmap
 <!-- The features, in build order, one spec file each. Tick them off as they're built. -->
-- [ ] `gui-skeleton.md`: calliope-gui skeleton written using Rust and Tauri
+- [x] `gui-skeleton.md`: calliope-gui skeleton written using Rust and Tauri
 - [ ] `gui-tracks-repository.md`: manage the backing track repository
 - [ ] `gui-stem-extracting.md`: calliope imports a music track and places stems in the repository
 - [ ] `gui-backing-track-assembly.md`: creater backing track out of extracted stems
