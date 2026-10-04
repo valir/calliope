@@ -1,6 +1,6 @@
 mod cli;
 mod gui;
-#[allow(dead_code)] // used from Task 5 (ipc)
+mod ipc;
 mod settings;
 #[allow(dead_code)] // only build.rs uses it outside tests
 mod version;

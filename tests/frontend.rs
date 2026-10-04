@@ -48,6 +48,7 @@ fn window_config_has_min_size_and_title() {
     assert_eq!(w["title"], "calliope");
     assert_eq!(w["minWidth"], 1024);
     assert_eq!(w["minHeight"], 640);
+    assert_eq!(w["visible"], false);
 }
 
 #[test]
