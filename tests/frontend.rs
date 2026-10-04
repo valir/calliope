@@ -133,3 +133,47 @@ fn dist_assets_are_local() {
         "no .woff2 font under dist/assets"
     );
 }
+
+fn dev_conf() -> serde_json::Value {
+    let text = fs::read_to_string(root().join("tauri.dev.conf.json")).unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+fn parse_csp(csp: &str) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    csp.split(';')
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(|d| {
+            let mut it = d.split_whitespace();
+            let name = it.next().unwrap().to_string();
+            (name, it.map(str::to_string).collect())
+        })
+        .collect()
+}
+
+#[test]
+fn production_csp_has_no_dev_relaxations() {
+    let text = fs::read_to_string(root().join("tauri.conf.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let csp = v["app"]["security"]["csp"].as_str().unwrap();
+    for bad in ["unsafe-inline", "unsafe-eval", "ws:", "localhost:5173"] {
+        assert!(!csp.contains(bad), "production CSP contains {bad}");
+    }
+    for key in ["devUrl", "devCsp", "beforeDevCommand"] {
+        assert!(!text.contains(key), "tauri.conf.json must not contain {key}");
+    }
+}
+
+#[test]
+fn dev_csp_is_minimal_and_separate() {
+    let dev = dev_conf();
+    assert_eq!(dev["build"]["devUrl"], "http://localhost:5173");
+    assert!(dev["app"]["security"].get("csp").is_none(), "dev overlay must not override csp");
+    let dev_csp = dev["app"]["security"]["devCsp"].as_str().expect("devCsp must be a string");
+    assert!(!dev_csp.contains("unsafe-eval"));
+    let prod = conf();
+    let mut expected = parse_csp(prod["app"]["security"]["csp"].as_str().unwrap());
+    expected.get_mut("style-src").unwrap().insert("'unsafe-inline'".into());
+    expected.get_mut("connect-src").unwrap().insert("ws://localhost:5173".into());
+    assert_eq!(parse_csp(dev_csp), expected);
+}

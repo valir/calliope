@@ -57,6 +57,20 @@ fn newest_mtime(dir: &std::path::Path) -> Option<SystemTime> {
     newest
 }
 
+/// Guards against dev configuration in release builds. Returns true when a debug build
+/// runs in dev mode (`TAURI_CONFIG` sets a `devUrl`), where `dist/` is not embedded.
+fn dev_mode() -> bool {
+    println!("cargo:rerun-if-env-changed=TAURI_CONFIG");
+    let cfg = std::env::var("TAURI_CONFIG").unwrap_or_default();
+    let release = std::env::var("PROFILE").is_ok_and(|p| p == "release");
+    if release && (cfg.contains("devUrl") || cfg.contains("devCsp")) {
+        fail(
+            "dev configuration (devUrl/devCsp) must not be used in a release build; use npm run build:app",
+        );
+    }
+    !release && cfg.contains("devUrl")
+}
+
 fn check_frontend() {
     println!("cargo:rerun-if-changed=src/ui");
     println!("cargo:rerun-if-changed=dist/index.html");
@@ -75,7 +89,9 @@ fn check_frontend() {
 }
 
 fn main() {
-    check_frontend();
+    if !dev_mode() {
+        check_frontend();
+    }
     println!("cargo:rerun-if-env-changed=CALLIOPE_BUILD_NUMBER");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
     println!("cargo:rerun-if-changed=src/version.rs");

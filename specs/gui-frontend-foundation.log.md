@@ -16,3 +16,5 @@ task 10 | GUI end-to-end tests on a display | implementer | done (DISPLAY=:1 npm
   - found by orchestrator in screenshots: Track view tabs laid out side by side with the panel, no active-tab highlight (task 9 defect) -> fixing next
 fix | shadcn data-* variants never matched bits-ui 2 attributes (tabs/dialog/radio/separator): @custom-variant mappings in app.css + guard test | implementer | done (screenshots re-checked on :1)
 task 11 | README and docs | implementer (local failed: output limit) | done
+task 13 | Dev mode with hot reload (owner decision) | implementer | done (live check on :1: hot reload OK, 0 csp violations; release guard verified)
+  - orchestrator: Cargo.toml tauri deps written in tauri-cli normal form so `tauri dev` no longer rewrites it

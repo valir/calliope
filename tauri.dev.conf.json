@@ -1,0 +1,11 @@
+{
+  "build": {
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev:ui"
+  },
+  "app": {
+    "security": {
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:5173; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    }
+  }
+}
