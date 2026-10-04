@@ -7,3 +7,4 @@ task 3 | build.rs frontend check, window config, static CSP/asset tests | implem
   - note: rerun-if-changed=src/ui also covers the Vite cache in src/ui/node_modules/.vite (consider moving Vite cacheDir out of src/ui)
 task 4 | Rust settings module | implementer | done
 task 5 | IPC commands, window-state plugin, Tauri wiring | implementer | done (orchestrator tightened version test to exactly 4 digits)
+task 6 | View registry and shortcut mapping | implementer (local failed: output limit) | done
