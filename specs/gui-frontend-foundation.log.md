@@ -10,3 +10,5 @@ task 5 | IPC commands, window-state plugin, Tauri wiring | implementer | done (o
 task 6 | View registry and shortcut mapping | implementer (local failed: output limit) | done
 task 7 | IPC wrappers, theme module, shared state | implementer | done
 task 8 | Placeholder component and the four simple views | local | done
+task 9 | Application shell (nav, footer, About, Track/Settings views, bootstrap) | implementer | done (screenshot on :1 OK)
+  - note: App.test.ts Escape test waits a fixed ~50 ms for the bits-ui dialog to close (possible flake; prefer waitFor)
