@@ -62,4 +62,6 @@ fn main() {
     let (yy, mm) = version::yymm_from_unix(secs);
     let v = version::format_version(yy, mm, build_number());
     println!("cargo:rustc-env=CALLIOPE_VERSION={v}");
+
+    tauri_build::build();
 }

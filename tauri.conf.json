@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "calliope-gui",
+  "identifier": "app.calliope.gui",
+  "build": {
+    "frontendDist": "src/ui"
+  },
+  "app": {
+    "windows": [
+      { "title": "calliope", "width": 800, "height": 600 }
+    ]
+  },
+  "bundle": {
+    "active": false,
+    "icon": ["icons/icon.png"]
+  }
+}

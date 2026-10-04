@@ -1,0 +1,21 @@
+use std::fs;
+use std::path::Path;
+
+fn root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+}
+
+#[test]
+fn index_html_says_hello() {
+    let html = fs::read_to_string(root().join("src/ui/index.html")).unwrap();
+    assert!(html.contains("hello from calliope"));
+}
+
+#[test]
+fn tauri_conf_points_at_frontend() {
+    let text = fs::read_to_string(root().join("tauri.conf.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["build"]["frontendDist"], "src/ui");
+    assert_eq!(v["productName"], "calliope-gui");
+    assert_eq!(v["app"]["windows"].as_array().unwrap().len(), 1);
+}
