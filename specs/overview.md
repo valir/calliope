@@ -107,7 +107,7 @@ tester for the features.
 ## Feature roadmap
 <!-- The features, in build order, one spec file each. Tick them off as they're built. -->
 - [x] `gui-skeleton.md`: calliope-gui skeleton written using Rust and Tauri
-- [ ] `gui-frontend-foundation.md`: frontend toolchain (Svelte), theme and navigation shell
+- [x] `gui-frontend-foundation.md`: frontend toolchain (Svelte), theme and navigation shell
 - [ ] `gui-tracks-repository.md`: manage the backing track repository
 - [ ] `gui-stem-extracting.md`: calliope imports a music track and places stems in the repository
 - [ ] `gui-backing-track-assembly.md`: creater backing track out of extracted stems
