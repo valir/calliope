@@ -35,3 +35,5 @@ task 12 | Visual verification and fresh-clone build on :1 | implementer | done
   - (d) window alone on empty workspace (1916x1120): layout fills sensibly, nav fixed width, content stretches, no awkward layout: PASS (/tmp/claude-1000/-home-vali-src-calliope/4fa7c5ce-b6e9-431a-9d46-ad9fd99ccef5/scratchpad/t12-maximised.png)
   - note: after programmatic view switch the h1 gets a visible amber focus ring (view-*.png, min-*.png); looks intentional (focus moved to heading for a11y) but is visually heavy; owner may judge.
   - note: checks done with a temporary workspace 9 (window moved there, then returned to workspace 3); app killed, no calliope-gui processes left.
+tester | acceptance tests (tests/acceptance_gui_frontend.rs, src/ui/acceptance_frontend.test.ts) | all PASS | done
+reviewer | 76cf5fb..HEAD | APPROVED (0 blockers, 0 majors, 6 minors) | done
