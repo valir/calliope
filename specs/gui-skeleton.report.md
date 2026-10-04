@@ -1,6 +1,6 @@
 # Report: calliope-gui skeleton
 
-**Status: DONE.** The one item left is your manual check that the GUI window appears.
+**Status: DONE.** All acceptance criteria are verified, including the GUI window (on the agents' display `:1`, 2026-10-04).
 
 - Branch: `spec/gui-skeleton` (base `773a2b1`), not pushed or merged
 - Plan: `specs/gui-skeleton.plan.md`, log: `specs/gui-skeleton.log.md`
@@ -10,7 +10,7 @@
 | Criterion | Test | Result |
 |---|---|---|
 | Compiling produces the `calliope-gui` binary | `ac1_binary_exists_and_is_named_calliope_gui`; `cargo build --release` creates `target/release/calliope-gui` | PASS |
-| No arguments: GUI visible and shows "hello from calliope" | `ac2_static_gui_content_and_wiring`, `tests/frontend.rs` (page content and config, checked statically); `tests/gui_smoke.rs` (ignored by default, needs a display) | static checks PASS; visible window **MANUAL** |
+| No arguments: GUI visible and shows "hello from calliope" | `ac2_static_gui_content_and_wiring`, `tests/frontend.rs` (page content and config, checked statically); `tests/gui_smoke.rs` (ignored by default, needs a display) | PASS (static checks; smoke test and `gui-shot` screenshot on display `:1`) |
 | `--help` shows the requirement 8 output | `ac3_help_exact_output`, `cli::tests::help_text_exact`, `tests/cli.rs` (no display) | PASS |
 | `--version` shows the requirement 9 output | `ac4_version_exact_output_and_format`, `cli::tests`, `tests/cli.rs` (no display) | PASS |
 | Req 1-3: Rust, source under `src/`, Tauri | `req2_source_lives_in_src`, `req3_tauri_is_used` | PASS |
@@ -18,6 +18,10 @@
 | Req 7: `YY.MM.BBBB` from the build date and a build number | `version::tests`, `req7_…`; checked by hand: `SOURCE_DATE_EPOCH=1790000000 CALLIOPE_BUILD_NUMBER=7` gives `26.09.0007`, and invalid numbers fail the build | PASS |
 
 Full suite: `cargo test && cargo clippy --all-targets -- -D warnings`. It ran with the display unset: 21 passed, 1 ignored (the smoke test), clippy clean.
+
+## GUI verification (display `:1`, 2026-10-04)
+- `DISPLAY=:1 cargo test --test gui_smoke -- --ignored`: PASS. The app was still running after 5 s. MESA printed harmless DRI3 warnings (no accelerated rendering on `:1`).
+- `gui-shot` captured the window titled `calliope`. It showed a bold **hello from calliope** heading at the top left on an otherwise plain white page. The window was 956x1120 rather than the configured 800x600 because the i3 window manager on `:1` resizes windows to fill their tile.
 
 ## Decisions applied (confirmed by the owner)
 - Copyright `(c) 2026`.
@@ -67,10 +71,11 @@ CALLIOPE_BUILD_NUMBER=42 cargo build --release   # pin the build number
 
 ## Manual checks (on your desktop session)
 - [ ] `cargo build --release` finishes and `target/release/calliope-gui` exists
-- [ ] `target/release/calliope-gui` opens a window titled "calliope" that shows **hello from calliope**. Closing the window ends the process.
+- [x] Window titled "calliope" shows **hello from calliope** (verified on `:1` with the debug build)
+- [ ] On your own desktop: `target/release/calliope-gui` shows the same window, and closing it ends the process
 - [ ] `--help` prints the requirement 8 text (as clarified above) and no window opens
 - [ ] `--version` prints `calliope-gui YY.MM.BBBB` (current year/month, 4-digit number) and no window opens
-- [ ] Optional: `cargo test --test gui_smoke -- --ignored` passes in the desktop session
+- [x] `cargo test --test gui_smoke -- --ignored` passes (on `:1`)
 
 No deployment steps: this feature only builds and runs locally.
 
