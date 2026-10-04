@@ -50,7 +50,7 @@ Application is written using Rust and has Tauri GUI to be OS independent.
 ## Acceptance criteria
 <!-- Concrete checks that prove it works. The tester turns each one into a test.
      Given <situation>, when <action>, then <observable result>. -->
-- [ ] Given source code, when we compile it, then it produces calliope-bin binary file
+- [ ] Given source code, when we compile it, then it produces calliope-gui binary file
 - [ ] Given binary compiled, when we run it with no arguments, then GUI is visible and displays the "hello from calliope"
 - [ ] Given binary compiled, when invoked with `--help`, then it shows the output specified at the requirement #8
 - [ ] Given binary compiled, when invoked with `--version`, then it shows the output specified at the requirement #9
