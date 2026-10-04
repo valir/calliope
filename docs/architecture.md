@@ -90,3 +90,9 @@ no counter file, 4 digits zero-padded in both `--help` and `--version`); `YY.MM`
 ### 2026-10-04: Parse CLI before GUI init   (feature: gui-skeleton)
 `--help`/`--version` must work in terminals and in headless CI/agent shells, so
 `main` dispatches on the arguments before touching Tauri/GTK.
+
+### 2026-10-04: Strict CSP for Tauri windows   (feature: gui-skeleton, reviewer follow-up)
+Tauri windows run with a strict CSP (`app.security.csp` in `tauri.conf.json`: everything
+`'self'`, `object-src 'none'`, no `unsafe-inline`/`unsafe-eval`; only the `ipc:` schemes are
+allowed beyond `'self'`). Loosening it requires an explicit decision. Tauri's automatic
+nonce/hash injection stays enabled. Enforced by a test in `tests/frontend.rs`.

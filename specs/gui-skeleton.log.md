@@ -8,3 +8,4 @@ task 6 | README | local | done
 tester | acceptance tests (tests/acceptance_gui_skeleton.rs) | all PASS, GUI visibility MANUAL | done
 reviewer | 773a2b1..HEAD | APPROVED (0 blockers, 0 majors) | done
 manual | GUI smoke test + gui-shot screenshot on display :1 | verified | done
+fix round 1 | reviewer follow-up: strict CSP in tauri.conf.json (+ tests, decision log) | implementer | done

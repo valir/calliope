@@ -48,7 +48,7 @@ No fix rounds were needed.
 
 ## Reviewer verdict: APPROVED (0 blockers, 0 majors)
 Remaining minor findings, suggested as follow-ups:
-1. `tauri.conf.json` sets no CSP. The risk is nil today because the page is static and there is no IPC. Add `"csp": "default-src 'self'"` before adding dynamic content or IPC.
+1. ~~`tauri.conf.json` sets no CSP.~~ **Done** (branch `fix/gui-csp`): strict CSP `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`, matching the IPC origins in Tauri 2.12's documented example. Guarded by `tests/frontend.rs`; window re-checked on `:1`.
 2. `tests/gui_smoke.rs`: if the assert fails, the test exits without killing the GUI process it started. Kill it first, or use a drop guard.
 3. `build.rs`: a shallow clone, or a source tree inside an unrelated git repo, gives a misleading commit count. CI should set `CALLIOPE_BUILD_NUMBER`.
 4. Nits: `std::env::args()` panics on non-UTF-8 arguments, and `print!` panics on a broken pipe (`--help | head -0`).
