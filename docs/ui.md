@@ -74,3 +74,27 @@
 ## Decided by the team
 <!-- The agents record here UI choices they made where this guide was silent, so the next
      feature reuses them. Edit or overrule anything. -->
+- (gui-frontend-foundation, **owner decision**) Navigation order and `Alt+1`...`Alt+6`:
+  Library, Import, Track, Playlists, Player, Settings (Alt+4 = Playlists, Alt+5 = Player).
+  Note: the ASCII sketch under "Layout and navigation" still shows the old order (Player
+  before Playlists); the owner will update it.
+- Font: Inter Variable, bundled with the app (shadcn-svelte itself sets no font; the system
+  default differs per machine). Root font size 18 px, so everything scales up for reading
+  at 1-2 m; nav items and buttons are at least ~50 px tall.
+- Colours: shadcn "neutral" palette for both themes; accent/primary and focus ring are
+  amber-500, with dark text on amber (white on amber is too low-contrast).
+- Focus: a 3 px amber focus ring on every focusable element when using the keyboard.
+- Navigation: buttons with an icon, label and shortcut hint; the active view has an amber
+  bar and a highlighted background. `Ctrl+B` collapses the nav to icons only (not
+  remembered between runs).
+- Shortcuts switch the view and move the focus to the view's heading; mouse clicks leave
+  the focus on the nav.
+- Footer: "Ready" · "Edge-AI: not configured" (placeholders for now) on the left, and on the
+  right a `v<version>` button that opens the About dialog (name, version, copyright).
+- Settings: "Appearance" (theme: Dark / Light) comes first, then MIDI interface, Audio output
+  and Edge-AI server.
+- Placeholder views show the title, a one-line summary and "This view will be filled by:
+  <feature>". Track shows tabs (Stems, Assembly, BPM & sections, Tablature, MIDI cues).
+- Window: 1280x800 centred on first start; afterwards the last size and position.
+- Components: shadcn-svelte button, input, label, dialog, tabs, radio-group, separator, card.
+  No toast library (sonner), which also fits "no pop-ups interrupting playback".
