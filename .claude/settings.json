@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git add:*)",
+      "Bash(git commit:*)", "Bash(git checkout:*)", "Bash(git branch:*)", "Bash(git switch:*)",
+      "Bash(local-claude:*)",
+      "Bash(python3:*)", "Bash(pytest:*)", "Bash(uv:*)",
+      "Bash(npm:*)", "Bash(npx:*)", "Bash(node:*)",
+      "Bash(cargo:*)", "Bash(make:*)", "Bash(gcc:*)",
+      "Bash(ls:*)", "Bash(mkdir:*)"
+    ],
+    "deny": ["Bash(git push:*)", "Bash(rm -rf:*)", "Bash(sudo:*)"]
+  }
+}
