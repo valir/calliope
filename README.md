@@ -25,7 +25,7 @@ calliope-gui --help
 calliope-gui --version
 ```
 
-Unknown options print an error plus help to `stderr` and exit with code 2.
+Unknown options print an error plus help to `stderr` and exit with code 2.
 
 ## Version scheme
 
