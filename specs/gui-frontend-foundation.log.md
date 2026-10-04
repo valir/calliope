@@ -12,3 +12,5 @@ task 7 | IPC wrappers, theme module, shared state | implementer | done
 task 8 | Placeholder component and the four simple views | local | done
 task 9 | Application shell (nav, footer, About, Track/Settings views, bootstrap) | implementer | done (screenshot on :1 OK)
   - note: App.test.ts Escape test waits a fixed ~50 ms for the bits-ui dialog to close (possible flake; prefer waitFor)
+task 10 | GUI end-to-end tests on a display | implementer | done (DISPLAY=:1 npm run test:gui: 5 e2e + 1 smoke pass; 16 screenshots; Escape test now uses waitFor)
+  - found by orchestrator in screenshots: Track view tabs laid out side by side with the panel, no active-tab highlight (task 9 defect) -> fixing next

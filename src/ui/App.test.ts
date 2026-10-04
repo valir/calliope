@@ -75,9 +75,7 @@ describe('App shell', () => {
     const dialog = await screen.findByRole('dialog');
     expect(dialog.textContent).toContain('26.10.0042');
     await fireEvent.keyDown(dialog, { key: 'Escape' });
-    await tick();
-    await new Promise((r) => setTimeout(r, 50));
-    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
   it('choosing Light applies the theme and persists it', async () => {
