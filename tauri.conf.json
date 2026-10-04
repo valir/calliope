@@ -10,7 +10,7 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
     },
     "windows": [
-      { "title": "calliope", "width": 800, "height": 600 }
+      { "label": "main", "title": "calliope", "width": 1280, "height": 800, "minWidth": 1024, "minHeight": 640, "center": true }
     ]
   },
   "bundle": {

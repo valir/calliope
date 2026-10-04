@@ -40,7 +40,42 @@ fn build_number() -> u32 {
     0
 }
 
+fn newest_mtime(dir: &std::path::Path) -> Option<SystemTime> {
+    let mut newest = None;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.file_name().is_some_and(|n| n == "node_modules") {
+            continue;
+        }
+        let t = if path.is_dir() {
+            newest_mtime(&path)
+        } else {
+            entry.metadata().ok().and_then(|m| m.modified().ok())
+        };
+        newest = newest.max(t);
+    }
+    newest
+}
+
+fn check_frontend() {
+    println!("cargo:rerun-if-changed=src/ui");
+    println!("cargo:rerun-if-changed=dist/index.html");
+    let index = std::path::Path::new("dist/index.html");
+    let Ok(built) = std::fs::metadata(index).and_then(|m| m.modified()) else {
+        fail(
+            "the frontend is not built (dist/index.html is missing). Build the app with: \
+             npm ci && npm run build:app   (or only the frontend: npm run build)",
+        );
+    };
+    if newest_mtime(std::path::Path::new("src/ui")).is_some_and(|t| t > built) {
+        println!(
+            "cargo:warning=the frontend in dist/ is stale (src/ui is newer than dist/index.html); run: npm run build"
+        );
+    }
+}
+
 fn main() {
+    check_frontend();
     println!("cargo:rerun-if-env-changed=CALLIOPE_BUILD_NUMBER");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
     println!("cargo:rerun-if-changed=src/version.rs");
