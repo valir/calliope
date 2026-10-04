@@ -20,7 +20,7 @@ npm run build:app
 
 Produces `target/release/calliope-gui`.
 
-Plain `cargo build` also works once `dist/` exists (built by `npm run build`). Without it, the build stops with a message saying the frontend is not built.
+Plain `cargo build` also works once `dist/` exists (built by `npm run build`). Without it, the build stops with a message saying the frontend is not built. If `src/ui/` is newer than `dist/`, a debug build only warns, but a release build fails; run `npm run build:app`.
 
 ## Run
 

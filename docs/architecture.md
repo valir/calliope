@@ -95,7 +95,10 @@ crates go in `src/<crate>/`.
 - Run: `npm run app` (= `vite build && cargo run`).
 - Plain `cargo build` does not run npm. It works once `dist/` exists. If
   `dist/index.html` is missing, `build.rs` stops with a message naming `npm run build:app`.
-  If `src/ui/` is newer than `dist/`, it prints a `cargo:warning`.
+  If `src/ui/` is newer than `dist/index.html`, a debug build prints a `cargo:warning` and a
+  release build fails (naming `npm run build:app`).
+  Vite/Vitest cache lives in the root `node_modules/.vite` (`cacheDir`), not in `src/ui/`,
+  because build.rs watches `src/ui`.
 - Dev: `npm run dev:app` (= `tauri dev --config tauri.dev.conf.json`, with `@tauri-apps/cli`
   as an npm dev-dependency). It starts the Vite dev server on `http://localhost:5173` (hot
   reload), then `cargo run` with the dev overlay passed in `TAURI_CONFIG`. The overlay has a
@@ -208,7 +211,7 @@ Keeps all source in `src/` and `node_modules/` out of it. Config files sit next 
 ### 2026-10-04: Plain cargo stays the Rust build; no tauri-cli; build.rs guards `dist/`   (feature: gui-frontend-foundation)
 `npm run build:app` = `vite build && cargo build --release`. `build.rs` does not invoke
 npm (keeps cargo fast, hermetic, and node-free for Rust-only work); it fails with a clear
-message if `dist/index.html` is missing, and warns if it is stale. Alternative: the
+message if `dist/index.html` is missing, and warns if it is stale (fails in release builds). Alternative: the
 `@tauri-apps/cli` npm package (`tauri build/dev`). Rejected for now: a large native
 dependency only needed for bundling, which is out of scope. Revisit with installers.
 Consequence: binaries are built without the `custom-protocol` feature (`tauri::is_dev()` is

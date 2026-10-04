@@ -82,6 +82,12 @@ fn check_frontend() {
         );
     };
     if newest_mtime(std::path::Path::new("src/ui")).is_some_and(|t| t > built) {
+        if std::env::var("PROFILE").is_ok_and(|p| p == "release") {
+            fail(
+                "the frontend in dist/ is out of date (src/ui is newer than dist/index.html), \
+                 and a release build must embed the current frontend. Run: npm run build:app",
+            );
+        }
         println!(
             "cargo:warning=the frontend in dist/ is stale (src/ui is newer than dist/index.html); run: npm run build"
         );

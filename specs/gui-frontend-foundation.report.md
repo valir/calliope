@@ -55,12 +55,12 @@ The local model succeeded on 1 of 4 attempts (task 8). It handles exact-content 
 
 ## Reviewer: APPROVED (0 blockers, 0 majors)
 Minor findings, suggested as follow-ups:
-1. **Vite cache inside `src/ui`.** Vite and Vitest keep their cache in `src/ui/node_modules/.vite`, so after any frontend test run the next cargo command reruns the build script and rebuilds. Fix: set `cacheDir: '../../node_modules/.vite'` in `vite.config.ts`.
-2. **Stale `dist/` only warns.** A `cargo build --release` after editing the UI ships the old UI, with only a warning. Consider failing for release builds. (`npm run build:app` always rebuilds.)
+1. ~~Vite cache inside `src/ui`.~~ **Done:** `cacheDir` is now the repo-root `node_modules/.vite`. A tracked empty `capabilities/` folder (`.gitkeep`) also stops tauri-build's watch on a missing folder from rebuilding on every `cargo build`. Repeated builds are now no-ops, even after frontend test runs.
+2. ~~Stale `dist/` only warns.~~ **Done:** a release build now fails with "the frontend in dist/ is out of date (src/ui is newer than dist/index.html), and a release build must embed the current frontend. Run: npm run build:app". Debug builds still warn.
 3. **Focus ring on the view heading.** It's a thick amber ring, shown after keyboard view switches only. It's correct per `docs/ui.md`, but visually heavy. A design call for you: keep it, or use a softer marker for the heading.
 4. **`frontend_log`.** It's always on, and its stderr lines are the e2e tests' interface. Document that in the code, and consider limiting the `view=`/`theme=` lines to debug builds.
-5. **One bad value resets all settings.** An invalid value in `settings.json` falls back to the defaults for everything, and the next save overwrites the file. Consider keeping a `.bak` copy before it grows more settings.
-6. **No fsync before rename** when saving settings. Low impact today.
+5. ~~One bad value resets all settings.~~ **Done:** fields are read one by one, so an invalid value falls back to its own default and the rest of the file is kept. A file that isn't JSON (or isn't an object) is moved to `settings.json.bak` before the defaults are used.
+6. ~~No fsync before rename.~~ **Done:** the temp file is fsynced before the rename, then the folder is fsynced (best effort).
 
 Nits:
 - `set_theme` does file IO synchronously; heavier commands should be `async`.

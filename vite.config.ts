@@ -4,9 +4,11 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 
 const lib = fileURLToPath(new URL('./src/ui/lib', import.meta.url));
+const cacheDir = fileURLToPath(new URL('./node_modules/.vite', import.meta.url));
 
 export default defineConfig({
   root: 'src/ui',
+  cacheDir,
   plugins: [tailwindcss(), svelte()],
   resolve: {
     alias: { $lib: lib },

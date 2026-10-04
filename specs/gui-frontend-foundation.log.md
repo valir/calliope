@@ -37,3 +37,4 @@ task 12 | Visual verification and fresh-clone build on :1 | implementer | done
   - note: checks done with a temporary workspace 9 (window moved there, then returned to workspace 3); app killed, no calliope-gui processes left.
 tester | acceptance tests (tests/acceptance_gui_frontend.rs, src/ui/acceptance_frontend.test.ts) | all PASS | done
 reviewer | 76cf5fb..HEAD | APPROVED (0 blockers, 0 majors, 6 minors) | done
+fix round 1 | owner-requested follow-ups: Vite cacheDir out of src/ui (+ capabilities/.gitkeep stops perpetual rebuilds), release build fails on stale dist/, settings per-field lenient load + .bak for corrupt file + fsync | implementer | done (npm test + test:gui on :1 pass)
