@@ -9,3 +9,4 @@ task 4 | Rust settings module | implementer | done
 task 5 | IPC commands, window-state plugin, Tauri wiring | implementer | done (orchestrator tightened version test to exactly 4 digits)
 task 6 | View registry and shortcut mapping | implementer (local failed: output limit) | done
 task 7 | IPC wrappers, theme module, shared state | implementer | done
+task 8 | Placeholder component and the four simple views | local | done
