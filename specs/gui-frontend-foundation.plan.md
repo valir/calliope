@@ -391,9 +391,10 @@ created it (before that: `cargo test && cargo clippy --all-targets -- -D warning
   mode-watcher or sonner.
 - **done when**: `npm run check` and `npm run build` pass; `dist/assets/` has at least one
   `.woff2`; `grep -L 'style="' src/ui/lib/components/ui -r` lists every component file (no
-  static style attributes); no CSS file in `dist/assets` contains `http://`, `https://` or
-  `url(data:`.
-- **test**: `npm run check && npm run build && ls dist/assets/*.woff2 && ! grep -rlE 'https?://|url\(data:' dist/assets/*.css`
+  static style attributes); no CSS file in `dist/assets` has a remote reference or `url(data:`
+  (checked after stripping `/* ... */` comments, which may hold licence URLs; remote means
+  `url(` or `@import` followed by an optional quote and `http(s)://` or `//`).
+- **test**: `npm run check && npm run build && ls dist/assets/*.woff2 && python3 -c "import re,glob,sys; bad=[f for f in glob.glob('dist/assets/*.css') if re.search(r'''(url\(|@import\s*(url\()?)\s*[\"']?(https?:)?//|url\(\s*[\"']?data:''', re.sub(r'/\*.*?\*/', '', open(f).read(), flags=re.S))]; print(bad); sys.exit(bool(bad))"`
 - **routine: no** (interactive CLI, theme judgement)
 
 ### Task 3: build.rs frontend check, window config, static CSP/asset tests
@@ -408,8 +409,8 @@ created it (before that: `cargo test && cargo clippy --all-targets -- -D warning
   `devCsp`; CSP test unchanged; new `no_static_style_attributes_in_svelte` (walks
   `src/ui/**/*.svelte`, fails on `style="` or `style='`); new `dist_has_no_inline_code`
   (`dist/index.html`: every `<script` has `src=`, no `<style`, no `style=`); new
-  `dist_assets_are_local` (no `http://`/`https://` in `dist/index.html` or `dist/**/*.css`,
-  no `url(data:` in CSS, at least one `.woff2` under `dist/assets`).
+  `dist_assets_are_local` (no `http://`/`https://` in `dist/index.html`; in `dist/**/*.css`, after stripping
+  `/* */` comments, no `url(`/`@import` pointing at `http(s)://` or `//` and no `url(data:`, at least one `.woff2` under `dist/assets`).
 - **done when**: Suite passes. `mv dist /tmp/claude-…/scratchpad/dist.bak && cargo build`
   fails and prints the exact "frontend is not built" message (then restore `dist`);
   `touch src/ui/App.svelte && cargo build` prints the stale warning.
