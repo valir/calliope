@@ -64,6 +64,7 @@ pub fn is_valid_id(id: &str) -> bool {
 }
 
 /// A fresh UUIDv7 (lower-case, hyphenated).
+#[allow(dead_code)] // future import feature
 pub fn new_id() -> String {
     uuid::Uuid::now_v7().hyphenated().to_string()
 }
@@ -115,6 +116,7 @@ fn check_text(label: &str, s: &str, max: usize) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(dead_code)] // used by validate_for_write
 fn check_timestamp(label: &str, s: &str) -> Result<(), String> {
     let b = s.as_bytes();
     let ok = b.len() == 20
@@ -195,6 +197,7 @@ fn validate_edit_fields(meta: &TrackMeta) -> Result<(), String> {
 
 /// Full strict check for a track Calliope writes from scratch (canonical timestamps too).
 /// Not used for tracks loaded from disk: their `imported` is preserved as read.
+#[allow(dead_code)] // used by create_track (tests, future import)
 pub fn validate_for_write(meta: &TrackMeta) -> Result<(), String> {
     validate_for_read(meta)?;
     validate_edit_fields(meta)?;

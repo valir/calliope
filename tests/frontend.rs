@@ -196,3 +196,42 @@ fn e2e_hooks_feature_is_never_default_or_in_release_scripts() {
         assert!(!s.contains("e2e-hooks"), "script {name} must not use e2e-hooks: {s}");
     }
 }
+
+fn names_between(text: &str, start: &str, end: &str) -> std::collections::BTreeSet<String> {
+    let s = text.find(start).expect("start marker") + start.len();
+    let e = s + text[s..].find(end).expect("end marker");
+    text[s..e]
+        .split(',')
+        .map(|n| n.trim().trim_matches('"').rsplit("::").next().unwrap().to_string())
+        .filter(|n| !n.is_empty())
+        .collect()
+}
+
+#[test]
+fn handler_list_build_list_and_capability_agree() {
+    let gui = fs::read_to_string(root().join("src/gui.rs")).unwrap();
+    let handlers = names_between(&gui, "generate_handler![", "]");
+    let build = fs::read_to_string(root().join("build.rs")).unwrap();
+    let commands = names_between(&build, "const COMMANDS: &[&str] = &[", "];");
+    let cap: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root().join("capabilities/main.json")).unwrap())
+            .unwrap();
+    let perms: Vec<&str> =
+        cap["permissions"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
+    let allow: std::collections::BTreeSet<String> = perms
+        .iter()
+        .map(|p| p.strip_prefix("allow-").expect("only allow-* entries").replace('-', "_"))
+        .collect();
+    assert_eq!(perms.len(), allow.len(), "duplicate permission");
+    assert!(handlers.len() >= 14);
+    assert_eq!(handlers, commands, "generate_handler! vs build.rs COMMANDS");
+    assert_eq!(handlers, allow, "generate_handler! vs capabilities/main.json");
+    assert_eq!(cap["windows"], serde_json::json!(["main"]));
+    assert_eq!(cap["local"], true);
+    for p in perms {
+        for bad in ["core:", "dialog:", "fs:"] {
+            assert!(!p.contains(bad), "{p}");
+        }
+    }
+    assert!(cap.get("remote").is_none());
+}

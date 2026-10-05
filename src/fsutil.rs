@@ -231,6 +231,7 @@ impl TablatureTrash {
     }
 
     /// The trash folder, once a file has been moved in.
+    #[allow(dead_code)] // used by tests
     pub fn dir(&self) -> Option<&Path> {
         self.dir.as_deref()
     }

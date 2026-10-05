@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Calliope's own commands for the main window. No plugin or core JS APIs.",
+  "local": true,
+  "windows": ["main"],
+  "permissions": [
+    "allow-app-version", "allow-get-settings", "allow-set-theme", "allow-frontend-log",
+    "allow-get-repository", "allow-choose-repository-root", "allow-set-repository-root",
+    "allow-reset-repository-root", "allow-list-tracks", "allow-pick-tablature",
+    "allow-save-track", "allow-delete-track", "allow-export-track", "allow-export-tablature"
+  ]
+}

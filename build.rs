@@ -6,6 +6,25 @@ mod version;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Every command the app registers in `generate_handler!` (src/gui.rs). A test keeps this list,
+/// that macro and capabilities/main.json identical.
+const COMMANDS: &[&str] = &[
+    "app_version",
+    "get_settings",
+    "set_theme",
+    "frontend_log",
+    "get_repository",
+    "choose_repository_root",
+    "set_repository_root",
+    "reset_repository_root",
+    "list_tracks",
+    "pick_tablature",
+    "save_track",
+    "delete_track",
+    "export_track",
+    "export_tablature",
+];
+
 fn git(args: &[&str]) -> Option<String> {
     let out = Command::new("git").args(args).output().ok()?;
     if !out.status.success() {
@@ -130,5 +149,9 @@ fn main() {
     let v = version::format_version(yy, mm, build_number());
     println!("cargo:rustc-env=CALLIOPE_VERSION={v}");
 
-    tauri_build::build();
+    let attrs = tauri_build::Attributes::new()
+        .app_manifest(tauri_build::AppManifest::new().commands(COMMANDS));
+    if let Err(e) = tauri_build::try_build(attrs) {
+        fail(&format!("tauri build failed: {e:#}"));
+    }
 }

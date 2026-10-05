@@ -21,7 +21,6 @@ pub struct Settings {
 }
 
 /// The repository root used when the setting is `None`.
-#[allow(dead_code)] // used by later tasks
 pub fn default_repository_root(data_dir: &Path) -> PathBuf {
     data_dir.join("calliope")
 }
@@ -116,7 +115,6 @@ impl SettingsStore {
         Ok(next)
     }
 
-    #[allow(dead_code)] // used by later tasks
     pub fn set_repository_root(&self, root: Option<PathBuf>) -> std::io::Result<Settings> {
         let mut cur = self.current.lock().unwrap_or_else(|e| e.into_inner());
         let mut next = cur.clone();

@@ -226,6 +226,7 @@ impl ScriptedPicker {
         Self { answers, lock: Mutex::new(()) }
     }
 
+    #[cfg(feature = "e2e-hooks")]
     /// Reads `CALLIOPE_E2E_DIALOG_ANSWERS`; `None` when it is unset or empty.
     pub fn from_env() -> Option<Self> {
         let v = std::env::var_os("CALLIOPE_E2E_DIALOG_ANSWERS")?;

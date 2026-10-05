@@ -1,14 +1,10 @@
 mod cli;
-#[allow(dead_code)] // used by later tasks
 mod fsutil;
 mod gui;
 mod ipc;
-#[allow(dead_code)] // used by later tasks
 mod picker;
-#[allow(dead_code)] // used by later tasks
 mod repository;
 mod settings;
-#[allow(dead_code)] // used by later tasks
 mod track_meta;
 #[allow(dead_code)] // only build.rs uses it outside tests
 mod version;

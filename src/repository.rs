@@ -88,6 +88,7 @@ pub struct SaveResult {
 
 /// A track to create from scratch (tests, the fixture builder, the future import feature).
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // for tests and the future import feature
 pub struct NewTrack {
     /// `None` generates a UUIDv7.
     pub id: Option<String>,
@@ -282,6 +283,7 @@ impl Repository {
 
     /// Creates a new track folder (the id must not exist yet). On failure only what this call
     /// created is removed.
+    #[allow(dead_code)] // for tests and the future import feature
     pub fn create_track(&self, new: NewTrack, audio_src: &Path) -> Result<TrackRecord, String> {
         let id = new.id.unwrap_or_else(track_meta::new_id);
         valid_id(&id)?;
