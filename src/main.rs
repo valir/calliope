@@ -4,6 +4,8 @@ mod fsutil;
 mod gui;
 mod ipc;
 #[allow(dead_code)] // used by later tasks
+mod picker;
+#[allow(dead_code)] // used by later tasks
 mod repository;
 mod settings;
 #[allow(dead_code)] // used by later tasks

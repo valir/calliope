@@ -4,3 +4,4 @@ task 2 | track_meta (schema v1, validation, timestamps, ids) | implementer | don
 task 3 | repository (scan, save transaction, delete, export) | implementer | done (27 temp-repo tests; orchestrator audited every remove/rename: only own copies/part/tmp files)
 task 4 | Sample fixture tests/fixtures/library-sample (6 invented tracks) | implementer | done
 task 5 | Settings repository_root | implementer | done
+task 6 | Picker (dialog plugin, token registry, scripted picker, release guard) | implementer | done (guard verified: release+e2e-hooks fails)

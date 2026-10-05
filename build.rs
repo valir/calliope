@@ -94,7 +94,17 @@ fn check_frontend() {
     }
 }
 
+/// The scripted dialog picker is a test hook; it must never ship.
+fn guard_e2e_hooks() {
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_E2E_HOOKS");
+    let release = std::env::var("PROFILE").is_ok_and(|p| p == "release");
+    if release && std::env::var_os("CARGO_FEATURE_E2E_HOOKS").is_some() {
+        fail("the e2e-hooks feature must never be in a release build");
+    }
+}
+
 fn main() {
+    guard_e2e_hooks();
     if !dev_mode() {
         check_frontend();
     }

@@ -177,3 +177,22 @@ fn dev_csp_is_minimal_and_separate() {
     expected.get_mut("connect-src").unwrap().insert("ws://localhost:5173".into());
     assert_eq!(parse_csp(dev_csp), expected);
 }
+
+#[test]
+fn e2e_hooks_feature_is_never_default_or_in_release_scripts() {
+    let cargo = fs::read_to_string(root().join("Cargo.toml")).unwrap();
+    let features = &cargo[cargo.find("[features]").expect("[features] section")..];
+    assert!(features.contains("e2e-hooks = []"));
+    if let Some(i) = features.lines().position(|l| l.trim_start().starts_with("default")) {
+        let start: usize = features.lines().take(i).map(|l| l.len() + 1).sum();
+        let rest = &features[start..];
+        let list = &rest[..rest.find(']').expect("default list end")];
+        assert!(!list.contains("e2e-hooks"), "e2e-hooks must not be a default feature");
+    }
+    let pkg: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root().join("package.json")).unwrap()).unwrap();
+    for name in ["app", "build:app", "build"] {
+        let s = pkg["scripts"][name].as_str().unwrap();
+        assert!(!s.contains("e2e-hooks"), "script {name} must not use e2e-hooks: {s}");
+    }
+}
