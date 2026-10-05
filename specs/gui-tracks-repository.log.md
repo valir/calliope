@@ -9,3 +9,4 @@ task 7 | IPC commands, app state, ACL manifest and capability | implementer | do
 task 8 | Frontend ipc.ts and its test | implementer (local failed: output limit) | done
 task 9 | Fuzzy matching and tree building (pure TS) | implementer | done
 task 10 | Track draft model and button states (pure TS) | implementer | done (remove+re-add same name becomes replace -> old file trashed)
+task 11 | shadcn textarea + alert-dialog, ConfirmDialog | implementer | done (no new variant mappings needed)
