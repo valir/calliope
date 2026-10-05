@@ -4,6 +4,8 @@ mod fsutil;
 mod gui;
 mod ipc;
 mod settings;
+#[allow(dead_code)] // used by later tasks
+mod track_meta;
 #[allow(dead_code)] // only build.rs uses it outside tests
 mod version;
 

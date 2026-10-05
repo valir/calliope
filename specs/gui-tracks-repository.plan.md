@@ -90,6 +90,10 @@ sends file-system paths, and the native file dialogs are opened by Rust.
 | `tablatures` | string array | plain file names, unique case-insensitively, ≠ `audio` |
 | `imported`, `modified` | string | RFC 3339 UTC with seconds, `Z` suffix, set by Rust only |
 
+- **Lenient read, strict write**: a cosmetic issue (whitespace padding, a `+02:00` or fractional
+  timestamp, a missing timestamp) never turns a hand-made track into a problem. Hard failures are
+  limited to unusable or unsafe tracks. Saving applies the strict rules to the edited fields, keeps
+  `imported` as read and writes `modified` as canonical UTC.
 - **Versioning and forward compatibility**: `track_meta::parse` reads the JSON as a
   `serde_json::Value`, checks `schema_version`, runs the migration chain
   (`migrate(value, from) -> value`; empty for v1, but the hook and its test exist), then
@@ -377,10 +381,15 @@ tests use `mockIPC`, and GUI tests use temp XDG dirs under `target/gui-e2e/`.
 ### Task 2: `track_meta` module: schema v1, validation, timestamps, ids
 - **files**: `src/track_meta.rs` (new), `src/main.rs`, `Cargo.toml` (`uuid = { version = "1", features = ["v7"] }`)
 - **does**: `TrackMeta` per §2.3 with `#[serde(flatten)] extra: serde_json::Map`;
-  `CURRENT_SCHEMA = 1`; `parse(bytes, dir_name)` (Value → schema check → `migrate` → strict
-  deserialize → `validate` → id == dir_name), with errors as readable strings
+  `CURRENT_SCHEMA = 1`; `parse(bytes, dir_name)` (Value → schema check → `migrate` → strict-typed
+  deserialize → `validate_for_read` → id == dir_name), with errors as readable strings
   (`missing schema_version`, `written by a newer Calliope (schema 2)`, `id "x" does not match folder "y"`, …);
-  `to_json_pretty`; `TrackEdits` + `apply_edits(&mut meta, edits)` (trims, turns empty
+  `to_json_pretty`; **lenient read, strict write**: `validate_for_read` only fails for unusable or
+  unsafe tracks (bad id, empty title, bad audio/tablature file names, plus the parse errors above);
+  padding, control chars, lengths, years and any/missing `imported`/`modified` text are accepted and
+  kept verbatim; `validate_for_write` is the full strict check (canonical timestamps) for new tracks;
+  `apply_edits` checks the edited fields strictly, leaves `imported`/`modified` untouched (Task 3's
+  save sets `modified` to now); `TrackEdits` + `apply_edits(&mut meta, edits)` (trims, turns empty
   optional strings into `None`, validates); `is_valid_id`; `new_id()`;
   `rfc3339_utc(unix_secs) -> String`; `now_rfc3339()`. Unit tests: round trip of the §2.3
   example; unknown fields survive parse → to_json; schema 2 and a missing schema are errors; a

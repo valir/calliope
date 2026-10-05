@@ -97,8 +97,13 @@
   ```
   `track.json` fields: `schema_version, id, band, album, title, composers[], year, source_url,
   copyright, audio, tablatures[], imported, modified` (RFC 3339 UTC). Unknown fields are kept
-  on save. A file with a newer `schema_version`, a wrong field type or an id mismatch is
-  reported as a problem and never rewritten. Writes: `write_atomic` (tmp + fsync + rename +
+  on save. Lenient on read, strict on write: loading only fails for things that make a track
+  unusable or unsafe (invalid JSON, wrong field types, newer `schema_version`, id/folder
+  mismatch, empty title, bad `audio`/tablature file names); those tracks are reported as
+  problems and never rewritten. Cosmetic issues (padded or control-char text, odd years, any
+  or missing `imported`/`modified` text such as `+02:00` offsets) load fine and are never
+  rewritten for that reason. Saving applies the strict rules to the edited fields, keeps
+  `imported` verbatim and sets `modified` to now in canonical `YYYY-MM-DDTHH:MM:SSZ`. Writes: `write_atomic` (tmp + fsync + rename +
   dir fsync). New files: no-clobber copies (part file + `hard_link`). Calliope never deletes
   user files: removals are `rename`s into `trash/`. Concurrency: one Mutex per app instance,
   and an optimistic `revision` check (FNV-1a of `track.json`) against other writers. No file
