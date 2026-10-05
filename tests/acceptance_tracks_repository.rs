@@ -1176,3 +1176,80 @@ mod ipc_layer {
         assert!(!missing.exists());
     }
 }
+
+// ---------- fix round 1 re-probes ----------
+
+#[test]
+fn crash_left_unique_tmp_files_do_not_break_scan_or_save() {
+    let e = Env::new();
+    let t = e.track(ID1, &["a.gp5"]);
+    // crash leftovers: inside a track folder, and as stray entries in tracks/
+    fs::write(e.dir(ID1).join(".track.json.4242.0.tmp"), "{ half written").unwrap();
+    fs::write(e.dir(ID1).join(".a.gp5.4242.1.tmp"), "junk").unwrap();
+    fs::write(e.repo.root.join("tracks").join(".track.json.4242.2.tmp"), "junk").unwrap();
+    fs::create_dir_all(e.repo.root.join("tracks").join(".track.json.4242.3.tmp")).unwrap();
+    let lib = e.repo.scan();
+    assert_eq!(lib.tracks.len(), 1, "{:?}", lib.problems);
+    assert!(lib.problems.is_empty(), "{:?}", lib.problems);
+    assert_eq!(lib.tracks[0].tablatures, vec!["a.gp5"]);
+    // a save still works, and leaves the foreign leftovers alone
+    let t2 = lib.tracks[0].clone();
+    let _ = t;
+    e.repo.save_track(e.req(&t2, e.keep_all(&t2)), &|_| None).unwrap();
+    assert_eq!(fs::read_to_string(e.dir(ID1).join(".track.json.4242.0.tmp")).unwrap(), "{ half written");
+    assert_eq!(e.repo.scan().tracks.len(), 1);
+    // delete moves the folder, leftovers included, nothing lost
+    let t3 = e.repo.scan().tracks.remove(0);
+    e.repo.delete_track(&t3.id, &t3.revision).unwrap();
+    assert!(e.repo.scan().tracks.is_empty());
+}
+
+#[test]
+fn tmp_named_track_folder_is_ignored_not_a_problem() {
+    let e = Env::new();
+    fs::create_dir_all(e.repo.root.join("tracks").join(format!("{ID1}.tmp"))).unwrap();
+    let lib = e.repo.scan();
+    assert!(lib.tracks.is_empty() && lib.problems.is_empty(), "{:?}", lib.problems);
+}
+
+#[test]
+fn export_into_root_trash_and_tracks_refused_nothing_written() {
+    let e = Env::new();
+    e.track(ID1, &["a.gp5"]);
+    let t = e.repo.scan().tracks.remove(0);
+    e.repo.delete_track(&t.id, &t.revision).unwrap();
+    e.track(ID1, &["a.gp5"]);
+    let root = e.repo.root.clone();
+    fs::create_dir_all(root.join("trash")).unwrap();
+    let nested = root.join("tracks").join(ID1);
+    let before = snapshot(&root);
+    for d in [root.clone(), root.join("trash"), root.join("tracks"), nested.clone(), root.join("tracks").join("..")] {
+        assert!(e.repo.export_track(ID1, &d).is_err(), "export into {} allowed", d.display());
+    }
+    // via a symlink pointing into the root
+    let link = e.base.join("lnk");
+    std::os::unix::fs::symlink(root.join("trash"), &link).unwrap();
+    assert!(e.repo.export_track(ID1, &link).is_err(), "export through symlink into trash allowed");
+    assert_eq!(snapshot(&root), before);
+}
+
+#[test]
+fn replacing_a_symlinked_tab_does_not_write_through_the_link() {
+    let e = Env::new();
+    let t = e.track(ID1, &[]);
+    let _ = t;
+    std::os::unix::fs::symlink(e.outside.join("secret.gp5"), e.dir(ID1).join("link.gp5")).unwrap();
+    let p = e.dir(ID1).join("track.json");
+    let s = fs::read_to_string(&p).unwrap().replace("\"tablatures\": []", "\"tablatures\": [\"link.gp5\"]");
+    fs::write(&p, s).unwrap();
+    let t2 = e.repo.scan().tracks.remove(0);
+    let newsrc = e.src("new.gp5", "NEW CONTENT");
+    let tok = newsrc.to_string_lossy().into_owned();
+    let res = e.repo.save_track(
+        e.req(&t2, vec![TabEntry::Replace { name: "link.gp5".into(), token: tok.clone() }]),
+        &|t| if t == tok { Some(newsrc.clone()) } else { None },
+    );
+    let _ = res;
+    assert_eq!(fs::read_to_string(e.outside.join("secret.gp5")).unwrap(), "SECRET", "wrote through symlink");
+    e.assert_outside_unchanged();
+}

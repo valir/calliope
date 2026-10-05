@@ -37,3 +37,5 @@ task 18 | README section | orchestrator (local failed: output limit; exact text 
 tester | acceptance tests (tests/acceptance_tracks_repository.rs, src/ui/acceptance_library.test.ts) | all 19 AC PASS; 5 data-safety findings as #[ignore] tests | done
 reviewer | f7894d9..HEAD | CHANGES REQUIRED (1 major: OFL text not shipped; data-safety minors) | done
 fix round 1 | OFL licence shipped in dist; export name cap; part-file/symlink/trash-symlink safety; unique tmp names; export refused inside root; conflict keeps draft; dialog test uses temp HOME; tablature panel pinned | implementer | done (148 acceptance tests, 0 ignored; GUI 2 runs green)
+tester (re-run) | 4 new probes (crash-left tmp files, tmp-named folder, export into root/trash, symlinked replace) | 19/19 AC PASS, 152 acceptance tests 0 ignored, GUI green | done
+reviewer (re-review) | fix round 1 | APPROVED (0 blockers, 0 majors) | done
