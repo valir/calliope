@@ -46,10 +46,26 @@ Starts the Vite dev server with hot reload plus the debug app. It uses a dev-onl
 * Alt+1 ... Alt+6: Library, Import, Track, Playlists, Player, Settings
 * Ctrl+B: collapse navigation
 
+## Track repository
+
+The Library view manages the backing tracks stored in the track repository folder.
+The default folder is `~/.local/share/calliope/`; change it in Settings > Track repository.
+
+* `tracks/<track id>/track.json`: the track metadata (JSON, with a `schema_version`)
+* `tracks/<track id>/`: the audio file and the tablature files named in `track.json`
+* `trash/`: deleted tracks and removed tablatures; Calliope never empties it
+* `calliope-repository.json`: marks the folder as a Calliope repository
+
+To try the Library with sample data, copy `tests/fixtures/library-sample` to a new folder
+and choose that folder in Settings.
+
+Library keys: Ctrl+F search, Ctrl+E edit, Ctrl+S save, Escape cancel editing.
+
 ## Settings files
 
 * `~/.config/app.calliope.gui/settings.json`
 * `~/.config/app.calliope.gui/.window-state.json`
+* `~/.local/share/calliope/`: default track repository (see above)
 
 ## Version scheme
 
