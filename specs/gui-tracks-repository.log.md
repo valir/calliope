@@ -10,3 +10,4 @@ task 8 | Frontend ipc.ts and its test | implementer (local failed: output limit)
 task 9 | Fuzzy matching and tree building (pure TS) | implementer | done
 task 10 | Track draft model and button states (pure TS) | implementer | done (remove+re-add same name becomes replace -> old file trashed)
 task 11 | shadcn textarea + alert-dialog, ConfirmDialog | implementer | done (no new variant mappings needed)
+task 12 | Library left column (toolbar, tree, search, problems) | implementer | done (screenshot on :1 with fixture copy OK)

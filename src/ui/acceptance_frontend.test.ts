@@ -5,11 +5,12 @@ import { tick } from 'svelte';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import App from './App.svelte';
 import { ui } from '$lib/app-state.svelte';
+import { resetLibrary } from '$lib/library-state.svelte';
 
 const NAV_ORDER = ['Library', 'Import', 'Track', 'Playlists', 'Player', 'Settings'];
 // Spec requirement 4: which future feature each view names.
 const FEATURES: Record<string, string[]> = {
-  Library: ['gui-tracks-repository'],
+  // Library has no placeholder any more: gui-tracks-repository replaced it with the real view.
   Import: ['gui-stem-extracting', 'gui-existing-track-import'],
   Track: ['gui-backing-track-assembly', 'gui-tablatures', 'gui-manipulate-backing-track'],
   Player: ['gui-play-backing-track'],
@@ -18,6 +19,7 @@ let logs: string[] = [];
 
 beforeEach(() => {
   logs = [];
+  resetLibrary();
   ui.view = 'library';
   ui.theme = 'dark';
   ui.version = '';
@@ -27,6 +29,8 @@ beforeEach(() => {
     if (cmd === 'app_version') return '26.10.1234';
     if (cmd === 'get_settings') return { theme: 'dark' };
     if (cmd === 'set_theme') return { theme: (args as { theme: string }).theme };
+    if (cmd === 'get_repository') return { root: '/tmp/x', is_default: true, status: 'ok' };
+    if (cmd === 'list_tracks') return { root: '/tmp/x', tracks: [], problems: [] };
     if (cmd === 'frontend_log') logs.push((args as { message: string }).message);
     return undefined;
   });
@@ -61,7 +65,8 @@ describe('acceptance: navigation (req 4, AC2, AC3)', () => {
         for (const t of ['MIDI interface', 'Audio output', 'Edge-AI server', 'Appearance']) expect(text).toContain(t);
         expect(text).toContain('gui-play-backing-track');
         expect(text).toContain('gui-stem-extracting');
-      } else for (const f of FEATURES[name]) expect(text).toContain(f);
+      } else if (name === 'Library') await waitFor(() => expect(main().textContent).toContain('No tracks in the repository yet.'));
+      else for (const f of FEATURES[name]) expect(text).toContain(f);
     }
   });
 

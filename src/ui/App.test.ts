@@ -4,6 +4,7 @@ import { tick } from 'svelte';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import App from './App.svelte';
 import { ui } from '$lib/app-state.svelte';
+import { resetLibrary } from '$lib/library-state.svelte';
 import { VIEWS } from '$lib/views';
 
 let calls: { cmd: string; args: unknown }[] = [];
@@ -20,8 +21,11 @@ beforeEach(() => {
     if (cmd === 'app_version') return '26.10.0042';
     if (cmd === 'get_settings') return { theme: 'dark' };
     if (cmd === 'set_theme') return { theme: (args as { theme: string }).theme };
+    if (cmd === 'get_repository') return { root: '/tmp/x', is_default: true, status: 'ok' };
+    if (cmd === 'list_tracks') return { root: '/tmp/x', tracks: [], problems: [] };
     return undefined;
   });
+  resetLibrary();
 });
 
 afterEach(() => {
