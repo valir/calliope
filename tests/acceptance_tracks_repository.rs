@@ -403,7 +403,6 @@ fn adding_audio_name_or_track_json_rejected() {
 }
 
 #[test]
-#[ignore = "FINDING: copy_to_part removes a pre-existing .name.part on failure (plan: stale temp files are never deleted)"]
 fn stale_part_file_is_not_overwritten_and_save_fails_cleanly() {
     let e = Env::new();
     let t = e.track(ID1, &["a.gp5"]);
@@ -796,7 +795,6 @@ fn removing_a_tab_that_is_a_symlink_to_an_outside_file_leaves_outside_file_alone
 }
 
 #[test]
-#[ignore = "FINDING: trash move canonicalises symlinks, so the symlink target (another track file) is trashed"]
 fn removing_a_tab_symlinked_to_another_tracks_file_does_not_trash_that_other_file() {
     let e = Env::new();
     let _a = e.track(ID1, &["a.gp5"]);
@@ -815,7 +813,6 @@ fn removing_a_tab_symlinked_to_another_tracks_file_does_not_trash_that_other_fil
 }
 
 #[test]
-#[ignore = "FINDING: trash/ symlink to outside is followed"]
 fn trash_symlinked_outside_does_not_receive_deleted_track() {
     let e = Env::new();
     let t = e.track(ID1, &["a.gp5"]);
@@ -988,7 +985,6 @@ fn export_into_file_or_missing_destination_fails() {
 }
 
 #[test]
-#[ignore = "FINDING: 3x200-char metadata gives an export folder name over 255 bytes"]
 fn export_track_with_maximal_valid_metadata_names() {
     // band, album and title may each be 200 chars; the export folder name must still be creatable.
     let e = Env::new();
@@ -1011,7 +1007,6 @@ fn export_track_with_maximal_valid_metadata_names() {
 }
 
 #[test]
-#[ignore = "FINDING: export folder name can exceed 255 bytes (ENAMETOOLONG)"]
 fn export_track_with_long_multibyte_names() {
     let e = Env::new();
     let id = "longmb";

@@ -36,3 +36,4 @@ task 17 | Licence record and its static test | implementer | done (29 direct dep
 task 18 | README section | orchestrator (local failed: output limit; exact text from plan) | done
 tester | acceptance tests (tests/acceptance_tracks_repository.rs, src/ui/acceptance_library.test.ts) | all 19 AC PASS; 5 data-safety findings as #[ignore] tests | done
 reviewer | f7894d9..HEAD | CHANGES REQUIRED (1 major: OFL text not shipped; data-safety minors) | done
+fix round 1 | OFL licence shipped in dist; export name cap; part-file/symlink/trash-symlink safety; unique tmp names; export refused inside root; conflict keeps draft; dialog test uses temp HOME; tablature panel pinned | implementer | done (148 acceptance tests, 0 ignored; GUI 2 runs green)

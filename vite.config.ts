@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
@@ -6,10 +7,25 @@ import tailwindcss from '@tailwindcss/vite';
 const lib = fileURLToPath(new URL('./src/ui/lib', import.meta.url));
 const cacheDir = fileURLToPath(new URL('./node_modules/.vite', import.meta.url));
 
+// The OFL-1.1 requires the licence text to travel with the bundled Inter font.
+const interLicence = fileURLToPath(
+  new URL('./node_modules/@fontsource-variable/inter/LICENSE', import.meta.url),
+);
+const fontLicence = {
+  name: 'calliope-font-licence',
+  generateBundle(this: { emitFile(f: { type: 'asset'; fileName: string; source: string }): void }) {
+    this.emitFile({
+      type: 'asset',
+      fileName: 'licenses/Inter-OFL-1.1.txt',
+      source: readFileSync(interLicence, 'utf8'),
+    });
+  },
+};
+
 export default defineConfig({
   root: 'src/ui',
   cacheDir,
-  plugins: [tailwindcss(), svelte()],
+  plugins: [tailwindcss(), svelte(), fontLicence],
   resolve: {
     alias: { $lib: lib },
     ...(process.env.VITEST ? { conditions: ['browser'] } : {}),

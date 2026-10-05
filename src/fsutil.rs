@@ -5,12 +5,6 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let mut s = path.as_os_str().to_owned();
-    s.push(suffix);
-    PathBuf::from(s)
-}
-
 fn sync_dir(dir: &Path) {
     #[cfg(unix)]
     {
@@ -23,20 +17,51 @@ fn sync_dir(dir: &Path) {
     let _ = dir;
 }
 
-/// Creates parent directories, writes `<path>.tmp` (fsynced), then renames it (atomic) and
-/// best-effort fsyncs the directory on Unix.
+#[cfg(test)]
+thread_local! {
+    /// Test hook: when set to a file name, `write_atomic` of that name fails before writing.
+    pub(crate) static FAIL_WRITE_OF: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A temp name unique to this process and call: `.<name>.<pid>.<n>.tmp`. Two instances (or a
+/// user's own `<name>.tmp`) never share it.
+fn unique_tmp_path(path: &Path) -> PathBuf {
+    let n = TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut name = std::ffi::OsString::from(".");
+    name.push(path.file_name().unwrap_or_default());
+    name.push(format!(".{}.{n}.tmp", std::process::id()));
+    path.with_file_name(name)
+}
+
+/// Creates parent directories, writes a uniquely named `.<name>.<pid>.<n>.tmp` next to `path`
+/// (created with `create_new`, fsynced), then renames it over `path` (atomic) and best-effort
+/// fsyncs the directory on Unix. The temp file is removed if anything fails.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    #[cfg(test)]
+    if FAIL_WRITE_OF.with(|f| f.borrow().as_deref() == path.file_name().and_then(|n| n.to_str())) {
+        return Err(io::Error::other("injected write failure"));
+    }
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
     if let Some(parent) = parent {
         fs::create_dir_all(parent)?;
     }
-    let tmp = with_suffix(path, ".tmp");
-    {
-        let mut f = fs::File::create(&tmp)?;
+    let tmp = unique_tmp_path(path);
+    let r = (|| {
+        let mut f = fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
+        drop(f);
+        fs::rename(&tmp, path)
+    })();
+    if let Err(e) = r {
+        // only reached after our own create_new, or when it failed (then there is no file of ours)
+        if tmp.symlink_metadata().is_ok() && !matches!(e.kind(), io::ErrorKind::AlreadyExists) {
+            let _ = fs::remove_file(&tmp);
+        }
+        return Err(e);
     }
-    fs::rename(&tmp, path)?;
     sync_dir(parent.unwrap_or_else(|| Path::new("")));
     Ok(())
 }
@@ -51,14 +76,12 @@ pub(crate) fn part_path(dest: &Path) -> io::Result<PathBuf> {
     Ok(dest.with_file_name(part))
 }
 
-/// Copies `src` to `part` and fsyncs it. The part file is removed on any error.
+/// Copies `src` to `part` and fsyncs it. The part file is removed on a later error, but only
+/// when this call created it: a pre-existing part file is never touched.
 pub(crate) fn copy_to_part(src: &Path, part: &Path) -> io::Result<()> {
-    let r = (|| {
-        let mut from = fs::File::open(src)?;
-        let mut to = fs::OpenOptions::new().write(true).create_new(true).open(part)?;
-        io::copy(&mut from, &mut to)?;
-        to.sync_all()
-    })();
+    let mut from = fs::File::open(src)?;
+    let mut to = fs::OpenOptions::new().write(true).create_new(true).open(part)?;
+    let r = io::copy(&mut from, &mut to).map(|_| ()).and_then(|()| to.sync_all());
     if r.is_err() {
         let _ = fs::remove_file(part);
     }
@@ -78,6 +101,7 @@ pub fn copy_no_clobber(src: &Path, dest: &Path) -> io::Result<()> {
         ));
     }
     copy_to_part(src, &part)?;
+    // from here on the part file is ours
     let r = match fs::hard_link(&part, dest) {
         Ok(()) => fs::remove_file(&part),
         Err(e)
@@ -176,17 +200,30 @@ fn bad_input(m: String) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, m)
 }
 
-/// Canonicalises `root` and `src` and checks that `src` is strictly inside `root` and not
-/// already under `root/trash`. Returns `(root, src, trash)`, all canonical.
+/// Canonicalises `root` and the parent of `src` (never `src` itself, so a symlink is moved
+/// as the link, not its target) and checks that `src` exists, is strictly inside `root` and
+/// not already under `root/trash`. Also refuses a `trash` that is not a real folder (a symlink
+/// is never followed). Returns `(root, src, trash)`, all with canonical parents.
 fn trash_guard(root: &Path, src: &Path) -> io::Result<(PathBuf, PathBuf, PathBuf)> {
     let root_c = root.canonicalize()?;
-    let src_c = src.canonicalize()?;
+    let name = src
+        .file_name()
+        .ok_or_else(|| bad_input(format!("{} is not inside the repository", src.display())))?;
+    let parent = src.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let src_c = parent.canonicalize()?.join(name);
+    fs::symlink_metadata(&src_c)?;
     if src_c == root_c || !src_c.starts_with(&root_c) {
         return Err(bad_input(format!("{} is not inside the repository", src.display())));
     }
     let trash = root_c.join("trash");
     if src_c.starts_with(&trash) {
         return Err(bad_input("item is already in the trash".into()));
+    }
+    match fs::symlink_metadata(&trash) {
+        Ok(m) if !m.is_dir() => {
+            return Err(bad_input("the trash folder is not a real folder (a symlink or file); nothing was moved".into()));
+        }
+        _ => {}
     }
     Ok((root_c, src_c, trash))
 }
@@ -201,7 +238,7 @@ pub fn move_track_to_trash(root: &Path, src: &Path, stamp: &str, id: &str) -> io
     let base = format!("{stamp}-{id}");
     for n in 1u32.. {
         let dest = trash.join(if n == 1 { base.clone() } else { format!("{base}-{n}") });
-        if dest.exists() {
+        if dest.symlink_metadata().is_ok() {
             continue;
         }
         fs::rename(&src_c, &dest)?;
@@ -276,7 +313,7 @@ impl TablatureTrash {
         for n in 1u32.. {
             let file = if n == 1 { name.clone() } else { format!("{stem} ({n}){ext}") };
             let dest = dir.join(file);
-            if dest.exists() {
+            if dest.symlink_metadata().is_ok() {
                 continue;
             }
             fs::rename(&src_c, &dest)?;
@@ -298,7 +335,52 @@ mod tests {
         write_atomic(&p, b"one").unwrap();
         write_atomic(&p, b"two").unwrap();
         assert_eq!(fs::read(&p).unwrap(), b"two");
-        assert!(!d.path().join("sub/x.json.tmp").exists());
+        assert_eq!(fs::read_dir(d.path().join("sub")).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn write_atomic_never_touches_a_users_dot_tmp_and_uses_unique_names() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("track.json");
+        fs::write(d.path().join("track.json.tmp"), b"mine").unwrap();
+        write_atomic(&p, b"x").unwrap();
+        assert_eq!(fs::read(d.path().join("track.json.tmp")).unwrap(), b"mine");
+        assert_ne!(unique_tmp_path(&p), unique_tmp_path(&p));
+        let name = unique_tmp_path(&p).file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.starts_with(".track.json.") && name.ends_with(".tmp"), "{name}");
+    }
+
+    #[test]
+    fn copy_to_part_keeps_a_preexisting_part_file() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("s");
+        fs::write(&src, b"new").unwrap();
+        let part = d.path().join(".s.part");
+        fs::write(&part, b"stale").unwrap();
+        assert!(copy_to_part(&src, &part).is_err());
+        assert_eq!(fs::read(&part).unwrap(), b"stale");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trash_moves_the_symlink_itself_and_refuses_a_symlinked_trash() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("repo");
+        fs::create_dir_all(root.join("tracks/a")).unwrap();
+        fs::write(root.join("tracks/a/real.gp5"), b"real").unwrap();
+        std::os::unix::fs::symlink(root.join("tracks/a/real.gp5"), root.join("tracks/a/link.gp5")).unwrap();
+        let mut tt = TablatureTrash::new(&root, "S", "a");
+        tt.move_in(&root.join("tracks/a/link.gp5")).unwrap();
+        assert!(root.join("tracks/a/real.gp5").exists());
+        assert!(root.join("tracks/a/link.gp5").symlink_metadata().is_err());
+        // trash that is a symlink
+        let out = d.path().join("out");
+        fs::create_dir_all(&out).unwrap();
+        fs::remove_dir_all(root.join("trash")).unwrap();
+        std::os::unix::fs::symlink(&out, root.join("trash")).unwrap();
+        assert!(move_track_to_trash(&root, &root.join("tracks/a"), "S", "a").is_err());
+        assert!(root.join("tracks/a").exists());
+        assert_eq!(fs::read_dir(&out).unwrap().count(), 0);
     }
 
     #[test]

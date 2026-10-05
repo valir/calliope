@@ -462,12 +462,13 @@ fn metadata_write_failure_leaves_no_new_files() {
 #[cfg(unix)]
 #[test]
 fn metadata_write_failure_after_copy_removes_copies() {
-    // Only track.json.tmp is blocked (a directory by that name), so the copy succeeds first.
+    // Only the track.json write is made to fail (test hook), so the copy succeeds first.
     let env = Env::new();
     let rec = env.track("aaa", &["one.gp5"]);
     let dir = env.dir("aaa");
-    fs::create_dir(dir.join("track.json.tmp")).unwrap();
+    crate::fsutil::FAIL_WRITE_OF.with(|f| *f.borrow_mut() = Some("track.json".into()));
     let r = env.repo.save_track(req(&rec, vec![keep("one.gp5"), TabEntry::Add { token: "new".into() }]), &env.lookup());
+    crate::fsutil::FAIL_WRITE_OF.with(|f| *f.borrow_mut() = None);
     assert!(r.is_err());
     assert!(!dir.join("tab-new.gp5").exists());
     assert!(!dir.join(".tab-new.gp5.part").exists());
@@ -610,4 +611,26 @@ fn fixture_library_sample_scans_clean() {
     assert_eq!(lib.tracks.len(), 6);
     assert!(lib.problems.is_empty(), "{:?}", lib.problems);
     assert!(lib.tracks.iter().all(|t| t.missing.is_empty()));
+}
+
+#[test]
+fn export_refuses_any_destination_inside_the_repository() {
+    let env = Env::new();
+    let rec = env.track("aaa", &["one.gp5"]);
+    let root = env.repo.root.clone();
+    fs::create_dir_all(root.join("trash")).unwrap();
+    for d in [root.clone(), root.join("trash"), env.dir("aaa")] {
+        assert!(env.repo.export_track("aaa", &d).is_err(), "{}", d.display());
+    }
+    assert!(env.repo.export_tablature("aaa", "one.gp5", &root.join("copy.gp5")).is_err());
+    assert!(env.repo.export_tablature("aaa", "one.gp5", &root.join("trash/copy.gp5")).is_err());
+    assert!(!root.join("copy.gp5").exists());
+    let _ = rec;
+}
+
+#[test]
+fn cut_bytes_respects_char_boundaries() {
+    assert_eq!(cut_bytes("abc", 5), "abc");
+    assert_eq!(cut_bytes("日日日", 4), "日");
+    assert_eq!(cut_bytes("éé", 3), "é");
 }

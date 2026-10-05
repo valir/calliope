@@ -28,6 +28,8 @@ export const lib = $state({
   mode: 'view' as Mode,
   draft: null as Draft | null,
   busy: false,
+  /** A save found track.json changed on disk; the draft is kept until the user cancels. */
+  conflict: false,
   message: '' as string,
   /** Inline error of the last action (shown as an alert). */
   errorMessage: '' as string,
@@ -48,6 +50,7 @@ export function resetLibrary(): void {
   lib.mode = 'view';
   lib.draft = null;
   lib.busy = false;
+  lib.conflict = false;
   lib.message = '';
   lib.errorMessage = '';
   lib.fieldErrors = {};
@@ -161,12 +164,21 @@ export function endEdit(): void {
   const id = lib.selectedId;
   lib.draft = null;
   lib.mode = 'view';
+  lib.conflict = false;
   lib.fieldErrors = {};
   void frontendLog(`mode=view id=${id}`);
 }
 
-const conflictText =
-  'This track was changed on disk since it was loaded. Your edits were not saved and the track was reloaded.';
+export const conflictText =
+  'The track changed on disk. Cancel to reload it; your edits will be discarded.';
+
+/** Leaves edit mode after a conflict (the user was told the edits are discarded) and reloads. */
+export async function discardAfterConflict(): Promise<void> {
+  endEdit();
+  clearMessages();
+  await load();
+  lib.message = 'Reloaded the track from disk.';
+}
 
 export async function saveEdit(): Promise<void> {
   const d = lib.draft;
@@ -193,9 +205,9 @@ export async function saveEdit(): Promise<void> {
   } catch (err) {
     void frontendLog(`error save_track: ${String(err)}`);
     if (isConflict(err)) {
-      endEdit();
+      // Keep edit mode and the draft: the user's typing is not thrown away.
+      lib.conflict = true;
       lib.errorMessage = conflictText;
-      await load();
     } else {
       lib.errorMessage = `Could not save: ${String(err)}`;
     }

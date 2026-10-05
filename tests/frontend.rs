@@ -269,3 +269,12 @@ fn licence_record_lists_every_direct_dependency() {
         .collect();
     assert!(missing.is_empty(), "docs/licences.md is missing: {missing:?}");
 }
+
+#[test]
+fn dist_ships_the_inter_font_licence() {
+    let src = fs::read_to_string(root().join("node_modules/@fontsource-variable/inter/LICENSE")).unwrap();
+    let shipped = fs::read_to_string(root().join("dist/licenses/Inter-OFL-1.1.txt"))
+        .expect("dist/licenses/Inter-OFL-1.1.txt missing; run `npm run build` first");
+    assert_eq!(shipped, src);
+    assert!(shipped.contains("SIL OPEN FONT LICENSE Version 1.1"));
+}

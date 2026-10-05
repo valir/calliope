@@ -105,9 +105,11 @@
 - (gui-tracks-repository) Library: two columns. On the left (20 rem) are a toolbar (Collapse
   all, Expand all, search box, Clear search) and a band > album > track tree, all collapsed
   at first and sorted case-insensitively, with "(no band)"/"(no album)" last. On the right is
-  the track pane: labelled fields, with the action bar Edit · Save · Cancel · Export · Delete
-  pinned to the bottom of the pane, and the "Tablature Files" panel (a list 4 rows high, plus
-  Add · Update · Export · Remove). Read-only fields look like plain text in disabled inputs;
+  the track pane: labelled fields (this area scrolls), and below it, pinned, the "Tablature
+  Files" panel (a list 4 rows high, plus Add · Update · Export · Remove) and the action bar
+  Edit · Save · Cancel · Export · Delete, so every button is visible without scrolling at
+  1280x800. A save conflict keeps edit mode and the draft, shows "The track changed on disk.
+  Cancel to reload it; your edits will be discarded."; Cancel/Escape then reloads at once. Read-only fields look like plain text in disabled inputs;
   edit mode enables the inputs and locks the tree.
 - Confirmations use a centred Yes/No dialog with the focus on "No". Results and errors are shown
   inline in the pane (status/alert line), never as toasts.

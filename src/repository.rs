@@ -145,15 +145,15 @@ pub fn status(root: &Path) -> RepoStatus {
     }
 }
 
-/// Is `path` (canonicalised, or its nearest existing ancestor) inside `<root>/tracks`?
-fn inside_tracks(root: &Path, path: &Path) -> bool {
-    let Ok(tracks) = root.join("tracks").canonicalize() else {
+/// Is `path` (canonicalised, or its nearest existing ancestor) inside the repository root?
+fn inside_root(root: &Path, path: &Path) -> bool {
+    let Ok(root) = root.canonicalize() else {
         return false;
     };
     let mut p = path.to_path_buf();
     loop {
         if let Ok(c) = p.canonicalize() {
-            return c.starts_with(&tracks);
+            return c.starts_with(&root);
         }
         if !p.pop() {
             return false;
@@ -327,7 +327,6 @@ impl Repository {
                 .map_err(|e| io_err("cannot write track.json", e))
         })();
         if let Err(e) = result {
-            let _ = fs::remove_file(dir.join("track.json.tmp"));
             for f in created {
                 let _ = fs::remove_file(f);
             }
@@ -452,7 +451,6 @@ impl Repository {
         // 4. write track.json atomically
         let json = track_meta::to_json_pretty(&meta);
         if let Err(e) = fsutil::write_atomic(&dir.join(TRACK_FILE), json.as_bytes()) {
-            let _ = fs::remove_file(dir.join("track.json.tmp"));
             rollback(&created, &parts);
             return Err(io_err("cannot write track.json (nothing was changed)", e));
         }
@@ -465,7 +463,7 @@ impl Repository {
         for name in to_trash {
             let path = dir.join(name);
             let same_name_part = parts.iter().any(|(_, dest)| *dest == path);
-            if !path.exists() {
+            if path.symlink_metadata().is_err() {
                 continue;
             }
             match trash.move_in(&path) {
@@ -519,8 +517,8 @@ impl Repository {
         if !dest_parent.is_dir() {
             return Err(format!("{} is not a folder", dest_parent.display()));
         }
-        if inside_tracks(&self.root, dest_parent) {
-            return Err("cannot export into the repository's tracks folder".into());
+        if inside_root(&self.root, dest_parent) {
+            return Err("cannot export into the repository folder".into());
         }
         let mut names = vec![TRACK_FILE.to_string(), m.audio.clone()];
         names.extend(m.tablatures.iter().cloned());
@@ -536,7 +534,7 @@ impl Repository {
             .map(|s| sanitize_component(s))
             .filter(|s| !s.is_empty())
             .collect();
-        let mut folder = parts.join(" - ");
+        let mut folder = cut_bytes(&parts.join(" - "), MAX_FOLDER_BYTES).trim().to_string();
         if folder.is_empty() {
             folder = id.to_string();
         }
@@ -568,8 +566,8 @@ impl Repository {
             return Err(format!("tablature \"{name}\" is missing on disk"));
         }
         let parent = dest.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-        if inside_tracks(&self.root, parent) {
-            return Err("cannot export into the repository's tracks folder".into());
+        if inside_root(&self.root, parent) {
+            return Err("cannot export into the repository folder".into());
         }
         if dest.is_dir() {
             return Err(format!("{} is a folder", dest.display()));
@@ -590,8 +588,25 @@ fn sanitize_component(s: &str) -> String {
             }
         })
         .collect();
-    let t: String = replaced.trim().trim_start_matches('.').chars().take(100).collect();
+    let t = cut_bytes(replaced.trim().trim_start_matches('.'), MAX_PART_BYTES);
     t.trim().trim_end_matches('.').trim().to_string()
+}
+
+/// Per-part byte budget of an export folder name (three parts and two separators stay well
+/// under the 255-byte file name limit, leaving room for a " (n)" suffix).
+const MAX_PART_BYTES: usize = 75;
+const MAX_FOLDER_BYTES: usize = 240;
+
+/// The longest prefix of `s` of at most `max` bytes, cut on a UTF-8 character boundary.
+fn cut_bytes(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut i = max;
+    while !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    &s[..i]
 }
 
 #[cfg(test)]

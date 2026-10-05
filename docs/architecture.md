@@ -103,8 +103,8 @@
   problems and never rewritten. Cosmetic issues (padded or control-char text, odd years, any
   or missing `imported`/`modified` text such as `+02:00` offsets) load fine and are never
   rewritten for that reason. Saving applies the strict rules to the edited fields, keeps
-  `imported` verbatim and sets `modified` to now in canonical `YYYY-MM-DDTHH:MM:SSZ`. Writes: `write_atomic` (tmp + fsync + rename +
-  dir fsync). New files: no-clobber copies (part file + `hard_link`). Calliope never deletes
+  `imported` verbatim and sets `modified` to now in canonical `YYYY-MM-DDTHH:MM:SSZ`. Writes: `write_atomic` (unique `.<name>.<pid>.<n>.tmp` created with
+  `create_new` + fsync + rename + dir fsync; a user's own `track.json.tmp` is never touched). New files: no-clobber copies (part file + `hard_link`). Calliope never deletes
   user files: removals are `rename`s into `trash/`. Concurrency: one Mutex per app instance,
   and an optimistic `revision` check (FNV-1a of `track.json`) against other writers. No file
   watcher; the Library rescans each time it is shown. A configured root that doesn't exist is
@@ -364,6 +364,17 @@ the trash. A failure before the metadata write undoes only Calliope's own new co
 failure after it only leaves orphans, reported as warnings. External changes (another instance,
 hand edits) are detected with a content revision (FNV-1a of `track.json`) sent back on
 save/delete. There are no lock files or file watchers.
+
+Accepted limits (fix round 1):
+- No cross-instance lock: two instances are protected only by the revision check and unique
+  temp names (they never share or truncate a temp file), not by mutual exclusion.
+- A crash between the trash move and the part-file rename during a same-name tablature
+  replace leaves the new version as `.<name>.part` in the track folder and the old one in
+  `trash/`. Nothing is lost.
+- Trash moves act on the link itself (never a symlink's target) and refuse a `trash/` that is
+  not a real folder. Export refuses any destination inside the repository root. The export
+  folder name is capped at 240 bytes (75 bytes per part, cut on a UTF-8 boundary).
+- A save conflict keeps edit mode and the draft; Cancel/Escape then discards and reloads.
 
 ### 2026-10-05: Native dialogs opened from Rust; the frontend only handles tokens   (feature: gui-tracks-repository)
 `tauri-plugin-dialog` is used from Rust only (`blocking_*` inside async commands). Picks

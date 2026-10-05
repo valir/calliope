@@ -134,6 +134,18 @@ fn edit_and_save() {
     settle();
     assert_eq!(std::fs::read_to_string(dirs.track_json(ID1)).unwrap(), hand, "conflicting save changed the file");
     shot("library-conflict");
+    // The draft is kept (still in edit mode, nothing reloaded); Escape discards and reloads.
+    let views_before = app.all_lines().iter().filter(|l| l.contains(&format!("mode=view id={ID1}"))).count();
+    app.key(&wid, "Escape");
+    app.wait_line(
+        |l| l.contains(&format!("mode=view id={ID1}")),
+        Duration::from_secs(10),
+    );
+    settle();
+    let views_after = app.all_lines().iter().filter(|l| l.contains(&format!("mode=view id={ID1}"))).count();
+    assert_eq!(views_after, views_before + 1, "Escape after a conflict should leave edit mode once");
+    assert_eq!(std::fs::read_to_string(dirs.track_json(ID1)).unwrap(), hand, "discarding changed the file");
+    shot("library-conflict-discarded");
     app.no_csp_violation();
 }
 
@@ -222,6 +234,33 @@ fn tablature_add_and_remove() {
     app.no_csp_violation();
 }
 
+fn wait_until(timeout: Duration, mut cond: impl FnMut() -> bool) -> bool {
+    let end = std::time::Instant::now() + timeout;
+    loop {
+        if cond() {
+            return true;
+        }
+        if std::time::Instant::now() >= end {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn dialog_open() -> bool {
+    let o = Command::new("xdotool").args(["search", "--onlyvisible", "--name", "^Add tablature$"]).output().unwrap();
+    !String::from_utf8_lossy(&o.stdout).trim().is_empty()
+}
+
+fn dialog_visible(wid: &str) -> bool {
+    Command::new("xdotool")
+        .args(["getwindowgeometry", wid])
+        .output()
+        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("Geometry"))
+        .unwrap_or(false)
+        && dialog_open()
+}
+
 #[test]
 #[ignore]
 fn add_opens_real_file_dialog() {
@@ -229,7 +268,16 @@ fn add_opens_real_file_dialog() {
         return;
     }
     let dirs = lib_dirs("add_opens_real_file_dialog");
-    let (mut app, wid, _) = App::start_lib(&dirs, &[]);
+    // HOME points at an empty temp folder so the real dialog never lists the real $HOME.
+    let home = dirs.base().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    // X authorisation normally lives in the real $HOME; keep pointing at it (path only).
+    let xauth = std::env::var_os("XAUTHORITY")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".Xauthority")))
+        .unwrap_or_default();
+    let (mut app, wid, _) =
+        App::start_lib(&dirs, &[("HOME", home.as_path()), ("XAUTHORITY", xauth.as_path())]);
     app.select_by_search(&wid, "after midnight", ID2);
     let json_before = std::fs::read(dirs.track_json(ID2)).unwrap();
     app.key(&wid, "ctrl+e");
@@ -238,15 +286,20 @@ fn add_opens_real_file_dialog() {
     app.key(&wid, "Return");
     let dlg = out("xdotool", &["search", "--sync", "--name", "^Add tablature$"]);
     let dlg = dlg.lines().next().expect("dialog window").to_string();
+    // Poll until the dialog is mapped and has a size, instead of a fixed sleep.
+    assert!(
+        wait_until(Duration::from_secs(10), || dialog_visible(&dlg)),
+        "dialog window never became visible"
+    );
     settle();
-    sleep_ms(800);
     shot_of("library-dialog", "Add tablature");
     app.key(&dlg, "Escape");
     app.wait_contains("dialog kind=add-tablature result=cancelled");
     // The dialog is gone.
-    sleep_ms(500);
-    let left = Command::new("xdotool").args(["search", "--onlyvisible", "--name", "^Add tablature$"]).output().unwrap();
-    assert!(String::from_utf8_lossy(&left.stdout).trim().is_empty(), "dialog window still open");
+    assert!(
+        wait_until(Duration::from_secs(10), || !dialog_open()),
+        "dialog window still open"
+    );
     settle();
     shot("library-dialog-cancelled");
     assert!(!app.all_lines().iter().any(|l| l.contains("tab-staged")), "nothing must be staged");

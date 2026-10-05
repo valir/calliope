@@ -212,13 +212,32 @@ describe('Track pane: saving and discarding', () => {
     expect(field('Band').value).toBe('X');
   });
 
-  it('a conflict reloads and leaves edit mode with a clear message', async () => {
+  it('a conflict keeps edit mode and the draft; Cancel then discards and reloads without asking', async () => {
     saveError = 'conflict: track changed on disk';
     await open('Slow Burn');
     await edit();
+    await fireEvent.input(field('Band'), { target: { value: 'Typed' } });
     await clickBtn('Save');
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Cancel to reload it'));
+    expect(field('Band').value).toBe('Typed');
+    expect(btn('Cancel').disabled).toBe(false);
+    expect(calledCmds().filter((c) => c === 'list_tracks').length).toBe(1);
+    await clickBtn('Cancel');
     await waitFor(() => expect(btn('Edit').disabled).toBe(false));
-    expect(screen.getByRole('alert').textContent).toContain('changed on disk');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(field('Band').value).not.toBe('Typed');
+    expect(calledCmds().filter((c) => c === 'list_tracks').length).toBe(2);
+  });
+
+  it('Escape after a conflict also discards and reloads', async () => {
+    saveError = 'conflict: track changed on disk';
+    await open('Slow Burn');
+    await edit();
+    await fireEvent.input(field('Band'), { target: { value: 'Typed' } });
+    await clickBtn('Save');
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Cancel to reload it'));
+    await fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' });
+    await waitFor(() => expect(btn('Edit').disabled).toBe(false));
     expect(calledCmds().filter((c) => c === 'list_tracks').length).toBe(2);
   });
 

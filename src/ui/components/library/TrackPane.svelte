@@ -5,6 +5,7 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import {
+    discardAfterConflict,
     endEdit,
     exportSelectedTrack,
     lib,
@@ -41,7 +42,8 @@
 
   function cancel(): void {
     if (!editing) return;
-    if (lib.draft && isDirty(lib.draft)) ask('discard', CONFIRM_DISCARD);
+    if (lib.conflict) void discardAfterConflict();
+    else if (lib.draft && isDirty(lib.draft)) ask('discard', CONFIRM_DISCARD);
     else endEdit();
   }
 
@@ -167,9 +169,11 @@
         <Input id={r.id} value={r.value} readonly disabled={noSelection} class="text-muted-foreground" />
       {/each}
     </div>
-
-    <div class="mt-4"><TablaturePanel /></div>
   </div>
+
+  <!-- The tablature panel and the action bar are pinned below the scrolling fields, so their
+       buttons are always visible. -->
+  <div class="shrink-0 border-t border-border pt-3"><TablaturePanel /></div>
 
   <div class="shrink-0 pt-3">
     {#if lib.errorMessage}
