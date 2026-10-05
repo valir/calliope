@@ -3,3 +3,4 @@ task 1 | fsutil (atomic write, safe copy, name validation, trash) | implementer 
 task 2 | track_meta (schema v1, validation, timestamps, ids) | implementer | done (orchestrator: lenient read / strict write for hand-made files)
 task 3 | repository (scan, save transaction, delete, export) | implementer | done (27 temp-repo tests; orchestrator audited every remove/rename: only own copies/part/tmp files)
 task 4 | Sample fixture tests/fixtures/library-sample (6 invented tracks) | implementer | done
+task 5 | Settings repository_root | implementer | done

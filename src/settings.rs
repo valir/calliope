@@ -16,6 +16,14 @@ pub enum Theme {
 #[serde(default)]
 pub struct Settings {
     pub theme: Theme,
+    /// Absolute path of the tablature repository; `None` = the default location.
+    pub repository_root: Option<PathBuf>,
+}
+
+/// The repository root used when the setting is `None`.
+#[allow(dead_code)] // used by later tasks
+pub fn default_repository_root(data_dir: &Path) -> PathBuf {
+    data_dir.join("calliope")
 }
 
 /// Missing file gives the default. Each field is read leniently: an invalid value falls back
@@ -65,6 +73,16 @@ pub fn load(path: &Path) -> Settings {
             ),
         }
     }
+    match obj.get("repository_root") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::String(r)) if Path::new(r).is_absolute() => {
+            s.repository_root = Some(PathBuf::from(r));
+        }
+        Some(v) => eprintln!(
+            "calliope: invalid repository_root {v} in {} (not an absolute path string); using default",
+            path.display()
+        ),
+    }
     s
 }
 
@@ -97,6 +115,16 @@ impl SettingsStore {
         *cur = next.clone();
         Ok(next)
     }
+
+    #[allow(dead_code)] // used by later tasks
+    pub fn set_repository_root(&self, root: Option<PathBuf>) -> std::io::Result<Settings> {
+        let mut cur = self.current.lock().unwrap_or_else(|e| e.into_inner());
+        let mut next = cur.clone();
+        next.repository_root = root;
+        save(&self.path, &next)?;
+        *cur = next.clone();
+        Ok(next)
+    }
 }
 
 #[cfg(test)]
@@ -104,7 +132,7 @@ mod tests {
     use super::*;
 
     fn light() -> Settings {
-        Settings { theme: Theme::Light }
+        Settings { theme: Theme::Light, repository_root: None }
     }
 
     #[test]
@@ -114,7 +142,7 @@ mod tests {
 
     #[test]
     fn json_shape() {
-        assert_eq!(serde_json::to_string(&light()).unwrap(), r#"{"theme":"light"}"#);
+        assert_eq!(serde_json::to_string(&light()).unwrap(), r#"{"theme":"light","repository_root":null}"#);
         let s: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
         assert_eq!(s, light());
     }
@@ -195,5 +223,40 @@ mod tests {
         assert_eq!(store.set_theme(Theme::Light).unwrap(), light());
         assert_eq!(store.get(), light());
         assert_eq!(SettingsStore::open(p).get(), light());
+    }
+
+    #[test]
+    fn relative_or_non_string_root_defaults_theme_kept() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("s.json");
+        for bad in [r#""rel/path""#, "5", "[]"] {
+            std::fs::write(&p, format!(r#"{{"theme":"light","repository_root":{bad}}}"#)).unwrap();
+            assert_eq!(load(&p), light());
+            assert!(p.exists());
+        }
+        std::fs::write(&p, r#"{"theme":"nope","repository_root":"/abs/lib"}"#).unwrap();
+        let s = load(&p);
+        assert_eq!(s.theme, Theme::Dark);
+        assert_eq!(s.repository_root, Some(PathBuf::from("/abs/lib")));
+    }
+
+    #[test]
+    fn root_roundtrip_and_set_reset_persist() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("cfg/s.json");
+        let s = Settings { theme: Theme::Dark, repository_root: Some(PathBuf::from("/abs/x")) };
+        save(&p, &s).unwrap();
+        assert_eq!(load(&p), s);
+        let store = SettingsStore::open(p.clone());
+        let r = store.set_repository_root(None).unwrap();
+        assert_eq!(r.repository_root, None);
+        assert_eq!(SettingsStore::open(p.clone()).get().repository_root, None);
+        store.set_repository_root(Some(PathBuf::from("/abs/y"))).unwrap();
+        assert_eq!(SettingsStore::open(p).get().repository_root, Some(PathBuf::from("/abs/y")));
+    }
+
+    #[test]
+    fn default_root_is_data_dir_calliope() {
+        assert_eq!(default_repository_root(Path::new("/d")), PathBuf::from("/d/calliope"));
     }
 }
