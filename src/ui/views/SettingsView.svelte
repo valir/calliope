@@ -3,6 +3,7 @@
   import * as RadioGroup from '$lib/components/ui/radio-group/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
+  import RepositorySettings from '../components/RepositorySettings.svelte';
   import { ui } from '$lib/app-state.svelte';
   import { frontendLog, setTheme, type Theme } from '$lib/ipc';
   import { applyTheme } from '$lib/theme';
@@ -51,6 +52,8 @@
       </RadioGroup.Root>
     </Card.Content>
   </Card.Root>
+
+  <RepositorySettings />
 
   {#each SETTINGS_PLACEHOLDERS as s (s.id)}
     <Card.Root>
