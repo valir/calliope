@@ -239,3 +239,10 @@ export function tabButtons(mode: Mode, selectedRow: { state: TabState } | null):
     export: selectedRow !== null && selectedRow.state === 'saved',
   };
 }
+
+// ---- confirmation texts (owner decisions, plan §10) ----
+
+export const confirmRemoveTab = (name: string): string => `Delete tablature "${name}"?`;
+export const confirmDeleteTrack = (title: string): string =>
+  `Delete track "${title}"? It will be moved to the repository's trash folder.`;
+export const CONFIRM_DISCARD = 'Discard your changes?';

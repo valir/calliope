@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import TreeToolbar from '../components/library/TreeToolbar.svelte';
   import TrackTree from '../components/library/TrackTree.svelte';
+  import TrackPane from '../components/library/TrackPane.svelte';
   import { lib, load, visibleTree } from '$lib/library-state.svelte';
 
   let searchRef = $state<HTMLInputElement | null>(null);
@@ -67,5 +68,7 @@
       </div>
     {/if}
   </div>
-  <section aria-label="Track" class="min-w-0 flex-1 overflow-y-auto p-4"></section>
+  <section aria-label="Track" class="min-h-0 min-w-0 flex-1 p-4">
+    <TrackPane />
+  </section>
 </section>

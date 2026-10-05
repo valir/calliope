@@ -11,3 +11,5 @@ task 9 | Fuzzy matching and tree building (pure TS) | implementer | done
 task 10 | Track draft model and button states (pure TS) | implementer | done (remove+re-add same name becomes replace -> old file trashed)
 task 11 | shadcn textarea + alert-dialog, ConfirmDialog | implementer | done (no new variant mappings needed)
 task 12 | Library left column (toolbar, tree, search, problems) | implementer | done (screenshot on :1 with fixture copy OK)
+task 13 | Track pane and Tablature Files panel | implementer | done (27 component tests AC6-AC19; screenshots on :1)
+  - for task 16 visual review: disabled primary "Edit" button still reads amber/active next to Save; tree/search have no visible "locked" cue in edit mode
