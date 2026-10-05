@@ -58,6 +58,33 @@ Calliope helps musicians improve their music playing skills.
    assorted MIDI output commands
 9. Manage backing track playing lists
 
+## Prior art
+<!-- Existing tools that overlap with Calliope: the common patterns they share, and what
+     Calliope deliberately does differently. Agents: prefer these familiar interaction
+     patterns over inventing new ones, implemented in our own way (see Constraints), and
+     don't rebuild what's listed under "Not for Calliope". -->
+
+Calliope combines three things no existing tool offers together: **stems made privately on
+our own GPU**, **the tablature following the actual backing track**, and **MIDI changes timed
+for this specific rig**, all in one Linux-native app with no subscription.
+
+| Tool                                     | Overlap                                                                        | Common patterns to consider                                                             | Not for Calliope                                                                |
+|------------------------------------------|--------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------|---------------------------------------------------------------------------------|
+| **BandHelper** (iOS, Android, Mac, web)  | Song library, set lists, backing tracks with speed/loop, MIDI to gear          | Song + set-list data model; quickly switching songs during a gig; per-song gear presets | Band sharing, scheduling, finances, stage plots, DMX lighting                   |
+| **Moises** (web, mobile, Win/Mac; cloud) | AI stem separation incl. guitar, speed/pitch, chord detection                  | Practice controls: loop a section, speed and pitch changes, count-in, the stem mixer UI | Cloud processing, accounts, subscriptions                                       |
+| **Guitar Pro 8** (Win/Mac)               | Tab editing and playback, syncing a tab to an audio file                       | How it syncs a tab to audio (tempo map / bar markers)                                   | Tab editing: TuxGuitar or Guitar Pro remain the editors, Calliope only displays |
+| **Songsterr** (web, mobile)              | Tabs synced to recordings                                                      | Following the cursor smoothly, auto-scrolling the tab during playback                   | Online catalogue, streaming                                                     |
+| **Reaper / Ableton Live** (DAWs)         | Backing tracks with precisely timed MIDI program changes; Reaper runs on Linux | MIDI timing precision as the bar to meet; tempo-map concepts                            | General-purpose multitrack editing and recording                                |
+| **TuxGuitar** (Java, LGPL)               | Tab editor and player on Linux                                                 | Its converter, to read Power Tab / TablEdit / `.tg` if needed                           | Embedding its UI (not possible; separate app)                                   |
+
+Interoperability worth keeping in mind: Guitar Pro / MusicXML files as the tab format;
+importing stems produced elsewhere (e.g. exported from Moises); and Calliope's own stems
+coming from the edge-AI server (`backing`, Demucs `htdemucs_6s`).
+
+Notes: the BandHelper and Moises rows were checked on their websites on 2026-10-05. The
+Guitar Pro 8, Songsterr and DAW details come from general knowledge, so verify them before
+relying on them in a design.
+
 ## Physical setup
 <!-- Every computer and piece of gear involved. -->
 | Name         | What it is                              | OS / firmware         | Location / network | Role in the system    |
@@ -91,6 +118,10 @@ Edge-AI setup can be found in the ~/edge-ai directory
 ## Constraints
 <!-- Latency/timing (real-time?), offline operation, power, security, budget,
      languages or tools you want or refuse, things that must never happen. -->
+
+Never copy code, graphics, icons or text from other products; implement common patterns
+in our own way. Keep a record of dependency licences. Use other products' names only to
+describe compatibility (e.g. "opens Guitar Pro files"), never in Calliope's own branding.
 
 Player audio and tablature view should always stay in sync.
 The MIDI commands should be sent in a timely fashion, with the shortest latency
