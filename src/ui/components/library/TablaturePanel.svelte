@@ -157,12 +157,12 @@
           id="tab-opt-{row.key}"
           role="option"
           aria-selected={row.key === selectedKey}
-          class="flex h-8 cursor-default items-center justify-between gap-2 px-2.5 text-sm aria-selected:bg-accent aria-selected:text-accent-foreground"
+          class="flex h-8 cursor-default items-center justify-between gap-2 px-2.5 text-sm aria-selected:bg-primary/15 aria-selected:shadow-[inset_3px_0_0_var(--primary)]"
           onclick={() => editing && (selectedKey = row.key)}
         >
           <span class="truncate">{row.name}</span>
           {#if row.state !== 'saved'}
-            <span class="shrink-0 text-xs text-muted-foreground">{row.state}</span>
+            <span class="shrink-0 text-xs font-medium text-amber-700 dark:text-primary">{row.state}</span>
           {/if}
         </li>
       {/each}

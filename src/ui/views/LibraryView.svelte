@@ -33,7 +33,14 @@
 <section class="flex h-full min-h-0" aria-labelledby="view-heading">
   <div class="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-r border-border p-4">
     <h1 id="view-heading" tabindex="-1" class="text-3xl font-semibold tracking-tight">Library</h1>
-    <TreeToolbar bind:searchRef onsearchdown={() => tree?.focusFirst()} />
+    <div class="flex flex-col gap-3 transition-opacity {lib.mode === 'edit' ? 'opacity-50' : ''}">
+      <TreeToolbar bind:searchRef onsearchdown={() => tree?.focusFirst()} />
+    </div>
+    {#if lib.mode === 'edit'}
+      <p role="status" class="text-sm text-muted-foreground" data-testid="tree-locked-hint">
+        Finish or cancel editing to browse
+      </p>
+    {/if}
     {#if lib.error}
       <p role="alert" class="text-destructive">{lib.error}</p>
     {:else if lib.repoProblem}
@@ -46,7 +53,9 @@
     {:else if query !== '' && !hasMatches}
       <p role="status" class="text-muted-foreground">No tracks match "{query}"</p>
     {/if}
-    <TrackTree bind:this={tree} />
+    <div class="flex flex-col transition-opacity {lib.mode === 'edit' ? 'opacity-50' : ''}">
+      <TrackTree bind:this={tree} />
+    </div>
     {#if problems.length > 0}
       <div class="text-sm">
         <button

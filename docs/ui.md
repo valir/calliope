@@ -83,6 +83,10 @@
   at 1-2 m; nav items and buttons are at least ~50 px tall.
 - Colours: shadcn "neutral" palette for both themes; accent/primary and focus ring are
   amber-500, with dark text on amber (white on amber is too low-contrast).
+- (gui-tracks-repository, task 16) Disabled buttons: muted fill and muted text (primary and
+  outline), plus 50% opacity. Selected tree/tablature rows: amber tint with an amber left
+  edge. View-mode fields are borderless, edit-mode fields are boxed. Edit mode dims the
+  toolbar and tree to 50% and shows "Finish or cancel editing to browse".
 - Focus: a 3 px amber focus ring on every focusable element when using the keyboard.
 - Navigation: buttons with an icon, label and shortcut hint; the active view has an amber
   bar and a highlighted background. `Ctrl+B` collapses the nav to icons only (not

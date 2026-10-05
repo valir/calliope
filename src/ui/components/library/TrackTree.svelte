@@ -131,7 +131,7 @@
         'flex cursor-pointer items-center gap-1 rounded-md py-1 pr-2 text-base outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50',
         pad[item.level],
         item.group && 'font-medium',
-        item.track && item.track.id === lib.selectedId && 'bg-accent text-accent-foreground',
+        item.track && item.track.id === lib.selectedId && 'bg-primary/15 text-foreground shadow-[inset_3px_0_0_var(--primary)]',
       )}
       onclick={() => {
         focusKey = item.key;

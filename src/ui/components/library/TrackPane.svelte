@@ -92,6 +92,9 @@
     { id: 'track-imported', label: 'Imported', value: selected?.imported ?? '' },
     { id: 'track-modified', label: 'Modified', value: selected?.modified ?? '' },
   ]);
+
+  // Read-only (view mode) fields drop their box; edit mode shows the full input box.
+  const viewLook = $derived(!editing && !noSelection ? 'border-transparent bg-transparent dark:bg-transparent' : '');
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -104,6 +107,7 @@
       value={shown ? shown[f.key] : ''}
       disabled={noSelection}
       readonly={!editing}
+      class={viewLook}
       aria-invalid={lib.fieldErrors[f.key] ? true : undefined}
       aria-describedby={lib.fieldErrors[f.key] ? `track-${f.key}-error` : undefined}
       oninput={(e) => input(f.key, e.currentTarget.value)}
@@ -128,6 +132,7 @@
           value={shown?.composers ?? ''}
           disabled={noSelection}
           readonly={!editing}
+          class={viewLook}
           aria-invalid={lib.fieldErrors.composers ? true : undefined}
           aria-describedby={lib.fieldErrors.composers ? 'track-composers-error' : undefined}
           oninput={(e) => input('composers', e.currentTarget.value)}
@@ -142,7 +147,7 @@
         <Input
           id="track-year"
           inputmode="numeric"
-          class="w-28"
+          class={`w-28 ${viewLook}`}
           value={shown?.year ?? ''}
           disabled={noSelection}
           readonly={!editing}
