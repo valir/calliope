@@ -7,3 +7,4 @@ task 5 | Settings repository_root | implementer | done
 task 6 | Picker (dialog plugin, token registry, scripted picker, release guard) | implementer | done (guard verified: release+e2e-hooks fails)
 task 7 | IPC commands, app state, ACL manifest and capability | implementer | done (test:gui on :1 passes under the new capability; real ~/.local/share/calliope untouched)
 task 8 | Frontend ipc.ts and its test | implementer (local failed: output limit) | done
+task 9 | Fuzzy matching and tree building (pure TS) | implementer | done
