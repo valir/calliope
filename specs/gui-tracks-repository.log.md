@@ -34,3 +34,5 @@ task 16 | Visual review on :1 | implementer | done (all PASS after 5 small CSS f
 task 17 | Licence record and its static test | implementer | done (29 direct deps: MIT 15, MIT/Apache dual 10, Apache-2.0 2, ISC 1, OFL-1.1 1; none copyleft)
   - follow-up: OFL-1.1 requires the Inter licence text to ship with the font; dist/ does not include it yet
 task 18 | README section | orchestrator (local failed: output limit; exact text from plan) | done
+tester | acceptance tests (tests/acceptance_tracks_repository.rs, src/ui/acceptance_library.test.ts) | all 19 AC PASS; 5 data-safety findings as #[ignore] tests | done
+reviewer | f7894d9..HEAD | CHANGES REQUIRED (1 major: OFL text not shipped; data-safety minors) | done
