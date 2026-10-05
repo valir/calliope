@@ -235,3 +235,37 @@ fn handler_list_build_list_and_capability_agree() {
     }
     assert!(cap.get("remote").is_none());
 }
+
+/// Names declared in the given tables of a Cargo.toml (simple `name = ...` lines).
+fn cargo_dependency_names(toml: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut in_deps = false;
+    for line in toml.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_deps = matches!(line, "[dependencies]" | "[build-dependencies]" | "[dev-dependencies]");
+        } else if in_deps && !line.is_empty() && !line.starts_with('#') {
+            if let Some((name, _)) = line.split_once('=') {
+                names.push(name.trim().to_string());
+            }
+        }
+    }
+    names
+}
+
+#[test]
+fn licence_record_lists_every_direct_dependency() {
+    let record = fs::read_to_string(root().join("docs/licences.md")).expect("docs/licences.md");
+    let mut names = cargo_dependency_names(&fs::read_to_string(root().join("Cargo.toml")).unwrap());
+    assert!(names.len() >= 8, "Cargo.toml parsing found too few dependencies: {names:?}");
+    let pkg: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root().join("package.json")).unwrap()).unwrap();
+    for section in ["dependencies", "devDependencies"] {
+        names.extend(pkg[section].as_object().unwrap().keys().cloned());
+    }
+    let missing: Vec<_> = names
+        .iter()
+        .filter(|n| !record.contains(&format!("`{n}`")))
+        .collect();
+    assert!(missing.is_empty(), "docs/licences.md is missing: {missing:?}");
+}

@@ -31,3 +31,5 @@ task 16 | Visual review on :1 | implementer | done (all PASS after 5 small CSS f
   - PASS edit mode locked cue. FIXED: toolbar+tree at 50% opacity and hint "Finish or cancel editing to browse" (LibraryView.svelte; library-min-edit.png, t16-light-min-edit)
   - PASS no overlap at 1024x640 / maximised; no CSP violations seen in app stderr
   - note: hint shifts the tree down one line in edit mode (accepted); an empty white tooltip box appeared next to the nav after hovering Playlists in a mis-sized window (t16 scratch run, not Library; unverified, native webkit tooltip)
+task 17 | Licence record and its static test | implementer | done (29 direct deps: MIT 15, MIT/Apache dual 10, Apache-2.0 2, ISC 1, OFL-1.1 1; none copyleft)
+  - follow-up: OFL-1.1 requires the Inter licence text to ship with the font; dist/ does not include it yet
