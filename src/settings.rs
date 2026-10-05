@@ -68,32 +68,10 @@ pub fn load(path: &Path) -> Settings {
     s
 }
 
-/// Creates parent directories, writes `<path>.tmp` (fsynced), then renames it (atomic) and
-/// best-effort fsyncs the directory on Unix.
+/// Creates parent directories and writes the file atomically (see `fsutil::write_atomic`).
 pub fn save(path: &Path, s: &Settings) -> std::io::Result<()> {
-    use std::io::Write;
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
-    if let Some(parent) = parent {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
     let json = serde_json::to_string_pretty(s).map_err(std::io::Error::other)?;
-    {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(json.as_bytes())?;
-        f.sync_all()?;
-    }
-    std::fs::rename(&tmp, path)?;
-    #[cfg(unix)]
-    {
-        let dir = parent.unwrap_or_else(|| Path::new("."));
-        if let Ok(d) = std::fs::File::open(dir) {
-            let _ = d.sync_all();
-        }
-    }
-    Ok(())
+    crate::fsutil::write_atomic(path, json.as_bytes())
 }
 
 pub struct SettingsStore {

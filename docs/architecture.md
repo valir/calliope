@@ -91,6 +91,9 @@
       <audio>, <tablatures>       plain file names listed in track.json
       stems/                      reserved for gui-stem-extracting
     trash/<UTCstamp>-<id>[-tablatures]/   deleted tracks / removed tablatures; never emptied
+      (a deleted track folder is renamed to trash/<stamp>-<id>/ itself, no extra nesting; all
+      tablature files removed or replaced in one save go into ONE trash/<stamp>-<id>-tablatures/,
+      a name clash inside it suffixes the file as `name (2).ext`; `-2`.. suffix on folder clash)
   ```
   `track.json` fields: `schema_version, id, band, album, title, composers[], year, source_url,
   copyright, audio, tablatures[], imported, modified` (RFC 3339 UTC). Unknown fields are kept

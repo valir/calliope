@@ -1,4 +1,6 @@
 mod cli;
+#[allow(dead_code)] // used by later tasks
+mod fsutil;
 mod gui;
 mod ipc;
 mod settings;

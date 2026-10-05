@@ -111,7 +111,7 @@ sends file-system paths, and the native file dialogs are opened by Rust.
 
 | Module | Responsibility | Tauri? |
 |---|---|---|
-| `src/fsutil.rs` (new) | `write_atomic(path, bytes)` (tmp + fsync + rename + dir fsync; moved here from settings.rs), `copy_no_clobber(src, dest)` (copy to `.<name>.part`, fsync, then `hard_link` to the final name, which fails atomically if it exists, then remove the part; falls back to exists-check + rename on file systems without hard links), `copy_replace(src, dest)` (part + rename, used only when the user confirmed an overwrite in the save dialog), `validate_file_name`, `fnv1a64_hex`, `create_unique_dir(parent, base)` (`base`, `base (2)`, …), `move_to_trash(root, item, stamp, id, kind)` | no |
+| `src/fsutil.rs` (new) | `write_atomic(path, bytes)` (tmp + fsync + rename + dir fsync; moved here from settings.rs), `copy_no_clobber(src, dest)` (copy to `.<name>.part`, fsync, then `hard_link` to the final name, which fails atomically if it exists, then remove the part; falls back to exists-check + rename on file systems without hard links), `copy_replace(src, dest)` (part + rename, used only when the user confirmed an overwrite in the save dialog), `validate_file_name`, `fnv1a64_hex`, `create_unique_dir(parent, base)` (`base`, `base (2)`, …), `move_track_to_trash(root, src, stamp, id)` (the track folder itself is renamed to `trash/<stamp>-<id>/`, no nesting; `-2`.. on clash), `TablatureTrash::new(root, stamp, id)` + `move_in(src)` (one `trash/<stamp>-<id>-tablatures/` per save, created on first use; a file name clash gets a ` (2)` suffix on the file, not a new folder); both refuse the root and anything already under `trash/` | no |
 | `src/track_meta.rs` (new) | `TrackMeta` struct + `extra`, `parse(bytes, dir_name) -> Result<TrackMeta, String>`, `to_json`, `validate`, `TrackEdits` + `apply_edits`, `is_valid_id`, `new_id()` (uuid v7), `now_rfc3339()` / `rfc3339_utc(secs)` | no |
 | `src/repository.rs` (new) + `src/repository_tests.rs` | `Repository { root }`: `status(root) -> RepoStatus`, `ensure_layout()` (marker + `tracks/`, only adds), `scan() -> Library { tracks, problems }`, `create_track(NewTrack, audio_src)` (for tests, the fixture builder and the future import feature), `save_track(SaveTrackRequest, &PickRegistry) -> SaveResult`, `delete_track(id, revision)`, `export_track(id, dest_parent) -> PathBuf`, `export_tablature(id, name, dest)`. Every id and name from IPC is validated and resolved strictly under `<root>/tracks/<id>` | no |
 | `src/picker.rs` (new) | `trait Picker { pick_file(&FileReq) / pick_folder(&FolderReq) / save_file(&SaveReq) -> Option<PathBuf> }`; `PickRegistry` (token → (kind, path), tokens `p<counter>`, kept until used or the app exits); `TauriPicker` (tauri-plugin-dialog, blocking calls, run via `spawn_blocking`); `ScriptedPicker`, compiled only with the `e2e-hooks` feature | `TauriPicker` only |
@@ -359,9 +359,12 @@ tests use `mockIPC`, and GUI tests use temp XDG dirs under `target/gui-e2e/`.
   `validate_file_name(&str) -> Result<(), String>` implements the rules of §2.2.
   `copy_no_clobber` uses part file + `hard_link` (falls back to an exists check + rename when
   `hard_link` returns `Unsupported`/`PermissionDenied`), and removes the part file on any error.
-  `move_to_trash(root, src, stamp, id, kind)` creates
-  `trash/<stamp>-<id>[-tablatures]/` (unique suffix `-2`… if needed) and `rename`s `src` into
-  it. It refuses (error) if `src` isn't inside `root`. `fnv1a64_hex(bytes)`. `create_unique_dir`.
+  `move_track_to_trash(root, src, stamp, id)` renames the track folder itself to
+  `trash/<stamp>-<id>/` (suffix `-2`… if needed). `TablatureTrash::new(root, stamp, id)` with
+  `move_in(&mut self, src)` moves each removed/replaced file into one
+  `trash/<stamp>-<id>-tablatures/` per save (created on first use; a clash inside it suffixes
+  the file as `name (2).ext`). Both refuse (error) if `src` isn't strictly inside `root` or is
+  already under `trash/`; paths are canonicalised. `fnv1a64_hex(bytes)`. `create_unique_dir`.
   Unit tests for each, on `tempfile` dirs: no-clobber refuses an existing dest and leaves no
   part file; `write_atomic` leaves no tmp; names `..`, `a/b`, `.x`, `track.json`, `a\b`, `x?`,
   `""` and 256-byte names are rejected and `Slow Burn (live).gp5` is accepted; FNV of `""` is
