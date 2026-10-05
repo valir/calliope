@@ -62,14 +62,17 @@ export async function load(): Promise<void> {
   lib.loading = true;
   lib.error = '';
   try {
-    const info = await getRepository();
-    if (info.status === 'missing' || info.status === 'newer') {
+    let info = await getRepository();
+    // A missing default root is created by list_tracks (first start just works);
+    // a configured root that does not exist is never created.
+    if ((info.status === 'missing' && !info.is_default) || info.status === 'newer') {
       lib.library = { root: info.root, tracks: [], problems: [] };
       lib.repoProblem = repoProblemText(info.status, info.root);
       void frontendLog(`library root=${info.root} status=${info.status} tracks=0 problems=0`);
     } else {
       lib.repoProblem = '';
       const l = await listTracks();
+      if (info.status === 'missing') info = await getRepository();
       lib.library = l;
       void frontendLog(
         `library root=${l.root} status=${info.status} tracks=${l.tracks.length} problems=${l.problems.length}`,

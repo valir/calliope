@@ -11,6 +11,8 @@ let logs: string[] = [];
 let tracks: TrackRecord[] = FIXTURE_TRACKS;
 let problems: LibraryProblem[] = [];
 let status: RepoStatus = 'ok';
+let isDefault = true;
+let listCalls = 0;
 let failList = false;
 
 beforeEach(() => {
@@ -18,11 +20,15 @@ beforeEach(() => {
   tracks = FIXTURE_TRACKS;
   problems = [];
   status = 'ok';
+  isDefault = true;
+  listCalls = 0;
   failList = false;
   resetLibrary();
   mockIPC((cmd, args) => {
-    if (cmd === 'get_repository') return { root: '/tmp/repo', is_default: true, status };
+    if (cmd === 'get_repository') return { root: '/tmp/repo', is_default: isDefault, status };
     if (cmd === 'list_tracks') {
+      listCalls++;
+      if (status === 'missing' && isDefault) status = 'empty';
       if (failList) throw new Error('disk on fire');
       return { root: '/tmp/repo', tracks, problems };
     }
@@ -209,12 +215,23 @@ describe('Library view: states', () => {
     expect(logs).toContain('library root=/tmp/repo status=ok tracks=6 problems=2');
   });
 
+  it('creates a missing default root through list_tracks without an alert', async () => {
+    status = 'missing';
+    tracks = [];
+    render(LibraryView);
+    await screen.findByText(/No tracks in the repository yet\./);
+    expect(listCalls).toBe(1);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('points to Settings when the repository is missing or newer', async () => {
     status = 'missing';
+    isDefault = false;
     render(LibraryView);
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('Settings');
     expect(alert.textContent).toContain('/tmp/repo');
+    expect(listCalls).toBe(0);
   });
 
   it('reports a load failure inline and in the log', async () => {

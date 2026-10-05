@@ -14,3 +14,4 @@ task 12 | Library left column (toolbar, tree, search, problems) | implementer | 
 task 13 | Track pane and Tablature Files panel | implementer | done (27 component tests AC6-AC19; screenshots on :1)
   - for task 16 visual review: disabled primary "Edit" button still reads amber/active next to Save; tree/search have no visible "locked" cue in edit mode
 task 14 | Settings Track repository card | implementer | done (switch blocked while editing)
+fix | first run: missing DEFAULT root now created via list_tracks (frontend skipped it); e2e checks marker+tracks/ on fresh XDG | implementer | done

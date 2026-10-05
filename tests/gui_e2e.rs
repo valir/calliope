@@ -225,6 +225,19 @@ fn starts_dark_with_version() {
     assert!(version.contains(&field(&ready, "version")), "ready={ready} version={version}");
     assert_eq!(field(&ready, "version"), version.split_whitespace().last().unwrap());
     app.wid();
+    // First start: the default root is created and the Library shows the empty state.
+    let end = Instant::now() + Duration::from_secs(15);
+    let lib = loop {
+        if let Some(l) = app.all_lines().into_iter().find(|l| l.contains("library root=")) {
+            break l;
+        }
+        assert!(Instant::now() < end, "no library line; got: {:?}", app.all_lines());
+        sleep(Duration::from_millis(50));
+    };
+    assert!(lib.contains("tracks=0"), "{lib}");
+    let repo = dirs.0.join("data/calliope");
+    assert!(repo.join("calliope-repository.json").is_file(), "marker missing in {repo:?}");
+    assert!(repo.join("tracks").is_dir());
     settle();
     shot("start-dark");
     app.no_csp_violation();
