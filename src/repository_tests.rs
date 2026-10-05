@@ -589,3 +589,25 @@ fn save_with_missing_old_file_still_works() {
     assert_eq!(res.track.tablatures, ["two.gp5"]);
     assert!(res.warnings.is_empty());
 }
+
+#[test]
+fn fixture_library_sample_scans_clean() {
+    fn copy(from: &Path, to: &Path) {
+        fs::create_dir_all(to).unwrap();
+        for e in fs::read_dir(from).unwrap().flatten() {
+            let dest = to.join(e.file_name());
+            if e.path().is_dir() {
+                copy(&e.path(), &dest);
+            } else {
+                fs::copy(e.path(), dest).unwrap();
+            }
+        }
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("library");
+    copy(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-sample"), &root);
+    let lib = Repository::new(&root).scan();
+    assert_eq!(lib.tracks.len(), 6);
+    assert!(lib.problems.is_empty(), "{:?}", lib.problems);
+    assert!(lib.tracks.iter().all(|t| t.missing.is_empty()));
+}

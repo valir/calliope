@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "0199b0a0-0000-7000-8000-000000000005",
+  "band": "Zephyr Lane",
+  "album": "",
+  "title": "Open Water",
+  "composers": [],
+  "year": 2024,
+  "source_url": null,
+  "copyright": null,
+  "audio": "backing.mp3",
+  "tablatures": [
+    "open-water-rhythm.gp5",
+    "open-water-lead.gp5",
+    "open-water-bass.gp5",
+    "open-water-intro.gp",
+    "open-water-full.gpx"
+  ],
+  "imported": "2026-10-01T12:00:00Z",
+  "modified": "2026-10-01T12:00:00Z"
+}

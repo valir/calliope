@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "0199b0a0-0000-7000-8000-000000000003",
+  "band": "Amber Fields",
+  "album": "Copper Sky",
+  "title": "Copper Sky",
+  "composers": [
+    "Bo Sample"
+  ],
+  "year": 2021,
+  "source_url": null,
+  "copyright": null,
+  "audio": "backing.mp3",
+  "tablatures": [
+    "copper-sky.gp5"
+  ],
+  "imported": "2026-10-01T12:00:00Z",
+  "modified": "2026-10-01T12:00:00Z"
+}
