@@ -15,3 +15,5 @@ task 13 | Track pane and Tablature Files panel | implementer | done (27 componen
   - for task 16 visual review: disabled primary "Edit" button still reads amber/active next to Save; tree/search have no visible "locked" cue in edit mode
 task 14 | Settings Track repository card | implementer | done (switch blocked while editing)
 fix | first run: missing DEFAULT root now created via list_tracks (frontend skipped it); e2e checks marker+tracks/ on fresh XDG | implementer | done
+task 15 | GUI e2e on :1 (8 tests with disk checks) | implementer | done (2 full runs + 2 extra runs green; orchestrator re-ran: 5+8+1 pass)
+  - note: harness duplicated into tests/common/mod.rs (gui_e2e.rs untouched); real-dialog test lists the real $HOME read-only, then Escape
