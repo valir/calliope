@@ -3,6 +3,8 @@ mod cli;
 mod fsutil;
 mod gui;
 mod ipc;
+#[allow(dead_code)] // used by later tasks
+mod repository;
 mod settings;
 #[allow(dead_code)] // used by later tasks
 mod track_meta;

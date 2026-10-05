@@ -41,7 +41,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-fn part_path(dest: &Path) -> io::Result<PathBuf> {
+pub(crate) fn part_path(dest: &Path) -> io::Result<PathBuf> {
     let name = dest
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "destination has no file name"))?;
@@ -52,7 +52,7 @@ fn part_path(dest: &Path) -> io::Result<PathBuf> {
 }
 
 /// Copies `src` to `part` and fsyncs it. The part file is removed on any error.
-fn copy_to_part(src: &Path, part: &Path) -> io::Result<()> {
+pub(crate) fn copy_to_part(src: &Path, part: &Path) -> io::Result<()> {
     let r = (|| {
         let mut from = fs::File::open(src)?;
         let mut to = fs::OpenOptions::new().write(true).create_new(true).open(part)?;
