@@ -11,7 +11,7 @@ const NAV_ORDER = ['Library', 'Import', 'Track', 'Playlists', 'Player', 'Setting
 // Spec requirement 4: which future feature each view names.
 const FEATURES: Record<string, string[]> = {
   // Library has no placeholder any more: gui-tracks-repository replaced it with the real view.
-  Import: ['gui-stem-extracting', 'gui-existing-track-import'],
+  // Import has no placeholder any more: gui-stem-extraction replaced it with the real view.
   Track: ['gui-backing-track-assembly', 'gui-tablatures', 'gui-manipulate-backing-track'],
   Player: ['gui-play-backing-track'],
 };
@@ -65,7 +65,8 @@ describe('acceptance: navigation (req 4, AC2, AC3)', () => {
         for (const t of ['MIDI interface', 'Audio output', 'Edge-AI server', 'Appearance']) expect(text).toContain(t);
         expect(text).toContain('gui-play-backing-track');
         expect(text).toContain('gui-stem-extracting');
-      } else if (name === 'Library') await waitFor(() => expect(main().textContent).toContain('No tracks in the repository yet.'));
+      } else if (name === 'Import') expect(text).toContain('Stem Extraction');
+      else if (name === 'Library') await waitFor(() => expect(main().textContent).toContain('No tracks in the repository yet.'));
       else for (const f of FEATURES[name]) expect(text).toContain(f);
     }
   });

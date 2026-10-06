@@ -52,7 +52,8 @@ describe('App shell', () => {
       expect(ui.view).toBe(v.id);
     }
     await fireEvent.click(screen.getByRole('button', { name: 'Import' }));
-    expect(screen.getByTestId('placeholder').textContent).toContain('gui-stem-extracting');
+    expect(screen.queryByTestId('placeholder')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Stem Extraction' })).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Playlists' }));
     expect(screen.getByTestId('placeholder').textContent).toContain('no feature spec');
     await fireEvent.click(screen.getByRole('button', { name: 'Track' }));

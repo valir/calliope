@@ -220,3 +220,19 @@ describe('tabButtons', () => {
     }
   });
 });
+
+describe('draftFromEdits', () => {
+  it('maps the metadata to the form values and back', async () => {
+    const { draftFromEdits, toEdits } = await import('./track-draft');
+    const e = {
+      band: 'B', album: 'A', title: 'T', composers: ['x', 'y'], year: 1999,
+      source_url: 'https://h.example/a', copyright: null,
+    };
+    const d = draftFromEdits(e);
+    expect(d).toEqual({
+      band: 'B', album: 'A', title: 'T', composers: 'x\ny', year: '1999',
+      source_url: 'https://h.example/a', copyright: '',
+    });
+    expect(toEdits(d)).toEqual(e);
+  });
+});

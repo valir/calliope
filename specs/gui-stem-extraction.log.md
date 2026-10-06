@@ -21,3 +21,5 @@ task 15 | ipc.ts types/wrappers, Library on v2 records | implementer | done (com
 task 16 | Library badges S/B and stem/original info | implementer | done (screenshot on :1 OK)
 task 17 | TrackFields.svelte extraction | implementer | done
   - follow-ups: gui_library_e2e relies on Tab counts (fragile; one run hung 30 min in the real-dialog test); client-side draft does not know original.flac for tablature clash (Rust rejects it)
+task 18 | Import view: menu, source page, download, resume prompt | implementer | done (committed with 19: shared files)
+task 19 | Import edit pane, extraction progress, done/failed states, re-attach | implementer | done (full import on :1 with local calliope-stems + stub: saved track shown in Library)

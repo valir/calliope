@@ -75,6 +75,19 @@ export function draftFromRecord(r: TrackRecord): Draft {
   };
 }
 
+/** The fields of a not-yet-saved track (the metadata an import found). */
+export function draftFromEdits(e: TrackEdits): DraftFields {
+  return {
+    band: e.band,
+    album: e.album,
+    title: e.title,
+    composers: e.composers.join('\n'),
+    year: e.year === null ? '' : String(e.year),
+    source_url: e.source_url ?? '',
+    copyright: e.copyright ?? '',
+  };
+}
+
 const fieldsOf = (d: DraftFields): DraftFields =>
   Object.fromEntries(FIELD_KEYS.map((k) => [k, d[k]])) as unknown as DraftFields;
 
