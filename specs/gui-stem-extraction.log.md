@@ -13,3 +13,4 @@ task 9 | Stub separator + real-model adapter (syntax-checked only, never run) | 
 task 10 | calliope-stems server (tiny_http, workspace member) | implementer | done (30 tests incl. smoke on 127.0.0.1 with stub)
   - limit: no upload read timeout (tiny_http); a stalled client holds a queue slot until it disconnects
 task 11 | Stems client + protocol conformance suite (real binary, stub, 127.0.0.1) | implementer | done (15 conformance tests, 3 runs green)
+task 12 | Settings edge_ai_url (http only, no TLS client) and keep_original | implementer | done

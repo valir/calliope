@@ -18,6 +18,54 @@ pub struct Settings {
     pub theme: Theme,
     /// Absolute path of the tablature repository; `None` = the default location.
     pub repository_root: Option<PathBuf>,
+    /// Base URL of the calliope-stems server, `http://host[:port][/path]` (see
+    /// `normalize_edge_ai_url`); `None` = not configured.
+    pub edge_ai_url: Option<String>,
+    /// Keep the original mix (as FLAC) next to the extracted stems.
+    pub keep_original: bool,
+}
+
+/// Longest accepted `edge_ai_url`.
+pub const MAX_EDGE_AI_URL_LEN: usize = 200;
+
+/// Checks and normalises a server URL: only `http://` (the server is on the home LAN), a host,
+/// no userinfo, query or fragment, at most 200 characters; trailing slashes are dropped.
+/// Blank input means "not configured" (`Ok(None)`).
+pub fn normalize_edge_ai_url(input: &str) -> Result<Option<String>, String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Ok(None);
+    }
+    if input.len() > MAX_EDGE_AI_URL_LEN {
+        return Err(format!("The server address is longer than {MAX_EDGE_AI_URL_LEN} characters"));
+    }
+    // The URL parser is lenient (`http:///x` becomes `http://x/`, `\` becomes `/`): be strict.
+    if input.chars().any(|c| c.is_whitespace() || c == '\\' || c.is_control()) {
+        return Err("The server address must not contain spaces or backslashes".into());
+    }
+    if input.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("http://")) && input[7..].starts_with('/') {
+        return Err("The server address needs a host name".into());
+    }
+    let url = url::Url::parse(input).map_err(|e| format!("Not a valid server address: {e}"))?;
+    match url.scheme() {
+        "http" => {}
+        "https" => return Err("Only http:// is supported on the LAN".into()),
+        _ => return Err("The server address must start with http://".into()),
+    }
+    if url.host_str().is_none_or(str::is_empty) {
+        return Err("The server address needs a host name".into());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("The server address must not contain a user name or password".into());
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err("The server address must not contain ? or #".into());
+    }
+    let text = url.as_str().trim_end_matches('/');
+    if text.len() > MAX_EDGE_AI_URL_LEN {
+        return Err(format!("The server address is longer than {MAX_EDGE_AI_URL_LEN} characters"));
+    }
+    Ok(Some(text.to_string()))
 }
 
 /// The repository root used when the setting is `None`.
@@ -82,6 +130,19 @@ pub fn load(path: &Path) -> Settings {
             path.display()
         ),
     }
+    match obj.get("edge_ai_url") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::String(u)) => match normalize_edge_ai_url(u) {
+            Ok(url) => s.edge_ai_url = url,
+            Err(e) => eprintln!("calliope: invalid edge_ai_url in {} ({e}); using default", path.display()),
+        },
+        Some(v) => eprintln!("calliope: invalid edge_ai_url {v} in {} (not a string); using default", path.display()),
+    }
+    match obj.get("keep_original") {
+        None => {}
+        Some(serde_json::Value::Bool(b)) => s.keep_original = *b,
+        Some(v) => eprintln!("calliope: invalid keep_original {v} in {} (not a boolean); using default", path.display()),
+    }
     s
 }
 
@@ -123,6 +184,29 @@ impl SettingsStore {
         *cur = next.clone();
         Ok(next)
     }
+
+    // Used by the IPC commands (task 14); allowed until then.
+    #[allow(dead_code)]
+    /// Validates (`normalize_edge_ai_url`), stores and saves the server URL; blank = `None`.
+    pub fn set_edge_ai_url(&self, url: &str) -> Result<Settings, String> {
+        let url = normalize_edge_ai_url(url)?;
+        let mut cur = self.current.lock().unwrap_or_else(|e| e.into_inner());
+        let mut next = cur.clone();
+        next.edge_ai_url = url;
+        save(&self.path, &next).map_err(|e| format!("Cannot save the settings: {e}"))?;
+        *cur = next.clone();
+        Ok(next)
+    }
+
+    #[allow(dead_code)]
+    pub fn set_keep_original(&self, keep: bool) -> std::io::Result<Settings> {
+        let mut cur = self.current.lock().unwrap_or_else(|e| e.into_inner());
+        let mut next = cur.clone();
+        next.keep_original = keep;
+        save(&self.path, &next)?;
+        *cur = next.clone();
+        Ok(next)
+    }
 }
 
 #[cfg(test)]
@@ -130,7 +214,7 @@ mod tests {
     use super::*;
 
     fn light() -> Settings {
-        Settings { theme: Theme::Light, repository_root: None }
+        Settings { theme: Theme::Light, ..Settings::default() }
     }
 
     #[test]
@@ -140,7 +224,7 @@ mod tests {
 
     #[test]
     fn json_shape() {
-        assert_eq!(serde_json::to_string(&light()).unwrap(), r#"{"theme":"light","repository_root":null}"#);
+        assert_eq!(serde_json::to_string(&light()).unwrap(), r#"{"theme":"light","repository_root":null,"edge_ai_url":null,"keep_original":false}"#);
         let s: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
         assert_eq!(s, light());
     }
@@ -242,7 +326,7 @@ mod tests {
     fn root_roundtrip_and_set_reset_persist() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("cfg/s.json");
-        let s = Settings { theme: Theme::Dark, repository_root: Some(PathBuf::from("/abs/x")) };
+        let s = Settings { repository_root: Some(PathBuf::from("/abs/x")), ..Settings::default() };
         save(&p, &s).unwrap();
         assert_eq!(load(&p), s);
         let store = SettingsStore::open(p.clone());
@@ -256,5 +340,68 @@ mod tests {
     #[test]
     fn default_root_is_data_dir_calliope() {
         assert_eq!(default_repository_root(Path::new("/d")), PathBuf::from("/d/calliope"));
+    }
+
+    #[test]
+    fn edge_ai_url_rules() {
+        let ok = |i: &str| normalize_edge_ai_url(i).unwrap();
+        assert_eq!(ok("http://archserver:8765"), Some("http://archserver:8765".into()));
+        assert_eq!(ok("http://192.168.2.20:8765/"), Some("http://192.168.2.20:8765".into()));
+        assert_eq!(ok("http://h:8765/prefix"), Some("http://h:8765/prefix".into()));
+        assert_eq!(ok("  http://h:8765/prefix/  "), Some("http://h:8765/prefix".into()));
+        assert_eq!(ok("http://[::1]:8765"), Some("http://[::1]:8765".into()));
+        assert_eq!(ok(""), None);
+        assert_eq!(ok("   "), None);
+        assert!(normalize_edge_ai_url("https://h:8765").unwrap_err().contains("Only http://"));
+        for bad in [
+            "ftp://h", "http://u:p@h", "http://u@h", "http://h/?q", "http://h/#f", "http://", "http:///x", "h:8765",
+            "archserver", "file:///etc/passwd", "http://h:99999",
+        ] {
+            assert!(normalize_edge_ai_url(bad).is_err(), "{bad}");
+        }
+        let long = format!("http://h/{}", "a".repeat(200));
+        assert!(normalize_edge_ai_url(&long).is_err());
+    }
+
+    #[test]
+    fn new_fields_default_and_roundtrip() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("s.json");
+        assert_eq!(Settings::default().edge_ai_url, None);
+        assert!(!Settings::default().keep_original);
+        let s = Settings { edge_ai_url: Some("http://h:1".into()), keep_original: true, ..Settings::default() };
+        save(&p, &s).unwrap();
+        assert_eq!(load(&p), s);
+    }
+
+    #[test]
+    fn invalid_new_fields_fall_back_others_kept() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("s.json");
+        for bad in ["\"https://h\"", "\"http://u:p@h\"", "5", "[]"] {
+            std::fs::write(&p, format!(r#"{{"theme":"light","keep_original":true,"edge_ai_url":{bad}}}"#)).unwrap();
+            let s = load(&p);
+            assert_eq!(s, Settings { theme: Theme::Light, keep_original: true, ..Settings::default() }, "{bad}");
+            assert!(p.exists() && !d.path().join("s.json.bak").exists());
+        }
+        std::fs::write(&p, r#"{"keep_original":"yes","edge_ai_url":"http://h:2/"}"#).unwrap();
+        let s = load(&p);
+        assert!(!s.keep_original);
+        assert_eq!(s.edge_ai_url.as_deref(), Some("http://h:2"));
+    }
+
+    #[test]
+    fn store_setters_persist_and_validate() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("cfg/s.json");
+        let store = SettingsStore::open(p.clone());
+        assert_eq!(store.set_edge_ai_url("http://a:1/").unwrap().edge_ai_url.as_deref(), Some("http://a:1"));
+        assert!(store.set_edge_ai_url("https://a").is_err());
+        assert_eq!(store.get().edge_ai_url.as_deref(), Some("http://a:1"));
+        assert!(store.set_keep_original(true).unwrap().keep_original);
+        let again = SettingsStore::open(p).get();
+        assert!(again.keep_original);
+        assert_eq!(again.edge_ai_url.as_deref(), Some("http://a:1"));
+        assert_eq!(store.set_edge_ai_url("").unwrap().edge_ai_url, None);
     }
 }
