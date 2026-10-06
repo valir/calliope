@@ -1,6 +1,7 @@
 mod cli;
 mod download;
 mod fsutil;
+mod import_job;
 mod import_tmp;
 mod gui;
 mod ipc;

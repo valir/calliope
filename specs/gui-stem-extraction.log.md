@@ -14,3 +14,4 @@ task 10 | calliope-stems server (tiny_http, workspace member) | implementer | do
   - limit: no upload read timeout (tiny_http); a stalled client holds a queue slot until it disconnects
 task 11 | Stems client + protocol conformance suite (real binary, stub, 127.0.0.1) | implementer | done (15 conformance tests, 3 runs green)
 task 12 | Settings edge_ai_url (http only, no TLS client) and keep_original | implementer | done
+task 13 | Import job orchestrator (real calliope-stems + fake yt-dlp + real ffmpeg) | implementer | done (23 tests, 3 runs green)

@@ -71,7 +71,7 @@ pub struct TrackMeta {
 }
 
 /// The user-editable fields (mirrors `TrackEdits` in the frontend).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrackEdits {
     pub band: String,
     pub album: String,

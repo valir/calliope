@@ -71,6 +71,11 @@ impl Cancel {
         self.flag.load(Ordering::SeqCst)
     }
 
+    /// The raw flag, for APIs that take an `&AtomicBool` (the stems client).
+    pub fn flag(&self) -> &AtomicBool {
+        &self.flag
+    }
+
     pub(crate) fn register(&self, h: CancelHandle) {
         if let Ok(mut g) = self.current.lock() {
             *g = Some(h.clone());

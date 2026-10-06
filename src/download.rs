@@ -231,7 +231,7 @@ pub struct Downloaded {
     pub info: Option<PathBuf>,
 }
 
-fn find_download(dir: &Path) -> Option<PathBuf> {
+pub fn find_download(dir: &Path) -> Option<PathBuf> {
     let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
         .ok()?
         .flatten()
