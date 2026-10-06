@@ -903,3 +903,265 @@ fn unknown_track_type_and_bad_stem_files_are_problems_never_rewritten() {
         assert_eq!(fs::read_to_string(&p).unwrap(), bad);
     }
 }
+
+// ---- staged track creation (task 5) ----
+
+mod staging {
+    use super::*;
+
+    const ID: &str = "0199c1a2-0000-7000-8000-000000000001";
+
+    fn stem_meta(id: &str, with_original: bool) -> TrackMeta {
+        let now = track_meta::now_rfc3339();
+        TrackMeta {
+            schema_version: track_meta::CURRENT_SCHEMA,
+            id: id.into(),
+            track_type: TrackType::Stem,
+            band: "B".into(),
+            album: "A".into(),
+            title: "T".into(),
+            composers: vec![],
+            year: None,
+            source_url: None,
+            copyright: None,
+            audio: None,
+            original: with_original.then(|| "original.flac".to_string()),
+            stems: ["vocals", "drums"]
+                .iter()
+                .map(|n| StemEntry { name: n.to_string(), file: format!("stems/{n}.flac") })
+                .collect(),
+            stem_model: Some("htdemucs_6s".into()),
+            tablatures: vec![],
+            imported: now.clone(),
+            modified: now,
+            extra: Default::default(),
+        }
+    }
+
+    fn fill(st: &Staging) {
+        for n in ["vocals", "drums"] {
+            let part = st.stem_part_path(n).unwrap();
+            fs::write(&part, format!("fLaC {n}")).unwrap();
+            st.finish_stem(n).unwrap();
+        }
+    }
+
+    fn job_audio(env: &Env) -> PathBuf {
+        let p = env.sources.join("audio.flac");
+        fs::write(&p, "ORIGINAL AUDIO").unwrap();
+        p
+    }
+
+    #[test]
+    fn commit_gives_a_scan_visible_stem_track() {
+        let env = Env::new();
+        let st = env.repo.begin_staged_track(ID).unwrap();
+        assert_eq!(st.dir(), env.repo.root.join("tracks").join(format!(".staging-{ID}")));
+        assert!(st.dir().join(STAGING_MARKER).is_file());
+        fill(&st);
+        // during staging a scan lists nothing and reports no problem
+        let lib = env.repo.scan();
+        assert!(lib.tracks.is_empty() && lib.problems.is_empty(), "{lib:?}");
+        let rec = st.commit(&stem_meta(ID, false)).unwrap();
+        assert_eq!(rec.track_type, TrackType::Stem);
+        assert!(rec.missing.is_empty() && rec.original.is_none() && rec.audio.is_none());
+        assert_eq!(rec.stems.len(), 2);
+        let dir = env.dir(ID);
+        assert!(dir.join("track.json").is_file() && dir.join("stems/vocals.flac").is_file());
+        assert!(!dir.join(STAGING_MARKER).exists());
+        assert!(!env.repo.root.join("tracks").join(format!(".staging-{ID}")).exists());
+        let lib = env.repo.scan();
+        assert_eq!((lib.tracks.len(), lib.problems.len()), (1, 0));
+        assert_eq!(lib.tracks[0], rec);
+    }
+
+    #[test]
+    fn commit_with_the_original_moves_it_into_the_track() {
+        let env = Env::new();
+        let src = job_audio(&env);
+        let mut st = env.repo.begin_staged_track(ID).unwrap();
+        fill(&st);
+        st.adopt_original(&src).unwrap();
+        assert!(!src.exists(), "renamed, not copied");
+        let rec = st.commit(&stem_meta(ID, true)).unwrap();
+        assert_eq!(rec.original.as_deref(), Some("original.flac"));
+        assert!(rec.missing.is_empty());
+        assert_eq!(fs::read_to_string(env.dir(ID).join("original.flac")).unwrap(), "ORIGINAL AUDIO");
+        fs::write(&src, "ORIGINAL AUDIO").unwrap(); // let Env::drop see an unchanged sources dir
+    }
+
+    #[test]
+    fn commit_refuses_when_the_track_exists_and_changes_nothing() {
+        let env = Env::new();
+        env.track(ID, &[]);
+        let before = list(&env.repo.root.join("tracks"));
+        assert!(env.repo.begin_staged_track(ID).unwrap_err().contains("already exists"));
+        assert_eq!(list(&env.repo.root.join("tracks")), before);
+
+        // the track appears while staging: commit refuses, the staging folder stays
+        let other = "0199c1a2-0000-7000-8000-000000000002";
+        let st = env.repo.begin_staged_track(other).unwrap();
+        fill(&st);
+        fs::create_dir(env.dir(other)).unwrap();
+        fs::write(env.dir(other).join("mine"), "user data").unwrap();
+        assert!(st.commit(&stem_meta(other, false)).unwrap_err().contains("already exists"));
+        assert_eq!(fs::read_to_string(env.dir(other).join("mine")).unwrap(), "user data");
+        assert!(st.dir().join("stems/vocals.flac").is_file());
+        st.abandon().unwrap();
+        assert!(env.dir(other).join("mine").exists());
+    }
+
+    #[test]
+    fn commit_validates_and_keeps_the_staging_folder_on_failure() {
+        let env = Env::new();
+        let st = env.repo.begin_staged_track(ID).unwrap();
+        // listed files missing
+        assert!(st.commit(&stem_meta(ID, false)).unwrap_err().contains("missing"));
+        fill(&st);
+        assert!(st.commit(&stem_meta(ID, true)).unwrap_err().contains("original.flac"));
+        // wrong id, bad title
+        assert!(st.commit(&stem_meta("other", false)).is_err());
+        let mut bad = stem_meta(ID, false);
+        bad.title = " ".into();
+        assert!(st.commit(&bad).is_err());
+        assert!(st.dir().join(STAGING_MARKER).is_file());
+        assert!(!env.dir(ID).exists());
+        st.abandon().unwrap();
+        assert!(!env.repo.root.join("tracks").join(format!(".staging-{ID}")).exists());
+    }
+
+    #[test]
+    fn stem_names_are_validated_and_never_replace() {
+        let env = Env::new();
+        let st = env.repo.begin_staged_track(ID).unwrap();
+        for bad in ["../x", "a/b", "", "Vocals", ".hidden"] {
+            assert!(st.stem_part_path(bad).is_err(), "{bad}");
+        }
+        fs::write(st.stem_part_path("bass").unwrap(), "1").unwrap();
+        st.finish_stem("bass").unwrap();
+        fs::write(st.stem_part_path("bass").unwrap(), "2").unwrap();
+        assert!(st.finish_stem("bass").is_err());
+        assert_eq!(fs::read_to_string(st.dir().join("stems/bass.flac")).unwrap(), "1");
+        st.abandon().unwrap();
+    }
+
+    #[test]
+    fn abandon_after_adopt_original_puts_audio_back() {
+        let env = Env::new();
+        let src = job_audio(&env);
+        let mut st = env.repo.begin_staged_track(ID).unwrap();
+        fill(&st);
+        st.adopt_original(&src).unwrap();
+        assert!(st.adopt_original(&src).is_err());
+        let dir = st.dir().to_path_buf();
+        st.abandon().unwrap();
+        assert_eq!(fs::read_to_string(&src).unwrap(), "ORIGINAL AUDIO");
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn abandon_keeps_everything_when_the_original_cannot_go_back() {
+        let env = Env::new();
+        let src = job_audio(&env);
+        let mut st = env.repo.begin_staged_track(ID).unwrap();
+        st.adopt_original(&src).unwrap();
+        fs::write(&src, "NEW FILE IN ITS PLACE").unwrap();
+        let dir = st.dir().to_path_buf();
+        assert!(st.abandon().is_err());
+        assert_eq!(fs::read_to_string(dir.join("original.flac")).unwrap(), "ORIGINAL AUDIO");
+        assert_eq!(fs::read_to_string(&src).unwrap(), "NEW FILE IN ITS PLACE");
+    }
+
+    #[test]
+    fn adopt_original_refuses_non_files_and_symlinks() {
+        let env = Env::new();
+        let mut st = env.repo.begin_staged_track(ID).unwrap();
+        assert!(st.adopt_original(&env.sources.join("missing.flac")).is_err());
+        assert!(st.adopt_original(&env.sources).is_err());
+        #[cfg(unix)]
+        {
+            let link = env.sources.join("link.flac");
+            std::os::unix::fs::symlink(env.outside.join("audio.mp3"), &link).unwrap();
+            assert!(st.adopt_original(&link).is_err());
+            fs::remove_file(&link).unwrap();
+        }
+        st.abandon().unwrap();
+    }
+
+    #[test]
+    fn begin_refuses_bad_ids_and_an_existing_staging_folder() {
+        let env = Env::new();
+        for bad in ["", "../x", "a/b", ".x"] {
+            assert!(env.repo.begin_staged_track(bad).is_err(), "{bad}");
+        }
+        let st = env.repo.begin_staged_track(ID).unwrap();
+        assert!(env.repo.begin_staged_track(ID).is_err());
+        assert!(st.dir().exists());
+        st.abandon().unwrap();
+    }
+
+    #[test]
+    fn abandon_and_stale_cleanup_refuse_what_is_not_ours() {
+        let env = Env::new();
+        let tracks = env.repo.root.join("tracks");
+        // no marker: a user's folder with a staging-like name
+        let user = tracks.join(".staging-mine");
+        fs::create_dir(&user).unwrap();
+        fs::write(user.join("data"), "user").unwrap();
+        // a marker folder with an invalid id in its name and a plain file
+        let odd = tracks.join(".staging-has space");
+        fs::create_dir(&odd).unwrap();
+        fs::write(odd.join(STAGING_MARKER), "").unwrap();
+        fs::write(tracks.join(".staging-file"), "user").unwrap();
+        // ours: stale, with a marker, plus the running one
+        let stale = env.repo.begin_staged_track("stale-1").unwrap();
+        let running = env.repo.begin_staged_track("running-1").unwrap();
+        fs::write(stale.dir().join("stems/x.flac.part"), "x").unwrap();
+        assert_eq!(env.repo.clean_stale_staging(Some("running-1")), 1);
+        assert!(!stale.dir().exists() && running.dir().exists());
+        assert!(user.join("data").exists() && odd.join(STAGING_MARKER).exists());
+        assert!(tracks.join(".staging-file").is_file());
+        running.abandon().unwrap();
+        // the marker is gone: abandon refuses and leaves the folder
+        let st = env.repo.begin_staged_track("nomarker").unwrap();
+        fs::remove_file(st.dir().join(STAGING_MARKER)).unwrap();
+        let dir = st.dir().to_path_buf();
+        assert!(st.abandon().is_err());
+        assert!(dir.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_staging_folders_are_never_followed() {
+        let env = Env::new();
+        let tracks = env.repo.root.join("tracks");
+        let target = env.sources.join("target");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join(STAGING_MARKER), "").unwrap();
+        fs::write(target.join("user-file"), "keep").unwrap();
+        std::os::unix::fs::symlink(&target, tracks.join(".staging-linked")).unwrap();
+        assert_eq!(env.repo.clean_stale_staging(None), 0);
+        assert!(target.join("user-file").exists());
+
+        // a link inside a real staging folder is removed as a link only
+        let st = env.repo.begin_staged_track(ID).unwrap();
+        std::os::unix::fs::symlink(&target, st.dir().join("stems/link")).unwrap();
+        st.abandon().unwrap();
+        assert!(target.join("user-file").exists());
+        fs::remove_dir_all(&target).unwrap(); // our own test data
+        fs::remove_file(tracks.join(".staging-linked")).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn begin_refuses_a_symlinked_tracks_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let elsewhere = tmp.path().join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        let root = tmp.path().join("root");
+        fs::create_dir(&root).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, root.join("tracks")).unwrap();
+        assert!(Repository::new(&root).begin_staged_track(ID).is_err());
+        assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
+    }
+}

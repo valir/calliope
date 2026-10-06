@@ -245,6 +245,7 @@ dependencies = [
 name = "calliope-gui"
 version = "0.1.0"
 dependencies = [
+ "calliope-common",
  "serde",
  "serde_json",
  "tauri",

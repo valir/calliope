@@ -646,6 +646,205 @@ fn cut_bytes(s: &str, max: usize) -> &str {
     &s[..i]
 }
 
+// ---- staged track creation (stem import, plan section 2.5) ----
+
+/// Marker inside `tracks/.staging-<id>`: "this folder is Calliope's own".
+pub const STAGING_MARKER: &str = ".calliope-staging";
+const STAGING_PREFIX: &str = ".staging-";
+/// File name the kept original mix gets inside the track.
+pub const ORIGINAL_NAME: &str = "original.flac";
+
+/// A real folder (never a symlink), judged without following links.
+fn is_real_dir(p: &Path) -> bool {
+    fs::symlink_metadata(p).map(|m| m.is_dir()).unwrap_or(false)
+}
+
+fn is_real_file(p: &Path) -> bool {
+    fs::symlink_metadata(p).map(|m| m.is_file()).unwrap_or(false)
+}
+
+/// A new track being assembled in `tracks/.staging-<id>/`. It becomes visible in `tracks/`
+/// only through the single rename in [`Staging::commit`]; until then scans skip it (dot name).
+#[derive(Debug)]
+#[allow(dead_code)] // used by the import job (a later task) and the tests
+pub struct Staging {
+    tracks: PathBuf,
+    id: String,
+    dir: PathBuf,
+    /// Where `original.flac` came from, so that `abandon` can put it back.
+    adopted_from: Option<PathBuf>,
+}
+
+#[allow(dead_code)] // used by the import job (a later task) and the tests
+impl Repository {
+    /// Creates `tracks/.staging-<id>/` (with the marker and an empty `stems/`). Fails if the id
+    /// is invalid, `tracks/<id>` exists, or the staging folder already exists (never reused).
+    /// The caller holds the `RepoState` mutex.
+    pub fn begin_staged_track(&self, id: &str) -> Result<Staging, String> {
+        valid_id(id)?;
+        let tracks = self.tracks_dir();
+        if tracks.symlink_metadata().is_ok() && !is_real_dir(&tracks) {
+            return Err("the tracks folder is not a real folder".into());
+        }
+        fs::create_dir_all(&tracks).map_err(|e| io_err("cannot create tracks folder", e))?;
+        if tracks.join(id).symlink_metadata().is_ok() {
+            return Err(format!("track \"{id}\" already exists"));
+        }
+        let dir = tracks.join(format!("{STAGING_PREFIX}{id}"));
+        fs::create_dir(&dir).map_err(|e| io_err("cannot create the staging folder", e))?;
+        // from here on the folder is ours
+        let r = fsutil::write_atomic(&dir.join(STAGING_MARKER), b"Calliope staging folder\n")
+            .and_then(|()| fs::create_dir(dir.join("stems")));
+        if let Err(e) = r {
+            let _ = fs::remove_file(dir.join(STAGING_MARKER));
+            let _ = fs::remove_dir(dir.join("stems"));
+            let _ = fs::remove_dir(&dir);
+            return Err(io_err("cannot prepare the staging folder", e));
+        }
+        Ok(Staging { tracks, id: id.to_string(), dir, adopted_from: None })
+    }
+
+    /// Removes leftover `tracks/.staging-*` folders, except the one for `keep_id`. Only real
+    /// folders that contain the marker are removed; anything else stays. Returns how many.
+    pub fn clean_stale_staging(&self, keep_id: Option<&str>) -> usize {
+        let tracks = self.tracks_dir();
+        let Ok(rd) = fs::read_dir(&tracks) else { return 0 };
+        let mut removed = 0;
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(id) = name.strip_prefix(STAGING_PREFIX) else { continue };
+            if !track_meta::is_valid_id(id) || keep_id == Some(id) {
+                continue;
+            }
+            if remove_staging_dir(&tracks.join(&name)) {
+                removed += 1;
+            }
+        }
+        removed
+    }
+}
+
+/// Removes `dir` if it is a real folder holding the staging marker. True if removed.
+fn remove_staging_dir(dir: &Path) -> bool {
+    if !is_real_dir(dir) || !is_real_file(&dir.join(STAGING_MARKER)) {
+        return false;
+    }
+    // remove_dir_all does not follow symlinks it meets inside
+    fs::remove_dir_all(dir).is_ok()
+}
+
+#[allow(dead_code)] // used by the import job (a later task) and the tests
+impl Staging {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    fn stem_file(&self, name: &str, suffix: &str) -> Result<PathBuf, String> {
+        if !track_meta::is_valid_stem_name(name) {
+            return Err(format!("invalid stem name \"{name}\""));
+        }
+        Ok(self.dir.join("stems").join(format!("{name}.flac{suffix}")))
+    }
+
+    /// `stems/<name>.flac.part`: where a stem is downloaded to (the name is validated).
+    pub fn stem_part_path(&self, name: &str) -> Result<PathBuf, String> {
+        self.stem_file(name, ".part")
+    }
+
+    /// Renames `stems/<name>.flac.part` to `stems/<name>.flac` (never replacing a file).
+    pub fn finish_stem(&self, name: &str) -> Result<PathBuf, String> {
+        let part = self.stem_file(name, ".part")?;
+        let done = self.stem_file(name, "")?;
+        if done.symlink_metadata().is_ok() {
+            return Err(format!("stem \"{name}\" already exists"));
+        }
+        fs::rename(&part, &done).map_err(|e| io_err(&format!("cannot finish stem \"{name}\""), e))?;
+        Ok(done)
+    }
+
+    /// Moves the job's `audio.flac` into the staging folder as `original.flac` (a rename on
+    /// the same file system; nothing is copied or left behind). `abandon` moves it back.
+    pub fn adopt_original(&mut self, src: &Path) -> Result<(), String> {
+        if self.adopted_from.is_some() {
+            return Err("the original was already adopted".into());
+        }
+        if !is_real_file(src) {
+            return Err(format!("{} is not a file", src.display()));
+        }
+        let dest = self.dir.join(ORIGINAL_NAME);
+        if dest.symlink_metadata().is_ok() {
+            return Err("original.flac already exists in the staging folder".into());
+        }
+        fs::rename(src, &dest).map_err(|e| io_err("cannot move the original into the track", e))?;
+        self.adopted_from = Some(src.to_path_buf());
+        Ok(())
+    }
+
+    /// Finishes the track: validates `meta` strictly (its id must be this one), checks that
+    /// every listed file is there, writes `track.json` atomically, removes the marker and
+    /// renames the folder to `tracks/<id>` (refused if that exists). On any error the staging
+    /// folder stays (marker restored) so the caller can `abandon` it. The caller holds the
+    /// `RepoState` mutex.
+    pub fn commit(&self, meta: &TrackMeta) -> Result<TrackRecord, String> {
+        if meta.id != self.id {
+            return Err("track.json id does not match the staging folder".into());
+        }
+        track_meta::validate_for_write(meta)?;
+        for name in track_files(meta) {
+            if !is_real_file(&self.dir.join(&name)) {
+                return Err(format!("{name} is missing from the new track"));
+            }
+        }
+        let final_dir = self.tracks.join(&self.id);
+        if final_dir.symlink_metadata().is_ok() {
+            return Err(format!("track \"{}\" already exists", self.id));
+        }
+        fsutil::write_atomic(&self.dir.join(TRACK_FILE), track_meta::to_json_pretty(meta).as_bytes())
+            .map_err(|e| io_err("cannot write track.json", e))?;
+        let marker = self.dir.join(STAGING_MARKER);
+        fs::remove_file(&marker).map_err(|e| io_err("cannot finish the staging folder", e))?;
+        if let Err(e) = fs::rename(&self.dir, &final_dir) {
+            let _ = fsutil::write_atomic(&marker, b"Calliope staging folder\n");
+            let _ = fs::remove_file(self.dir.join(TRACK_FILE));
+            return Err(io_err("cannot create the track folder", e));
+        }
+        let repo = Repository { root: self.tracks.parent().map(Path::to_path_buf).unwrap_or_default() };
+        repo.load_record(&self.id)
+    }
+
+    /// Throws the staging folder away. An adopted original is moved back first; if that fails
+    /// (or its place was taken) nothing is removed and an error says where the file is.
+    pub fn abandon(self) -> Result<(), String> {
+        if !is_real_dir(&self.dir) || !is_real_file(&self.dir.join(STAGING_MARKER)) {
+            return Err("the staging folder is not Calliope's own; left alone".into());
+        }
+        if let Some(src) = &self.adopted_from {
+            let held = self.dir.join(ORIGINAL_NAME);
+            if is_real_file(&held) {
+                if src.symlink_metadata().is_ok() {
+                    return Err(format!(
+                        "cannot move the original back: {} exists; it stays in {}",
+                        src.display(),
+                        self.dir.display()
+                    ));
+                }
+                fs::rename(&held, src).map_err(|e| {
+                    io_err(&format!("cannot move the original back; it stays in {}", self.dir.display()), e)
+                })?;
+            }
+        }
+        if remove_staging_dir(&self.dir) {
+            Ok(())
+        } else {
+            Err("cannot remove the staging folder".into())
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "repository_tests.rs"]
 mod tests;

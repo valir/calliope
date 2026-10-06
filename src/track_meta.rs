@@ -241,7 +241,7 @@ pub fn validate_for_read(meta: &TrackMeta) -> Result<(), String> {
 }
 
 /// `^[a-z0-9][a-z0-9_-]{0,31}$`
-fn is_valid_stem_name(name: &str) -> bool {
+pub fn is_valid_stem_name(name: &str) -> bool {
     let mut chars = name.chars();
     match chars.next() {
         Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit() => {}
