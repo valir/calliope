@@ -87,7 +87,7 @@
   {/if}
 
   {#if imp.error}
-    <p id="import-error" role="alert" class="text-sm text-primary">{imp.error}</p>
+    <p id="import-error" role="alert" class="text-sm text-amber-700 dark:text-primary">{imp.error}</p>
   {/if}
 
   {#if imp.prompt}

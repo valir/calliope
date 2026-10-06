@@ -10,6 +10,14 @@
 
   let keepOriginal = $state<boolean | null>(null);
   let confirmOpen = $state(false);
+  let errorEl = $state<HTMLElement | null>(null);
+
+  // At small window sizes the message sits below the fold: scroll it into view when it appears.
+  $effect(() => {
+    void keepOriginal; // the "original mix" line above appears late and moves the message down
+    const el = errorEl;
+    if (el) requestAnimationFrame(() => el.scrollIntoView?.({ block: 'nearest' }));
+  });
 
   onMount(async () => {
     try {
@@ -58,7 +66,7 @@
   {#if keepOriginal !== null}
     <p class="text-sm text-muted-foreground">
       {keepOriginal ? 'The original mix will be kept' : 'The original mix will not be kept'}
-      <Button variant="link" size="sm" class="h-auto px-1" onclick={() => {
+      <Button variant="link" size="sm" class="h-auto px-1 text-amber-700 dark:text-primary" onclick={() => {
         ui.settingsTarget = 'stem';
         ui.view = 'settings';
       }}>Change in Settings</Button>
@@ -66,7 +74,7 @@
   {/if}
 
   {#if imp.extractError}
-    <p role="alert" class="text-sm text-primary">{imp.extractError}</p>
+    <p bind:this={errorEl} role="alert" class="text-sm text-amber-700 dark:text-primary">{imp.extractError}</p>
   {/if}
 
   <div class="flex gap-2">

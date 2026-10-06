@@ -32,11 +32,11 @@
     <Card.Description>Programs Calliope uses to download and prepare audio.</Card.Description>
   </Card.Header>
   <Card.Content class="flex flex-col gap-2">
-    {#if error}<p role="alert" class="text-primary">{error}</p>{/if}
+    {#if error}<p role="alert" class="text-amber-700 dark:text-primary">{error}</p>{/if}
     {#each rows as r (r.name)}
       <p data-testid="tool-{r.name}">
         <span class="font-mono">{r.name}</span>:
-        <span class={r.info.ok ? 'text-muted-foreground' : 'text-primary'}>{line(r.info)}</span>
+        <span class={r.info.ok ? 'text-muted-foreground' : 'text-amber-700 dark:text-primary'}>{line(r.info)}</span>
       </p>
     {/each}
   </Card.Content>

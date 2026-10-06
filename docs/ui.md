@@ -116,3 +116,9 @@
 - Library keys: Ctrl+F search, ↓ from search into the tree, arrows in the tree, Ctrl+E edit,
   Ctrl+S save, Escape cancels editing.
 - Settings order: Appearance, Track repository, MIDI interface, Audio output, Edge-AI server.
+- (gui-stem-extraction, task 22) Message text in the accent colour (import errors, edge-AI/tool
+  problems, the "Change in Settings" link) uses `text-amber-700` in the light theme and
+  `text-primary` (amber-500) in the dark theme, because amber-500 on white is only about 2:1.
+  Buttons and badges keep amber-500 fill with dark text in both themes. A failed extraction
+  scrolls its message into view (it sits below the fold at 1024x640). The switch's off state has a
+  muted border so it stays visible on dark cards.

@@ -27,3 +27,19 @@ task 20 | Settings Stem extraction + External tools cards, footer edge-AI status
   - follow-up: footer edge-AI status not refreshed from job results (plan §2.7)
 task 21 | GUI e2e import tests on :1 in a loopback-only namespace (13 tests, disk checks) | implementer | done (2 full runs green; real ~/.config etc. fingerprint unchanged)
   - follow-ups: import e2e navigates by Tab from a fixed click point (log-awaited); added frontend log lines for UI-side import errors/prompts
+task 22 | Visual review on :1 | implementer | done (4 fixes; checklist below, all PASS after the fixes)
+  - method: temporary scratch test (not committed) ran the real app + calliope-stems stub in unshare -rn, theme dark/light, sizes 1024x640, 1280x800 and maximised 1920x1200; shots in target/gui-shots/review-<theme>-<ok|fail>-<step>-<1024|1280|max>.png, plus Task 21's import-*.png (dark, 1280x800)
+  - PASS Import source page (URL / audio), dark+light, 1024+max: target/gui-shots/review-dark-ok-source-url-1024.png, review-light-ok-source-audio-1024.png
+  - PASS edit pane, dark+light (scrolls at 1024x640, Extract/Cancel reachable; fully visible at 1280x800 and max): review-dark-ok-edit-1024.png, review-light-ok-edit-1024.png, review-dark-ok-edit-max.png
+  - PASS "Working..." spinner + percentage + Cancel, dark+light: review-dark-ok-working-1024.png, review-light-ok-working-1024.png; download progress bar: import-downloading.png; resume prompt: import-resume-prompt.png
+  - PASS done state "Saved ... with 6 stems" + Show in Library, dark+light: review-dark-ok-done-1024.png, review-light-ok-done-1024.png
+  - FAIL then PASS failed state: (a) light theme: amber-500 error text on white was ~2:1; fixed with text-amber-700 in light, text-primary in dark (import errors, Settings alerts and tool/edge-AI problem lines, "Change in Settings" link): review-light-fail-failed-1280.png; (b) at 1024x640 the message sat below the fold and the user saw only the footer; fixed: ImportEditPane scrolls the message into view (rAF, re-run when the keep-original line appears): review-dark-fail-failed-1024.png, review-light-fail-failed-1024.png
+  - PASS Library stem track (S badge, selected row, detail pane), dark+light: review-dark-ok-library-stem-track-1024.png, review-light-ok-library-stem-track-1024.png
+  - FAIL then PASS Settings cards (Stem extraction, External tools), dark+light, 1024 scrolled and max: review-dark-ok-settings-scrolled-1024.png, review-light-ok-settings-scrolled-1024.png, review-dark-ok-settings-max.png; the switch's off state was faint on dark cards, fixed with a muted border (switch.svelte)
+  - PASS nothing clipped at 1024x640/1280x800/max in any state (only the intended scroll); inline URL error: import-url-invalid.png
+  - notes: webview sometimes repaints late after a window resize (a black margin in one max shot: review-dark-fail-failed-max.png), harness timing, not an app issue; light-theme shots of the download/resume prompt were not taken (same components as the checked ones); the fail-state flow was only captured at 1024x640 start size
+  - docs/ui.md "Decided by the team" updated with the choices; npm test (588 Rust + 248 vitest) and DISPLAY=:1 npm run test:gui (5+13+8+1) green
+task 23 | Licences and READMEs | implementer | done
+  - tests/frontend.rs: licence_record_lists_every_direct_dependency now reads every workspace member's Cargo.toml (and [target.*.dependencies]); docs/licences.md already had the crate rows, now also External tools (not bundled), Test-only tools, shadcn progress/switch
+  - htdemucs_6s weights licence could not be determined from local files: recorded as "to be confirmed by the owner" (also the Demucs LICENSE file is not shipped inside audio-separator)
+  - README.md Import section; src/calliope-stems/README.md; src/calliope-stems/deploy/calliope-stems.service (systemd-analyze verify --user: only "ExecStart not executable", the binary is not installed). Nothing installed or started.

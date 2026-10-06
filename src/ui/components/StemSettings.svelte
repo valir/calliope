@@ -103,12 +103,12 @@
         <Button variant="outline" disabled={busy || saved === ''} onclick={test}>Test connection</Button>
       </div>
       {#if error}
-        <p role="alert" class="text-primary">{error}</p>
+        <p role="alert" class="text-amber-700 dark:text-primary">{error}</p>
       {/if}
       {#if status}
         <p
           data-testid="edge-ai-status"
-          class={status.state === 'connected' || status.state === 'not-configured' ? 'text-muted-foreground' : 'text-primary'}
+          class={status.state === 'connected' || status.state === 'not-configured' ? 'text-muted-foreground' : 'text-amber-700 dark:text-primary'}
         >
           {status.message}
         </p>
