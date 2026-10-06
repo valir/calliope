@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "0199c0a0-0000-7000-8000-000000000001",
+  "band": "Amber Fields",
+  "album": "Northern Roads",
+  "title": "Slow Burn",
+  "composers": [
+    "Ann Example",
+    "Bo Sample"
+  ],
+  "year": 2019,
+  "source_url": "https://example.org/slow-burn",
+  "copyright": "© 2019 Amber Fields (fixture)",
+  "audio": "backing.mp3",
+  "tablatures": [
+    "slow-burn.gp5",
+    "slow-burn-solo.gp"
+  ],
+  "imported": "2026-10-01T12:00:00Z",
+  "modified": "2026-10-01T12:00:00Z"
+}

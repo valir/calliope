@@ -219,7 +219,7 @@ fn scan_reports_problems_without_failing() {
     fs::copy(tracks.join("orig/track.json"), tracks.join("copy/track.json")).unwrap();
     // newer schema
     fs::create_dir(tracks.join("newer")).unwrap();
-    fs::write(tracks.join("newer/track.json"), r#"{"schema_version": 2, "id": "newer"}"#).unwrap();
+    fs::write(tracks.join("newer/track.json"), r#"{"schema_version": 3, "id": "newer"}"#).unwrap();
     // invalid folder name, missing track.json, dot folder, stray file
     fs::create_dir(tracks.join("bad name")).unwrap();
     fs::create_dir(tracks.join("empty")).unwrap();
@@ -481,7 +481,7 @@ fn hand_edited_and_newer_tracks_are_never_rewritten() {
     let env = Env::new();
     let rec = env.track("aaa", &[]);
     let p = env.dir("aaa").join("track.json");
-    let newer = fs::read_to_string(&p).unwrap().replace("\"schema_version\": 1", "\"schema_version\": 2");
+    let newer = fs::read_to_string(&p).unwrap().replace("\"schema_version\": 2", "\"schema_version\": 3");
     fs::write(&p, &newer).unwrap();
     let l = env.lookup();
     assert!(env.repo.save_track(req(&rec, vec![]), &l).is_err());
@@ -633,4 +633,273 @@ fn cut_bytes_respects_char_boundaries() {
     assert_eq!(cut_bytes("abc", 5), "abc");
     assert_eq!(cut_bytes("日日日", 4), "日");
     assert_eq!(cut_bytes("éé", 3), "é");
+}
+
+// ---------- schema v2: stems, original, never-rewrite guarantee ----------
+
+const V1_A: &str = "0199c0a0-0000-7000-8000-000000000001";
+const V1_B: &str = "0199c0a0-0000-7000-8000-000000000002";
+const V2_BACKING: &str = "0199c0a0-0000-7000-8000-000000000003";
+const STEM_ID: &str = "0199c0a0-0000-7000-8000-000000000101";
+const STEM_NAMES: [&str; 6] = ["vocals", "drums", "bass", "guitar", "piano", "other"];
+
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for e in fs::read_dir(from).unwrap().flatten() {
+        let dest = to.join(e.file_name());
+        if e.path().is_dir() {
+            copy_tree(&e.path(), &dest);
+        } else {
+            fs::copy(e.path(), dest).unwrap();
+        }
+    }
+}
+
+/// Every file under `dir` with its bytes.
+fn snapshot(dir: &Path) -> BTreeMap<String, Vec<u8>> {
+    fn walk(base: &Path, d: &Path, m: &mut BTreeMap<String, Vec<u8>>) {
+        for e in fs::read_dir(d).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                m.insert(format!("{}/", p.strip_prefix(base).unwrap().display()), Vec::new());
+                walk(base, &p, m);
+            } else {
+                m.insert(p.strip_prefix(base).unwrap().to_string_lossy().into_owned(), fs::read(&p).unwrap());
+            }
+        }
+    }
+    let mut m = BTreeMap::new();
+    walk(dir, dir, &mut m);
+    m
+}
+
+/// A copy of `tests/fixtures/library-v2` plus an "outside" folder that must stay unchanged.
+struct V2 {
+    _tmp: TempDir,
+    outside: PathBuf,
+    outside_before: BTreeMap<String, Vec<u8>>,
+    repo: Repository,
+}
+
+impl V2 {
+    fn new() -> V2 {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("library");
+        let outside = tmp.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("ORIGINAL.flac"), b"not the original").unwrap();
+        fs::write(outside.join("notes.gp5"), b"NOTES").unwrap();
+        copy_tree(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-v2"), &root);
+        let outside_before = snapshot(&outside);
+        V2 { _tmp: tmp, outside, outside_before, repo: Repository::new(root) }
+    }
+    fn dir(&self, id: &str) -> PathBuf {
+        self.repo.root.join("tracks").join(id)
+    }
+    fn record(&self, id: &str) -> TrackRecord {
+        self.repo.scan().tracks.into_iter().find(|t| t.id == id).unwrap()
+    }
+}
+
+impl Drop for V2 {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            assert_eq!(snapshot(&self.outside), self.outside_before, "the outside folder changed");
+        }
+    }
+}
+
+#[test]
+fn fixture_library_v2_scans_clean() {
+    let v = V2::new();
+    let lib = v.repo.scan();
+    assert!(lib.problems.is_empty(), "{:?}", lib.problems);
+    assert_eq!(lib.tracks.len(), 4);
+    assert!(lib.tracks.iter().all(|t| t.missing.is_empty()), "{:?}", lib.tracks);
+    let types: Vec<_> = lib.tracks.iter().map(|t| (t.id.as_str(), t.track_type)).collect();
+    assert_eq!(
+        types,
+        vec![
+            (V1_A, TrackType::Backing),
+            (V1_B, TrackType::Backing),
+            (V2_BACKING, TrackType::Backing),
+            (STEM_ID, TrackType::Stem)
+        ]
+    );
+}
+
+#[test]
+fn scan_list_export_never_rewrite_any_track_json() {
+    let v = V2::new();
+    let before = snapshot(&v.repo.root);
+    for _ in 0..2 {
+        let lib = v.repo.scan();
+        assert_eq!(lib.tracks.len(), 4);
+    }
+    let dest = tempfile::tempdir().unwrap();
+    for id in [V1_A, V1_B, V2_BACKING, STEM_ID] {
+        v.repo.export_track(id, dest.path()).unwrap();
+    }
+    v.repo.export_tablature(V1_A, "slow-burn.gp5", &dest.path().join("t.gp5")).unwrap();
+    assert_eq!(snapshot(&v.repo.root), before, "every byte of the repository is unchanged");
+}
+
+#[test]
+fn v1_revision_is_the_hash_of_its_bytes_and_is_migrated_in_memory() {
+    let v = V2::new();
+    let bytes = fs::read(v.dir(V1_A).join("track.json")).unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains("\"schema_version\": 1"));
+    let rec = v.record(V1_A);
+    assert_eq!(rec.revision, crate::fsutil::fnv1a64_hex(&bytes));
+    assert_eq!(rec.track_type, TrackType::Backing);
+    assert_eq!(rec.audio.as_deref(), Some("backing.mp3"));
+    assert!(rec.stems.is_empty() && rec.original.is_none() && rec.stem_model.is_none());
+    let v2 = fs::read(v.dir(V2_BACKING).join("track.json")).unwrap();
+    assert_eq!(v.record(V2_BACKING).revision, crate::fsutil::fnv1a64_hex(&v2));
+}
+
+#[test]
+fn saving_a_v1_track_writes_schema_2_and_keeps_unknown_fields() {
+    let v = V2::new();
+    let p = v.dir(V1_A).join("track.json");
+    let mut j: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+    j["x_note"] = "keep me".into();
+    fs::write(&p, serde_json::to_vec_pretty(&j).unwrap()).unwrap();
+    let other_before = fs::read(v.dir(V1_B).join("track.json")).unwrap();
+    let rec = v.record(V1_A);
+    let mut r = req(&rec, vec![keep("slow-burn.gp5"), keep("slow-burn-solo.gp")]);
+    r.edits.title = "Slow Burn (edit)".into();
+    let res = v.repo.save_track(r, &|_| None).unwrap();
+    assert_eq!(res.track.track_type, TrackType::Backing);
+    let j: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+    assert_eq!(j["schema_version"], 2);
+    assert_eq!(j["type"], "backing");
+    assert_eq!(j["stems"], serde_json::json!([]));
+    assert_eq!(j["x_note"], "keep me");
+    assert_eq!(j["title"], "Slow Burn (edit)");
+    assert_eq!(j["audio"], "backing.mp3");
+    // another v1 track is untouched by that save
+    assert_eq!(fs::read(v.dir(V1_B).join("track.json")).unwrap(), other_before);
+}
+
+#[test]
+fn stem_track_lists_six_stems_and_the_original() {
+    let v = V2::new();
+    let rec = v.record(STEM_ID);
+    assert_eq!(rec.track_type, TrackType::Stem);
+    assert_eq!(rec.audio, None);
+    assert_eq!(rec.original.as_deref(), Some("original.flac"));
+    assert_eq!(rec.stem_model.as_deref(), Some("htdemucs_6s"));
+    let names: Vec<&str> = rec.stems.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, STEM_NAMES);
+    assert!(rec.stems.iter().all(|s| s.file == format!("stems/{}.flac", s.name)));
+    assert!(rec.missing.is_empty());
+}
+
+#[test]
+fn missing_reports_a_deleted_stem_and_original() {
+    let v = V2::new();
+    fs::remove_file(v.dir(STEM_ID).join("stems/drums.flac")).unwrap();
+    fs::remove_file(v.dir(STEM_ID).join("original.flac")).unwrap();
+    let rec = v.record(STEM_ID);
+    assert_eq!(rec.missing, vec!["original.flac", "stems/drums.flac"]);
+    let dest = tempfile::tempdir().unwrap();
+    let e = v.repo.export_track(STEM_ID, dest.path()).unwrap_err();
+    assert!(e.contains("stems/drums.flac") && e.contains("original.flac"), "{e}");
+    assert_eq!(fs::read_dir(dest.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn export_copies_stems_and_original() {
+    let v = V2::new();
+    let dest = tempfile::tempdir().unwrap();
+    let out = v.repo.export_track(STEM_ID, dest.path()).unwrap();
+    assert_eq!(out.file_name().unwrap(), "The Example Band - Test Pressings - Glass Harbour");
+    let src = snapshot(&v.dir(STEM_ID));
+    assert_eq!(snapshot(&out), src);
+    assert!(out.join("stems/vocals.flac").is_file() && out.join("original.flac").is_file());
+    assert_eq!(src.keys().filter(|k| k.starts_with("stems/") && k.ends_with(".flac")).count(), 6);
+}
+
+#[test]
+fn failed_stem_export_leaves_nothing_behind() {
+    let v = V2::new();
+    fs::remove_file(v.dir(STEM_ID).join("stems/other.flac")).unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    assert!(v.repo.export_track(STEM_ID, dest.path()).is_err());
+    assert_eq!(fs::read_dir(dest.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn deleting_a_stem_track_moves_the_whole_folder_to_the_trash() {
+    let v = V2::new();
+    let before = snapshot(&v.dir(STEM_ID));
+    let rec = v.record(STEM_ID);
+    v.repo.delete_track(STEM_ID, &rec.revision).unwrap();
+    assert!(!v.dir(STEM_ID).exists());
+    let trash: Vec<_> = fs::read_dir(v.repo.root.join("trash")).unwrap().flatten().collect();
+    assert_eq!(trash.len(), 1);
+    assert_eq!(snapshot(&trash[0].path()), before);
+}
+
+#[test]
+fn saving_a_stem_track_keeps_audio_original_and_stems_verbatim() {
+    let v = V2::new();
+    let files_before = snapshot(&v.dir(STEM_ID));
+    let rec = v.record(STEM_ID);
+    let mut r = req(&rec, vec![TabEntry::Add { token: "t".into() }]);
+    r.edits.title = "Glass Harbour (edit)".into();
+    let notes = v.outside.join("notes.gp5");
+    let res = v.repo.save_track(r, &|t| (t == "t").then(|| notes.clone())).unwrap();
+    let t = res.track;
+    assert_eq!((t.track_type, &t.audio, &t.original), (TrackType::Stem, &None, &rec.original));
+    assert_eq!(t.stems, rec.stems);
+    assert_eq!(t.stem_model, rec.stem_model);
+    assert_eq!(t.tablatures, vec!["notes.gp5"]);
+    let after = snapshot(&v.dir(STEM_ID));
+    for (k, bytes) in &files_before {
+        if k != "track.json" {
+            assert_eq!(after.get(k), Some(bytes), "{k}");
+        }
+    }
+    let j: serde_json::Value = serde_json::from_slice(&after["track.json"]).unwrap();
+    assert_eq!(j["schema_version"], 2);
+    assert_eq!(j["type"], "stem");
+    assert!(j["audio"].is_null());
+    assert_eq!(j["original"], "original.flac");
+}
+
+#[test]
+fn a_tablature_cannot_take_the_name_of_the_original_or_a_stem() {
+    let v = V2::new();
+    let rec = v.record(STEM_ID);
+    let before = snapshot(&v.dir(STEM_ID));
+    let clash = v.outside.join("ORIGINAL.flac");
+    let r = req(&rec, vec![TabEntry::Add { token: "t".into() }]);
+    let e = v.repo.save_track(r, &|_| Some(clash.clone())).unwrap_err();
+    assert!(e.contains("clashes"), "{e}");
+    assert_eq!(snapshot(&v.dir(STEM_ID)), before);
+}
+
+#[test]
+fn unknown_track_type_and_bad_stem_files_are_problems_never_rewritten() {
+    let v = V2::new();
+    let p = v.dir(STEM_ID).join("track.json");
+    let good = fs::read_to_string(&p).unwrap();
+    for (from, to) in [
+        ("\"type\": \"stem\"", "\"type\": \"video\""),
+        ("stems/vocals.flac", "stems/../vocals.flac"),
+        ("\"stems/drums.flac\"", "\"drums.flac\""),
+    ] {
+        let bad = good.replace(from, to);
+        assert_ne!(bad, good);
+        fs::write(&p, &bad).unwrap();
+        let lib = v.repo.scan();
+        assert_eq!(lib.tracks.len(), 3, "{to}");
+        assert_eq!(lib.problems.len(), 1, "{to}");
+        assert_eq!(fs::read_to_string(&p).unwrap(), bad);
+        let rec = TrackRecord { id: STEM_ID.into(), ..v.record(V2_BACKING) };
+        assert!(v.repo.save_track(req(&rec, vec![]), &|_| None).is_err());
+        assert_eq!(fs::read_to_string(&p).unwrap(), bad);
+    }
 }

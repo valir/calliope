@@ -1,0 +1,28 @@
+{
+  "schema_version": 2,
+  "id": "0199c0a0-0000-7000-8000-000000000101",
+  "type": "stem",
+  "band": "The Example Band",
+  "album": "Test Pressings",
+  "title": "Glass Harbour",
+  "composers": [
+    "Ann Example"
+  ],
+  "year": 2021,
+  "source_url": "https://media.example/watch?v=abc",
+  "copyright": null,
+  "audio": null,
+  "original": "original.flac",
+  "stems": [
+    {"name": "vocals", "file": "stems/vocals.flac"},
+    {"name": "drums", "file": "stems/drums.flac"},
+    {"name": "bass", "file": "stems/bass.flac"},
+    {"name": "guitar", "file": "stems/guitar.flac"},
+    {"name": "piano", "file": "stems/piano.flac"},
+    {"name": "other", "file": "stems/other.flac"}
+  ],
+  "stem_model": "htdemucs_6s",
+  "tablatures": [],
+  "imported": "2026-10-06T18:00:00Z",
+  "modified": "2026-10-06T18:00:00Z"
+}

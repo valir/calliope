@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "id": "0199c0a0-0000-7000-8000-000000000003",
+  "type": "backing",
+  "band": "Copper Hill",
+  "album": "Second Edition",
+  "title": "Plain Backing",
+  "composers": [],
+  "year": 2022,
+  "source_url": null,
+  "copyright": null,
+  "audio": "backing.mp3",
+  "original": null,
+  "stems": [],
+  "stem_model": null,
+  "tablatures": [],
+  "imported": "2026-10-02T09:00:00Z",
+  "modified": "2026-10-02T09:00:00Z"
+}

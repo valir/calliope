@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::fsutil;
-use crate::track_meta::{self, TrackEdits, TrackMeta};
+use crate::track_meta::{self, StemEntry, TrackEdits, TrackMeta, TrackType};
 
 pub const MARKER: &str = "calliope-repository.json";
 pub const REPO_SCHEMA: u64 = 1;
@@ -35,6 +35,8 @@ pub enum RepoStatus {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TrackRecord {
     pub id: String,
+    #[serde(rename = "type")]
+    pub track_type: TrackType,
     pub band: String,
     pub album: String,
     pub title: String,
@@ -42,7 +44,10 @@ pub struct TrackRecord {
     pub year: Option<i64>,
     pub source_url: Option<String>,
     pub copyright: Option<String>,
-    pub audio: String,
+    pub audio: Option<String>,
+    pub original: Option<String>,
+    pub stems: Vec<StemEntry>,
+    pub stem_model: Option<String>,
     pub tablatures: Vec<String>,
     pub imported: String,
     pub modified: String,
@@ -178,6 +183,15 @@ struct Loaded {
     revision: String,
 }
 
+/// Every file a track lists, relative to its folder: audio, original, stems, tablatures.
+fn track_files(m: &TrackMeta) -> Vec<String> {
+    let mut v: Vec<String> = m.audio.iter().cloned().collect();
+    v.extend(m.original.iter().cloned());
+    v.extend(m.stems.iter().map(|s| s.file.clone()));
+    v.extend(m.tablatures.iter().cloned());
+    v
+}
+
 impl Repository {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
@@ -223,13 +237,13 @@ impl Repository {
 
     fn record(dir: &Path, l: Loaded) -> TrackRecord {
         let m = l.meta;
-        let missing = std::iter::once(&m.audio)
-            .chain(m.tablatures.iter())
+        let missing = track_files(&m)
+            .into_iter()
             .filter(|n| !dir.join(n).is_file())
-            .cloned()
             .collect();
         TrackRecord {
             id: m.id,
+            track_type: m.track_type,
             band: m.band,
             album: m.album,
             title: m.title,
@@ -238,6 +252,9 @@ impl Repository {
             source_url: m.source_url,
             copyright: m.copyright,
             audio: m.audio,
+            original: m.original,
+            stems: m.stems,
+            stem_model: m.stem_model,
             tablatures: m.tablatures,
             imported: m.imported,
             modified: m.modified,
@@ -292,6 +309,7 @@ impl Repository {
         let meta = TrackMeta {
             schema_version: track_meta::CURRENT_SCHEMA,
             id: id.clone(),
+            track_type: track_meta::TrackType::Backing,
             band: e.band.trim().to_string(),
             album: e.album.trim().to_string(),
             title: e.title.trim().to_string(),
@@ -299,14 +317,17 @@ impl Repository {
             year: e.year,
             source_url: e.source_url.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
             copyright: e.copyright.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-            audio: new.audio_name.clone(),
+            audio: Some(new.audio_name.clone()),
+            original: None,
+            stems: Vec::new(),
+            stem_model: None,
             tablatures: new.tablatures.iter().map(|(n, _)| n.clone()).collect(),
             imported: now.clone(),
             modified: now,
             extra: Default::default(),
         };
         track_meta::validate_for_write(&meta)?;
-        let mut files: Vec<(&str, &Path)> = vec![(meta.audio.as_str(), audio_src)];
+        let mut files: Vec<(&str, &Path)> = vec![(new.audio_name.as_str(), audio_src)];
         files.extend(new.tablatures.iter().map(|(n, p)| (n.as_str(), p.as_path())));
         for (_, src) in &files {
             if !src.is_file() {
@@ -401,7 +422,13 @@ impl Repository {
                 }
             }
         }
-        let mut seen: Vec<String> = vec![old.audio.to_lowercase()];
+        let mut seen: Vec<String> = old
+            .audio
+            .iter()
+            .chain(old.original.iter())
+            .chain(old.stems.iter().map(|s| &s.file))
+            .map(|a| a.to_lowercase())
+            .collect();
         for p in &plan {
             fsutil::validate_file_name(&p.name)?;
             let lower = p.name.to_lowercase();
@@ -520,8 +547,8 @@ impl Repository {
         if inside_root(&self.root, dest_parent) {
             return Err("cannot export into the repository folder".into());
         }
-        let mut names = vec![TRACK_FILE.to_string(), m.audio.clone()];
-        names.extend(m.tablatures.iter().cloned());
+        let mut names = vec![TRACK_FILE.to_string()];
+        names.extend(track_files(&m));
         let missing: Vec<&String> = names.iter().filter(|n| !dir.join(n).is_file()).collect();
         if !missing.is_empty() {
             return Err(format!(
@@ -541,11 +568,21 @@ impl Repository {
         let dest = fsutil::create_unique_dir(dest_parent, &folder)
             .map_err(|e| io_err("cannot create the export folder", e))?;
         let mut created: Vec<PathBuf> = Vec::new();
+        let mut made_stems = false;
         for n in &names {
             let target = dest.join(n);
-            if let Err(e) = fsutil::copy_no_clobber(&dir.join(n), &target) {
+            let r = if n.starts_with("stems/") && !made_stems {
+                fs::create_dir(dest.join("stems")).map(|()| made_stems = true)
+            } else {
+                Ok(())
+            }
+            .and_then(|()| fsutil::copy_no_clobber(&dir.join(n), &target));
+            if let Err(e) = r {
                 for f in created {
                     let _ = fs::remove_file(f);
+                }
+                if made_stems {
+                    let _ = fs::remove_dir(dest.join("stems"));
                 }
                 let _ = fs::remove_dir(&dest);
                 return Err(io_err(&format!("cannot export \"{n}\""), e));

@@ -143,11 +143,11 @@ fn req1_metadata_has_all_fields_and_version() {
     let j = e.json(ID1);
     for k in [
         "schema_version", "id", "band", "album", "title", "composers", "year", "source_url", "copyright",
-        "audio", "tablatures", "imported", "modified",
+        "type", "audio", "original", "stems", "stem_model", "tablatures", "imported", "modified",
     ] {
         assert!(j.get(k).is_some(), "missing field {k}");
     }
-    assert_eq!(j["schema_version"], 1);
+    assert_eq!(j["schema_version"], 2);
     assert_eq!(j["id"], ID1);
     assert_eq!(j["audio"], "backing.mp3");
     assert_eq!(j["tablatures"], serde_json::json!(["a.gp5"]));
@@ -166,7 +166,7 @@ fn req3_4_5_layout_tracks_dir_one_folder_per_track_relative_names() {
     assert_eq!(lib.tracks.len(), 2);
     assert!(lib.problems.is_empty());
     for t in lib.tracks {
-        assert!(!t.audio.contains('/'));
+        assert!(!t.audio.as_deref().unwrap_or_default().contains('/'));
         assert!(t.tablatures.iter().all(|n| !n.contains('/')));
     }
     e.assert_outside_unchanged();
@@ -623,7 +623,7 @@ fn newer_schema_track_is_a_problem_and_never_rewritten_or_deleted() {
     e.track(ID1, &[]);
     let p = e.dir(ID1).join("track.json");
     let mut j: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
-    j["schema_version"] = 2.into();
+    j["schema_version"] = 3.into();
     j["future_field"] = serde_json::json!({"a": [1,2,3]});
     let bytes = serde_json::to_vec_pretty(&j).unwrap();
     fs::write(&p, &bytes).unwrap();
@@ -633,7 +633,8 @@ fn newer_schema_track_is_a_problem_and_never_rewritten_or_deleted() {
     assert!(lib.problems[0].message.contains("newer"), "{}", lib.problems[0].message);
     let fake = TrackRecord {
         id: ID1.into(), band: "".into(), album: "".into(), title: "T".into(), composers: vec![], year: None,
-        source_url: None, copyright: None, audio: "backing.mp3".into(), tablatures: vec![], imported: "".into(),
+        source_url: None, copyright: None, audio: Some("backing.mp3".into()), tablatures: vec![],
+        track_type: track_meta::TrackType::Backing, original: None, stems: vec![], stem_model: None, imported: "".into(),
         modified: "".into(), revision: fsutil::fnv1a64_hex(&bytes), missing: vec![],
     };
     assert!(e.repo.save_track(e.req(&fake, vec![]), &|_| None).is_err());
@@ -663,7 +664,7 @@ fn unknown_fields_survive_a_save() {
     let t = e.track(ID1, &[]);
     let p = e.dir(ID1).join("track.json");
     let mut j: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
-    j["stems"] = serde_json::json!({"vocals": "stems/v.mp3"});
+    j["future_stems"] = serde_json::json!({"vocals": "stems/v.mp3"});
     j["x_note"] = "keep me".into();
     fs::write(&p, serde_json::to_vec(&j).unwrap()).unwrap();
     let t2 = e.repo.scan().tracks.remove(0);
@@ -671,7 +672,7 @@ fn unknown_fields_survive_a_save() {
     e.repo.save_track(e.req(&t2, vec![]), &|_| None).unwrap();
     let j = e.json(ID1);
     assert_eq!(j["x_note"], "keep me");
-    assert_eq!(j["stems"]["vocals"], "stems/v.mp3");
+    assert_eq!(j["future_stems"]["vocals"], "stems/v.mp3");
 }
 
 #[test]

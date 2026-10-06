@@ -1,10 +1,28 @@
-//! Track metadata (`track.json`, schema version 1): parsing, validation, edits, ids and UTC
+//! Track metadata (`track.json`, schema version 2; version 1 is migrated in memory): parsing, validation, edits, ids and UTC
 //! timestamps. Pure logic, no Tauri. See plan section 2.3.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-pub const CURRENT_SCHEMA: u32 = 1;
+pub const CURRENT_SCHEMA: u32 = 2;
+
+const MAX_STEMS: usize = 16;
+const MAX_STEM_MODEL: usize = 100;
+const STEMS_DIR: &str = "stems/";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrackType {
+    Backing,
+    Stem,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StemEntry {
+    pub name: String,
+    /// Always `stems/<plain file name>`.
+    pub file: String,
+}
 
 const MAX_NAME: usize = 200;
 const MAX_COMPOSERS: usize = 20;
@@ -15,6 +33,8 @@ const MAX_COPYRIGHT: usize = 500;
 pub struct TrackMeta {
     pub schema_version: u32,
     pub id: String,
+    #[serde(rename = "type")]
+    pub track_type: TrackType,
     #[serde(default)]
     pub band: String,
     #[serde(default)]
@@ -28,7 +48,16 @@ pub struct TrackMeta {
     pub source_url: Option<String>,
     #[serde(default)]
     pub copyright: Option<String>,
-    pub audio: String,
+    /// Required for `backing`; may be absent for `stem`.
+    #[serde(default)]
+    pub audio: Option<String>,
+    /// The original full mix kept by the stem import (plain file name).
+    #[serde(default)]
+    pub original: Option<String>,
+    #[serde(default)]
+    pub stems: Vec<StemEntry>,
+    #[serde(default)]
+    pub stem_model: Option<String>,
     #[serde(default)]
     pub tablatures: Vec<String>,
     /// Kept verbatim as read; may be non-canonical, or empty when missing (unknown).
@@ -69,9 +98,18 @@ pub fn new_id() -> String {
     uuid::Uuid::now_v7().hyphenated().to_string()
 }
 
-/// Migration hook: upgrades a value written with schema `from` to `CURRENT_SCHEMA`.
-/// Empty for v1.
-pub fn migrate(value: Value, _from: u32) -> Value {
+/// Upgrades a value written with schema `from` to `CURRENT_SCHEMA`, in memory only (a v1 file
+/// is never rewritten because of this). v1 -> v2 adds `"type": "backing"` and `"stems": []`
+/// where absent and sets `schema_version` 2. The caller has already rejected a v1 `type`
+/// other than `"backing"`.
+pub fn migrate(mut value: Value, from: u32) -> Value {
+    if from < 2 {
+        if let Some(obj) = value.as_object_mut() {
+            obj.entry("type").or_insert_with(|| Value::String("backing".into()));
+            obj.entry("stems").or_insert_with(|| Value::Array(Vec::new()));
+            obj.insert("schema_version".into(), Value::from(2));
+        }
+    }
     value
 }
 
@@ -87,6 +125,13 @@ pub fn parse(bytes: &[u8], dir_name: &str) -> Result<TrackMeta, String> {
     };
     if version > u64::from(CURRENT_SCHEMA) {
         return Err(format!("written by a newer Calliope (schema {version})"));
+    }
+    match obj.get("type") {
+        None if version >= 2 => return Err("missing type".into()),
+        None => {}
+        Some(Value::String(t)) if t == "backing" || (t == "stem" && version >= 2) => {}
+        Some(Value::String(t)) => return Err(format!("unknown track type \"{t}\"")),
+        Some(_) => return Err("unknown track type".into()),
     }
     let value = migrate(value, version as u32);
     let meta: TrackMeta = serde_json::from_value(value).map_err(|e| e.to_string())?;
@@ -148,20 +193,61 @@ pub fn validate_for_read(meta: &TrackMeta) -> Result<(), String> {
     if meta.title.trim().is_empty() {
         return Err("title is empty".into());
     }
-    crate::fsutil::validate_file_name(&meta.audio).map_err(|e| format!("audio: {e}"))?;
     let mut seen: Vec<String> = Vec::new();
-    for t in &meta.tablatures {
-        crate::fsutil::validate_file_name(t).map_err(|e| format!("tablature: {e}"))?;
-        let lower = t.to_lowercase();
-        if lower == meta.audio.to_lowercase() {
-            return Err(format!("tablature \"{t}\" is the audio file"));
-        }
+    let mut claim = |label: &str, name: &str| -> Result<(), String> {
+        let lower = name.to_lowercase();
         if seen.contains(&lower) {
-            return Err(format!("tablature \"{t}\" is listed twice"));
+            return Err(format!("{label} \"{name}\" clashes with another file of the track"));
         }
         seen.push(lower);
+        Ok(())
+    };
+    match (&meta.audio, meta.track_type) {
+        (Some(a), _) => {
+            crate::fsutil::validate_file_name(a).map_err(|e| format!("audio: {e}"))?;
+            claim("audio", a)?;
+        }
+        (None, TrackType::Backing) => return Err("audio is missing".into()),
+        (None, TrackType::Stem) => {}
+    }
+    if let Some(o) = &meta.original {
+        crate::fsutil::validate_file_name(o).map_err(|e| format!("original: {e}"))?;
+        claim("original", o)?;
+    }
+    if meta.track_type == TrackType::Stem && meta.stems.is_empty() {
+        return Err("a stem track has no stems".into());
+    }
+    let mut names: Vec<&str> = Vec::new();
+    for st in &meta.stems {
+        if !is_valid_stem_name(&st.name) {
+            return Err(format!("invalid stem name \"{}\"", st.name));
+        }
+        if names.contains(&st.name.as_str()) {
+            return Err(format!("stem \"{}\" is listed twice", st.name));
+        }
+        names.push(&st.name);
+        let plain = st
+            .file
+            .strip_prefix(STEMS_DIR)
+            .ok_or_else(|| format!("stem file \"{}\" is not inside stems/", st.file))?;
+        crate::fsutil::validate_file_name(plain).map_err(|e| format!("stem file: {e}"))?;
+        claim("stem file", &st.file)?;
+    }
+    for t in &meta.tablatures {
+        crate::fsutil::validate_file_name(t).map_err(|e| format!("tablature: {e}"))?;
+        claim("tablature", t)?;
     }
     Ok(())
+}
+
+/// `^[a-z0-9][a-z0-9_-]{0,31}$`
+fn is_valid_stem_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit() => {}
+        _ => return false,
+    }
+    name.len() <= 32 && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
 /// Strict rules for the user-editable fields (applied when writing).
@@ -191,6 +277,12 @@ fn validate_edit_fields(meta: &TrackMeta) -> Result<(), String> {
     }
     if let Some(c) = &meta.copyright {
         check_text("copyright", c, MAX_COPYRIGHT)?;
+    }
+    if meta.stems.len() > MAX_STEMS {
+        return Err(format!("more than {MAX_STEMS} stems"));
+    }
+    if let Some(m) = &meta.stem_model {
+        check_text("stem_model", m, MAX_STEM_MODEL)?;
     }
     Ok(())
 }
@@ -274,6 +366,42 @@ mod tests {
   "imported": "2026-10-05T14:03:22Z",
   "modified": "2026-10-05T14:10:00Z"
 }"#;
+    const EXAMPLE_V2: &str = r#"{
+  "schema_version": 2,
+  "type": "backing",
+  "id": "0199b3f2-6c1e-7a3b-9d2e-4f5a6b7c8d9e",
+  "band": "Amber Fields",
+  "album": "Northern Roads",
+  "title": "Slow Burn",
+  "composers": ["Ann Example", "Bo Sample"],
+  "year": 2019,
+  "source_url": "https://example.org/slow-burn",
+  "copyright": "© 2019 Amber Fields",
+  "audio": "backing.mp3",
+  "original": null,
+  "stems": [],
+  "stem_model": null,
+  "tablatures": ["slow-burn.gp5", "slow-burn-solo.gp"],
+  "imported": "2026-10-05T14:03:22Z",
+  "modified": "2026-10-05T14:10:00Z"
+}"#;
+    const STEM: &str = r#"{
+  "schema_version": 2,
+  "id": "0199b3f2-6c1e-7a3b-9d2e-4f5a6b7c8d9e",
+  "type": "stem",
+  "band": "The Example Band",
+  "title": "Glass Harbour",
+  "audio": null,
+  "original": "original.flac",
+  "stems": [
+    {"name": "vocals", "file": "stems/vocals.flac"},
+    {"name": "drums", "file": "stems/drums.flac"}
+  ],
+  "stem_model": "htdemucs_6s",
+  "tablatures": ["tab.gp5"],
+  "imported": "2026-10-06T18:00:00Z",
+  "modified": "2026-10-06T18:00:00Z"
+}"#;
     const ID: &str = "0199b3f2-6c1e-7a3b-9d2e-4f5a6b7c8d9e";
 
     fn example() -> TrackMeta {
@@ -298,7 +426,7 @@ mod tests {
         assert_eq!(m.title, "Slow Burn");
         assert_eq!(m.year, Some(2019));
         let back = to_json_pretty(&m);
-        let a: Value = serde_json::from_str(EXAMPLE).unwrap();
+        let a: Value = serde_json::from_str(EXAMPLE_V2).unwrap();
         let b: Value = serde_json::from_str(&back).unwrap();
         assert_eq!(a, b);
         assert_eq!(parse(back.as_bytes(), ID).unwrap(), m);
@@ -315,10 +443,10 @@ mod tests {
 
     #[test]
     fn schema_errors() {
-        let newer = EXAMPLE.replace("\"schema_version\": 1", "\"schema_version\": 2");
+        let newer = EXAMPLE.replace("\"schema_version\": 1", "\"schema_version\": 3");
         assert_eq!(
             parse(newer.as_bytes(), ID).unwrap_err(),
-            "written by a newer Calliope (schema 2)"
+            "written by a newer Calliope (schema 3)"
         );
         let missing = EXAMPLE.replace("\"schema_version\": 1,", "");
         assert_eq!(parse(missing.as_bytes(), ID).unwrap_err(), "missing schema_version");
@@ -327,9 +455,117 @@ mod tests {
     }
 
     #[test]
-    fn migrate_hook_is_identity_for_v1() {
+    fn migrate_v1_adds_type_and_stems() {
         let v: Value = serde_json::from_str(EXAMPLE).unwrap();
-        assert_eq!(migrate(v.clone(), 1), v);
+        let m = migrate(v.clone(), 1);
+        assert_eq!(m["schema_version"], 2);
+        assert_eq!(m["type"], "backing");
+        assert_eq!(m["stems"], serde_json::json!([]));
+        let mut back = m.clone();
+        let o = back.as_object_mut().unwrap();
+        o.remove("type");
+        o.remove("stems");
+        o.insert("schema_version".into(), 1.into());
+        assert_eq!(back, v, "nothing else changed");
+        assert_eq!(migrate(m.clone(), 2), m);
+    }
+
+    #[test]
+    fn v1_sample_becomes_backing_v2() {
+        let m = example();
+        assert_eq!(m.schema_version, 2);
+        assert_eq!(m.track_type, TrackType::Backing);
+        assert_eq!(m.audio.as_deref(), Some("backing.mp3"));
+        assert!(m.stems.is_empty() && m.original.is_none() && m.stem_model.is_none());
+        assert_eq!(m.tablatures, vec!["slow-burn.gp5", "slow-burn-solo.gp"]);
+        assert_eq!(m.copyright.as_deref(), Some("© 2019 Amber Fields"));
+        let out: Value = serde_json::from_str(&to_json_pretty(&m)).unwrap();
+        assert_eq!(out["schema_version"], 2);
+        assert_eq!(out["type"], "backing");
+    }
+
+    #[test]
+    fn v1_with_a_type_key() {
+        let ok = EXAMPLE.replace("\"band\"", "\"type\": \"backing\",\n  \"band\"");
+        assert_eq!(parse(ok.as_bytes(), ID).unwrap().track_type, TrackType::Backing);
+        for t in ["\"stem\"", "\"video\"", "7"] {
+            let bad = EXAMPLE.replace("\"band\"", &format!("\"type\": {t},\n  \"band\""));
+            assert!(parse(bad.as_bytes(), ID).is_err(), "{t}");
+        }
+    }
+
+    #[test]
+    fn v2_stem_track() {
+        let m = parse(STEM.as_bytes(), ID).unwrap();
+        assert_eq!(m.track_type, TrackType::Stem);
+        assert_eq!(m.audio, None);
+        assert_eq!(m.original.as_deref(), Some("original.flac"));
+        assert_eq!(m.stems.len(), 2);
+        assert_eq!(m.stems[1], StemEntry { name: "drums".into(), file: "stems/drums.flac".into() });
+        assert_eq!(m.stem_model.as_deref(), Some("htdemucs_6s"));
+        assert!(validate_for_write(&m).is_ok());
+        let a: Value = serde_json::from_str(STEM).unwrap();
+        let b: Value = serde_json::from_str(&to_json_pretty(&m)).unwrap();
+        assert_eq!(a["stems"], b["stems"]);
+        assert_eq!(b["audio"], Value::Null);
+        assert_eq!(b["type"], "stem");
+    }
+
+    #[test]
+    fn v2_type_rules() {
+        let no_type = EXAMPLE_V2.replace("  \"type\": \"backing\",\n", "");
+        assert_eq!(parse(no_type.as_bytes(), ID).unwrap_err(), "missing type");
+        let odd = EXAMPLE_V2.replace("\"backing\",", "\"video\",");
+        assert_eq!(parse(odd.as_bytes(), ID).unwrap_err(), "unknown track type \"video\"");
+        let no_audio = EXAMPLE_V2.replace("\"audio\": \"backing.mp3\"", "\"audio\": null");
+        assert!(parse(no_audio.as_bytes(), ID).is_err());
+    }
+
+    #[test]
+    fn stem_track_rules() {
+        let bad: [fn(&mut TrackMeta); 12] = [
+            |m| m.stems.clear(),
+            |m| m.stems[0].file = "stems/../x.flac".into(),
+            |m| m.stems[0].file = "stems/a/b.flac".into(),
+            |m| m.stems[0].file = "x.flac".into(),
+            |m| m.stems[0].file = "stems/".into(),
+            |m| m.stems[0].file = "stems/.hidden".into(),
+            |m| m.stems[1].name = "vocals".into(),
+            |m| m.stems[1].file = "stems/VOCALS.flac".into(),
+            |m| m.stems[0].name = "Vocals".into(),
+            |m| m.original = Some("tab.gp5".into()),
+            |m| m.original = Some("a/b.flac".into()),
+            |m| m.audio = Some("ORIGINAL.flac".into()),
+        ];
+        for f in bad {
+            let mut m = parse(STEM.as_bytes(), ID).unwrap();
+            f(&mut m);
+            assert!(validate_for_read(&m).is_err(), "{m:?}");
+        }
+        // write-only limits
+        let mut m = parse(STEM.as_bytes(), ID).unwrap();
+        m.stems = (0..17)
+            .map(|i| StemEntry { name: format!("s{i}"), file: format!("stems/s{i}.flac") })
+            .collect();
+        assert!(validate_for_read(&m).is_ok());
+        assert!(validate_for_write(&m).is_err());
+        m.stems.truncate(16);
+        assert!(validate_for_write(&m).is_ok());
+        m.stem_model = Some("x".repeat(101));
+        assert!(validate_for_read(&m).is_ok());
+        assert!(validate_for_write(&m).is_err());
+        // a backing track may carry the audio file only; original equal to audio is a clash
+        let mut b = example();
+        b.original = Some("Backing.MP3".into());
+        assert!(validate_for_read(&b).is_err());
+    }
+
+    #[test]
+    fn unknown_fields_survive_in_v2_stem() {
+        let text = STEM.replace("\"band\"", "\"future\": 1,\n  \"band\"");
+        let m = parse(text.as_bytes(), ID).unwrap();
+        let back: Value = serde_json::from_str(&to_json_pretty(&m)).unwrap();
+        assert_eq!(back["future"], 1);
     }
 
     #[test]
@@ -352,7 +588,7 @@ mod tests {
             |m| m.year = Some(0),
             |m| m.tablatures = vec!["A.gp5".into(), "a.GP5".into()],
             |m| m.tablatures = vec!["BACKING.mp3".into()],
-            |m| m.audio = "../x.mp3".into(),
+            |m| m.audio = Some("../x.mp3".into()),
             |m| m.modified = "yesterday".into(),
             |m| m.band = " x ".into(),
         ];
