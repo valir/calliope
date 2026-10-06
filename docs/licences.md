@@ -27,6 +27,16 @@ may be chosen. Transitive dependencies are not listed here.
 | `tauri-build` | build-dependency | `2` | 2.7.1 | Apache-2.0 OR MIT | Tauri build script |
 | `tempfile` | dev-dependency | `3` | 3.27.0 | MIT OR Apache-2.0 | temporary folders in tests |
 
+## Rust crates of other workspace members
+
+`calliope-common` (`src/calliope-common/Cargo.toml`, no Tauri/GTK; shared by the GUI and the
+`calliope-stems` server). It also uses `serde`, `serde_json` and `tempfile` (dev) from the table above.
+
+| Name | Kind | Range | Locked | Licence | Purpose |
+|---|---|---|---|---|---|
+| `libc` | dependency (unix) | `0.2` | 0.2.190 | MIT OR Apache-2.0 | `prctl(PR_SET_PDEATHSIG)` and `kill(-pgid)` in the process runner |
+| `ureq` | optional dependency (feature `client`, no TLS) | `3` | 3.4.2 | MIT OR Apache-2.0 | blocking HTTP client for the calliope-stems API |
+
 ## npm packages (`package.json`)
 
 | Name | Kind | Range | Installed | Licence | Purpose |

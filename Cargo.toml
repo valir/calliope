@@ -3,6 +3,12 @@ name = "calliope-gui"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+# The root package is the GUI. Other crates live in src/<crate>/; plain `cargo build` and
+# `npm run build:app` build only the GUI (default-members), the suites use --workspace.
+members = ["src/calliope-common"]
+default-members = ["."]
+
 [[bin]]
 name = "calliope-gui"
 path = "src/main.rs"

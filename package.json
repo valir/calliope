@@ -14,7 +14,7 @@
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "test:ui": "vitest run",
-    "test": "npm run check && npm run test:ui && npm run build && cargo test && cargo clippy --all-targets -- -D warnings",
+    "test": "npm run check && npm run test:ui && npm run build && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
     "test:gui": "npm run build && cargo test --features e2e-hooks --test gui_smoke --test gui_e2e --test gui_library_e2e -- --ignored --test-threads=1"
   },
   "dependencies": {

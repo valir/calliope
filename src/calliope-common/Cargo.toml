@@ -1,0 +1,24 @@
+[package]
+name = "calliope-common"
+version = "0.1.0"
+edition = "2021"
+description = "Shared code of calliope-gui and calliope-stems: the stems API v1 types, a FLAC header parser, a child-process runner and (feature client) the HTTP client. No Tauri/GTK."
+
+[lib]
+name = "calliope_common"
+path = "src/lib.rs"
+
+[features]
+# The HTTP client for the calliope-stems API (src/stems_client.rs, added with the client task).
+client = ["dep:ureq"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3", default-features = false, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

@@ -278,3 +278,64 @@ fn dist_ships_the_inter_font_licence() {
     assert_eq!(shipped, src);
     assert!(shipped.contains("SIL OPEN FONT LICENSE Version 1.1"));
 }
+
+/// Names of the packages reachable from `start` through normal, build and dev dependencies.
+fn reachable_packages(meta: &serde_json::Value, start: &str) -> std::collections::BTreeSet<String> {
+    let nodes = meta["resolve"]["nodes"].as_array().unwrap();
+    let packages = meta["packages"].as_array().unwrap();
+    let name_of = |id: &str| -> String {
+        packages.iter().find(|p| p["id"] == id).unwrap()["name"].as_str().unwrap().to_string()
+    };
+    let start_id = packages.iter().find(|p| p["name"] == start).unwrap_or_else(|| panic!("no package {start}"))["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut todo = vec![start_id];
+    while let Some(id) = todo.pop() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        let node = nodes.iter().find(|n| n["id"] == id.as_str()).unwrap();
+        for d in node["deps"].as_array().unwrap() {
+            todo.push(d["pkg"].as_str().unwrap().to_string());
+        }
+    }
+    seen.iter().map(|id| name_of(id)).collect()
+}
+
+#[test]
+fn server_side_crates_stay_separate_from_the_gui() {
+    let out = std::process::Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+        .args(["metadata", "--format-version", "1", "--locked", "--all-features"])
+        .current_dir(root())
+        .output()
+        .expect("run cargo metadata");
+    assert!(out.status.success(), "cargo metadata failed: {}", String::from_utf8_lossy(&out.stderr));
+    let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let members: Vec<&str> = meta["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| meta["workspace_members"].as_array().unwrap().contains(&p["id"]))
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert!(members.contains(&"calliope-gui") && members.contains(&"calliope-common"), "{members:?}");
+
+    let is_ui = |n: &str| n.starts_with("tauri") || n.starts_with("gtk") || n.starts_with("webkit");
+    // calliope-stems is added by a later task; check it as soon as it exists.
+    for krate in ["calliope-common", "calliope-stems"] {
+        if !members.contains(&krate) {
+            assert_eq!(krate, "calliope-stems", "{krate} must be a workspace member");
+            continue;
+        }
+        let bad: Vec<_> = reachable_packages(&meta, krate).into_iter().filter(|n| is_ui(n)).collect();
+        assert!(bad.is_empty(), "{krate} must not depend on the GUI stack: {bad:?}");
+    }
+    let gui = reachable_packages(&meta, "calliope-gui");
+    assert!(!gui.contains("calliope-stems"), "calliope-gui must not depend on calliope-stems");
+    assert!(!reachable_packages(&meta, "calliope-common").contains("calliope-gui"));
+    for server in ["tiny_http", "hyper", "axum", "actix-web", "warp"] {
+        assert!(!reachable_packages(&meta, "calliope-common").contains(server), "calliope-common must not contain an HTTP server ({server})");
+    }
+}
