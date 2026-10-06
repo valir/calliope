@@ -1,4 +1,5 @@
 mod cli;
+mod download;
 mod fsutil;
 mod import_tmp;
 mod gui;

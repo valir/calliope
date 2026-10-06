@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Fake yt-dlp for Calliope's tests (see tests/support/README.md).
+
+Never touches the network: it refuses every host that does not end in ".example" and
+"downloads" tests/fixtures/import/download.webm instead. It mimics only the options Calliope
+uses and insists on --ignore-config and on `--` before the URL.
+"""
+import json
+import os
+import sys
+import time
+from urllib.parse import urlsplit
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+FIXTURES = os.path.normpath(os.path.join(HERE, "..", "..", "fixtures", "import"))
+
+
+def die(msg, code=2):
+    sys.stderr.write(msg + "\n")
+    sys.stderr.flush()
+    sys.exit(code)
+
+
+def main(argv):
+    if argv == ["--version"]:
+        print("2025.09.26")
+        return 0
+
+    log = os.environ.get("FAKE_YTDLP_LOG")
+    entry = {"argv": argv}
+
+    if "--" not in argv:
+        die("fake yt-dlp: the URL must come after `--`")
+    sep = argv.index("--")
+    opts, rest = argv[:sep], argv[sep + 1:]
+    if "--ignore-config" not in opts:
+        die("fake yt-dlp: --ignore-config is required")
+    if len(rest) != 1:
+        die("fake yt-dlp: exactly one URL is expected after `--`")
+    url = rest[0]
+
+    home = temp = None
+    outputs = {}
+    template = None
+    resume = True
+    i = 0
+    while i < len(opts):
+        a = opts[i]
+        if a in ("--paths", "--output", "--progress-template"):
+            if i + 1 >= len(opts):
+                die("fake yt-dlp: %s needs a value" % a)
+            v = opts[i + 1]
+            i += 2
+            if a == "--paths":
+                if v.startswith("temp:"):
+                    temp = v[5:]
+                else:
+                    home = v
+            elif a == "--output":
+                if v.startswith("infojson:"):
+                    outputs["infojson"] = v[9:]
+                else:
+                    outputs["default"] = v
+            else:
+                template = v
+            continue
+        if a == "--continue":
+            resume = True
+        elif a == "--no-continue":
+            resume = False
+        i += 1
+
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme not in ("http", "https") or not host.endswith(".example"):
+        die("fake yt-dlp: real network URLs are not allowed")
+    if not home:
+        die("fake yt-dlp: --paths is required")
+    temp = temp or home
+    name_tpl = outputs.get("default", "%(title)s.%(ext)s")
+    final_name = name_tpl.replace("%(ext)s", "webm")
+    if "/" in final_name or final_name.startswith("."):
+        die("fake yt-dlp: unsupported --output")
+    info_name = outputs.get("infojson", "info") + ".info.json"  # as the real one appends it
+
+    path = parts.path
+    if path == "/http403":
+        die("ERROR: [generic] Unable to download webpage: HTTP Error 403: Forbidden", 1)
+    if path == "/offline":
+        die("ERROR: [generic] Unable to download webpage: <urlopen error [Errno -2] "
+            "Name or service not known>", 1)
+    if path not in ("/watch", "/slow", "/no-total"):
+        die("ERROR: Unsupported URL: " + url, 1)
+
+    with open(os.path.join(FIXTURES, "download.webm"), "rb") as f:
+        data = f.read()
+    total = len(data)
+    part = os.path.join(temp, final_name + ".part")
+    start = 0
+    if resume and os.path.isfile(part):
+        start = min(os.path.getsize(part), total)
+    entry["resume_from"] = start
+    if log:
+        with open(log, "a") as lf:
+            lf.write(json.dumps(entry) + "\n")
+
+    chunk = -(-total // 5)
+    delay = 0.3 if path == "/slow" else 0.02
+    mode = "ab" if start else "wb"
+    pos = start
+    with open(part, mode) as out:
+        while pos < total:
+            time.sleep(delay)
+            out.write(data[pos:pos + chunk])
+            out.flush()
+            pos = min(pos + chunk, total)
+            line = (template or "download:%(progress.downloaded_bytes)s")
+            line = line.replace("download:", "", 1)
+            tot = "NA" if path == "/no-total" else str(total)
+            line = (line.replace("%(progress.downloaded_bytes)s", str(pos))
+                        .replace("%(progress.total_bytes)s", tot)
+                        .replace("%(progress.total_bytes_estimate)s", "NA"))
+            print(line, flush=True)
+    os.replace(part, os.path.join(home, final_name))
+    with open(os.path.join(FIXTURES, "info.json"), "rb") as f:
+        info = f.read()
+    with open(os.path.join(home, info_name), "wb") as f:
+        f.write(info)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

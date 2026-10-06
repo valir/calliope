@@ -71,7 +71,7 @@ impl Cancel {
         self.flag.load(Ordering::SeqCst)
     }
 
-    fn register(&self, h: CancelHandle) {
+    pub(crate) fn register(&self, h: CancelHandle) {
         if let Ok(mut g) = self.current.lock() {
             *g = Some(h.clone());
         }
@@ -80,7 +80,7 @@ impl Cancel {
         }
     }
 
-    fn clear(&self) {
+    pub(crate) fn clear(&self) {
         if let Ok(mut g) = self.current.lock() {
             *g = None;
         }

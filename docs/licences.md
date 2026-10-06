@@ -24,6 +24,7 @@ may be chosen. Transitive dependencies are not listed here.
 | `serde` | dependency | `1` | 1.0.229 | MIT OR Apache-2.0 | (de)serialisation of settings and track metadata |
 | `serde_json` | dependency | `1` | 1.0.151 | MIT OR Apache-2.0 | JSON files and IPC payloads |
 | `uuid` | dependency | `1` | 1.27.0 | Apache-2.0 OR MIT | track ids (v7) |
+| `url` | dependency | `2` | 2.5.8 | MIT OR Apache-2.0 | URL validation and normalisation for the yt-dlp download |
 | `tauri-build` | build-dependency | `2` | 2.7.1 | Apache-2.0 OR MIT | Tauri build script |
 | `tempfile` | dev-dependency | `3` | 3.27.0 | MIT OR Apache-2.0 | temporary folders in tests |
 

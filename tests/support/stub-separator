@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Stub separator for Calliope's tests: the separator contract of the calliope-stems server
+# (plan section 2.8) without any model.
+#
+#   stub-separator <input.flac> <out_dir> <model>
+#
+# Copies tests/fixtures/import/stems/*.flac into <out_dir>, printing `progress 0.25` ... `progress 1`.
+# Behaviour: $STUB_SEPARATOR_MODE, else the first line of `stub-mode` in the current directory
+# (the server runs the separator in the job folder) or in its parent's parent (the work dir),
+# else "ok":
+#   ok          copy the stems, exit 0
+#   fail        print a message on stderr, exit 3
+#   slow        2 s per progress step
+#   hang        sleep until killed
+#   bad-output  write README.txt instead of stems
+#   not-flac    one stem without the "fLaC" magic
+# $STUB_SEPARATOR_LOG, if set, gets the argv (one line, tab separated) appended.
+set -euo pipefail
+
+if [[ $# -ne 3 ]]; then
+  echo "usage: stub-separator <input.flac> <out_dir> <model>" >&2
+  exit 64
+fi
+in=$1 out=$2 model=$3
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STEMS="$HERE/../fixtures/import/stems"
+
+if [[ -n "${STUB_SEPARATOR_LOG:-}" ]]; then
+  printf '%s\t%s\t%s\n' "$in" "$out" "$model" >>"$STUB_SEPARATOR_LOG"
+fi
+
+mode=${STUB_SEPARATOR_MODE:-}
+if [[ -z $mode ]]; then
+  for f in "$PWD/stub-mode" "$PWD/../../stub-mode"; do
+    if [[ -f $f ]]; then
+      IFS= read -r mode <"$f" || true
+      break
+    fi
+  done
+fi
+mode=${mode:-ok}
+
+[[ -f $in ]] || { echo "stub-separator: input not found" >&2; exit 2; }
+mkdir -p -- "$out"
+
+step_sleep=0
+case $mode in
+  ok | bad-output | not-flac) ;;
+  fail)
+    echo "stub-separator: simulated failure" >&2
+    exit 3
+    ;;
+  slow) step_sleep=2 ;;
+  hang)
+    echo "stub-separator: hanging"
+    while true; do sleep 1; done
+    ;;
+  *)
+    echo "stub-separator: unknown mode '$mode'" >&2
+    exit 64
+    ;;
+esac
+
+for p in 0.25 0.5 0.75; do
+  echo "progress $p"
+  (( step_sleep == 0 )) || sleep "$step_sleep"
+done
+
+case $mode in
+  bad-output)
+    echo "not a stem" >"$out/README.txt"
+    ;;
+  not-flac)
+    cp -- "$STEMS"/*.flac "$out/"
+    printf 'this is not flac\n' >"$out/vocals.flac"
+    ;;
+  *)
+    cp -- "$STEMS"/*.flac "$out/"
+    ;;
+esac
+echo "progress 1"

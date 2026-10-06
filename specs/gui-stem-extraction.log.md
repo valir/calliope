@@ -7,3 +7,6 @@ task 4 | Repository v2 (stems, original, export, never-rewrite byte check, libra
 task 5 | Import temp space and staged track creation | implementer | done (committed with 6-7: shared main.rs)
 task 6 | tools module (discovery, versions) | implementer | done (unparseable version = usable with warning)
 task 7 | media module (ffprobe metadata, FLAC conversion, 15-min limit, 1 GiB cap) | implementer | done
+task 8 | Fake yt-dlp and download module | implementer | done (committed with 9: shared tests/support/README.md)
+  - manual check: confirm real yt-dlp writes info.info.json for --output infojson:info (fake mimics it; run_download renames to info.json)
+task 9 | Stub separator + real-model adapter (syntax-checked only, never run) | implementer | done (~/edge-ai untouched)
