@@ -399,3 +399,102 @@ fn cancel_during_upload_stops_promptly_and_deletes_an_accepted_job() {
     assert!(t.elapsed() < Duration::from_secs(5), "cancel took {:?}", t.elapsed());
     assert!(uploaded.load(Ordering::SeqCst) < 8_000_000);
 }
+
+// ---------------------------------------------------------------- fix round 1 probes
+
+/// A tiny one-shot-per-connection status server bound to a given address (for restart tests).
+fn status_server_on(addr: SocketAddr, stop: Arc<AtomicBool>) -> std::thread::JoinHandle<()> {
+    let l = TcpListener::bind(addr).unwrap();
+    l.set_nonblocking(true).unwrap();
+    std::thread::spawn(move || {
+        while !stop.load(Ordering::SeqCst) {
+            match l.accept() {
+                Ok((mut s, _)) => {
+                    s.set_nonblocking(false).ok();
+                    s.set_read_timeout(Some(Duration::from_secs(5))).ok();
+                    let mut head = Vec::new();
+                    let mut b = [0u8; 1];
+                    while !head.ends_with(b"\r\n\r\n") {
+                        match s.read(&mut b) {
+                            Ok(1) => head.push(b[0]),
+                            _ => break,
+                        }
+                    }
+                    json(
+                        &mut s,
+                        "200 OK",
+                        serde_json::json!({"job":"0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b","state":"done","progress":1.0,"stems":["vocals"],"error":null}),
+                    );
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
+    })
+}
+
+#[test]
+fn wait_final_survives_a_brief_outage_but_not_a_long_one() {
+    let job = "0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b";
+    // reserve a port, keep it closed for ~700 ms (interval 300 ms, 3 retries = ~900 ms window), then serve
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    assert!(addr.ip().is_loopback());
+    drop(l);
+    let stop = Arc::new(AtomicBool::new(false));
+    let (stop2, a2) = (stop.clone(), addr);
+    let starter = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(700));
+        status_server_on(a2, stop2).join().ok();
+    });
+    let c = StemsClient::new(&format!("http://{addr}"));
+    let r = c.wait_final(job, &AtomicBool::new(false), Duration::from_millis(300), Duration::from_secs(60), |_| {});
+    assert!(r.is_ok(), "brief outage must be survived: {r:?}");
+    stop.store(true, Ordering::SeqCst);
+    starter.join().unwrap();
+
+    // a long outage: the server only comes back after 5 s; the client has long given up
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    drop(l);
+    let stop = Arc::new(AtomicBool::new(false));
+    let (stop2, a2) = (stop.clone(), addr);
+    let starter = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(5));
+        status_server_on(a2, stop2).join().ok();
+    });
+    let t = std::time::Instant::now();
+    let r = StemsClient::new(&format!("http://{addr}")).wait_final(job, &AtomicBool::new(false), Duration::from_millis(300), Duration::from_secs(60), |_| {});
+    assert!(matches!(r, Err(ClientError::Unreachable(_))), "{r:?}");
+    assert!(t.elapsed() < Duration::from_secs(4), "took {:?}", t.elapsed());
+    stop.store(true, Ordering::SeqCst);
+    starter.join().unwrap();
+}
+
+#[test]
+fn cancel_during_a_slow_stem_stops_quickly_and_removes_the_part() {
+    let job = "0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b";
+    let fake = serve(|_, s| {
+        let body = flac_bytes(2_000_000);
+        let h = format!("HTTP/1.1 200 OK\r\nContent-Type: audio/flac\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+        let _ = s.write_all(h.as_bytes());
+        for chunk in body.chunks(4096) {
+            if s.write_all(chunk).is_err() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50)); // ~40 s for the whole body
+        }
+    });
+    let d = tempfile::tempdir().unwrap();
+    let dest = d.path().join("drums.flac.part");
+    let cancel = Arc::new(AtomicBool::new(false));
+    let c2 = cancel.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(600));
+        c2.store(true, Ordering::SeqCst);
+    });
+    let t = std::time::Instant::now();
+    let r = fake.client().fetch_stem(job, "drums", &dest, &cancel);
+    assert_eq!(r, Err(ClientError::Cancelled));
+    assert!(t.elapsed() < Duration::from_secs(3), "took {:?}", t.elapsed());
+    assert!(!dest.exists(), "part left behind");
+}

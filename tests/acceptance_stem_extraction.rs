@@ -1561,3 +1561,283 @@ fn prepare_url_does_not_create_import_tmp() {
     let _ = rig.state.prepare_url(&rig.root, WATCH);
     assert!(!rig.root.join("import-tmp").exists());
 }
+
+// ====================================================================== fix round 1 probes
+
+#[test]
+fn ytdlp_skip_outputs_show_the_right_message_and_leave_no_job() {
+    let rig = Rig::new(false);
+    for (path, msg) in [
+        ("live", "Download refused: the video is a live stream or longer than 15 minutes"),
+        ("long", "Download refused: the video is a live stream or longer than 15 minutes"),
+        ("huge", "Download refused: the file is larger than 1 GiB"),
+    ] {
+        let url = format!("https://media.example/{path}");
+        rig.url(&url, false).unwrap();
+        let s = rig.idle();
+        assert_eq!(s.phase, Phase::Failed, "{path}");
+        assert_eq!(s.error.as_ref().unwrap().message, msg, "{path}");
+        assert!(!rig.state.is_active(), "{path}: a job is still active");
+        // no media file kept anywhere below import-tmp
+        for d in rig.import_tmp() {
+            let dir = rig.root.join("import-tmp").join(&d);
+            let inner = names_in(&dir);
+            assert!(!inner.iter().any(|n| n.starts_with("download.") || n == "audio.flac"), "{path}: {inner:?}");
+        }
+        assert!(rig.tracks().is_empty(), "{path}");
+        // the app is not stuck: the next URL starts
+        let ok = rig.url(WATCH, false).unwrap();
+        rig.ready();
+        rig.state.discard(&ok.job).unwrap();
+    }
+    rig.outside_ok();
+}
+
+#[test]
+fn match_filter_and_max_filesize_arrive_as_single_argv_entries_before_the_double_dash() {
+    let rig = Rig::new(false);
+    let s = rig.url(WATCH, false).unwrap();
+    rig.ready();
+    rig.state.discard(&s.job).unwrap();
+    let runs = rig.ytdlp_runs();
+    assert_eq!(runs.len(), 1);
+    let argv: Vec<&str> = runs[0]["argv"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    let sep = argv.iter().position(|a| *a == "--").unwrap();
+    let i = argv.iter().position(|a| *a == "--match-filter").expect("--match-filter");
+    assert_eq!(argv[i + 1], "!is_live & duration <=? 900", "{argv:?}");
+    assert!(i + 1 < sep);
+    let j = argv.iter().position(|a| *a == "--max-filesize").expect("--max-filesize");
+    assert_eq!(argv[j + 1], "1G");
+    assert!(j + 1 < sep);
+    assert_eq!(argv.iter().filter(|a| a.contains("is_live")).count(), 1);
+}
+
+fn loopback_trap() -> (SocketAddr, Arc<AtomicUsize>, Arc<AtomicBool>) {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    assert!(addr.ip().is_loopback());
+    l.set_nonblocking(true).unwrap();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+    let (h2, s2) = (hits.clone(), stop.clone());
+    std::thread::spawn(move || {
+        while !s2.load(Ordering::SeqCst) {
+            if l.accept().is_ok() {
+                h2.fetch_add(1, Ordering::SeqCst);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    });
+    (addr, hits, stop)
+}
+
+#[test]
+fn ffmpeg_never_follows_playlist_concat_or_hls_inputs_to_other_protocols() {
+    let (addr, hits, stop) = loopback_trap();
+    let rig = Rig::new(false);
+    let outside_file = rig.outside.join("precious.txt");
+    let cases: Vec<(&str, String)> = vec![
+        ("pl.m3u8", format!("#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXTINF:10,\nhttp://{addr}/seg0.ts\n#EXT-X-ENDLIST\n")),
+        ("pl2.m3u8", format!("#EXTM3U\n#EXTINF:10,\ntcp://{addr}\n")),
+        ("pl.ffconcat", format!("ffconcat version 1.0\nfile 'http://{addr}/a.mp3'\n")),
+        ("pl.txt", format!("ffconcat version 1.0\nfile '{}'\n", outside_file.display())),
+        ("pl.sdp", format!("v=0\no=- 0 0 IN IP4 127.0.0.1\ns=x\nc=IN IP4 127.0.0.1\nt=0 0\nm=audio {} RTP/AVP 0\n", addr.port())),
+    ];
+    for (name, body) in cases {
+        for ext in ["", ".mp3", ".flac", ".mp4"] {
+            let p = rig.sources.join(format!("{name}{ext}"));
+            fs::write(&p, &body).unwrap();
+            let before = fs::read(&p).unwrap();
+            let r = rig.file_at(&p);
+            let s = match r {
+                Ok(_) => rig.idle(),
+                Err(e) => {
+                    let _ = e;
+                    continue;
+                }
+            };
+            assert_eq!(s.phase, Phase::Failed, "{name}{ext}: {:?}", s.error);
+            assert_eq!(fs::read(&p).unwrap(), before);
+        }
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    stop.store(true, Ordering::SeqCst);
+    assert_eq!(hits.load(Ordering::SeqCst), 0, "ffmpeg/ffprobe connected to the loopback trap");
+    rig.outside_ok();
+    assert!(rig.staging().is_empty());
+}
+
+/// A WAV whose header declares `declared_s` seconds of 8 kHz mono 16-bit audio but whose body holds `real_s`.
+fn lying_wav(path: &Path, declared_s: u32, real_s: u32) {
+    let rate = 8000u32;
+    let data_declared = declared_s * rate * 2;
+    let mut f = fs::File::create(path).unwrap();
+    f.write_all(b"RIFF").unwrap();
+    f.write_all(&(36 + data_declared).to_le_bytes()).unwrap();
+    f.write_all(b"WAVEfmt ").unwrap();
+    f.write_all(&16u32.to_le_bytes()).unwrap();
+    f.write_all(&1u16.to_le_bytes()).unwrap();
+    f.write_all(&1u16.to_le_bytes()).unwrap();
+    f.write_all(&rate.to_le_bytes()).unwrap();
+    f.write_all(&(rate * 2).to_le_bytes()).unwrap();
+    f.write_all(&2u16.to_le_bytes()).unwrap();
+    f.write_all(&16u16.to_le_bytes()).unwrap();
+    f.write_all(b"data").unwrap();
+    f.write_all(&data_declared.to_le_bytes()).unwrap();
+    let chunk: Vec<u8> = (0..rate * 2).map(|i| (i.wrapping_mul(2654435761) >> 24) as u8 / 64).collect();
+    for _ in 0..real_s {
+        f.write_all(&chunk).unwrap();
+    }
+}
+
+#[test]
+fn a_source_whose_header_understates_its_length_never_yields_a_flac_over_15_minutes() {
+    let rig = Rig::new(false);
+    // an mp3 whose Xing header describes 10 s, followed by 20 more minutes of frames
+    let mk = |secs: &str, xing: &str, name: &str| {
+        let p = rig.dir.path().join(name);
+        let st = Command::new(tool("ffmpeg"))
+            .args(["-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050", "-t", secs, "-ac", "1", "-c:a", "libmp3lame", "-b:a", "16k", "-write_xing", xing])
+            .arg(&p)
+            .status()
+            .unwrap();
+        assert!(st.success());
+        p
+    };
+    let head = mk("10", "1", "head.mp3");
+    let body = mk("1200", "0", "body.mp3");
+    let liar = rig.sources.join("liar.mp3");
+    let mut bytes = fs::read(&head).unwrap();
+    bytes.extend(fs::read(&body).unwrap());
+    fs::write(&liar, bytes).unwrap();
+    let declared: f64 = {
+        let o = Command::new(tool("ffprobe")).args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"]).arg(&liar).output().unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().parse().unwrap()
+    };
+    eprintln!("ffprobe declared duration of the liar: {declared}");
+    rig.file_at(&liar).unwrap();
+    let s = rig.idle();
+    match s.phase {
+        Phase::Failed => assert_eq!(s.error.unwrap().message, "Tracks longer than 15 minutes are not supported"),
+        Phase::Ready => {
+            let flac = rig.root.join("import-tmp").join(&rig.import_tmp()[0]).join("audio.flac");
+            let out = Command::new(tool("ffprobe")).args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"]).arg(&flac).output().unwrap();
+            let dur: f64 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
+            eprintln!("understated-header FLAC duration: {dur} (declared {declared})");
+            assert!(dur <= 906.0, "converted FLAC is {dur} s long");
+        }
+        other => panic!("unexpected phase {other:?}"),
+    }
+    assert!(rig.staging().is_empty());
+}
+
+#[test]
+fn conversion_is_capped_even_when_the_probe_was_told_a_short_length() {
+    // ffprobe cannot be fooled by the files I can build, so lie to to_flac directly: a probe of a
+    // 10 s file, then a 20 minute source
+    let d = tempfile::tempdir().unwrap();
+    let mk = |secs: &str, name: &str| {
+        let p = d.path().join(name);
+        let st = Command::new(tool("ffmpeg"))
+            .args(["-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=8000", "-t", secs, "-ac", "1", "-c:a", "pcm_s16le"])
+            .arg(&p)
+            .status()
+            .unwrap();
+        assert!(st.success());
+        p
+    };
+    let short = mk("10", "short.wav");
+    let long = mk("1200", "long.wav");
+    let probe = media::probe(&tool("ffprobe"), &short, &media::Cancel::new()).unwrap();
+    let job = tempfile::tempdir().unwrap();
+    let flac = media::to_flac(&tool("ffmpeg"), &long, &probe, job.path(), &media::Cancel::new()).unwrap();
+    let o = Command::new(tool("ffprobe")).args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"]).arg(&flac).output().unwrap();
+    let dur: f64 = String::from_utf8_lossy(&o.stdout).trim().parse().unwrap();
+    assert!(dur <= 906.0 && dur > 890.0, "FLAC is {dur} s");
+}
+
+#[test]
+fn cancel_while_receiving_stems_stops_quickly_and_leaves_no_part_or_track() {
+    let mut cfg = AiConfig::good();
+    cfg.slow_stem_ms = 40;
+    cfg.body = Arc::new(|_| {
+        let mut b = b"fLaC".to_vec();
+        b.extend(std::iter::repeat(7u8).take(3_000_000)); // ~30 s dribbled
+        b
+    });
+    let ai = fake_ai(cfg);
+    let rig = Rig::new(true);
+    let before = fingerprint(&rig.root);
+    rig.file("untagged.flac").unwrap();
+    let ready = rig.ready();
+    rig.extract(&ready, &ai.url(), false).unwrap();
+    rig.wait("receiving", |s| s.phase == Phase::Receiving);
+    std::thread::sleep(Duration::from_millis(400));
+    let t = Instant::now();
+    rig.state.cancel(&ready.job).unwrap();
+    rig.wait("stopped", |s| !rig.state.is_running());
+    assert!(t.elapsed() < Duration::from_secs(5), "cancel took {:?}", t.elapsed());
+    assert!(rig.staging().is_empty(), "{:?}", rig.staging());
+    assert_eq!(rig.tracks().len(), v1_ids().len());
+    // no *.part anywhere below the repo
+    fn parts(d: &Path, out: &mut Vec<PathBuf>) {
+        for e in fs::read_dir(d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                parts(&p, out);
+            } else if p.to_string_lossy().ends_with(".part") {
+                out.push(p);
+            }
+        }
+    }
+    let mut found = vec![];
+    parts(&rig.root, &mut found);
+    assert!(found.is_empty(), "{found:?}");
+    for (k, v) in &before {
+        if !k.starts_with("import-tmp") {
+            assert_eq!(fingerprint(&rig.root).get(k), Some(v), "{k}");
+        }
+    }
+    rig.no_stray_processes();
+}
+
+#[test]
+fn prepare_url_creates_nothing_on_disk() {
+    let rig = Rig::new(false);
+    let before = fingerprint(&rig.root);
+    assert!(!rig.root.join("import-tmp").exists());
+    for u in [WATCH, "https://media.example/other", "not a url", ""] {
+        let _ = rig.state.prepare_url(&rig.root, u);
+    }
+    assert!(!rig.root.join("import-tmp").exists(), "prepare_url created import-tmp");
+    assert_eq!(fingerprint(&rig.root), before);
+    // an unrelated root path that does not exist is not created either
+    let ghost = rig.dir.path().join("ghost");
+    let _ = rig.state.prepare_url(&ghost, WATCH);
+    assert!(!ghost.exists());
+    // with a real partial it reports Partial and still changes nothing
+    rig.url("https://media.example/slow?v=p", false).unwrap();
+    until("part bytes", 20, || part_has_bytes(&rig));
+    let s = rig.state.snapshot().unwrap();
+    rig.state.cancel(&s.job).unwrap();
+    rig.idle();
+    let snap = fingerprint(&rig.root);
+    let prep = rig.state.prepare_url(&rig.root, "https://media.example/slow?v=p");
+    assert_eq!(format!("{:?}", prep.status), "Partial");
+    assert_eq!(fingerprint(&rig.root), snap);
+}
+
+#[test]
+fn fragment_files_are_not_taken_as_the_download() {
+    let d = tempfile::tempdir().unwrap();
+    for n in ["download.f251.webm", "download.f137.mp4", "download.f140-1.m4a", "download.webm.part", "download.f251.webm.part", "download.webm.ytdl", "download.mp4.part-Frag3", "download.temp"] {
+        fs::write(d.path().join(n), b"x").unwrap();
+    }
+    assert_eq!(download::find_download(d.path()), None);
+    assert!(import_tmp::is_finished_download("download.webm"));
+    assert!(import_tmp::is_finished_download("download.mp4"));
+    assert!(import_tmp::is_finished_download("download.opus"));
+    assert!(!import_tmp::is_finished_download("download.f251.webm"));
+    assert!(!import_tmp::is_finished_download("downloadx.webm"));
+    assert!(!import_tmp::is_finished_download("download."));
+}

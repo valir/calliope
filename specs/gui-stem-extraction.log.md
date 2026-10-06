@@ -46,3 +46,5 @@ task 23 | Licences and READMEs | implementer | done
 tester | acceptance tests (server 22, hostile client 13, orchestrator/data-safety 198, GUI 4, vitest +37) | all AC PASS; 4 low findings as #[ignore] tests | done
 reviewer | 0a8892c..HEAD | CHANGES REQUIRED (1 major: start_extraction wedges job on early error; minors) | done
 fix round 1 | start_extraction rollback (major); yt-dlp size/live/duration filter; ffmpeg protocol whitelist + -t; client cancel/poll tolerance; error truncation; no import-tmp on prepare; fragment files; attach error; known limits documented | implementer | done (GUI 2 runs green)
+tester (re-run) | 9 new probes (yt-dlp skips, argv, ffmpeg protocols, -t cap, cancel receiving, poll outage, prepare_url, fragments) | all AC PASS, no findings | done
+reviewer (re-review) | fix round 1 | APPROVED (0 blockers, 0 majors) | done
