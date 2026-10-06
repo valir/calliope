@@ -38,6 +38,13 @@ may be chosen. Transitive dependencies are not listed here.
 | `libc` | dependency (unix) | `0.2` | 0.2.190 | MIT OR Apache-2.0 | `prctl(PR_SET_PDEATHSIG)` and `kill(-pgid)` in the process runner |
 | `ureq` | optional dependency (feature `client`, no TLS) | `3` | 3.4.2 | MIT OR Apache-2.0 | blocking HTTP client for the calliope-stems API |
 
+`calliope-stems` (`src/calliope-stems/Cargo.toml`, the edge-AI server; no Tauri/GTK). It also uses
+`serde`, `serde_json`, `uuid` (feature `v4` here), `libc` and `tempfile` (dev) from the tables above.
+
+| Name | Kind | Range | Locked | Licence | Purpose |
+|---|---|---|---|---|---|
+| `tiny_http` | dependency | `0.12` | 0.12.0 | MIT OR Apache-2.0 | small synchronous HTTP server for the calliope-stems API |
+
 ## npm packages (`package.json`)
 
 | Name | Kind | Range | Installed | Licence | Purpose |

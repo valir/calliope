@@ -1,0 +1,20 @@
+[package]
+name = "calliope-stems"
+version = "0.1.0"
+edition = "2021"
+description = "Edge-AI stem separation server implementing calliope-stems API v1. No Tauri/GTK."
+
+[[bin]]
+name = "calliope-stems"
+path = "src/main.rs"
+
+[dependencies]
+calliope-common = { path = "../calliope-common" }
+tiny_http = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

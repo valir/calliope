@@ -10,3 +10,5 @@ task 7 | media module (ffprobe metadata, FLAC conversion, 15-min limit, 1 GiB ca
 task 8 | Fake yt-dlp and download module | implementer | done (committed with 9: shared tests/support/README.md)
   - manual check: confirm real yt-dlp writes info.info.json for --output infojson:info (fake mimics it; run_download renames to info.json)
 task 9 | Stub separator + real-model adapter (syntax-checked only, never run) | implementer | done (~/edge-ai untouched)
+task 10 | calliope-stems server (tiny_http, workspace member) | implementer | done (30 tests incl. smoke on 127.0.0.1 with stub)
+  - limit: no upload read timeout (tiny_http); a stalled client holds a queue slot until it disconnects

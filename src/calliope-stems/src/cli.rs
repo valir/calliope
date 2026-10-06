@@ -1,0 +1,258 @@
+//! Hand-written command line parser (`--flag value` or `--flag=value`).
+
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use crate::config::*;
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub const HELP: &str = "calliope-stems: stem separation server for Calliope (API v1)
+
+Usage: calliope-stems --separator PATH [options]
+
+Options:
+  --separator PATH            the separator executable (required, no default); it is run as
+                              <PATH> <input.flac> <out_dir> <model>
+  --listen ADDR:PORT          address to bind (default 0.0.0.0:8765; port 0 = any free port)
+  --work-dir DIR              job files (default $XDG_STATE_HOME/calliope-stems,
+                              ~/.local/state/calliope-stems)
+  --model NAME                model name advertised and passed to the separator (default htdemucs_6s)
+  --max-upload-mb N           larger uploads are refused with 413 (default 300)
+  --max-duration-s N          longer audio is refused with 413 (default 900)
+  --queue N                   jobs allowed to wait behind the running one (default 2)
+  --separator-timeout-min N   a separator running longer is killed (default 30)
+  --retention-hours N         finished jobs are deleted after this (default 24)
+  --help                      show this text
+  --version                   show the version
+";
+
+#[derive(Debug)]
+pub enum Parsed {
+    Run(Box<Config>),
+    Help,
+    Version,
+}
+
+/// Environment the defaults depend on.
+#[derive(Debug, Default, Clone)]
+pub struct Env {
+    pub home: Option<PathBuf>,
+    pub xdg_state_home: Option<PathBuf>,
+}
+
+impl Env {
+    pub fn from_process() -> Env {
+        let get = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+        Env { home: get("HOME"), xdg_state_home: get("XDG_STATE_HOME") }
+    }
+}
+
+fn number(flag: &str, value: &str, min: u64) -> Result<u64, String> {
+    let n: u64 = value.parse().map_err(|_| format!("{flag} needs a whole number, got '{value}'"))?;
+    if n < min {
+        return Err(format!("{flag} must be at least {min}"));
+    }
+    Ok(n)
+}
+
+fn valid_model(m: &str) -> bool {
+    !m.is_empty()
+        && m.len() <= 64
+        && !m.starts_with('.')
+        && m.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-'))
+}
+
+fn is_executable_file(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+}
+
+/// Parses the arguments after the program name. `Err` is a message for the user (exit 2).
+pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parsed, String> {
+    let mut listen = DEFAULT_LISTEN.parse::<SocketAddr>().expect("default address");
+    let mut work_dir: Option<PathBuf> = None;
+    let mut separator: Option<PathBuf> = None;
+    let mut model = DEFAULT_MODEL.to_string();
+    let mut max_upload_mb = DEFAULT_MAX_UPLOAD_MB;
+    let mut max_duration_s = calliope_common::stems_api::MAX_DURATION_S;
+    let mut queue = DEFAULT_QUEUE;
+    let mut timeout_min = DEFAULT_SEPARATOR_TIMEOUT_MIN;
+    let mut retention_hours = DEFAULT_RETENTION_HOURS;
+    let mut janitor_interval = DEFAULT_JANITOR_INTERVAL;
+
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        let (flag, inline) = match arg.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f.to_string(), Some(v.to_string())),
+            _ => (arg.clone(), None),
+        };
+        match flag.as_str() {
+            "--help" | "-h" => return Ok(Parsed::Help),
+            "--version" | "-V" => return Ok(Parsed::Version),
+            "--listen" | "--work-dir" | "--separator" | "--model" | "--max-upload-mb" | "--max-duration-s"
+            | "--queue" | "--separator-timeout-min" | "--retention-hours" | "--janitor-interval-ms" => {
+                let value = match inline {
+                    Some(v) => v,
+                    None => it.next().ok_or_else(|| format!("{flag} needs a value"))?,
+                };
+                match flag.as_str() {
+                    "--listen" => {
+                        listen = value
+                            .parse()
+                            .map_err(|_| format!("--listen needs ADDR:PORT (e.g. 127.0.0.1:8765), got '{value}'"))?
+                    }
+                    "--work-dir" => work_dir = Some(PathBuf::from(value)),
+                    "--separator" => separator = Some(PathBuf::from(value)),
+                    "--model" => {
+                        if !valid_model(&value) {
+                            return Err(format!("--model: '{value}' is not a plain model name"));
+                        }
+                        model = value;
+                    }
+                    "--max-upload-mb" => max_upload_mb = number(&flag, &value, 1)?,
+                    "--max-duration-s" => max_duration_s = number(&flag, &value, 1)?,
+                    "--queue" => queue = number(&flag, &value, 0)? as usize,
+                    "--separator-timeout-min" => timeout_min = number(&flag, &value, 1)?,
+                    "--retention-hours" => retention_hours = number(&flag, &value, 0)?,
+                    // Hidden: lets the tests exercise retention quickly.
+                    "--janitor-interval-ms" => janitor_interval = Duration::from_millis(number(&flag, &value, 10)?),
+                    _ => unreachable!(),
+                }
+            }
+            _ => return Err(format!("unknown argument '{arg}' (try --help)")),
+        }
+    }
+
+    let separator = separator.ok_or_else(|| {
+        "--separator PATH is required (the separator executable; there is no default, so that nothing starts a model by accident)"
+            .to_string()
+    })?;
+    if !is_executable_file(&separator) {
+        return Err(format!("--separator: '{}' is not an executable file", separator.display()));
+    }
+    let separator = std::path::absolute(&separator).map_err(|e| format!("--separator: {e}"))?;
+
+    let work_dir = match work_dir {
+        Some(d) => d,
+        None => match (&env.xdg_state_home, &env.home) {
+            (Some(x), _) => x.join("calliope-stems"),
+            (None, Some(h)) => h.join(".local/state/calliope-stems"),
+            (None, None) => return Err("--work-dir is required (neither XDG_STATE_HOME nor HOME is set)".into()),
+        },
+    };
+    let work_dir = std::path::absolute(&work_dir).map_err(|e| format!("--work-dir: {e}"))?;
+
+    Ok(Parsed::Run(Box::new(Config {
+        listen,
+        work_dir,
+        separator,
+        model,
+        max_upload_bytes: max_upload_mb.saturating_mul(1024 * 1024),
+        max_duration_s,
+        queue,
+        separator_timeout: Duration::from_secs(timeout_min * 60),
+        retention: Duration::from_secs(retention_hours.saturating_mul(3600)),
+        janitor_interval,
+    })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stub() -> String {
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/support/stub-separator").to_string()
+    }
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn run(a: &[&str]) -> Result<Config, String> {
+        let env = Env { home: Some("/home/u".into()), xdg_state_home: None };
+        match parse(args(a), &env)? {
+            Parsed::Run(c) => Ok(*c),
+            other => panic!("expected Run, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn defaults() {
+        let c = run(&["--separator", &stub()]).unwrap();
+        assert_eq!(c.listen, "0.0.0.0:8765".parse().unwrap());
+        assert_eq!(c.work_dir, PathBuf::from("/home/u/.local/state/calliope-stems"));
+        assert_eq!(c.model, "htdemucs_6s");
+        assert_eq!(c.max_upload_bytes, 314_572_800);
+        assert_eq!(c.max_duration_s, 900);
+        assert_eq!(c.queue, 2);
+        assert_eq!(c.separator_timeout, Duration::from_secs(1800));
+        assert_eq!(c.retention, Duration::from_secs(24 * 3600));
+        assert!(c.separator.is_absolute());
+    }
+
+    #[test]
+    fn xdg_state_home_wins_over_home() {
+        let env = Env { home: Some("/home/u".into()), xdg_state_home: Some("/state".into()) };
+        let Parsed::Run(c) = parse(args(&["--separator", &stub()]), &env).unwrap() else { panic!() };
+        assert_eq!(c.work_dir, PathBuf::from("/state/calliope-stems"));
+    }
+
+    #[test]
+    fn missing_separator_is_an_error_naming_the_flag() {
+        let e = run(&[]).unwrap_err();
+        assert!(e.contains("--separator") && e.contains("required"), "{e}");
+        let e = run(&["--listen", "127.0.0.1:0"]).unwrap_err();
+        assert!(e.contains("--separator"), "{e}");
+    }
+
+    #[test]
+    fn flags_in_both_forms() {
+        let c = run(&[
+            "--separator", &stub(), "--listen=127.0.0.1:0", "--work-dir", "/tmp/w", "--model", "m1",
+            "--max-upload-mb=1", "--max-duration-s", "60", "--queue", "0", "--separator-timeout-min", "2",
+            "--retention-hours", "0", "--janitor-interval-ms", "50",
+        ])
+        .unwrap();
+        assert_eq!(c.listen.port(), 0);
+        assert_eq!(c.work_dir, PathBuf::from("/tmp/w"));
+        assert_eq!((c.model.as_str(), c.max_upload_bytes, c.max_duration_s, c.queue), ("m1", 1 << 20, 60, 0));
+        assert_eq!((c.separator_timeout.as_secs(), c.retention.as_secs()), (120, 0));
+        assert_eq!(c.janitor_interval, Duration::from_millis(50));
+    }
+
+    #[test]
+    fn bad_values_are_refused() {
+        let s = stub();
+        for bad in [
+            vec!["--separator", &s, "--listen", "nonsense"],
+            vec!["--separator", &s, "--listen", "127.0.0.1"],
+            vec!["--separator", &s, "--max-upload-mb", "0"],
+            vec!["--separator", &s, "--max-upload-mb", "x"],
+            vec!["--separator", &s, "--queue", "-1"],
+            vec!["--separator", &s, "--model", "../x"],
+            vec!["--separator", &s, "--model", ""],
+            vec!["--separator", &s, "--bogus"],
+            vec!["--separator"],
+            vec!["--separator", "/nonexistent/separator"],
+            vec!["--separator", "/etc/passwd"],
+        ] {
+            assert!(run(&bad).is_err(), "{bad:?} should fail");
+        }
+    }
+
+    #[test]
+    fn help_and_version() {
+        let env = Env::default();
+        assert!(matches!(parse(args(&["--help"]), &env), Ok(Parsed::Help)));
+        assert!(matches!(parse(args(&["--version"]), &env), Ok(Parsed::Version)));
+        assert!(HELP.contains("--separator") && HELP.contains("required"));
+    }
+
+    #[test]
+    fn no_home_and_no_work_dir_is_an_error() {
+        let e = parse(args(&["--separator", &stub()]), &Env::default()).unwrap_err();
+        assert!(e.contains("--work-dir"), "{e}");
+    }
+}
