@@ -367,7 +367,7 @@ impl ImportState {
         if self.is_active() {
             return prep(UrlPrepStatus::Busy, BUSY_MESSAGE, 0);
         }
-        let partial = ImportTmp::open(root).ok().and_then(|t| t.find_partial(&url)).filter(|p| p.is_resumable());
+        let partial = ImportTmp::peek(root).and_then(|t| t.find_partial(&url)).filter(|p| p.is_resumable());
         match partial {
             Some(p) => {
                 let bytes = std::fs::read_dir(&p.dir)
@@ -500,6 +500,8 @@ impl ImportState {
             return Err("This import is not ready for extraction".into());
         }
         let audio = j.audio.clone().filter(|a| a.is_file()).ok_or("The prepared audio is missing; start the import again")?;
+        // all fallible work first: an early error must leave the job untouched
+        let tmp = ImportTmp::open(&j.root)?;
         let cancel = Cancel::new();
         j.cancel = Some(cancel.clone());
         j.running = true;
@@ -512,7 +514,6 @@ impl ImportState {
         j.snap.stems_done = 0;
         j.snap.stems_total = 0;
         let out = j.snap.clone();
-        let tmp = ImportTmp::open(&j.root)?;
         let ctx = Ctx { inner: self.inner.clone(), id: j.snap.job.clone(), cancel, root: j.root.clone(), tmp };
         let dir = j.dir.clone();
         eprintln!("calliope: import job={} phase=uploading", job);
@@ -872,7 +873,7 @@ fn run_extract(
     match st.state {
         JobState::Done => {}
         JobState::Failed => {
-            let m = st.error.filter(|m| !m.trim().is_empty()).unwrap_or_else(|| "The edge-AI server could not separate the track".into());
+            let m = st.error.map(|m| media::clean_text(&m, 300)).filter(|m| !m.is_empty()).unwrap_or_else(|| "The edge-AI server could not separate the track".into());
             return fail(Stage::Server, m);
         }
         _ => return fail(Stage::Server, "The job was cancelled on the edge-AI server"),
@@ -898,7 +899,7 @@ fn run_extract(
     for (i, name) in stems.iter().enumerate() {
         ctx.check_cancel()?;
         let part = staging.as_ref().expect("staging").stem_part_path(name).map_err(save_err)?;
-        client.fetch_stem(&id, name, &part).map_err(client_stop)?;
+        client.fetch_stem(&id, name, &part, ctx.cancel.flag()).map_err(client_stop)?;
         staging.as_ref().expect("staging").finish_stem(name).map_err(save_err)?;
         let done = i as u32 + 1;
         ctx.update(|j| j.snap.stems_done = done);

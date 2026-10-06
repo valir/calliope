@@ -278,18 +278,18 @@ fn ok_flow_with_the_client() {
     let dest = dest_dir.path().to_path_buf();
     for name in done.stems.as_ref().unwrap() {
         let part = dest.join(format!("{name}.flac.part"));
-        let n = c.fetch_stem(&job, name, &part).unwrap();
+        let n = c.fetch_stem(&job, name, &part, &AtomicBool::new(false)).unwrap();
         let want = std::fs::read(fixture(&format!("stems/{name}.flac"))).unwrap();
         assert_eq!(std::fs::read(&part).unwrap(), want, "{name}");
         assert_eq!(n, want.len() as u64);
     }
     // Unknown stem and invalid names.
     assert!(matches!(
-        c.fetch_stem(&job, "nothing", &dest.join("x.part")),
+        c.fetch_stem(&job, "nothing", &dest.join("x.part"), &AtomicBool::new(false)),
         Err(ClientError::Restarted) | Err(ClientError::Rejected { status: 404, .. })
     ));
     assert!(!dest.join("x.part").exists());
-    assert!(matches!(c.fetch_stem(&job, "../x", &dest.join("y.part")), Err(ClientError::Invalid(_))));
+    assert!(matches!(c.fetch_stem(&job, "../x", &dest.join("y.part"), &AtomicBool::new(false)), Err(ClientError::Invalid(_))));
 
     let dir = s.jobs().join(&job);
     assert!(dir.exists());

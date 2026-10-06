@@ -503,7 +503,7 @@ fn v1_repository_is_never_rewritten_by_scan_prepare_import_cancel_or_discard() {
 
     // prepare_url is a pure question
     let p = rig.state.prepare_url(&rig.root, WATCH);
-    // (prepare_url creating an empty import-tmp is reported separately as a FINDING)
+    // 
     let mut now = fingerprint(&rig.root);
     now.remove("import-tmp");
     assert_eq!(now, before, "prepare_url changed something: {:?}", p.status);
@@ -1146,13 +1146,12 @@ fn hostile_job_ids_and_failure_states() {
     let ai = fake_ai(cfg);
     let rig = Rig::new(false);
     let s = run_against(&ai, &rig);
-    // (a server message of up to 64 KiB reaches the UI untruncated: see the FINDING test below)
+    // (a long server message is cut: see server_error_text_is_truncated)
     assert_eq!(s.phase, Phase::Failed);
 }
 
 #[test]
-#[ignore = "FINDING: the `error` text of a failed server job (up to 64 KiB, from the LAN server) is shown to the user untruncated; yt-dlp/ffmpeg messages are cut to 300 chars but this one is not"]
-fn finding_server_error_text_is_not_truncated() {
+fn server_error_text_is_truncated() {
     let mut cfg = AiConfig::good();
     cfg.final_state = "failed";
     cfg.error = Some(format!("<script>alert(1)</script>{}", "x".repeat(50_000)));
@@ -1160,7 +1159,7 @@ fn finding_server_error_text_is_not_truncated() {
     let rig = Rig::new(false);
     let s = run_against(&ai, &rig);
     let m = s.error.unwrap().message;
-    assert!(m.len() < 2000, "an unbounded server message ({} bytes) goes to the UI", m.len());
+    assert!(m.chars().count() <= 300, "an unbounded server message ({} bytes) goes to the UI", m.len());
 }
 
 #[test]
@@ -1550,15 +1549,14 @@ fn a_v1_track_with_a_type_key_is_handled_per_the_rule() {
 // ====================================================================== missing-limit findings
 
 #[test]
-#[ignore = "FINDING: yt-dlp is run without --max-filesize (nor a duration filter), so the 1 GiB / 15 minute limits are only enforced AFTER the whole download; a huge URL can fill the repository disk"]
-fn finding_yt_dlp_has_no_download_size_cap() {
+fn yt_dlp_has_a_download_size_and_duration_cap() {
     let args = download::ytdlp_args(Path::new("/tmp/x"), "https://media.example/x", false);
-    assert!(args.iter().any(|a| a == "--max-filesize"), "no --max-filesize in {args:?}");
+    assert!(args.windows(2).any(|w| w[0] == "--max-filesize" && w[1] == "1G"), "no --max-filesize in {args:?}");
+    assert!(args.windows(2).any(|w| w[0] == "--match-filter" && w[1].contains("!is_live") && w[1].contains("900")), "{args:?}");
 }
 
 #[test]
-#[ignore = "FINDING: prepare_url (the check done when the user presses Extract on a URL) creates <root>/import-tmp in the user's repository"]
-fn finding_prepare_url_creates_import_tmp() {
+fn prepare_url_does_not_create_import_tmp() {
     let rig = Rig::new(true);
     let _ = rig.state.prepare_url(&rig.root, WATCH);
     assert!(!rig.root.join("import-tmp").exists());

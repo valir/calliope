@@ -43,10 +43,11 @@ def main(argv):
     outputs = {}
     template = None
     resume = True
+    max_filesize = match_filter = None
     i = 0
     while i < len(opts):
         a = opts[i]
-        if a in ("--paths", "--output", "--progress-template"):
+        if a in ("--paths", "--output", "--progress-template", "--max-filesize", "--match-filter"):
             if i + 1 >= len(opts):
                 die("fake yt-dlp: %s needs a value" % a)
             v = opts[i + 1]
@@ -56,6 +57,10 @@ def main(argv):
                     temp = v[5:]
                 else:
                     home = v
+            elif a == "--max-filesize":
+                max_filesize = v
+            elif a == "--match-filter":
+                match_filter = v
             elif a == "--output":
                 if v.startswith("infojson:"):
                     outputs["infojson"] = v[9:]
@@ -69,6 +74,11 @@ def main(argv):
         elif a == "--no-continue":
             resume = False
         i += 1
+
+    if max_filesize != "1G":
+        die("fake yt-dlp: --max-filesize 1G is required")
+    if match_filter != "!is_live & duration <=? 900":
+        die("fake yt-dlp: the live/duration --match-filter is required")
 
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
@@ -89,6 +99,14 @@ def main(argv):
     if path == "/offline":
         die("ERROR: [generic] Unable to download webpage: <urlopen error [Errno -2] "
             "Name or service not known>", 1)
+    # what the real one prints (and exits 0) when a video is skipped by the filters
+    if path in ("/live", "/long"):
+        print("[download] %s does not pass filter (%s), skipping .." % ("Some video", match_filter), flush=True)
+        return 0
+    if path == "/huge":
+        print("[download] File is larger than max-filesize (2147483648 bytes > 1073741824 bytes). Aborting.",
+              flush=True)
+        return 0
     if path not in ("/watch", "/slow", "/no-total"):
         die("ERROR: Unsupported URL: " + url, 1)
 

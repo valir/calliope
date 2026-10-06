@@ -371,7 +371,7 @@ fn short_body_with_connection_kept_open_is_a_known_limitation_not_a_crash() {
 }
 
 #[test]
-#[ignore = "FINDING: a few stalled uploads (declared Content-Length never completed, socket kept open) occupy every queue slot forever: no read timeout, so a LAN client can lock out the owner with queue+1 idle sockets"]
+#[ignore = "KNOWN LIMIT (documented, owner decision: LAN-only, no auth): a few stalled uploads (declared Content-Length never completed, socket kept open) occupy every queue slot forever: no read timeout, so a LAN client can lock out the owner with queue+1 idle sockets"]
 fn finding_stalled_uploads_lock_the_queue() {
     let s = start("ok", &["--queue", "2"]);
     let mut stalled = Vec::new();

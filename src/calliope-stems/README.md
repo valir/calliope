@@ -52,6 +52,16 @@ expose it to the internet. The GUI talks plain `http://` to it (Settings > Stem 
 `src/calliope-stems/tests/conformance.rs` is the executable specification of every endpoint,
 status code and limit.
 
+## Known limits
+
+* No read timeout on uploads and one thread per connection: a few stalled uploads (a declared
+  `Content-Length` that never completes) can occupy every queue slot until the clients close.
+  Accepted: the server is for a trusted LAN and has no authentication (owner decision). The
+  ignored test `finding_stalled_uploads_lock_the_queue` shows it.
+* If the Calliope app is killed (SIGKILL) mid-job, the server does not notice: it keeps
+  separating until its own job timeout, then the result is dropped.
+* `PR_SET_PDEATHSIG` (used by the GUI for its child processes) only covers direct children.
+
 ## The separator contract
 
 The server never loads a model itself. It runs the `--separator` executable once per job, in

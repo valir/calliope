@@ -15,6 +15,7 @@ let channel: ((e: ImportEvent) => void) | null = null;
 let prep: UrlPrep = { status: 'ready', message: '', partial_bytes: 0 };
 let fileResult: JobSnapshot | null = null;
 let watchResult: JobSnapshot | null = null;
+let watchFailures = 0;
 let startError = '';
 
 const URL_OK = 'https://video.example/watch?v=1';
@@ -43,6 +44,7 @@ beforeEach(() => {
   prep = { status: 'ready', message: '', partial_bytes: 0 };
   fileResult = null;
   watchResult = null;
+  watchFailures = 0;
   startError = '';
   resetImport();
   resetLibrary();
@@ -57,7 +59,9 @@ beforeEach(() => {
         if (startError) throw new Error(startError);
         return snap();
       case 'import_file': return fileResult;
-      case 'watch_import': return watchResult;
+      case 'watch_import':
+        if (watchFailures > 0) { watchFailures -= 1; throw new Error('boom'); }
+        return watchResult;
       case 'start_stem_extraction': return snap({ phase: 'uploading', metadata: a.edits as TrackEdits });
       case 'get_settings': return { theme: 'dark', repository_root: null, edge_ai_url: null, keep_original: false };
       case 'get_repository': return { root: '/tmp/r', is_default: true, status: 'ok' };
@@ -420,6 +424,21 @@ describe('Import view: re-attach and footer', () => {
     watchResult = snap({ phase: 'working', metadata: META });
     render(ImportView);
     expect(await screen.findByText(/Working\.\.\./)).toBeTruthy();
+  });
+
+  it('a failing watch_import is retried once and then shown as an error', async () => {
+    watchFailures = 5;
+    render(ImportView);
+    await waitFor(() => expect(imp.error).toContain('Could not check for a running import'));
+    expect(callsOf('watch_import')).toHaveLength(2);
+  });
+
+  it('a watch_import that fails once is retried and the job is attached', async () => {
+    watchFailures = 1;
+    watchResult = snap({ phase: 'working', metadata: META });
+    render(ImportView);
+    expect(await screen.findByText(/Working\.\.\./)).toBeTruthy();
+    expect(imp.error).toBe('');
   });
 
   it('with no job the view stays on the menu', async () => {

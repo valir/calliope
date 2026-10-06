@@ -20,6 +20,12 @@ pub const UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 pub const POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// No state change for this long means the server is gone.
 pub const STALL_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+/// A stem is fetched within this time (ureq has no per-read timeout; cancel is checked per chunk).
+pub const STEM_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// Consecutive failed polls tolerated before the server counts as gone.
+pub const POLL_RETRIES: u32 = 3;
+/// Server error text is cut to this many characters (same bound as yt-dlp / ffmpeg messages).
+pub const MAX_ERROR_CHARS: usize = 300;
 pub const MAX_JSON_BYTES: u64 = 64 * 1024;
 pub const MAX_STEM_BYTES: u64 = 1024 * 1024 * 1024;
 
@@ -144,7 +150,7 @@ impl StemsClient {
             .read_to_vec()
             .ok()
             .and_then(|b| serde_json::from_slice::<ErrorBody>(&b).ok())
-            .map(|e| e.error)
+            .map(|e| e.error.chars().filter(|c| !c.is_control()).take(MAX_ERROR_CHARS).collect::<String>())
             .unwrap_or_else(|| format!("HTTP {status}"));
         Err(ClientError::Rejected { status, message })
     }
@@ -252,12 +258,24 @@ impl StemsClient {
     ) -> Result<JobStatus, ClientError> {
         let mut last: Option<(JobState, Option<u64>)> = None;
         let mut changed = Instant::now();
+        let mut unreachable_polls = 0u32;
         loop {
             if cancel.load(Ordering::SeqCst) {
                 self.delete(job);
                 return Err(ClientError::Cancelled);
             }
-            let st = self.status(job)?;
+            let st = match self.status(job) {
+                Ok(st) => {
+                    unreachable_polls = 0;
+                    st
+                }
+                Err(ClientError::Unreachable(_)) if unreachable_polls < POLL_RETRIES => {
+                    unreachable_polls += 1;
+                    std::thread::sleep(interval);
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             on_status(&st);
             if st.state.is_final() {
                 return Ok(st);
@@ -274,8 +292,8 @@ impl StemsClient {
     }
 
     /// Downloads one stem into `dest_part` (replaced if present). Checks the `fLaC` magic and
-    /// the size limit; on any error the partial file is removed. Returns the size.
-    pub fn fetch_stem(&self, job: &str, name: &str, dest_part: &Path) -> Result<u64, ClientError> {
+    /// the size limit; stops with `Cancelled` when `cancel` is set; on any error the partial file is removed. Returns the size.
+    pub fn fetch_stem(&self, job: &str, name: &str, dest_part: &Path, cancel: &AtomicBool) -> Result<u64, ClientError> {
         if !is_valid_job_id(job) || !is_valid_stem_name(name) {
             return Err(ClientError::Invalid("bad job id or stem name".into()));
         }
@@ -284,7 +302,7 @@ impl StemsClient {
             .get(&self.url(&format!("/v1/jobs/{job}/stems/{name}")))
             .config()
             .timeout_global(None)
-            .timeout_recv_body(Some(UPLOAD_TIMEOUT))
+            .timeout_recv_body(Some(STEM_TIMEOUT))
             .build()
             .call()
             .map_err(net_error)?;
@@ -306,6 +324,9 @@ impl StemsClient {
             let mut total = 4u64;
             let mut buf = vec![0u8; 64 * 1024];
             loop {
+                if cancel.load(Ordering::SeqCst) {
+                    return Err(ClientError::Cancelled);
+                }
                 let n = body.read(&mut buf).map_err(|e| ClientError::Unreachable(e.to_string()))?;
                 if n == 0 {
                     break;

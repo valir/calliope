@@ -376,7 +376,15 @@ export function showInLibrary(): void {
 export async function attach(): Promise<void> {
   const before = eventSeq;
   try {
-    const snap = await watchImport(applyEvent);
+    let snap;
+    try {
+      snap = await watchImport(applyEvent);
+    } catch (first) {
+      // retry once: an idle source page while a job may be running would be misleading
+      log(`error watch_import (retrying): ${String(first)}`);
+      await new Promise((r) => setTimeout(r, 300));
+      snap = await watchImport(applyEvent);
+    }
     if (!snap || eventSeq !== before) return;
     if (snap.phase === 'cancelled') return;
     imp.mode = 'stem';
@@ -394,5 +402,8 @@ export async function attach(): Promise<void> {
     log(`attached phase=${snap.phase} job=${snap.job}`);
   } catch (err) {
     log(`error watch_import: ${String(err)}`);
+    if (eventSeq === before && !imp.job) {
+      imp.error = 'Could not check for a running import. Close this page and open it again.';
+    }
   }
 }

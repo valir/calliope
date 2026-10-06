@@ -245,7 +245,7 @@ fn fetch_stem_refuses_non_flac_and_cleans_up() {
         let fake = serve(move |_, s| f(s));
         let d = tempfile::tempdir().unwrap();
         let dest = d.path().join("vocals.flac.part");
-        let r = fake.client().fetch_stem(job, "vocals", &dest);
+        let r = fake.client().fetch_stem(job, "vocals", &dest, &AtomicBool::new(false));
         assert!(r.is_err(), "{name}: accepted {r:?}");
         assert!(!dest.exists(), "{name}: partial file left behind");
         assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 0, "{name}");
@@ -253,10 +253,10 @@ fn fetch_stem_refuses_non_flac_and_cleans_up() {
     // 404 is "restarted"
     let fake = serve(|_, s| json(s, "404 Not Found", serde_json::json!({"error":"x"})));
     let d = tempfile::tempdir().unwrap();
-    assert!(matches!(fake.client().fetch_stem(job, "vocals", &d.path().join("p")), Err(ClientError::Restarted)));
+    assert!(matches!(fake.client().fetch_stem(job, "vocals", &d.path().join("p"), &AtomicBool::new(false)), Err(ClientError::Restarted)));
     // names are validated before any request
     for (j, n) in [("../x", "vocals"), (job, "../x"), (job, "A"), (job, "")] {
-        assert!(matches!(fake.client().fetch_stem(j, n, &d.path().join("p")), Err(ClientError::Invalid(_))), "{j} {n}");
+        assert!(matches!(fake.client().fetch_stem(j, n, &d.path().join("p"), &AtomicBool::new(false)), Err(ClientError::Invalid(_))), "{j} {n}");
     }
     assert!(!d.path().join("p").exists());
 }
@@ -272,9 +272,40 @@ fn fetch_stem_good_flac_is_stored_verbatim() {
     });
     let d = tempfile::tempdir().unwrap();
     let dest = d.path().join("drums.flac.part");
-    let n = fake.client().fetch_stem(job, "drums", &dest).unwrap();
+    let n = fake.client().fetch_stem(job, "drums", &dest, &AtomicBool::new(false)).unwrap();
     assert_eq!(n as usize, body.len());
     assert_eq!(std::fs::read(&dest).unwrap(), body);
+}
+
+#[test]
+fn fetch_stem_honours_the_cancel_flag_and_removes_the_part() {
+    let job = "0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b";
+    let body = flac_bytes(300_000);
+    let fake = serve(move |_, s| reply(s, "200 OK", "audio/flac", &body));
+    let d = tempfile::tempdir().unwrap();
+    let dest = d.path().join("drums.flac.part");
+    let r = fake.client().fetch_stem(job, "drums", &dest, &AtomicBool::new(true));
+    assert_eq!(r, Err(ClientError::Cancelled));
+    assert!(!dest.exists());
+}
+
+#[test]
+fn wait_final_tolerates_a_few_unreachable_polls_but_not_forever() {
+    // a closed port: every poll is Unreachable; the error comes after the retries, not at once
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    drop(l);
+    let c = StemsClient::new(&format!("http://{addr}"));
+    let t = std::time::Instant::now();
+    let r = c.wait_final(
+        "0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b",
+        &AtomicBool::new(false),
+        Duration::from_millis(100),
+        Duration::from_secs(60),
+        |_| {},
+    );
+    assert!(matches!(r, Err(ClientError::Unreachable(_))), "{r:?}");
+    assert!(t.elapsed() >= Duration::from_millis(300), "gave up after {:?}", t.elapsed());
 }
 
 #[test]

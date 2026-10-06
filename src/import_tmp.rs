@@ -72,6 +72,19 @@ pub fn url_key(normalised_url: &str) -> String {
     fsutil::fnv1a64_hex(normalised_url.as_bytes())
 }
 
+/// True for yt-dlp's finished `download.<ext>`; false for `.part` / `.ytdl` / `.temp` and the
+/// per-format fragments of a merge (`download.f251.webm`).
+pub fn is_finished_download(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("download.") else { return false };
+    if [".part", ".ytdl", ".temp"].iter().any(|x| name.ends_with(x)) || name.contains(".part-Frag") {
+        return false;
+    }
+    let fragment = rest
+        .split_once('.')
+        .is_some_and(|(f, _)| f.len() > 1 && f.starts_with('f') && f[1..].chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+    !fragment && !rest.is_empty()
+}
+
 impl ImportTmp {
     /// Opens (creating it if absent) `<root>/import-tmp/`. The root must be an existing
     /// folder; a symlinked or non-folder `import-tmp` is refused.
@@ -89,6 +102,15 @@ impl ImportTmp {
             Err(e) => return Err(io_err("cannot read the import folder", e)),
         }
         Ok(Self { dir })
+    }
+
+    /// Like `open` but never creates anything: `None` if there is no real `import-tmp` folder.
+    pub fn peek(root: &Path) -> Option<Self> {
+        let dir = root.join(DIR_NAME);
+        match fs::symlink_metadata(&dir) {
+            Ok(m) if m.is_dir() && root.is_dir() => Some(Self { dir }),
+            _ => None,
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -167,7 +189,7 @@ impl ImportTmp {
                 p.has_audio = true;
             } else if name.starts_with("download.") && name.ends_with(".part") {
                 p.has_part = true;
-            } else if name.starts_with("download.") && !name.ends_with(".ytdl") {
+            } else if is_finished_download(&name) {
                 p.has_download = true;
             }
         }

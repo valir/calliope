@@ -19,6 +19,10 @@ use crate::track_meta::TrackEdits;
 pub const MAX_DURATION_S: f64 = 15.0 * 60.0;
 /// Largest source file accepted.
 pub const MAX_FILE_BYTES: u64 = 1 << 30;
+/// Only plain files (and pipes) are ever opened by ffmpeg / ffprobe, whatever the input names.
+const PROTOCOL_WHITELIST: &str = "file,pipe";
+/// The 15 minute limit plus a little margin, as ffmpeg's `-t`.
+const MAX_OUTPUT_SECONDS: &str = "905";
 const MAX_PROBE_BYTES: usize = 4 << 20;
 const MAX_ERROR_CHARS: usize = 300;
 
@@ -180,7 +184,11 @@ pub fn probe(ffprobe: &Path, file: &Path, cancel: &Cancel) -> Result<Probe, Medi
         _ => return Err(unreadable()),
     }
     let args: Vec<String> =
-        ["-v", "error", "-print_format", "json", "-show_format", "-show_streams"].iter().map(|s| s.to_string()).chain([file_arg(file)]).collect();
+        ["-v", "error", "-protocol_whitelist", PROTOCOL_WHITELIST, "-print_format", "json", "-show_format", "-show_streams", "-i"]
+            .iter()
+            .map(|s| s.to_string())
+            .chain([file_arg(file)])
+            .collect();
     let out = run(ffprobe, &args, cancel)?;
     if !out.success {
         return Err(unreadable());
@@ -312,9 +320,10 @@ pub fn to_flac(ffmpeg: &Path, src: &Path, probe: &Probe, job_dir: &Path, cancel:
     if part.symlink_metadata().is_ok() {
         std::fs::remove_file(&part).map_err(|e| MediaError::Failed(format!("cannot clear {PART_NAME}: {e}")))?;
     }
-    let mut args: Vec<String> = ["-nostdin", "-hide_banner", "-loglevel", "error", "-n", "-i"].iter().map(|s| s.to_string()).collect();
+    let mut args: Vec<String> = ["-nostdin", "-hide_banner", "-loglevel", "error", "-n", "-protocol_whitelist", PROTOCOL_WHITELIST, "-i"].iter().map(|s| s.to_string()).collect();
     args.push(file_arg(src));
-    args.extend(["-map", "0:a:0", "-vn", "-sn", "-dn", "-c:a", "flac", "-ar", "44100", "-ac", "2", "-f", "flac"].iter().map(|s| s.to_string()));
+    // -t: a header that understates the length cannot produce a huge FLAC
+    args.extend(["-t", MAX_OUTPUT_SECONDS, "-map", "0:a:0", "-vn", "-sn", "-dn", "-c:a", "flac", "-ar", "44100", "-ac", "2", "-f", "flac"].iter().map(|s| s.to_string()));
     args.push(part.to_string_lossy().into_owned());
     let result = (|| {
         let out = run(ffmpeg, &args, cancel)?;
@@ -543,13 +552,26 @@ mod tests {
         let argv: Vec<String> = fs::read_to_string(log).unwrap().lines().map(String::from).collect();
         let part = job.path().join(".audio.flac.part").to_string_lossy().into_owned();
         let want: Vec<String> = format!(
-            "-nostdin -hide_banner -loglevel error -n -i file:{} -map 0:a:0 -vn -sn -dn -c:a flac -ar 44100 -ac 2 -f flac {part}",
+            "-nostdin -hide_banner -loglevel error -n -protocol_whitelist file,pipe -i file:{} -t 905 -map 0:a:0 -vn -sn -dn -c:a flac -ar 44100 -ac 2 -f flac {part}",
             src.display()
         )
         .split(' ')
         .map(String::from)
         .collect();
         assert_eq!(argv, want);
+    }
+
+    #[test]
+    fn protocols_are_whitelisted_and_output_is_bounded_with_the_real_tools() {
+        let job = tempfile::tempdir().unwrap();
+        let src = fixture("tagged.mp3");
+        let p = probe(&tool("ffprobe"), &src, &Cancel::new()).unwrap();
+        let flac = to_flac(&tool("ffmpeg"), &src, &p, job.path(), &Cancel::new()).unwrap();
+        assert!(flac.is_file());
+        // a playlist-like input naming a network protocol is not opened
+        let bad = job.path().join("x.m3u8");
+        fs::write(&bad, "#EXTM3U\nhttp://127.0.0.1:9/never.mp3\n").unwrap();
+        assert!(probe(&tool("ffprobe"), &bad, &Cancel::new()).is_err());
     }
 
     #[test]

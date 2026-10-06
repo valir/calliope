@@ -554,7 +554,18 @@ build pain. Run as separate executables found on `PATH`, they put no licence obl
 Calliope as long as they are not bundled (recorded in `docs/licences.md`). Always argv arrays,
 `--ignore-config` for yt-dlp, `--` before URLs, `file:` inputs for ffmpeg, own process group
 plus PDEATHSIG so nothing survives a cancel or a crash. All audio is normalised to FLAC
-44.1 kHz stereo before upload, so the server accepts one format.
+44.1 kHz stereo before upload, so the server accepts one format. Limits are enforced by the
+tools themselves, not only afterwards: yt-dlp gets `--max-filesize 1G` and
+`--match-filter "!is_live & duration <=? 900"` (a skipped video is reported with a clear
+message); ffmpeg/ffprobe get `-protocol_whitelist file,pipe` and the conversion `-t 905`.
+`--no-plugin-dirs` is not used: it needs a yt-dlp newer than our minimum (2023.01).
+
+Known limits (accepted, LAN-only and no-auth being owner decisions): the server has no read
+timeout on uploads and one thread per connection, so a few stalled uploads can hold every
+queue slot until the clients go away (`finding_stalled_uploads_lock_the_queue`, ignored,
+documents it). `PR_SET_PDEATHSIG` only covers direct children when the GUI is SIGKILLed
+(grandchildren such as yt-dlp's helpers are not covered), and if the app dies mid-job the
+server keeps separating until its own timeout.
 
 ### 2026-10-06: Edge-AI stems: "calliope-stems API v1" and our own `calliope-stems` server   (feature: gui-stem-extraction, owner decision Q1)
 archserver had Ollama (localhost only, not used for stems) and the CLI `stems/backing`, but no

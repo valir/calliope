@@ -680,3 +680,41 @@ fn event_json_shapes() {
     let s = serde_json::to_value(new_snapshot("j".into(), SourceKind::AudioFile, "a.mp3".into(), Phase::Preparing)).unwrap();
     assert_eq!(s["source"], serde_json::json!({"kind": "audio-file", "label": "a.mp3"}));
 }
+
+#[test]
+fn an_early_error_in_start_extraction_leaves_the_job_untouched() {
+    let server = TestServer::start("ok");
+    let rig = Rig::new();
+    rig.file("tagged.mp3").unwrap();
+    let ready = rig.ready();
+
+    // import-tmp became a symlink: the job folder is still reachable through it, but opening is refused
+    let real = rig._dir.path().join("moved-import-tmp");
+    fs::rename(rig.root.join("import-tmp"), &real).unwrap();
+    std::os::unix::fs::symlink(&real, rig.root.join("import-tmp")).unwrap();
+    assert!(rig.extract(&ready, &server, false).is_err());
+    assert!(!rig.state.is_running(), "a refused start must not leave the job running");
+    let s = rig.state.snapshot().unwrap();
+    assert_eq!(s.phase, Phase::Ready);
+    assert!(rig.state.cancel(&ready.job).is_ok());
+    fs::remove_file(rig.root.join("import-tmp")).unwrap();
+    fs::rename(&real, rig.root.join("import-tmp")).unwrap();
+
+    // and the job works again afterwards
+    rig.extract(&ready, &server, false).unwrap();
+    rig.wait("saved", |s| s.phase == Phase::Saved);
+}
+
+#[test]
+fn a_vanished_root_before_start_extraction_is_a_clean_error() {
+    let server = TestServer::start("ok");
+    let rig = Rig::new();
+    rig.file("tagged.mp3").unwrap();
+    let ready = rig.ready();
+    fs::remove_dir_all(&rig.root).unwrap();
+    assert!(rig.extract(&ready, &server, false).is_err());
+    assert!(!rig.state.is_running());
+    assert!(rig.state.cancel(&ready.job).is_ok());
+    rig.state.discard(&ready.job).unwrap();
+    assert!(rig.state.snapshot().is_none());
+}

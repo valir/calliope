@@ -24,6 +24,13 @@ const MAX_NAME: usize = 200;
 const MAX_COMPOSERS: usize = 20;
 const MAX_COPYRIGHT: usize = 500;
 const PROGRESS_PREFIX: &str = "calliope-progress ";
+/// yt-dlp's own size cap (the 1 GiB import limit).
+pub const MAX_FILESIZE: &str = "1G";
+/// Refuses live streams and known durations over 15 minutes (unknown durations pass; the
+/// converter's own limit catches those).
+pub const MATCH_FILTER: &str = "!is_live & duration <=? 900";
+pub const TOO_LONG_MESSAGE: &str = "Download refused: the video is a live stream or longer than 15 minutes";
+pub const TOO_BIG_MESSAGE: &str = "Download refused: the file is larger than 1 GiB";
 pub const INFO_JSON: &str = "info.json";
 /// What the real yt-dlp makes of `--output infojson:info` (it appends `.info.json`).
 const INFO_JSON_YTDLP: &str = "info.info.json";
@@ -75,6 +82,10 @@ pub fn ytdlp_args(job_dir: &Path, url: &str, resume: bool) -> Vec<String> {
     .iter()
     .map(|s| s.to_string())
     .collect();
+    // limits are enforced by yt-dlp itself, before the bytes are fetched
+    for s in ["--max-filesize", MAX_FILESIZE, "--match-filter", MATCH_FILTER] {
+        a.push(s.into());
+    }
     a.push(if resume { "--continue" } else { "--no-continue" }.into());
     for s in [
         "--write-info-json",
@@ -120,6 +131,17 @@ pub fn http_status(line: &str) -> Option<u16> {
     let i = line.find("HTTP Error ")? + "HTTP Error ".len();
     let digits: String = line[i..].chars().take_while(char::is_ascii_digit).collect();
     (digits.len() == 3).then(|| digits.parse().ok()).flatten()
+}
+
+/// yt-dlp reports a skipped video on stdout (and exits 0): the user-facing reason, if so.
+pub fn parse_skip(line: &str) -> Option<&'static str> {
+    if line.contains("does not pass filter") {
+        Some(TOO_LONG_MESSAGE)
+    } else if line.contains("larger than max-filesize") {
+        Some(TOO_BIG_MESSAGE)
+    } else {
+        None
+    }
 }
 
 /// Turns a stderr line into the user-facing error; `None` if it isn't an `ERROR:` line.
@@ -238,7 +260,7 @@ pub fn find_download(dir: &Path) -> Option<PathBuf> {
         .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
         .filter(|e| {
             let n = e.file_name().to_string_lossy().into_owned();
-            n.starts_with("download.") && !n.ends_with(".part") && !n.ends_with(".ytdl")
+            crate::import_tmp::is_finished_download(&n)
         })
         .map(|e| e.path())
         .collect();
@@ -267,6 +289,8 @@ pub fn run_download(
     let last_error = Arc::new(Mutex::new(None::<String>));
     let last_raw = Arc::new(Mutex::new(None::<String>));
     let (le, lr) = (last_error.clone(), last_raw.clone());
+    let skipped = Arc::new(Mutex::new(None::<&'static str>));
+    let sk = skipped.clone();
     let args = ytdlp_args(job_dir, url, resume);
     let running = process::spawn(
         ytdlp,
@@ -275,6 +299,10 @@ pub fn run_download(
         move |l| {
             if let Some((d, t)) = parse_progress(&l) {
                 on_progress(d, t);
+            } else if let Some(m) = parse_skip(&l) {
+                if let Ok(mut g) = sk.lock() {
+                    *g = Some(m);
+                }
             }
         },
         move |l| {
@@ -308,6 +336,9 @@ pub fn run_download(
         });
     }
     let Some(file) = find_download(job_dir) else {
+        if let Some(m) = skipped.lock().ok().and_then(|g| *g) {
+            return failed(m);
+        }
         return failed("Download failed: yt-dlp produced no file");
     };
     // The real yt-dlp appends ".info.json" to the `infojson:` name; settle on `info.json`.
@@ -428,6 +459,37 @@ mod tests {
     }
 
     #[test]
+    fn argv_carries_the_size_and_duration_limits() {
+        let a = ytdlp_args(Path::new("/x"), "https://h.example/", true);
+        assert!(a.windows(2).any(|w| w[0] == "--max-filesize" && w[1] == "1G"));
+        assert!(a.windows(2).any(|w| w[0] == "--match-filter" && w[1] == "!is_live & duration <=? 900"));
+    }
+
+    #[test]
+    fn skipped_videos_get_a_clear_message() {
+        for (path, msg) in [("live", TOO_LONG_MESSAGE), ("long", TOO_LONG_MESSAGE), ("huge", TOO_BIG_MESSAGE)] {
+            let url = normalise(&format!("https://media.example/{path}")).unwrap();
+            let (_r, dir) = setup(&url);
+            let e = run_download(&fake(), &dir, &url, true, &Cancel::new(), |_, _| {}).unwrap_err();
+            assert_eq!(e, DownloadError::Failed { message: msg.into(), http_status: None }, "{path}");
+        }
+    }
+
+    #[test]
+    fn fragments_are_not_the_download() {
+        let d = tempfile::tempdir().unwrap();
+        for n in ["download.f251.webm", "download.f137.mp4", "download.webm.part", "download.webm.ytdl", "download.f251.webm.part"] {
+            fs::write(d.path().join(n), b"x").unwrap();
+        }
+        assert_eq!(find_download(d.path()), None);
+        fs::write(d.path().join("download.webm"), b"x").unwrap();
+        assert_eq!(find_download(d.path()), Some(d.path().join("download.webm")));
+        assert!(crate::import_tmp::is_finished_download("download.m4a"));
+        assert!(crate::import_tmp::is_finished_download("download.flac"));
+        assert!(!crate::import_tmp::is_finished_download("download.f140.m4a"));
+    }
+
+    #[test]
     fn progress_lines() {
         assert_eq!(parse_progress("calliope-progress 100 1000 NA"), Some((100, Some(1000))));
         assert_eq!(parse_progress("calliope-progress 100 NA 2000"), Some((100, Some(2000))));
@@ -493,7 +555,17 @@ mod tests {
         let run = |args: &[&str]| {
             std::process::Command::new(fake()).args(args).output().unwrap()
         };
-        let o = run(&["--ignore-config", "--paths", d.path().to_str().unwrap(), "--", "https://www.youtube.com/watch?v=ok"]);
+        let o = run(&[
+            "--ignore-config",
+            "--max-filesize",
+            "1G",
+            "--match-filter",
+            "!is_live & duration <=? 900",
+            "--paths",
+            d.path().to_str().unwrap(),
+            "--",
+            "https://www.youtube.com/watch?v=ok",
+        ]);
         assert_eq!(o.status.code(), Some(2));
         assert!(String::from_utf8_lossy(&o.stderr).contains("real network URLs are not allowed"));
         let o = run(&["--paths", d.path().to_str().unwrap(), "--", "https://media.example/watch"]);
