@@ -245,7 +245,8 @@ fn cargo_dependency_names(toml: &str) -> Vec<String> {
     for line in toml.lines() {
         let line = line.trim();
         if line.starts_with('[') {
-            in_deps = matches!(line, "[dependencies]" | "[build-dependencies]" | "[dev-dependencies]");
+            in_deps = matches!(line, "[dependencies]" | "[build-dependencies]" | "[dev-dependencies]")
+                || (line.starts_with("[target.") && line.ends_with(".dependencies]"));
         } else if in_deps && !line.is_empty() && !line.starts_with('#') {
             if let Some((name, _)) = line.split_once('=') {
                 names.push(name.trim().to_string());
@@ -258,8 +259,21 @@ fn cargo_dependency_names(toml: &str) -> Vec<String> {
 #[test]
 fn licence_record_lists_every_direct_dependency() {
     let record = fs::read_to_string(root().join("docs/licences.md")).expect("docs/licences.md");
-    let mut names = cargo_dependency_names(&fs::read_to_string(root().join("Cargo.toml")).unwrap());
+    let root_toml = fs::read_to_string(root().join("Cargo.toml")).unwrap();
+    let mut names = cargo_dependency_names(&root_toml);
     assert!(names.len() >= 8, "Cargo.toml parsing found too few dependencies: {names:?}");
+    // Every other workspace member's manifest too (the `members = [...]` list of the root).
+    let members = names_between(&root_toml, "members = [", "]");
+    assert!(members.len() >= 2, "workspace members not found: {members:?}");
+    for m in &members {
+        let toml = fs::read_to_string(root().join(m).join("Cargo.toml")).unwrap_or_else(|e| panic!("{m}/Cargo.toml: {e}"));
+        let member_names = cargo_dependency_names(&toml);
+        assert!(!member_names.is_empty(), "no dependencies parsed in {m}/Cargo.toml");
+        names.extend(member_names);
+    }
+    for n in ["libc", "ureq", "tiny_http"] {
+        assert!(names.iter().any(|x| x == n), "member dependency {n} not found by the parser");
+    }
     let pkg: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(root().join("package.json")).unwrap()).unwrap();
     for section in ["dependencies", "devDependencies"] {

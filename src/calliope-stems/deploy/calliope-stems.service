@@ -1,0 +1,14 @@
+# Example systemd USER unit for calliope-stems. Copy it to ~/.config/systemd/user/ yourself
+# (see ../README.md, "Manual deployment"); nothing in this repository installs or starts it.
+[Unit]
+Description=Calliope stems service (calliope-stems API v1)
+After=network-online.target
+
+[Service]
+# Where the audio-separator adapter finds .venv/bin/audio-separator and models/.
+Environment=STEMS_HOME=%h/edge-ai/stems
+ExecStart=%h/.local/bin/calliope-stems --listen 0.0.0.0:8765 --work-dir %h/.local/state/calliope-stems --separator %h/.local/bin/calliope-separate-audio-separator --model htdemucs_6s
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
