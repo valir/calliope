@@ -30,7 +30,7 @@ export interface DraftTab {
 export interface Draft extends DraftFields {
   id: string;
   revision: string;
-  audio: string;
+  audio: string | null;
   tabs: DraftTab[];
   /** Everything as loaded, to detect changes. */
   initial: { fields: DraftFields; tabs: DraftTab[] };
@@ -165,7 +165,7 @@ export function tabRows(d: Draft): { key: string; name: string; state: TabState 
 function clash(d: Draft, name: string, exceptKey: string | null): string | null {
   const lower = name.toLowerCase();
   if (lower === 'track.json') return '"track.json" is reserved';
-  if (lower === d.audio.toLowerCase()) return `"${name}" is the audio file of this track`;
+  if (lower === d.audio?.toLowerCase()) return `"${name}" is the audio file of this track`;
   if (d.tabs.some((t) => t.key !== exceptKey && t.name.toLowerCase() === lower)) {
     return `A tablature named "${name}" is already listed`;
   }

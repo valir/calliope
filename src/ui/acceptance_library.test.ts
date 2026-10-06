@@ -17,7 +17,11 @@ const rec = (n: number, p: Partial<TrackRecord>): TrackRecord => ({
   year: null,
   source_url: null,
   copyright: null,
+  type: 'backing',
   audio: 'backing.mp3',
+  original: null,
+  stems: [],
+  stem_model: null,
   tablatures: [],
   imported: '2026-10-01T12:00:00Z',
   modified: '2026-10-01T12:00:00Z',
@@ -74,7 +78,11 @@ afterEach(() => {
 });
 
 const items = () => screen.queryAllByRole('treeitem');
-const labels = () => items().map((i) => i.textContent!.trim());
+// The row label without the "S"/"B" type badge.
+const labels = () =>
+  items().map((i) =>
+    i.textContent!.trim().replace(i.querySelector('[data-track-type]')?.textContent ?? '', '').trim(),
+  );
 const search = () => screen.getByRole('searchbox', { name: 'Search tracks' }) as HTMLInputElement;
 const btn = (name: string) => screen.getByRole('button', { name }) as HTMLButtonElement;
 const field = (l: string) => screen.getByLabelText(l) as HTMLInputElement;
@@ -88,11 +96,15 @@ async function ready() {
   render(LibraryView);
   await waitFor(() => expect(items().length).toBeGreaterThan(0));
 }
+// The row's accessible name starts with its type badge ("Backing track " / "Stem track ").
+const rowName = (title: string) =>
+  new RegExp(`^(Backing track |Stem track )?${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
+
 async function openTrack(title: string) {
   await ready();
   await fireEvent.click(btn('Expand all'));
   await tick();
-  await fireEvent.click(screen.getByRole('treeitem', { name: title }));
+  await fireEvent.click(screen.getByRole('treeitem', { name: rowName(title) }));
   await tick();
 }
 async function edit() {

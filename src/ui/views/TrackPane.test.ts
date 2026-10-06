@@ -76,13 +76,17 @@ const clickBtn = async (name: string) => {
   await tick();
 };
 
+// The row's accessible name starts with its type badge ("Backing track " / "Stem track ").
+const rowName = (title: string) =>
+  new RegExp(`^(Backing track |Stem track )?${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
+
 async function open(title: string | null): Promise<void> {
   render(LibraryView);
   await waitFor(() => expect(screen.queryAllByRole('treeitem').length).toBeGreaterThan(0));
   if (title === null) return;
   await fireEvent.click(anyBtn('Expand all'));
   await tick();
-  await fireEvent.click(screen.getByRole('treeitem', { name: title }));
+  await fireEvent.click(screen.getByRole('treeitem', { name: rowName(title) }));
   await tick();
 }
 const edit = async () => {
@@ -160,6 +164,28 @@ describe('Track pane: states', () => {
     await tick();
     expect(btn('Edit').disabled).toBe(false);
     expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+});
+
+describe('Track pane: stem tracks', () => {
+  it('shows Stem track, the six stem names and the original file; audio is none', async () => {
+    await open('Glass Harbour');
+    expect(field('Type').value).toBe('Stem track');
+    expect(field('Audio file').value).toBe('none');
+    expect(field('Original').value).toBe('original.flac');
+    expect(field('Stem model').value).toBe('htdemucs_6s');
+    const names = within(screen.getByRole('list', { name: 'Stems' })).getAllByRole('listitem');
+    expect(names.map((n) => n.textContent!.trim())).toEqual(
+      ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'],
+    );
+  });
+
+  it('a backing track shows its type and audio file, no Original or Stems', async () => {
+    await open('Slow Burn');
+    expect(field('Type').value).toBe('Backing track');
+    expect(field('Audio file').value).toBe('backing.mp3');
+    expect(screen.queryByLabelText('Original')).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Stems' })).toBeNull();
   });
 });
 

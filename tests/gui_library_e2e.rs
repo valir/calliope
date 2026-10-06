@@ -171,8 +171,8 @@ fn tablature_add_and_remove() {
     assert!(tablatures(&dirs, ID2).is_empty());
     app.key(&wid, "ctrl+e");
     app.wait_contains(&format!("mode=edit id={ID2}"));
-    // Band, Album, Title, Composers, Year, Source, Copyright, 4 read-only, list box, Add.
-    app.key(&wid, &"Tab ".repeat(13));
+    // Band, Album, Title, Composers, Year, Source, Copyright, 5 read-only (ID, Type, Audio, Imported, Modified), list box, Add.
+    app.key(&wid, &"Tab ".repeat(14));
     app.key(&wid, "Return");
     app.wait_contains("dialog kind=add-tablature result=picked");
     app.wait_contains("tab-staged add name=riff.gp5");
@@ -190,7 +190,7 @@ fn tablature_add_and_remove() {
     app.key(&wid, "ctrl+e");
     app.wait_contains(&format!("mode=edit id={ID2}"));
     click_band_label(&wid);
-    app.key(&wid, &"Tab ".repeat(11)); // the list box
+    app.key(&wid, &"Tab ".repeat(12)); // the list box (Band is focused; 11 fields incl. Type, then it)
     app.key(&wid, "Down Tab Tab"); // select the row, then Add, Update
     app.key(&wid, "Return");
     app.wait_contains("dialog kind=update-tablature result=picked");
@@ -211,7 +211,7 @@ fn tablature_add_and_remove() {
     app.key(&wid, "ctrl+e");
     app.wait_contains(&format!("mode=edit id={ID2}"));
     click_band_label(&wid);
-    app.key(&wid, &"Tab ".repeat(11)); // the list box
+    app.key(&wid, &"Tab ".repeat(12)); // the list box (Band is focused; 11 fields incl. Type, then it)
     app.key(&wid, "Down");
     settle();
     shot("library-tab-selected");
@@ -282,7 +282,7 @@ fn add_opens_real_file_dialog() {
     let json_before = std::fs::read(dirs.track_json(ID2)).unwrap();
     app.key(&wid, "ctrl+e");
     app.wait_contains(&format!("mode=edit id={ID2}"));
-    app.key(&wid, &"Tab ".repeat(13));
+    app.key(&wid, &"Tab ".repeat(14));
     app.key(&wid, "Return");
     let dlg = out("xdotool", &["search", "--sync", "--name", "^Add tablature$"]);
     let dlg = dlg.lines().next().expect("dialog window").to_string();
@@ -316,8 +316,8 @@ fn delete_track_to_trash() {
     let dirs = lib_dirs("delete_track_to_trash");
     let (mut app, wid, _) = App::start_lib(&dirs, &[]);
     app.select_by_search(&wid, "lanterns", ID4);
-    // The 11 fields, Edit, Export, Delete.
-    app.key(&wid, &"Tab ".repeat(14));
+    // The 12 fields (with Type), Edit, Export, Delete.
+    app.key(&wid, &"Tab ".repeat(15));
     app.key(&wid, "Return");
     settle();
     shot("library-delete-confirm");
@@ -402,6 +402,14 @@ fn library_min_size() {
 
 /// Focuses the Band field by clicking its label (a deterministic Tab start for a 1280x800 window).
 fn click_band_label(wid: &str) {
+    // The pane's field area scrolls (it is taller than the window since the Type row was added)
+    // and keeps its offset between edits: scroll it to the top first.
+    let s = Command::new("xdotool")
+        .args(["mousemove", "--window", wid, "900", "300", "click", "--repeat", "8", "4"])
+        .status()
+        .unwrap();
+    assert!(s.success());
+    sleep_ms(300);
     let s = Command::new("xdotool")
         .args(["mousemove", "--window", wid, "655", "35", "click", "1"])
         .status()

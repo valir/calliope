@@ -148,6 +148,25 @@
       {:else}
         <span class="size-4 shrink-0"></span>
       {/if}
+      {#if item.track}
+        {#if item.track.type === 'stem'}
+          <span
+            role="img"
+            aria-label="Stem track"
+            data-track-type="stem"
+            class="inline-flex size-5 shrink-0 items-center justify-center rounded border border-primary text-xs font-semibold leading-none text-primary"
+            >S</span
+          >
+        {:else}
+          <span
+            role="img"
+            aria-label="Backing track"
+            data-track-type="backing"
+            class="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border text-xs font-semibold leading-none text-muted-foreground"
+            >B</span
+          >
+        {/if}
+      {/if}
       <span class="truncate">{item.label}</span>
     </div>
   {/each}

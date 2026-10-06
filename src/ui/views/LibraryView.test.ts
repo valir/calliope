@@ -42,7 +42,10 @@ afterEach(() => {
 });
 
 const items = () => screen.queryAllByRole('treeitem');
-const labels = () => items().map((i) => i.textContent!.trim());
+// The row label without the "S"/"B" type badge.
+const labelOf = (i: Element) =>
+  i.textContent!.trim().replace(i.querySelector('[data-track-type]')?.textContent ?? '', '').trim();
+const labels = () => items().map(labelOf);
 const search = () => screen.getByRole('searchbox', { name: 'Search tracks' }) as HTMLInputElement;
 
 async function ready(): Promise<void> {
@@ -70,7 +73,7 @@ describe('Library view: structure', () => {
     expect(items().length).toBe(4);
     expect(items().every((i) => i.getAttribute('aria-expanded') === 'false')).toBe(true);
     expect(labels()).toEqual(['Amber Fields', 'the Night Owls', 'Zephyr Lane', '(no band)']);
-    expect(logs).toContain('library root=/tmp/repo status=ok tracks=6 problems=0');
+    expect(logs).toContain('library root=/tmp/repo status=ok tracks=7 problems=0');
   });
 
   it('AC2: labels and order at all three levels after Expand all', async () => {
@@ -80,6 +83,7 @@ describe('Library view: structure', () => {
       'Amber Fields',
       'Copper Sky',
       'Copper Sky',
+      'Glass Harbour',
       'Northern Roads',
       'after midnight',
       'Slow Burn',
@@ -94,7 +98,7 @@ describe('Library view: structure', () => {
       'Café Practice Groove',
     ]);
     expect(items().map((i) => i.getAttribute('aria-level'))).toEqual(
-      ['1', '2', '3', '2', '3', '3', '1', '2', '3', '1', '2', '3', '1', '2', '3'],
+      ['1', '2', '3', '3', '2', '3', '3', '1', '2', '3', '1', '2', '3', '1', '2', '3'],
     );
     await click('Collapse all');
     expect(items().length).toBe(4);
@@ -164,7 +168,7 @@ describe('Library view: tree keyboard', () => {
     await tick();
     const track = items()[2];
     expect(document.activeElement).toBe(track);
-    expect(track.textContent!.trim()).toBe('Copper Sky');
+    expect(labelOf(track)).toBe('Copper Sky');
     await fireEvent.keyDown(track, { key: ' ' });
     expect(items()[2].getAttribute('aria-selected')).toBe('true');
     expect(logs).toContain('select id=0199b0a0-0000-7000-8000-000000000003');
@@ -186,7 +190,7 @@ describe('Library view: tree keyboard', () => {
     await fireEvent.click(items()[0]);
     expect(items()[0].getAttribute('aria-expanded')).toBe('true');
     await expandAll();
-    const t = items().find((i) => i.textContent!.trim() === 'Slow Burn')!;
+    const t = items().find((i) => labelOf(i) === 'Slow Burn')!;
     await fireEvent.click(t);
     expect(t.getAttribute('aria-selected')).toBe('true');
   });
@@ -212,7 +216,7 @@ describe('Library view: states', () => {
     await fireEvent.click(btn);
     expect(screen.getByText('bad-1: invalid JSON')).toBeTruthy();
     expect(screen.getByText('bad-2: schema 2')).toBeTruthy();
-    expect(logs).toContain('library root=/tmp/repo status=ok tracks=6 problems=2');
+    expect(logs).toContain('library root=/tmp/repo status=ok tracks=7 problems=2');
   });
 
   it('creates a missing default root through list_tracks without an alert', async () => {
@@ -240,5 +244,24 @@ describe('Library view: states', () => {
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('disk on fire');
     expect(logs.some((l) => l.startsWith('error list_tracks:'))).toBe(true);
+  });
+});
+
+describe('Library view: track-type badges', () => {
+  const row = (title: string) => items().find((i) => labelOf(i) === title)!;
+
+  it('a stem track has "S" (aria-label "Stem track") before its name, a backing track "B"', async () => {
+    await ready();
+    await expandAll();
+    const stem = row('Glass Harbour');
+    const badge = stem.querySelector('[data-track-type]') as HTMLElement;
+    expect(badge.textContent!.trim()).toBe('S');
+    expect(badge.getAttribute('aria-label')).toBe('Stem track');
+    expect(stem.textContent!.trim()).toMatch(/^S\s*Glass Harbour$/);
+    const back = row('Slow Burn').querySelector('[data-track-type]') as HTMLElement;
+    expect(back.textContent!.trim()).toBe('B');
+    expect(back.getAttribute('aria-label')).toBe('Backing track');
+    // groups carry no badge
+    expect(items()[0].querySelector('[data-track-type]')).toBeNull();
   });
 });

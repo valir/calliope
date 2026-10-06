@@ -74,7 +74,7 @@ describe('filterTree', () => {
   it('nght finds the Night Owls', () => expect(titles('nght')).toEqual(['Lanterns']));
   it('brn finds Slow Burn', () => expect(titles('brn')).toEqual(['Slow Burn']));
   it('ber finds Amber Fields tracks', () =>
-    expect(titles('ber')).toEqual(['Copper Sky', 'after midnight', 'Slow Burn']));
+    expect(titles('ber')).toEqual(['Copper Sky', 'Glass Harbour', 'after midnight', 'Slow Burn']));
   it('mbr finds nothing', () => {
     const r = filterTree(tree, 'mbr');
     expect(r.tree).toEqual([]);

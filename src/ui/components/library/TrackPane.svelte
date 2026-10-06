@@ -3,7 +3,7 @@
   import TablaturePanel from './TablaturePanel.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
-  import { Textarea } from '$lib/components/ui/textarea/index.js';
+  import TrackFields from '../TrackFields.svelte';
   import {
     discardAfterConflict,
     endEdit,
@@ -74,101 +74,50 @@
     }
   }
 
-  const textFields: { key: DraftField; label: string }[] = [
-    { key: 'band', label: 'Band' },
-    { key: 'album', label: 'Album' },
-    { key: 'title', label: 'Title' },
-  ];
-  const lateFields: { key: DraftField; label: string }[] = [
-    { key: 'source_url', label: 'Source link' },
-    { key: 'copyright', label: 'Copyright' },
-  ];
-
   function input(field: DraftField, value: string): void {
     if (lib.draft) lib.draft = setField(lib.draft, field, value);
   }
 
   const readOnly = $derived([
     { id: 'track-id', label: 'Track ID', value: shown?.id ?? '' },
-    { id: 'track-audio', label: 'Audio file', value: shown?.audio ?? '' },
+    { id: 'track-type', label: 'Type', value: selected ? (selected.type === 'stem' ? 'Stem track' : 'Backing track') : '' },
+    { id: 'track-audio', label: 'Audio file', value: selected ? (selected.audio ?? 'none') : '' },
+    ...(selected?.original ? [{ id: 'track-original', label: 'Original', value: selected.original }] : []),
+    ...(selected?.stem_model ? [{ id: 'track-stem-model', label: 'Stem model', value: selected.stem_model }] : []),
     { id: 'track-imported', label: 'Imported', value: selected?.imported ?? '' },
     { id: 'track-modified', label: 'Modified', value: selected?.modified ?? '' },
   ]);
-
-  // Read-only (view mode) fields drop their box; edit mode shows the full input box.
-  const viewLook = $derived(!editing && !noSelection ? 'border-transparent bg-transparent dark:bg-transparent' : '');
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
-{#snippet field(f: { key: DraftField; label: string })}
-  <label for="track-{f.key}" class="pt-1.5 text-sm font-medium">{f.label}</label>
-  <div class="flex flex-col gap-1">
-    <Input
-      id="track-{f.key}"
-      value={shown ? shown[f.key] : ''}
-      disabled={noSelection}
-      readonly={!editing}
-      class={viewLook}
-      aria-invalid={lib.fieldErrors[f.key] ? true : undefined}
-      aria-describedby={lib.fieldErrors[f.key] ? `track-${f.key}-error` : undefined}
-      oninput={(e) => input(f.key, e.currentTarget.value)}
-    />
-    {#if lib.fieldErrors[f.key]}
-      <p id="track-{f.key}-error" class="text-sm text-destructive">{lib.fieldErrors[f.key]}</p>
-    {/if}
-  </div>
-{/snippet}
-
 <div class="flex h-full min-h-0 flex-col">
   <div class="min-h-0 flex-1 overflow-y-auto pr-1">
-    <div class="grid grid-cols-[7rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2">
-      {#each textFields as f (f.key)}{@render field(f)}{/each}
-
-      <label for="track-composers" class="pt-1.5 text-sm font-medium">Composers</label>
-      <div class="flex flex-col gap-1">
-        <Textarea
-          id="track-composers"
-          rows={3}
-          placeholder={editing ? 'One composer per line' : ''}
-          value={shown?.composers ?? ''}
-          disabled={noSelection}
-          readonly={!editing}
-          class={viewLook}
-          aria-invalid={lib.fieldErrors.composers ? true : undefined}
-          aria-describedby={lib.fieldErrors.composers ? 'track-composers-error' : undefined}
-          oninput={(e) => input('composers', e.currentTarget.value)}
-        />
-        {#if lib.fieldErrors.composers}
-          <p id="track-composers-error" class="text-sm text-destructive">{lib.fieldErrors.composers}</p>
-        {/if}
-      </div>
-
-      <label for="track-year" class="pt-1.5 text-sm font-medium">Year</label>
-      <div class="flex flex-col gap-1">
-        <Input
-          id="track-year"
-          inputmode="numeric"
-          class={`w-28 ${viewLook}`}
-          value={shown?.year ?? ''}
-          disabled={noSelection}
-          readonly={!editing}
-          aria-invalid={lib.fieldErrors.year ? true : undefined}
-          aria-describedby={lib.fieldErrors.year ? 'track-year-error' : undefined}
-          oninput={(e) => input('year', e.currentTarget.value)}
-        />
-        {#if lib.fieldErrors.year}
-          <p id="track-year-error" class="text-sm text-destructive">{lib.fieldErrors.year}</p>
-        {/if}
-      </div>
-
-      {#each lateFields as f (f.key)}{@render field(f)}{/each}
-
+    <TrackFields
+      draft={shown}
+      {editing}
+      errors={lib.fieldErrors}
+      oninput={input}
+      idPrefix="track"
+    >
       {#each readOnly as r (r.id)}
         <label for={r.id} class="pt-1.5 text-sm font-medium text-muted-foreground">{r.label}</label>
         <Input id={r.id} value={r.value} readonly disabled={noSelection} class="text-muted-foreground" />
       {/each}
-    </div>
+      {#if selected && selected.stems.length > 0}
+        <span id="track-stems-label" class="pt-1.5 text-sm font-medium text-muted-foreground">Stems</span>
+        <ul aria-labelledby="track-stems-label" class="flex flex-wrap gap-1.5 pt-1">
+          {#each selected.stems as st (st.name)}
+            <li
+              class="rounded-md border border-border px-2 py-0.5 text-sm text-muted-foreground"
+              class:text-destructive={selected.missing.includes(st.file)}
+            >
+              {st.name}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </TrackFields>
   </div>
 
   <!-- The tablature panel and the action bar are pinned below the scrolling fields, so their

@@ -1,7 +1,12 @@
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 
 export type Theme = 'dark' | 'light';
-export interface Settings { theme: Theme; repository_root: string | null }
+export interface Settings {
+  theme: Theme;
+  repository_root: string | null;
+  edge_ai_url: string | null;
+  keep_original: boolean;
+}
 
 export const appVersion = (): Promise<string> => invoke<string>('app_version');
 export const getSettings = (): Promise<Settings> => invoke<Settings>('get_settings');
@@ -10,8 +15,11 @@ export const frontendLog = (message: string): Promise<void> =>
   invoke<void>('frontend_log', { message }).catch(() => undefined);
 
 // Track repository: mirrors src/track_meta.rs, src/repository.rs and src/ipc.rs.
+export type TrackType = 'backing' | 'stem';
+export interface StemEntry { name: string; file: string }
 export interface TrackRecord {
   id: string;
+  type: TrackType;
   band: string;
   album: string;
   title: string;
@@ -19,7 +27,11 @@ export interface TrackRecord {
   year: number | null;
   source_url: string | null;
   copyright: string | null;
-  audio: string;
+  /** null for stem tracks. */
+  audio: string | null;
+  original: string | null;
+  stems: StemEntry[];
+  stem_model: string | null;
   tablatures: string[];
   imported: string;
   modified: string;
@@ -66,3 +78,82 @@ export const exportTrack = (id: string): Promise<string | null> =>
   invoke<string | null>('export_track', { id });
 export const exportTablature = (id: string, name: string): Promise<string | null> =>
   invoke<string | null>('export_tablature', { id, name });
+
+// Stem extraction import: mirrors src/import_job.rs and src/ipc.rs.
+export type EdgeAiState = 'not-configured' | 'connected' | 'unreachable' | 'incompatible';
+export interface EdgeAiStatus { state: EdgeAiState; message: string; models: string[] }
+export interface ToolInfo { found: boolean; version: string | null; ok: boolean; message: string }
+export interface ToolsInfo { yt_dlp: ToolInfo; ffmpeg: ToolInfo; ffprobe: ToolInfo }
+export type UrlPrepStatus = 'invalid' | 'ready' | 'partial' | 'busy';
+export interface UrlPrep { status: UrlPrepStatus; message: string; partial_bytes: number }
+export type ImportKind = 'audio' | 'video';
+export type JobPhase =
+  | 'downloading' | 'preparing' | 'ready' | 'uploading' | 'queued' | 'working'
+  | 'receiving' | 'saving' | 'saved' | 'failed' | 'cancelled';
+export type JobStage = 'download' | 'prepare' | 'server' | 'save';
+export interface JobSource { kind: 'url' | 'audio-file' | 'video-file'; label: string }
+export interface JobError { stage: JobStage; message: string; http_status: number | null }
+export interface JobSnapshot {
+  job: string;
+  source: JobSource;
+  phase: JobPhase;
+  downloaded: number;
+  total: number | null;
+  sent: number;
+  stems_done: number;
+  stems_total: number;
+  progress: number | null;
+  duration_s: number | null;
+  metadata: TrackEdits | null;
+  error: JobError | null;
+  track: TrackRecord | null;
+}
+export type ImportEvent =
+  | { phase: 'downloading'; downloaded: number; total: number | null }
+  | { phase: 'preparing' }
+  | { phase: 'ready'; metadata: TrackEdits; duration_s: number | null }
+  | { phase: 'uploading'; sent: number; total: number }
+  | { phase: 'queued' }
+  | { phase: 'working'; progress: number | null }
+  | { phase: 'receiving'; done: number; total: number }
+  | { phase: 'saving' }
+  | { phase: 'saved'; track: TrackRecord }
+  | { phase: 'failed'; stage: JobStage; message: string; http_status: number | null }
+  | { phase: 'cancelled'; back_to: 'source' | 'edit' };
+
+/** Wraps a callback in the Tauri Channel the Rust side streams ImportEvent values into. */
+function channel(onEvent: (e: ImportEvent) => void): Channel<ImportEvent> {
+  const ch = new Channel<ImportEvent>();
+  ch.onmessage = onEvent;
+  return ch;
+}
+
+export const setEdgeAiUrl = (url: string | null): Promise<Settings> =>
+  invoke<Settings>('set_edge_ai_url', { url });
+export const setKeepOriginal = (keep: boolean): Promise<Settings> =>
+  invoke<Settings>('set_keep_original', { keep });
+export const checkEdgeAi = (): Promise<EdgeAiStatus> => invoke<EdgeAiStatus>('check_edge_ai');
+export const checkTools = (): Promise<ToolsInfo> => invoke<ToolsInfo>('check_tools');
+export const prepareUrlImport = (url: string): Promise<UrlPrep> =>
+  invoke<UrlPrep>('prepare_url_import', { url });
+export const startUrlImport = (
+  url: string,
+  resume: boolean,
+  onEvent: (e: ImportEvent) => void,
+): Promise<JobSnapshot> => invoke<JobSnapshot>('start_url_import', { url, resume, events: channel(onEvent) });
+/** Opens the file dialog in Rust; null when it was cancelled. */
+export const importFile = (
+  kind: ImportKind,
+  onEvent: (e: ImportEvent) => void,
+): Promise<JobSnapshot | null> =>
+  invoke<JobSnapshot | null>('import_file', { kind, events: channel(onEvent) });
+export const startStemExtraction = (job: string, edits: TrackEdits): Promise<JobSnapshot> =>
+  invoke<JobSnapshot>('start_stem_extraction', { job, edits });
+export const cancelImport = (job: string): Promise<JobSnapshot> =>
+  invoke<JobSnapshot>('cancel_import', { job });
+export const discardImport = (job: string): Promise<void> =>
+  invoke<void>('discard_import', { job });
+export const getImportJob = (): Promise<JobSnapshot | null> =>
+  invoke<JobSnapshot | null>('get_import_job');
+export const watchImport = (onEvent: (e: ImportEvent) => void): Promise<JobSnapshot | null> =>
+  invoke<JobSnapshot | null>('watch_import', { events: channel(onEvent) });
