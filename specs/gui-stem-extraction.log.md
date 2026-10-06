@@ -12,3 +12,4 @@ task 8 | Fake yt-dlp and download module | implementer | done (committed with 9:
 task 9 | Stub separator + real-model adapter (syntax-checked only, never run) | implementer | done (~/edge-ai untouched)
 task 10 | calliope-stems server (tiny_http, workspace member) | implementer | done (30 tests incl. smoke on 127.0.0.1 with stub)
   - limit: no upload read timeout (tiny_http); a stalled client holds a queue slot until it disconnects
+task 11 | Stems client + protocol conformance suite (real binary, stub, 127.0.0.1) | implementer | done (15 conformance tests, 3 runs green)

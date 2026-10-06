@@ -18,3 +18,4 @@ libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
+calliope-common = { path = "../calliope-common", features = ["client"] }

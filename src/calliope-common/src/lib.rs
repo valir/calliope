@@ -5,3 +5,5 @@
 
 pub mod process;
 pub mod stems_api;
+#[cfg(feature = "client")]
+pub mod stems_client;
