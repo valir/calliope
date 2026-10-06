@@ -43,3 +43,5 @@ task 23 | Licences and READMEs | implementer | done
   - tests/frontend.rs: licence_record_lists_every_direct_dependency now reads every workspace member's Cargo.toml (and [target.*.dependencies]); docs/licences.md already had the crate rows, now also External tools (not bundled), Test-only tools, shadcn progress/switch
   - htdemucs_6s weights licence could not be determined from local files: recorded as "to be confirmed by the owner" (also the Demucs LICENSE file is not shipped inside audio-separator)
   - README.md Import section; src/calliope-stems/README.md; src/calliope-stems/deploy/calliope-stems.service (systemd-analyze verify --user: only "ExecStart not executable", the binary is not installed). Nothing installed or started.
+tester | acceptance tests (server 22, hostile client 13, orchestrator/data-safety 198, GUI 4, vitest +37) | all AC PASS; 4 low findings as #[ignore] tests | done
+reviewer | 0a8892c..HEAD | CHANGES REQUIRED (1 major: start_extraction wedges job on early error; minors) | done
