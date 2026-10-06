@@ -27,6 +27,7 @@ describe('shadcn variants match bits-ui attributes', () => {
       ['data-open', 'data-state="open"'],
       ['data-closed', 'data-state="closed"'],
       ['data-checked', 'data-state="checked"'],
+      ['data-unchecked', 'data-state="unchecked"'],
     ]) {
       expect(css).toContain(`@custom-variant ${name} (&[${attr}]);`);
     }

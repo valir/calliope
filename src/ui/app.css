@@ -12,6 +12,7 @@
 @custom-variant data-open (&[data-state="open"]);
 @custom-variant data-closed (&[data-state="closed"]);
 @custom-variant data-checked (&[data-state="checked"]);
+@custom-variant data-unchecked (&[data-state="unchecked"]);
 
 :root {
 	--radius: 0.625rem;

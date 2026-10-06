@@ -62,9 +62,8 @@ describe('acceptance: navigation (req 4, AC2, AC3)', () => {
       const text = main().textContent!;
       if (name === 'Playlists') expect(text).toContain('Planned; there is no feature spec yet.');
       else if (name === 'Settings') {
-        for (const t of ['MIDI interface', 'Audio output', 'Edge-AI server', 'Appearance']) expect(text).toContain(t);
+        for (const t of ['MIDI interface', 'Audio output', 'Stem extraction', 'External tools', 'Appearance']) expect(text).toContain(t);
         expect(text).toContain('gui-play-backing-track');
-        expect(text).toContain('gui-stem-extracting');
       } else if (name === 'Import') expect(text).toContain('Stem Extraction');
       else if (name === 'Library') await waitFor(() => expect(main().textContent).toContain('No tracks in the repository yet.'));
       else for (const f of FEATURES[name]) expect(text).toContain(f);

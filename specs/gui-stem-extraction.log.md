@@ -23,3 +23,5 @@ task 17 | TrackFields.svelte extraction | implementer | done
   - follow-ups: gui_library_e2e relies on Tab counts (fragile; one run hung 30 min in the real-dialog test); client-side draft does not know original.flac for tablature clash (Rust rejects it)
 task 18 | Import view: menu, source page, download, resume prompt | implementer | done (committed with 19: shared files)
 task 19 | Import edit pane, extraction progress, done/failed states, re-attach | implementer | done (full import on :1 with local calliope-stems + stub: saved track shown in Library)
+task 20 | Settings Stem extraction + External tools cards, footer edge-AI status | implementer | done (data-unchecked variant mapped + guarded)
+  - follow-up: footer edge-AI status not refreshed from job results (plan §2.7)

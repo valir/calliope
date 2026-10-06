@@ -2,8 +2,9 @@
   import * as Card from '$lib/components/ui/card/index.js';
   import * as RadioGroup from '$lib/components/ui/radio-group/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
-  import { Input } from '$lib/components/ui/input/index.js';
   import RepositorySettings from '../components/RepositorySettings.svelte';
+  import StemSettings from '../components/StemSettings.svelte';
+  import ToolsSettings from '../components/ToolsSettings.svelte';
   import { ui } from '$lib/app-state.svelte';
   import { frontendLog, setTheme, type Theme } from '$lib/ipc';
   import { applyTheme } from '$lib/theme';
@@ -55,6 +56,10 @@
 
   <RepositorySettings />
 
+  <StemSettings />
+
+  <ToolsSettings />
+
   {#each SETTINGS_PLACEHOLDERS as s (s.id)}
     <Card.Root>
       <Card.Header>
@@ -63,12 +68,6 @@
       </Card.Header>
       <Card.Content class="flex flex-col gap-3">
         <p class="text-muted-foreground">This section will be filled by: {s.feature}.</p>
-        {#if s.id === 'edge-ai'}
-          <div class="flex flex-col gap-2">
-            <Label for="edge-ai-address">Server address</Label>
-            <Input id="edge-ai-address" disabled placeholder="http://host:11434" />
-          </div>
-        {/if}
       </Card.Content>
     </Card.Root>
   {/each}

@@ -30,7 +30,6 @@ export interface SettingsSection { id: string; title: string; text: string; feat
 export const SETTINGS_PLACEHOLDERS: readonly SettingsSection[] = [
   { id: 'midi', title: 'MIDI interface', text: 'Choose the USB-MIDI interface that sends clock and patch changes.', feature: 'gui-play-backing-track' },
   { id: 'audio', title: 'Audio output', text: 'Choose where the audio goes.', feature: 'gui-play-backing-track' },
-  { id: 'edge-ai', title: 'Edge-AI server', text: 'The ollama server on the LAN used for stem extraction.', feature: 'gui-stem-extracting' },
 ];
 
 export function featureText(features: readonly string[]): string {

@@ -60,6 +60,6 @@ describe('views', () => {
   });
   it('has tabs and settings placeholders', () => {
     expect(TRACK_TABS).toHaveLength(5);
-    expect(SETTINGS_PLACEHOLDERS).toHaveLength(3);
+    expect(SETTINGS_PLACEHOLDERS).toHaveLength(2);
   });
 });

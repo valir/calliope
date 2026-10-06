@@ -58,7 +58,10 @@
   {#if keepOriginal !== null}
     <p class="text-sm text-muted-foreground">
       {keepOriginal ? 'The original mix will be kept' : 'The original mix will not be kept'}
-      <Button variant="link" size="sm" class="h-auto px-1" onclick={() => (ui.view = 'settings')}>Change in Settings</Button>
+      <Button variant="link" size="sm" class="h-auto px-1" onclick={() => {
+        ui.settingsTarget = 'stem';
+        ui.view = 'settings';
+      }}>Change in Settings</Button>
     </p>
   {/if}
 
