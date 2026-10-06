@@ -17,7 +17,6 @@
 //! `ImportTmp::remove_job_dir` / `Staging::abandon` (Calliope-marked folders only); a track
 //! becomes visible by one rename inside `Staging::commit`, run under the repository lock.
 //! No Tauri here: the Tauri layer gives it a sink for events and a [`RepoLock`].
-#![allow(dead_code)] // wired by the IPC layer (a later task); the tests use everything
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -143,6 +142,7 @@ pub enum ImportEvent {
 
 impl ImportEvent {
     /// Progress updates are throttled; phase changes are always delivered.
+    #[allow(dead_code)] // the throttle tests use it
     fn is_progress(&self) -> bool {
         matches!(
             self,
@@ -222,6 +222,7 @@ struct Job {
     dir: PathBuf,
     audio: Option<PathBuf>,
     root: PathBuf,
+    #[allow(dead_code)]
     kind: SourceKind,
     /// A thread is working on it.
     running: bool,
@@ -331,6 +332,10 @@ impl ImportState {
                 poll,
             }),
         }
+    }
+
+    pub fn tools(&self) -> &Tools {
+        &self.inner.tools
     }
 
     pub fn snapshot(&self) -> Option<JobSnapshot> {

@@ -14,6 +14,16 @@ mod repository;
 mod settings;
 #[path = "../src/picker.rs"]
 mod picker;
+#[path = "../src/import_tmp.rs"]
+mod import_tmp;
+#[path = "../src/media.rs"]
+mod media;
+#[path = "../src/download.rs"]
+mod download;
+#[path = "../src/tools.rs"]
+mod tools;
+#[path = "../src/import_job.rs"]
+mod import_job;
 #[path = "../src/ipc.rs"]
 mod ipc;
 
@@ -1086,6 +1096,10 @@ mod ipc_layer {
         fn save_file(&self, _: &SaveReq) -> Option<PathBuf> { None }
     }
 
+    fn import_state(st: &RepoState) -> import_job::ImportState {
+        import_job::ImportState::new(tools::Tools::default(), st.repo_lock(), std::time::Duration::from_millis(10))
+    }
+
     fn state(root: &Path, files: Vec<Option<PathBuf>>, folders: Vec<Option<PathBuf>>) -> RepoState {
         RepoState::new(root.to_path_buf(), Box::new(Fake { files: Mutex::new(files), folders: Mutex::new(folders) }))
     }
@@ -1116,9 +1130,9 @@ mod ipc_layer {
         let picked = do_pick_tablature(&st, PickPurpose::Add, None).unwrap().unwrap();
         assert_eq!(picked.name, "riff.gp5");
         let default = e.base.join("default");
-        assert!(do_set_root(&st, &store, &default, &picked.token).is_err());
-        assert!(do_set_root(&st, &store, &default, "p999").is_err());
-        assert!(do_set_root(&st, &store, &default, "../../etc").is_err());
+        assert!(do_set_root(&st, &store, &import_state(&st), &default, &picked.token).is_err());
+        assert!(do_set_root(&st, &store, &import_state(&st), &default, "p999").is_err());
+        assert!(do_set_root(&st, &store, &import_state(&st), &default, "../../etc").is_err());
         assert_eq!(store.get().repository_root, None);
     }
 
@@ -1162,7 +1176,7 @@ mod ipc_layer {
         let store = settings::SettingsStore::open(e.base.join("settings.json"));
         let picked = do_choose_root(&st, None).unwrap();
         assert_eq!(picked.status, repository::RepoStatus::Newer);
-        assert!(do_set_root(&st, &store, &e.base.join("d"), &picked.token).is_err());
+        assert!(do_set_root(&st, &store, &import_state(&st), &e.base.join("d"), &picked.token).is_err());
         assert!(!newer.join("tracks").exists());
         assert_eq!(store.get().repository_root, None);
     }

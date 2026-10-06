@@ -1,9 +1,11 @@
 //! Tauri shell. The only module that touches Tauri/GTK.
 
 use crate::{
+    import_job::ImportState,
     ipc::{self, RepoState},
     picker::{Picker, TauriPicker},
     settings::{self, SettingsStore},
+    tools::Tools,
 };
 use tauri::Manager;
 
@@ -32,8 +34,16 @@ pub fn run() {
                 .get()
                 .repository_root
                 .unwrap_or_else(|| settings::default_repository_root(&app.path().data_dir().expect("data dir")));
+            let url = store.get().edge_ai_url;
             app.manage(store);
-            app.manage(RepoState::new(root, choose_picker(app.handle())));
+            let repo = RepoState::new(root, choose_picker(app.handle()));
+            let tools = Tools::discover(&std::env::var_os("PATH").unwrap_or_default());
+            app.manage(ImportState::new(tools, repo.repo_lock(), ipc::IMPORT_POLL));
+            app.manage(repo);
+            // Start-up health check of the edge-AI server (only when one is configured).
+            if url.is_some() {
+                std::thread::spawn(move || ipc::startup_health_check(url));
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -50,8 +60,30 @@ pub fn run() {
             ipc::save_track,
             ipc::delete_track,
             ipc::export_track,
-            ipc::export_tablature
+            ipc::export_tablature,
+            ipc::set_edge_ai_url,
+            ipc::set_keep_original,
+            ipc::check_edge_ai,
+            ipc::check_tools,
+            ipc::prepare_url_import,
+            ipc::start_url_import,
+            ipc::import_file,
+            ipc::start_stem_extraction,
+            ipc::cancel_import,
+            ipc::discard_import,
+            ipc::get_import_job,
+            ipc::watch_import
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running calliope-gui");
+        .build(tauri::generate_context!())
+        .expect("error while building calliope-gui")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Stop a running import (child processes, edge-AI job) before the process ends.
+                if let Some(import) = app.try_state::<ImportState>() {
+                    if !import.shutdown(ipc::SHUTDOWN_WAIT) {
+                        eprintln!("calliope: import did not stop within the exit grace period");
+                    }
+                }
+            }
+        });
 }

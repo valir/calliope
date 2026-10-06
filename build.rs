@@ -23,6 +23,18 @@ const COMMANDS: &[&str] = &[
     "delete_track",
     "export_track",
     "export_tablature",
+    "set_edge_ai_url",
+    "set_keep_original",
+    "check_edge_ai",
+    "check_tools",
+    "prepare_url_import",
+    "start_url_import",
+    "import_file",
+    "start_stem_extraction",
+    "cancel_import",
+    "discard_import",
+    "get_import_job",
+    "watch_import",
 ];
 
 fn git(args: &[&str]) -> Option<String> {

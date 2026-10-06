@@ -223,13 +223,15 @@ fn handler_list_build_list_and_capability_agree() {
         .map(|p| p.strip_prefix("allow-").expect("only allow-* entries").replace('-', "_"))
         .collect();
     assert_eq!(perms.len(), allow.len(), "duplicate permission");
-    assert!(handlers.len() >= 14);
+    assert!(handlers.len() >= 26);
     assert_eq!(handlers, commands, "generate_handler! vs build.rs COMMANDS");
     assert_eq!(handlers, allow, "generate_handler! vs capabilities/main.json");
     assert_eq!(cap["windows"], serde_json::json!(["main"]));
     assert_eq!(cap["local"], true);
     for p in perms {
-        for bad in ["core:", "dialog:", "fs:"] {
+        // only Calliope's own `allow-*` commands: no core or plugin permission at all
+        assert!(p.starts_with("allow-") && !p.contains(':'), "{p}");
+        for bad in ["core:", "dialog:", "fs:", "event:", "shell:", "http:"] {
             assert!(!p.contains(bad), "{p}");
         }
     }

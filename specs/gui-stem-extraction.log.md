@@ -15,3 +15,5 @@ task 10 | calliope-stems server (tiny_http, workspace member) | implementer | do
 task 11 | Stems client + protocol conformance suite (real binary, stub, 127.0.0.1) | implementer | done (15 conformance tests, 3 runs green)
 task 12 | Settings edge_ai_url (http only, no TLS client) and keep_original | implementer | done
 task 13 | Import job orchestrator (real calliope-stems + fake yt-dlp + real ffmpeg) | implementer | done (23 tests, 3 runs green)
+task 14 | Picker kinds, 12 IPC commands, Channel events, wiring, ACL | implementer | done (26 commands, still no core/plugin permissions; GUI tests green)
+  - accepted: root-change vs job-start race window (job keeps its own root copy); Channel adapter + exit hook covered only by task 21 e2e

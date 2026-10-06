@@ -15,6 +15,8 @@ pub enum DialogKind {
     RepositoryRoot,
     ExportTrack,
     ExportTablature,
+    ImportAudio,
+    ImportVideo,
 }
 
 impl DialogKind {
@@ -25,6 +27,8 @@ impl DialogKind {
             DialogKind::RepositoryRoot => "repository-root",
             DialogKind::ExportTrack => "export-track",
             DialogKind::ExportTablature => "export-tablature",
+            DialogKind::ImportAudio => "import-audio",
+            DialogKind::ImportVideo => "import-video",
         }
     }
 
@@ -36,6 +40,8 @@ impl DialogKind {
             DialogKind::RepositoryRoot,
             DialogKind::ExportTrack,
             DialogKind::ExportTablature,
+            DialogKind::ImportAudio,
+            DialogKind::ImportVideo,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -55,6 +61,29 @@ pub fn is_tablature_name(name: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// Extensions offered for local audio files (lowercase, no dot).
+pub const AUDIO_EXTENSIONS: &[&str] =
+    &["mp3", "flac", "wav", "ogg", "oga", "opus", "m4a", "aac", "wma", "aiff", "aif"];
+
+/// Extensions offered for local video files (lowercase, no dot).
+pub const VIDEO_EXTENSIONS: &[&str] =
+    &["mp4", "mkv", "webm", "mov", "avi", "m4v", "flv", "wmv", "mpg", "mpeg", "ts"];
+
+fn has_extension(name: &str, list: &[&str]) -> bool {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => list.contains(&ext.to_ascii_lowercase().as_str()),
+        _ => false,
+    }
+}
+
+pub fn is_audio_name(name: &str) -> bool {
+    has_extension(name, AUDIO_EXTENSIONS)
+}
+
+pub fn is_video_name(name: &str) -> bool {
+    has_extension(name, VIDEO_EXTENSIONS)
 }
 
 /// Logs the line the e2e tests wait on.
@@ -325,6 +354,27 @@ mod tests {
         assert!(!is_tablature_name("gp5"));
         assert!(!is_tablature_name(".gp5"));
         assert!(!is_tablature_name("riff"));
+    }
+
+    #[test]
+    fn audio_and_video_names() {
+        assert!(is_audio_name("Song.MP3"));
+        assert!(is_audio_name("a.b.flac"));
+        assert!(!is_audio_name("clip.mp4"));
+        assert!(!is_audio_name("mp3"));
+        assert!(is_video_name("clip.MKV"));
+        assert!(!is_video_name("song.mp3"));
+        assert!(!is_video_name(".mp4"));
+    }
+
+    #[test]
+    fn scripted_knows_import_kinds() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("answers");
+        std::fs::write(&f, "import-audio /tmp/a.mp3\nimport-video CANCEL\n").unwrap();
+        let p = ScriptedPicker::new(f);
+        assert_eq!(p.pick_file(&file_req(DialogKind::ImportAudio)), Some("/tmp/a.mp3".into()));
+        assert_eq!(p.pick_file(&file_req(DialogKind::ImportVideo)), None);
     }
 
     fn file_req(kind: DialogKind) -> FileReq {

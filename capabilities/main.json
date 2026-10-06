@@ -8,6 +8,18 @@
     "allow-app-version", "allow-get-settings", "allow-set-theme", "allow-frontend-log",
     "allow-get-repository", "allow-choose-repository-root", "allow-set-repository-root",
     "allow-reset-repository-root", "allow-list-tracks", "allow-pick-tablature",
-    "allow-save-track", "allow-delete-track", "allow-export-track", "allow-export-tablature"
+    "allow-save-track", "allow-delete-track", "allow-export-track", "allow-export-tablature",
+    "allow-set-edge-ai-url",
+    "allow-set-keep-original",
+    "allow-check-edge-ai",
+    "allow-check-tools",
+    "allow-prepare-url-import",
+    "allow-start-url-import",
+    "allow-import-file",
+    "allow-start-stem-extraction",
+    "allow-cancel-import",
+    "allow-discard-import",
+    "allow-get-import-job",
+    "allow-watch-import"
   ]
 }

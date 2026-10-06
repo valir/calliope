@@ -185,8 +185,6 @@ impl SettingsStore {
         Ok(next)
     }
 
-    // Used by the IPC commands (task 14); allowed until then.
-    #[allow(dead_code)]
     /// Validates (`normalize_edge_ai_url`), stores and saves the server URL; blank = `None`.
     pub fn set_edge_ai_url(&self, url: &str) -> Result<Settings, String> {
         let url = normalize_edge_ai_url(url)?;
@@ -198,7 +196,6 @@ impl SettingsStore {
         Ok(next)
     }
 
-    #[allow(dead_code)]
     pub fn set_keep_original(&self, keep: bool) -> std::io::Result<Settings> {
         let mut cur = self.current.lock().unwrap_or_else(|e| e.into_inner());
         let mut next = cur.clone();
