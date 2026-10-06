@@ -56,6 +56,12 @@ export function resetImport(): void {
 
 const log = (m: string): void => void frontendLog(`import ${m}`);
 
+/** Shows `message` under the source controls (and logs it, for the GUI tests). */
+function showError(message: string): void {
+  imp.error = message;
+  log(`error stage=ui message=${message}`);
+}
+
 export function step(): Step {
   if (imp.mode === 'menu') return 'menu';
   const j = imp.job;
@@ -232,7 +238,7 @@ async function begin(url: string, resume: boolean): Promise<void> {
   try {
     adopt(await startUrlImport(url, resume, applyEvent), before);
   } catch (err) {
-    imp.error = String(err);
+    showError(String(err));
   }
 }
 
@@ -242,17 +248,20 @@ export async function extractUrl(): Promise<void> {
   imp.prompt = null;
   const bad = checkUrl(imp.url);
   if (bad) {
-    imp.error = bad;
+    showError(bad);
     return;
   }
   imp.starting = true;
   try {
     const prep = await prepareUrlImport(imp.url.trim());
-    if (prep.status === 'partial') imp.prompt = { bytes: prep.partial_bytes };
-    else if (prep.status !== 'ready') imp.error = prep.message;
+    if (prep.status === 'partial') {
+      imp.prompt = { bytes: prep.partial_bytes };
+      log(`prompt=incomplete-download bytes=${prep.partial_bytes}`);
+    }
+    else if (prep.status !== 'ready') showError(prep.message);
     else await begin(imp.url.trim(), false);
   } catch (err) {
-    imp.error = String(err);
+    showError(String(err));
   } finally {
     imp.starting = false;
   }
@@ -262,6 +271,7 @@ export async function answerPrompt(resume: boolean): Promise<void> {
   if (!imp.prompt || imp.starting) return;
   imp.prompt = null;
   imp.starting = true;
+  log(`prompt-answer=${resume ? 'resume' : 'start-over'}`);
   try {
     await begin(imp.url.trim(), resume);
   } finally {
@@ -278,7 +288,7 @@ export async function browse(kind: ImportKind): Promise<void> {
     const snap = await importFile(kind, applyEvent);
     if (snap) adopt(snap, before);
   } catch (err) {
-    imp.error = String(err);
+    showError(String(err));
   } finally {
     imp.starting = false;
   }
@@ -315,7 +325,7 @@ export async function cancelRunning(): Promise<void> {
   try {
     await cancelImport(j.job);
   } catch (err) {
-    imp.error = String(err);
+    showError(String(err));
   }
 }
 

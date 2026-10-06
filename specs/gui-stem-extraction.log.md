@@ -25,3 +25,5 @@ task 18 | Import view: menu, source page, download, resume prompt | implementer 
 task 19 | Import edit pane, extraction progress, done/failed states, re-attach | implementer | done (full import on :1 with local calliope-stems + stub: saved track shown in Library)
 task 20 | Settings Stem extraction + External tools cards, footer edge-AI status | implementer | done (data-unchecked variant mapped + guarded)
   - follow-up: footer edge-AI status not refreshed from job results (plan §2.7)
+task 21 | GUI e2e import tests on :1 in a loopback-only namespace (13 tests, disk checks) | implementer | done (2 full runs green; real ~/.config etc. fingerprint unchanged)
+  - follow-ups: import e2e navigates by Tab from a fixed click point (log-awaited); added frontend log lines for UI-side import errors/prompts

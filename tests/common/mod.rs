@@ -55,6 +55,8 @@ impl Dirs {
 /// A running app; killed on drop.
 pub struct App {
     child: Child,
+    /// `CALLIOPE_E2E_TAG` value: every process carrying it in its environment is killed on drop.
+    tag: Option<String>,
     lines: Arc<Mutex<Vec<String>>>,
     seen: usize,
 }
@@ -75,13 +77,14 @@ impl App {
         for (k, v) in env {
             cmd.env(k, v);
         }
-        let mut child = cmd
-            .env("XDG_CONFIG_HOME", dirs.0.join("config"))
+        cmd.env("XDG_CONFIG_HOME", dirs.0.join("config"))
             .env("XDG_DATA_HOME", dirs.0.join("data"))
-            .env("XDG_CACHE_HOME", dirs.0.join("cache"))
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn calliope-gui");
+            .env("XDG_CACHE_HOME", dirs.0.join("cache"));
+        App::spawn(cmd, None)
+    }
+
+    pub fn spawn(mut cmd: Command, tag: Option<String>) -> App {
+        let mut child = cmd.stderr(Stdio::piped()).spawn().expect("spawn calliope-gui");
         let lines = Arc::new(Mutex::new(Vec::new()));
         let err = child.stderr.take().unwrap();
         let l2 = lines.clone();
@@ -91,7 +94,7 @@ impl App {
                 l2.lock().unwrap().push(line);
             }
         });
-        App { child, lines, seen: 0 }
+        App { child, tag, lines, seen: 0 }
     }
 
     pub fn all_lines(&self) -> Vec<String> {
@@ -162,6 +165,9 @@ impl Drop for App {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        if let Some(tag) = &self.tag {
+            kill_tagged(tag);
+        }
     }
 }
 
@@ -326,4 +332,222 @@ pub fn size(wid: &str, w: u32, h: u32) {
 /// Number of `tracks=` in a `library ...` line.
 pub fn tracks_in(line: &str) -> usize {
     field(line, "tracks").parse().unwrap()
+}
+
+
+// ---- import helpers ----
+
+/// SIGKILLs every process whose environment has `CALLIOPE_E2E_TAG=<tag>` (the app, the
+/// calliope-stems server, yt-dlp, ffmpeg and the stub separator of one test).
+pub fn kill_tagged(tag: &str) {
+    let want = format!("CALLIOPE_E2E_TAG={tag}");
+    for _ in 0..3 {
+        for (pid, _) in tagged_pids(&want) {
+            let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+        }
+        if tagged_pids(&want).is_empty() {
+            return;
+        }
+        sleep(Duration::from_millis(100));
+    }
+}
+
+/// (pid, command line) of the processes carrying `want` (`NAME=value`) in their environment.
+pub fn tagged_pids(want: &str) -> Vec<(u32, String)> {
+    let me = std::process::id();
+    let mut v = Vec::new();
+    let Ok(rd) = std::fs::read_dir("/proc") else { return v };
+    for e in rd.flatten() {
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        if pid == me {
+            continue;
+        }
+        let Ok(env) = std::fs::read(e.path().join("environ")) else { continue };
+        if env.split(|b| *b == 0).any(|kv| kv == want.as_bytes()) {
+            let cmd = std::fs::read(e.path().join("cmdline")).unwrap_or_default();
+            v.push((pid, String::from_utf8_lossy(&cmd).replace('\0', " ")));
+        }
+    }
+    v
+}
+
+pub const STEMS_PORT: u16 = 8765;
+pub const STEM_NAMES: [&str; 6] = ["bass", "drums", "guitar", "other", "piano", "vocals"];
+
+/// The X authority file of the real session (HOME is replaced by a temp dir for the app).
+fn xauthority() -> PathBuf {
+    match std::env::var_os("XAUTHORITY") {
+        Some(x) => PathBuf::from(x),
+        None => PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".Xauthority"),
+    }
+}
+
+fn system_path() -> String {
+    std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".into())
+}
+
+impl Dirs {
+    pub fn import_tmp(&self) -> PathBuf {
+        self.repo().join("import-tmp")
+    }
+    pub fn stems_log(&self) -> String {
+        std::fs::read_to_string(self.0.join("stems.log")).unwrap_or_default()
+    }
+    pub fn ytdlp_log(&self) -> String {
+        std::fs::read_to_string(self.0.join("ytdlp.log")).unwrap_or_default()
+    }
+    /// Names of the entries of `<repo>/tracks`, sorted.
+    pub fn track_ids(&self) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(self.repo().join("tracks"))
+            .map(|r| r.map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect())
+            .unwrap_or_default();
+        v.sort();
+        v
+    }
+}
+
+/// Every file below `dir` (relative path -> bytes), for byte-identity checks.
+pub fn snapshot(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fn walk(base: &Path, dir: &Path, out: &mut std::collections::BTreeMap<String, Vec<u8>>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if e.file_type().unwrap().is_dir() {
+                walk(base, &p, out);
+            } else {
+                out.insert(p.strip_prefix(base).unwrap().to_string_lossy().to_string(), std::fs::read(&p).unwrap());
+            }
+        }
+    }
+    let mut m = std::collections::BTreeMap::new();
+    walk(dir, dir, &mut m);
+    m
+}
+
+/// A temp area for one import test: the library fixture is the starting repository, the
+/// fixture sources are copied to `<base>/media/`.
+pub fn import_dirs(test: &str) -> Dirs {
+    let dirs = lib_dirs(test);
+    let media = dirs.base().join("media");
+    std::fs::create_dir_all(&media).unwrap();
+    for f in ["tagged.mp3", "tagged.ogg", "untagged.flac", "with-audio.mp4", "no-audio.mp4", "long.flac"] {
+        std::fs::copy(root().join("tests/fixtures/import").join(f), media.join(f)).unwrap();
+    }
+    std::fs::create_dir_all(dirs.base().join("stems-work")).unwrap();
+    std::fs::create_dir_all(dirs.base().join("home")).unwrap();
+    dirs
+}
+
+impl Dirs {
+    pub fn media(&self, name: &str) -> PathBuf {
+        self.0.join("media").join(name)
+    }
+}
+
+/// Starts the e2e app and the real `calliope-stems` binary (with `tests/support/stub-separator`)
+/// inside `unshare -rn` with only the loopback interface up, so neither can reach the internet
+/// or the LAN. Temp XDG dirs and HOME, the fake yt-dlp first on PATH, a pre-written
+/// `settings.json` (repository root, server on 127.0.0.1:8765, `keep_original`). Waits for the
+/// Library to load, floats the window at 1280x800.
+pub fn start_import_app(dirs: &Dirs, stub_mode: &str, keep_original: bool, answers: &[String]) -> (App, String) {
+    assert!(dirs.base().starts_with(root().join("target")), "temp dir is not under target/");
+    let stems = root().join("target/debug/calliope-stems");
+    assert!(stems.exists(), "build calliope-stems first (cargo build -p calliope-stems)");
+    std::fs::write(dirs.base().join("stems-work/stub-mode"), format!("{stub_mode}\n")).unwrap();
+    let cfg = dirs.app_config();
+    std::fs::create_dir_all(&cfg).unwrap();
+    let settings = serde_json::json!({
+        "repository_root": dirs.repo(),
+        "edge_ai_url": format!("http://127.0.0.1:{STEMS_PORT}"),
+        "keep_original": keep_original,
+    });
+    std::fs::write(cfg.join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap()).unwrap();
+    let ans = dirs.base().join("answers");
+    std::fs::write(&ans, answers.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+
+    let tag = dirs.base().file_name().unwrap().to_string_lossy().to_string();
+    // A leftover from an earlier crashed run would hold the port.
+    kill_tagged(&tag);
+    let script = format!(
+        "ip link set lo up || exit 1; {stems} --listen 127.0.0.1:{STEMS_PORT} --work-dir {work} \
+         --separator {sep} 2> {log} & exec {bin}",
+        stems = sh_quote(&stems),
+        work = sh_quote(&dirs.base().join("stems-work")),
+        sep = sh_quote(&root().join("tests/support/stub-separator")),
+        log = sh_quote(&dirs.base().join("stems.log")),
+        bin = sh_quote(Path::new(BIN)),
+    );
+    let mut cmd = Command::new("unshare");
+    cmd.args(["-rn", "sh", "-c", &script])
+        .env("XDG_CONFIG_HOME", dirs.base().join("config"))
+        .env("XDG_DATA_HOME", dirs.base().join("data"))
+        .env("XDG_CACHE_HOME", dirs.base().join("cache"))
+        .env("XDG_STATE_HOME", dirs.base().join("state"))
+        .env("XAUTHORITY", xauthority())
+        .env("HOME", dirs.base().join("home"))
+        .env("PATH", format!("{}:{}", root().join("tests/support/bin").display(), system_path()))
+        .env("FAKE_YTDLP_LOG", dirs.base().join("ytdlp.log"))
+        .env("CALLIOPE_E2E_DIALOG_ANSWERS", &ans)
+        .env("CALLIOPE_E2E_TAG", &tag);
+    let mut app = App::spawn(cmd, Some(tag));
+    app.wait_ready();
+    let end = Instant::now() + Duration::from_secs(15);
+    while !dirs.stems_log().contains("listening") {
+        assert!(Instant::now() < end, "calliope-stems did not start: {}", dirs.stems_log());
+        sleep(Duration::from_millis(50));
+    }
+    app.wait_line(|l| l.contains("library root="), Duration::from_secs(20));
+    let wid = app.wid();
+    assert_loopback_only(&app);
+    float(&wid);
+    size(&wid, 1280, 800);
+    (app, wid)
+}
+
+fn sh_quote(p: &Path) -> String {
+    format!("'{}'", p.display().to_string().replace('\'', "'\\''"))
+}
+
+/// The app process and the server see only `lo` (their own network namespace).
+pub fn assert_loopback_only(app: &App) {
+    let me = std::fs::read_link("/proc/self/ns/net").unwrap();
+    let tag = app.tag.clone().unwrap();
+    let procs = tagged_pids(&format!("CALLIOPE_E2E_TAG={tag}"));
+    assert!(!procs.is_empty());
+    let mut checked = 0;
+    for (pid, cmd) in procs {
+        if !(cmd.contains("calliope-gui") || cmd.contains("calliope-stems")) {
+            continue;
+        }
+        let Ok(ns) = std::fs::read_link(format!("/proc/{pid}/ns/net")) else { continue };
+        assert_ne!(ns, me, "{cmd} shares the test's network namespace");
+        let dev = std::fs::read_to_string(format!("/proc/{pid}/net/dev")).unwrap();
+        let ifaces: Vec<&str> = dev.lines().skip(2).filter_map(|l| l.split(':').next()).map(str::trim).collect();
+        assert_eq!(ifaces, ["lo"], "{cmd}: interfaces {ifaces:?}");
+        checked += 1;
+    }
+    assert!(checked >= 2, "expected the app and the server, checked {checked}");
+}
+
+impl App {
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// Waits until the app process has exited.
+    pub fn wait_exit(&mut self, timeout: Duration) {
+        let end = Instant::now() + timeout;
+        while Instant::now() < end {
+            if self.child.try_wait().unwrap().is_some() {
+                return;
+            }
+            sleep(Duration::from_millis(100));
+        }
+        panic!("app still running after {timeout:?}");
+    }
+
+    /// Processes of this test still alive (empty when everything is gone).
+    pub fn leftovers(&self) -> Vec<(u32, String)> {
+        tagged_pids(&format!("CALLIOPE_E2E_TAG={}", self.tag.clone().unwrap()))
+    }
 }
