@@ -1,0 +1,8 @@
+{
+  "id": "abc123",
+  "title": "The Example Band - Night Drive",
+  "webpage_url": "https://media.example/watch?v=abc123",
+  "upload_date": "20200115",
+  "duration": 5,
+  "extractor": "generic"
+}
