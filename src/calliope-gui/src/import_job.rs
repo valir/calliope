@@ -236,9 +236,22 @@ struct Inner {
     job: Mutex<Option<Job>>,
     sink: Mutex<Option<Sink>>,
     throttle: Mutex<Throttle>,
-    tools: Tools,
+    tools: Mutex<Tools>,
+    /// Looks the tools up again (the app re-reads PATH, so a tool installed while Calliope runs
+    /// is found without a restart). `None` keeps the tools given to `new` (tests).
+    rediscover: Option<Box<dyn Fn() -> Tools + Send + Sync>>,
     lock: Arc<dyn RepoLock>,
     poll: Duration,
+}
+
+impl Inner {
+    fn current_tools(&self) -> Tools {
+        if let Some(f) = &self.rediscover {
+            let fresh = f();
+            *guard(&self.tools) = fresh;
+        }
+        guard(&self.tools).clone()
+    }
 }
 
 fn guard<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -327,15 +340,23 @@ impl ImportState {
                 job: Mutex::new(None),
                 sink: Mutex::new(None),
                 throttle: Mutex::new(Throttle::default()),
-                tools,
+                tools: Mutex::new(tools),
+                rediscover: None,
                 lock,
                 poll,
             }),
         }
     }
 
-    pub fn tools(&self) -> &Tools {
-        &self.inner.tools
+    /// Makes every `tools()` call and every import start look the tools up again with `f`.
+    pub fn with_rediscovery(mut self, f: impl Fn() -> Tools + Send + Sync + 'static) -> Self {
+        Arc::get_mut(&mut self.inner).expect("with_rediscovery before sharing").rediscover = Some(Box::new(f));
+        self
+    }
+
+    /// The current tools, looked up again when rediscovery is set.
+    pub fn tools(&self) -> Tools {
+        self.inner.current_tools()
     }
 
     pub fn snapshot(&self) -> Option<JobSnapshot> {
@@ -391,7 +412,7 @@ impl ImportState {
     /// missing tool, repository problems, a job already active) are returned as text.
     pub fn start_url(&self, root: &Path, input: &str, resume: bool, sink: Sink) -> Result<JobSnapshot, String> {
         let url = download::normalise(input)?;
-        check_tools(&self.inner.tools, &[ToolName::YtDlp, ToolName::Ffmpeg, ToolName::Ffprobe])?;
+        check_tools(&self.inner.current_tools(), &[ToolName::YtDlp, ToolName::Ffmpeg, ToolName::Ffprobe])?;
         let mut slot = guard(&self.inner.job);
         if slot.as_ref().is_some_and(|j| !j.over) {
             return Err(BUSY_MESSAGE.into());
@@ -422,7 +443,7 @@ impl ImportState {
         if name.is_empty() {
             return Err("the selected file has no usable name".into());
         }
-        check_tools(&self.inner.tools, &[ToolName::Ffmpeg, ToolName::Ffprobe])?;
+        check_tools(&self.inner.current_tools(), &[ToolName::Ffmpeg, ToolName::Ffprobe])?;
         let mut slot = guard(&self.inner.job);
         if slot.as_ref().is_some_and(|j| !j.over) {
             return Err(BUSY_MESSAGE.into());
@@ -654,7 +675,7 @@ impl Ctx {
     }
 
     fn tool(&self, t: ToolName) -> R<PathBuf> {
-        match self.inner.tools.path_of(t) {
+        match guard(&self.inner.tools).path_of(t) {
             Some(p) => Ok(p.to_path_buf()),
             None => fail(Stage::Prepare, t.missing_message()),
         }

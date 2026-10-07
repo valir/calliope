@@ -624,6 +624,23 @@ fn a_missing_root_or_tool_is_reported_before_a_job_exists() {
 }
 
 #[test]
+fn a_tool_installed_while_the_app_runs_is_found_without_a_restart() {
+    let rig = Rig::new();
+    let installed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = installed.clone();
+    let real = rig.tools.clone();
+    let state = ImportState::new(Tools::default(), rig.lock.clone(), Duration::from_millis(50))
+        .with_rediscovery(move || if flag.load(std::sync::atomic::Ordering::SeqCst) { real.clone() } else { Tools::default() });
+    assert!(state.start_url(&rig.root, WATCH, false, rig.sink.clone()).unwrap_err().contains("yt-dlp was not found"));
+    assert!(state.tools().path_of(crate::tools::ToolName::YtDlp).is_none());
+    installed.store(true, std::sync::atomic::Ordering::SeqCst); // "pacman -S yt-dlp" in another terminal
+    assert!(state.tools().path_of(crate::tools::ToolName::YtDlp).is_some(), "Settings must see the new tool");
+    state.start_url(&rig.root, WATCH, false, rig.sink.clone()).expect("the import must start without restarting the app");
+    state.cancel(&state.snapshot().unwrap().job).ok();
+    let _ = state.shutdown(Duration::from_secs(5));
+}
+
+#[test]
 fn replace_sink_redirects_later_events() {
     let rig = Rig::new();
     let other: Arc<Mutex<Vec<ImportEvent>>> = Arc::new(Mutex::new(Vec::new()));

@@ -577,7 +577,7 @@ pub async fn check_edge_ai(app: tauri::AppHandle) -> Result<EdgeAiStatus, String
 #[tauri::command]
 pub async fn check_tools(app: tauri::AppHandle) -> Result<ToolsInfo, String> {
     blocking(move || {
-        let tools = app.state::<ImportState>().tools().clone();
+        let tools = app.state::<ImportState>().tools();
         Ok(do_check_tools(&tools))
     })
     .await

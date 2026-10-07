@@ -37,8 +37,8 @@ pub fn run() {
             let url = store.get().edge_ai_url;
             app.manage(store);
             let repo = RepoState::new(root, choose_picker(app.handle()));
-            let tools = Tools::discover(&std::env::var_os("PATH").unwrap_or_default());
-            app.manage(ImportState::new(tools, repo.repo_lock(), ipc::IMPORT_POLL));
+            let discover = || Tools::discover(&std::env::var_os("PATH").unwrap_or_default());
+            app.manage(ImportState::new(discover(), repo.repo_lock(), ipc::IMPORT_POLL).with_rediscovery(discover));
             app.manage(repo);
             // Start-up health check of the edge-AI server (only when one is configured).
             if url.is_some() {
