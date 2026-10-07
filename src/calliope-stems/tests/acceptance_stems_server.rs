@@ -13,7 +13,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+    // The shared test fixtures and the stub separator live in the GUI crate's tests/.
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../calliope-gui")
 }
 fn fixture(name: &str) -> PathBuf {
     root().join("tests/fixtures/import").join(name)

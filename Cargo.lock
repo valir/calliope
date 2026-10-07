@@ -237,21 +237,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "calliope-common"
-version = "0.1.0"
-dependencies = [
- "libc",
- "serde",
- "serde_json",
- "tempfile",
- "ureq",
-]
-
-[[package]]
 name = "calliope-gui"
 version = "0.1.0"
 dependencies = [
- "calliope-common",
+ "calliope-lib",
  "serde",
  "serde_json",
  "tauri",
@@ -264,10 +253,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "calliope-lib"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "ureq",
+]
+
+[[package]]
 name = "calliope-stems"
 version = "0.1.0"
 dependencies = [
- "calliope-common",
+ "calliope-lib",
  "libc",
  "serde",
  "serde_json",

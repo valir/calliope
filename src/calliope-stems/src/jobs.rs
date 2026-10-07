@@ -6,8 +6,8 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use calliope_common::process::{self, CancelHandle};
-use calliope_common::stems_api::{JobState, JobStatus};
+use calliope_lib::process::{self, CancelHandle};
+use calliope_lib::stems_api::{JobState, JobStatus};
 
 use crate::config::Config;
 use crate::separator::{parse_progress, truncate, validate_output};

@@ -9,6 +9,15 @@ fn root() -> &'static Path {
 fn read(p: &str) -> String {
     fs::read_to_string(root().join(p)).unwrap_or_else(|e| panic!("{p}: {e}"))
 }
+
+/// The repository root (workspace): `target/`, `docs/`, `specs/` and the workspace Cargo.toml.
+fn repo() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
+}
+/// Reads a file relative to the repository root (docs/, specs/).
+fn read_repo(p: &str) -> String {
+    fs::read_to_string(repo().join(p)).unwrap_or_else(|e| panic!("{p}: {e}"))
+}
 fn json(p: &str) -> serde_json::Value {
     serde_json::from_str(&read(p)).unwrap()
 }
@@ -35,8 +44,9 @@ fn req1_typescript_svelte_vite_all_source_in_src() {
     assert!(root().join("components.json").exists(), "shadcn-svelte config");
     // No frontend source outside src/ (config files at the root are not source).
     let mut files = Vec::new();
-    for dir in ["tests", "docs", "specs"] {
-        walk(&root().join(dir), &mut files);
+    walk(&root().join("tests"), &mut files);
+    for dir in ["docs", "specs"] {
+        walk(&repo().join(dir), &mut files);
     }
     for f in files {
         let ext = f.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -160,7 +170,7 @@ fn req7_window_min_size_and_state_plugin() {
     assert!(w["height"].as_u64().unwrap() >= w["minHeight"].as_u64().unwrap());
     assert!(read("Cargo.toml").contains("tauri-plugin-window-state"));
     assert!(read("src/gui.rs").contains("tauri_plugin_window_state"));
-    assert!(read("docs/ui.md").contains("1024"), "docs/ui.md min size");
+    assert!(read_repo("docs/ui.md").contains("1024"), "docs/ui.md min size");
 }
 
 #[test]
@@ -182,7 +192,7 @@ fn req8_main_ts_reports_csp_violations() {
 
 #[test]
 fn ac10_architecture_doc_is_updated() {
-    let a = read("docs/architecture.md");
+    let a = read_repo("docs/architecture.md");
     for needle in ["Svelte 5", "npm run build:app", "src/ipc.rs", "gui-shot", "`:1`", "test:gui"] {
         assert!(a.contains(needle), "architecture.md lacks {needle}");
     }

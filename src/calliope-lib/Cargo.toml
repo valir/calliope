@@ -1,11 +1,11 @@
 [package]
-name = "calliope-common"
+name = "calliope-lib"
 version = "0.1.0"
 edition = "2021"
 description = "Shared code of calliope-gui and calliope-stems: the stems API v1 types, a FLAC header parser, a child-process runner and (feature client) the HTTP client. No Tauri/GTK."
 
 [lib]
-name = "calliope_common"
+name = "calliope_lib"
 path = "src/lib.rs"
 
 [features]

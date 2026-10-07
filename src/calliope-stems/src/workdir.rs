@@ -4,7 +4,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use calliope_common::stems_api::is_valid_job_id;
+use calliope_lib::stems_api::is_valid_job_id;
 
 pub const MARKER: &str = ".calliope-stems-job";
 

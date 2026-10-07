@@ -1,6 +1,6 @@
 //! Protocol conformance suite for "calliope-stems API v1": the REAL `calliope-stems` binary on
 //! 127.0.0.1 (port 0, temp work dir, the stub separator, never the real model), exercised with
-//! raw HTTP over `TcpStream` and with `calliope_common::stems_client`.
+//! raw HTTP over `TcpStream` and with `calliope_lib::stems_client`.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -9,10 +9,11 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use calliope_common::stems_client::{ClientError, StemsClient};
+use calliope_lib::stems_client::{ClientError, StemsClient};
 
 fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+    // The shared test fixtures and the stub separator live in the GUI crate's tests/.
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../calliope-gui")
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -262,7 +263,7 @@ fn ok_flow_with_the_client() {
             }
         })
         .unwrap();
-    use calliope_common::stems_api::JobState;
+    use calliope_lib::stems_api::JobState;
     assert_eq!(done.state, JobState::Done, "{done:?}");
     assert!(states.contains(&JobState::Running), "{states:?}");
     assert_eq!(*states.last().unwrap(), JobState::Done);
@@ -506,7 +507,7 @@ fn wait_final_cancel_deletes_the_job() {
     let job = c.submit(&fixture("untagged.flac"), &cancel, |_, _| {}).unwrap();
     let e = c
         .wait_final(&job, &cancel, Duration::from_millis(50), Duration::from_secs(60), |st| {
-            if st.state == calliope_common::stems_api::JobState::Running {
+            if st.state == calliope_lib::stems_api::JobState::Running {
                 cancel.store(true, Ordering::SeqCst);
             }
         })

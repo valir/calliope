@@ -3,7 +3,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use calliope_common::stems_api::{is_valid_stem_name, MAX_STEMS};
+use calliope_lib::stems_api::{is_valid_stem_name, MAX_STEMS};
 
 /// The usual stems come first, in this order; any others follow alphabetically.
 const STANDARD_ORDER: [&str; 6] = ["vocals", "drums", "bass", "guitar", "piano", "other"];

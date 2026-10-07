@@ -5,7 +5,7 @@ use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 use std::time::Instant;
 
-use calliope_common::stems_api::{
+use calliope_lib::stems_api::{
     flac_info, is_valid_job_id, is_valid_stem_name, ErrorBody, FlacError, Health, JobCreated, JobState,
     API_VERSION, SERVICE_NAME,
 };

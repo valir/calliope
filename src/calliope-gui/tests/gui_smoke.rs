@@ -25,7 +25,7 @@ fn gui_starts_and_stays_up() {
         return;
     }
     // Never touch the user's real config: use a fresh dir under target/.
-    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/gui-e2e/smoke");
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/gui-e2e/smoke");
     let _ = std::fs::remove_dir_all(&base);
     for d in ["config", "data", "cache"] {
         std::fs::create_dir_all(base.join(d)).unwrap();

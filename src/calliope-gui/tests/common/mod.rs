@@ -14,6 +14,11 @@ pub fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// The repository root (workspace): `target/`, `docs/`, `specs/` and the workspace Cargo.toml.
+pub fn repo() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
+}
+
 pub fn have_display() -> bool {
     if std::env::var_os("DISPLAY").is_none() {
         println!("skipping: no DISPLAY");
@@ -40,7 +45,7 @@ pub struct Dirs(PathBuf);
 
 impl Dirs {
     pub fn new(test: &str) -> Dirs {
-        let base = root().join("target/gui-e2e").join(test);
+        let base = repo().join("target/gui-e2e").join(test);
         let _ = std::fs::remove_dir_all(&base);
         for d in ["config", "data", "cache"] {
             std::fs::create_dir_all(base.join(d)).unwrap();
@@ -180,7 +185,7 @@ pub fn shot_of(name: &str, title: &str) {
         println!("skipping screenshot {name}: gui-shot missing");
         return;
     }
-    let dir = root().join("target/gui-shots");
+    let dir = repo().join("target/gui-shots");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("{name}.png"));
     let s = Command::new("gui-shot")
@@ -251,7 +256,7 @@ pub const ID6: &str = "0199b0a0-0000-7000-8000-000000000006";
 /// A temp dir with the library fixture copied to the default root under XDG_DATA_HOME.
 pub fn lib_dirs(test: &str) -> Dirs {
     let dirs = Dirs::new(test);
-    assert!(dirs.0.starts_with(root().join("target")), "temp dir is not under target/");
+    assert!(dirs.0.starts_with(repo().join("target")), "temp dir is not under target/");
     copy_dir(&root().join("tests/fixtures/library-sample"), &dirs.repo());
     dirs
 }
@@ -450,8 +455,8 @@ impl Dirs {
 /// `settings.json` (repository root, server on 127.0.0.1:8765, `keep_original`). Waits for the
 /// Library to load, floats the window at 1280x800.
 pub fn start_import_app(dirs: &Dirs, stub_mode: &str, keep_original: bool, answers: &[String]) -> (App, String) {
-    assert!(dirs.base().starts_with(root().join("target")), "temp dir is not under target/");
-    let stems = root().join("target/debug/calliope-stems");
+    assert!(dirs.base().starts_with(repo().join("target")), "temp dir is not under target/");
+    let stems = repo().join("target/debug/calliope-stems");
     assert!(stems.exists(), "build calliope-stems first (cargo build -p calliope-stems)");
     std::fs::write(dirs.base().join("stems-work/stub-mode"), format!("{stub_mode}\n")).unwrap();
     let cfg = dirs.app_config();
@@ -504,6 +509,13 @@ pub fn start_import_app(dirs: &Dirs, stub_mode: &str, keep_original: bool, answe
     (app, wid)
 }
 
+/// True when one of the words of `cmd` is the program `name` (by file name, so a path that
+/// merely contains the name, like `src/calliope-gui/tests/...`, doesn't count).
+pub fn runs_program(cmd: &str, name: &str) -> bool {
+    cmd.split_whitespace()
+        .any(|w| w.trim_matches(|c| c == '\'' || c == '"').rsplit('/').next() == Some(name))
+}
+
 fn sh_quote(p: &Path) -> String {
     format!("'{}'", p.display().to_string().replace('\'', "'\\''"))
 }
@@ -516,7 +528,7 @@ pub fn assert_loopback_only(app: &App) {
     assert!(!procs.is_empty());
     let mut checked = 0;
     for (pid, cmd) in procs {
-        if !(cmd.contains("calliope-gui") || cmd.contains("calliope-stems")) {
+        if !(runs_program(&cmd, "calliope-gui") || runs_program(&cmd, "calliope-stems")) {
             continue;
         }
         let Ok(ns) = std::fs::read_link(format!("/proc/{pid}/ns/net")) else { continue };

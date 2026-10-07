@@ -1,7 +1,7 @@
 //! External tools on the laptop (plan section 2.6): finds `yt-dlp`, `ffmpeg` and `ffprobe` on
 //! `PATH`, checks their versions and produces the install hints. Pure logic, no Tauri; the
 //! `PATH` value is a parameter (the GUI captures it once). Tools run through
-//! `calliope_common::process` (argv only, never a shell).
+//! `calliope_lib::process` (argv only, never a shell).
 #![allow(dead_code)] // used by the download/media/job modules (later tasks) and the tests
 
 use std::ffi::OsStr;
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use calliope_common::process;
+use calliope_lib::process;
 use serde::Serialize;
 
 /// How long a `--version` run may take before it is stopped.

@@ -11,8 +11,9 @@ use std::time::{Duration, Instant};
 const BIN: &str = env!("CARGO_BIN_EXE_calliope-gui");
 const VIEWS: [&str; 6] = ["library", "import", "track", "playlists", "player", "settings"];
 
-fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+/// The repository root (workspace): `target/`, `docs/`, `specs/` and the workspace Cargo.toml.
+fn repo() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
 }
 
 fn have_display() -> bool {
@@ -41,7 +42,7 @@ struct Dirs(PathBuf);
 
 impl Dirs {
     fn new(test: &str) -> Dirs {
-        let base = root().join("target/gui-e2e").join(test);
+        let base = repo().join("target/gui-e2e").join(test);
         let _ = std::fs::remove_dir_all(&base);
         for d in ["config", "data", "cache"] {
             std::fs::create_dir_all(base.join(d)).unwrap();
@@ -164,7 +165,7 @@ fn shot(name: &str) {
         println!("skipping screenshot {name}: gui-shot missing");
         return;
     }
-    let dir = root().join("target/gui-shots");
+    let dir = repo().join("target/gui-shots");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("{name}.png"));
     let s = Command::new("gui-shot")

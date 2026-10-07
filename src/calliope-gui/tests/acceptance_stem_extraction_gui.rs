@@ -65,7 +65,7 @@ fn real_user_fingerprint() -> BTreeMap<String, (u64, u64)> {
 /// Starts the e2e app and a server inside `unshare -rn`. `server_cmd` is the shell command that
 /// starts the edge-AI stand-in on 127.0.0.1:8765 (stderr to `<base>/stems.log`).
 fn start_app(dirs: &Dirs, server_cmd: &str, keep_original: bool, answers: &[String]) -> (App, String) {
-    assert!(dirs.base().starts_with(root().join("target")), "temp dir is not under target/");
+    assert!(dirs.base().starts_with(repo().join("target")), "temp dir is not under target/");
     let cfg = dirs.app_config();
     std::fs::create_dir_all(&cfg).unwrap();
     let settings = serde_json::json!({
@@ -121,7 +121,7 @@ fn real_server(dirs: &Dirs, mode: &str) -> String {
     std::fs::write(dirs.base().join("stems-work/stub-mode"), format!("{mode}\n")).unwrap();
     format!(
         "{} --listen 127.0.0.1:{STEMS_PORT} --work-dir {} --separator {}",
-        sh_quote(&root().join("target/debug/calliope-stems")),
+        sh_quote(&repo().join("target/debug/calliope-stems")),
         sh_quote(&dirs.base().join("stems-work")),
         sh_quote(&root().join("tests/support/stub-separator"))
     )

@@ -23,8 +23,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use calliope_common::stems_api::JobState;
-use calliope_common::stems_client::{ClientError, StemsClient, STALL_TIMEOUT};
+use calliope_lib::stems_api::JobState;
+use calliope_lib::stems_client::{ClientError, StemsClient, STALL_TIMEOUT};
 use serde::Serialize;
 
 use crate::download::{self, DownloadError};

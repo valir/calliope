@@ -8,7 +8,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+    // The shared test fixtures and the stub separator live in the GUI crate's tests/.
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../calliope-gui")
 }
 
 struct Server {

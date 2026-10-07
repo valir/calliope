@@ -183,7 +183,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn fixture(name: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/import").join(name)
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../calliope-gui/tests/fixtures/import").join(name)
     }
 
     fn info_of(name: &str) -> Result<FlacInfo, FlacError> {

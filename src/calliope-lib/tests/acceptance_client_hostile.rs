@@ -1,4 +1,4 @@
-//! QA probes of the stems client (`calliope_common::stems_client`) against hostile or broken
+//! QA probes of the stems client (`calliope_lib::stems_client`) against hostile or broken
 //! "servers": scripted raw HTTP on 127.0.0.1 only. The client talks to whatever address the
 //! user typed in Settings, so everything it gets back is untrusted.
 #![cfg(feature = "client")]
@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use calliope_common::stems_client::{ClientError, StemsClient};
+use calliope_lib::stems_client::{ClientError, StemsClient};
 
 type Handler = dyn Fn(&Request, &mut TcpStream) + Send + Sync + 'static;
 

@@ -564,7 +564,7 @@ fn import_close_window_during_extraction() {
     let wid = r.wid.clone();
     r.app.close_gracefully(&wid);
     until(10, "no child process left", || {
-        !r.app.leftovers().iter().any(|(_, c)| is_tool_child(c) || c.contains("calliope-gui"))
+        !r.app.leftovers().iter().any(|(_, c)| is_tool_child(c) || runs_program(c, "calliope-gui"))
     });
     until(10, "the DELETE reaching the server", || r.dirs.stems_log().contains("method=DELETE"));
     r.assert_no_children();

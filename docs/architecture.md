@@ -4,6 +4,13 @@
      features, so each new feature stays consistent with the previous ones. You can edit
      it too; the architect treats your edits as decisions. -->
 
+**Paths in this document.** The repository is a Cargo workspace of three crates in
+`src/calliope-gui/`, `src/calliope-lib/` and `src/calliope-stems/`. Paths that start with
+`src/calliope-<crate>/` are relative to the repository root, and so are `target/`, `docs/` and
+`specs/`. All other paths (`src/*.rs`, `src/ui/...`, `tests/...`, `build.rs`,
+`tauri.conf.json`, `package.json`, `capabilities/`, `dist/`, `node_modules/`) are relative to
+the GUI crate, `src/calliope-gui/`.
+
 ## Components
 <!-- name | runs on | responsibility | language/stack | code location -->
 
@@ -19,13 +26,13 @@
 | calliope-gui (track repository) | Laptop | Repository layout, scan, save transaction, delete-to-trash, export, staged (atomic) creation of new tracks | Rust, pure (no Tauri) | `src/repository.rs` (+ `src/repository_tests.rs`) |
 | calliope-gui (file dialogs) | Laptop | Native open/folder/save dialogs opened from Rust (tablatures, repository root, exports, import audio/video); pick tokens; scripted picker for e2e (`e2e-hooks` feature) | Rust + `tauri-plugin-dialog` | `src/picker.rs` |
 | calliope-gui (import temp space) | Laptop | `<root>/import-tmp/` job folders, resume lookup, safe cleanup | Rust, pure | `src/import_tmp.rs` |
-| calliope-gui (external tools) | Laptop | Finds `yt-dlp`/`ffmpeg`/`ffprobe` on `PATH`, version checks; runs them with `calliope_common::process` | Rust | `src/tools.rs` |
+| calliope-gui (external tools) | Laptop | Finds `yt-dlp`/`ffmpeg`/`ffprobe` on `PATH`, version checks; runs them with `calliope_lib::process` | Rust | `src/tools.rs` |
 | calliope-gui (media) | Laptop | ffprobe JSON → audio check/duration/tags → `TrackEdits`; ffmpeg → FLAC 44.1 kHz stereo | Rust, pure | `src/media.rs` |
 | calliope-gui (download) | Laptop | URL validation/normalisation (`url` crate), yt-dlp args, progress/error parsing, `info.json` mapping | Rust | `src/download.rs` |
 | calliope-gui (import job) | Laptop | The single import job: state machine, events, cancel, shutdown | Rust, pure (std threads) | `src/import_job.rs` |
 | calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
-| calliope-common (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation, FLAC STREAMINFO parser, HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel). No Tauri/GTK | Rust; `serde`, `libc`, `ureq` 3 without TLS (feature) | `src/calliope-common/` |
-| calliope-stems (edge-AI stems service) | archserver (LAN), deployed by hand as a systemd user unit | HTTP server for "calliope-stems API v1": validates FLAC uploads (≤ 15 min), queues jobs (1 running), runs a configurable separator command, serves the stems, cleans up. No Tauri/GTK; the GUI doesn't depend on it | Rust; `tiny_http`, `calliope-common` | `src/calliope-stems/` |
+| calliope-lib (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation, FLAC STREAMINFO parser, HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel). No Tauri/GTK | Rust; `serde`, `libc`, `ureq` 3 without TLS (feature) | `src/calliope-lib/` |
+| calliope-stems (edge-AI stems service) | archserver (LAN), deployed by hand as a systemd user unit | HTTP server for "calliope-stems API v1": validates FLAC uploads (≤ 15 min), queues jobs (1 running), runs a configurable separator command, serves the stems, cleans up. No Tauri/GTK; the GUI doesn't depend on it | Rust; `tiny_http`, `calliope-lib` | `src/calliope-stems/` |
 | separator adapter | archserver | `<sep> <input.flac> <out_dir> <model>` → `<out_dir>/<stem>.flac`; the real one runs the owner's audio-separator venv with `htdemucs_6s` (frees VRAM from Ollama first) | bash | `src/calliope-stems/separators/audio-separator.sh` |
 | yt-dlp, ffmpeg, ffprobe | Laptop | External executables, installed by the user, never bundled | upstream | system `PATH` |
 | audio-separator, Demucs, PyTorch | archserver | The real separation model, the owner's existing install in `~/edge-ai/stems/.venv`; never bundled, never run by tests | upstream (Python) | outside this repo |
@@ -154,7 +161,7 @@
   watcher; the Library rescans each time it is shown. A configured root that doesn't exist is
   never created (it may be an unmounted disk); the default root is created on first use.
 - **Edge-AI stems protocol ("calliope-stems API v1")**, types and client in
-  `calliope-common` (`stems_api`, `stems_client`), server `calliope-stems`; plain HTTP on the
+  `calliope-lib` (`stems_api`, `stems_client`), server `calliope-stems`; plain HTTP on the
   LAN, base URL from settings (e.g. `http://archserver:8765`); full table in the
   gui-stem-extraction plan §2.7:
   `GET /v1/health` → `{"service":"calliope-stems","api":1,"version","models":[...],"default_model":"htdemucs_6s","busy","max_duration_s":900,"max_upload_bytes"}`;
@@ -178,7 +185,7 @@
   **Separator contract**: `<separator> <input.flac> <out_dir> <model>`, writes
   `<out_dir>/<stem>.flac`, optional stdout `progress <0..1>`, exit 0; outputs are validated.
 - **Track length limit**: 15 minutes, checked by Calliope before upload and by the server
-  (`MAX_DURATION_S` in `calliope-common`).
+  (`MAX_DURATION_S` in `calliope-lib`).
 - **External tools** (not bundled, found on `PATH` once at start-up, versions checked):
   `yt-dlp` ≥ 2023.01 (`--ignore-config`, `--` before the URL, output only into the job
   folder), `ffmpeg`/`ffprobe` ≥ 5 (inputs as `file:<abs path>`, `-nostdin`, `-n`). Always argv
@@ -189,22 +196,28 @@
 ## Repository layout
 
 ```
-Cargo.toml / Cargo.lock   single package `calliope-gui` at repo root (lock committed)
-build.rs                  version generation, frontend-built check, tauri_build::build()
-capabilities/main.json    ACL: the app's own commands for window `main` (no plugin/core permissions)
-permissions/autogenerated/  generated by build.rs from the app manifest (gitignored)
-tauri.conf.json           Tauri 2 config (frontendDist = "dist", strict CSP, bundling disabled; never devUrl/devCsp)
-tauri.dev.conf.json       dev-only overlay (devUrl, beforeDevCommand, devCsp), used only by `npm run dev:app`
-.taurignore               keeps `tauri dev` from rebuilding Rust on frontend edits
-package.json / -lock      npm project at the root (scripts below; lock committed)
-vite.config.ts            Vite root = src/ui, outDir = dist/, $lib alias, vitest config
-svelte.config.js, tsconfig.json, components.json (shadcn-svelte CLI config)
-icons/                    app icons
-src/                      ALL source
-  *.rs                    Rust modules (main, cli, version, gui, ipc, settings, fsutil,
+Cargo.toml                workspace only: members = the three crates below,
+                          default-members = calliope-gui, resolver 2
+Cargo.lock, target/       one lock (committed) and one build dir for the whole workspace
+specs/, docs/             specs, plans, architecture, UI guide (docs/ui.md), licences (docs/licences.md)
+CLAUDE.md, .claude/       agent instructions and settings
+src/                      ALL source (owner requirement), one folder per crate
+  calliope-gui/           the desktop app (package calliope-gui); npm project + Tauri app
+    Cargo.toml, build.rs  version generation, frontend-built check, tauri_build::build()
+    capabilities/main.json  ACL: the app's own commands for window `main` (no plugin/core permissions)
+    permissions/autogenerated/  generated by build.rs from the app manifest (gitignored)
+    tauri.conf.json       Tauri 2 config (frontendDist = "dist", strict CSP, bundling disabled; never devUrl/devCsp)
+    tauri.dev.conf.json   dev-only overlay (devUrl, beforeDevCommand, devCsp), used only by `npm run dev:app`
+    .taurignore           keeps `tauri dev` from rebuilding Rust on frontend edits
+    package.json / -lock  the GUI's npm project (scripts below; lock committed)
+    vite.config.ts        Vite root = src/ui, outDir = dist/, $lib alias, vitest config
+    svelte.config.js, tsconfig.json, components.json (shadcn-svelte CLI config)
+    icons/                app icons
+    README.md             build, run, test and usage of the GUI
+    src/*.rs              Rust modules (main, cli, version, gui, ipc, settings, fsutil,
                           track_meta, repository (+ repository_tests), picker, import_tmp,
                           tools, media, download, import_job, ...)
-  ui/                     frontend: index.html, main.ts, app.css, App.svelte,
+    src/ui/               frontend: index.html, main.ts, app.css, App.svelte,
                           components/ (library/ = tree, pane, tablature panel;
                           import/ = source page, edit pane, extraction progress;
                           TrackFields.svelte shared by Library and Import),
@@ -214,30 +227,33 @@ src/                      ALL source
                           url-check.ts, import-state.svelte.ts,
                           utils.ts, components/ui/ = shadcn components owned by us),
                           *.test.ts next to the code
-  calliope-common/        workspace member: shared lib (Cargo.toml, src/{lib,stems_api,
-                          stems_client,process}.rs); no Tauri
-  calliope-stems/         workspace member: the edge-AI stems server (Cargo.toml, src/*.rs,
-                          tests/conformance.rs, separators/audio-separator.sh,
-                          deploy/calliope-stems.service, README.md); no Tauri
-dist/                     generated by `vite build`, gitignored, embedded into the binary
-tests/                    cargo integration tests (cli, frontend, acceptance_*, gui_smoke, gui_e2e,
-                          gui_library_e2e, gui_import_e2e); tests/fixtures/library-sample/ = sample
+    dist/                 generated by `vite build`, gitignored, embedded into the binary
+    tests/                cargo integration tests (cli, frontend, acceptance_*, gui_smoke, gui_e2e,
+                          gui_library_e2e, gui_import_e2e); fixtures/library-sample/ = sample
                           repository (v1), library-v2/ = mixed v1/v2 incl. a stem track,
                           import/ = generated audio/video/stem fixtures (make-fixtures.sh)
-  support/                test-only stand-ins: stub-separator (bash), bin/yt-dlp (Python 3 stdlib)
-specs/, docs/             specs, plans, architecture, UI guide (docs/ui.md), licences (docs/licences.md)
+      support/            test-only stand-ins: stub-separator (bash), bin/yt-dlp (Python 3 stdlib)
+  calliope-lib/           shared library (package calliope-lib, lib calliope_lib): Cargo.toml,
+                          src/{lib,stems_api,stems_client,process}.rs, tests/; no Tauri
+  calliope-stems/         the edge-AI stems server: Cargo.toml, src/*.rs, tests/conformance.rs,
+                          separators/audio-separator.sh, deploy/calliope-stems.service, README.md;
+                          no Tauri
 ```
 
-All source lives under `src/` (an owner requirement). Config files stay at the root next to
-`Cargo.toml`. The root `Cargo.toml` is both the `calliope-gui` package and a Cargo workspace
-(`members = ["src/calliope-common", "src/calliope-stems"]`, `default-members` = the root
-package); further crates go in `src/<crate>/`. One `Cargo.lock` and `target/` for all. A static
-test keeps Tauri/GTK out of the server and common crates and the server out of the GUI.
+All source lives under `src/` (an owner requirement), one folder per crate; further crates go
+in `src/<crate>/` and into the workspace `members`. Each crate keeps its own config files next
+to its `Cargo.toml`. The shared test fixtures and stand-ins live in the GUI crate's `tests/`,
+and the tests of `calliope-lib` and `calliope-stems` reference them as
+`../calliope-gui/tests/...`. A static test keeps Tauri/GTK out of the server and lib crates and
+the server out of the GUI.
 
 ## Build and run
 
+- All `npm` commands run in `src/calliope-gui/`; build output goes to the workspace
+  `target/` at the repository root. `cargo` commands work from anywhere in the repository
+  (`-p <crate>` or `--workspace` pick the crate).
 - Prerequisites: Rust, `webkit2gtk-4.1 gtk3 base-devel`, Node.js >= 22.12 with npm; run
-  `npm ci` once after cloning and after `package-lock.json` changes. At run time the import
+  `npm ci` (in `src/calliope-gui/`) once after cloning and after `package-lock.json` changes. At run time the import
   needs `yt-dlp` and `ffmpeg` (`pacman -S yt-dlp ffmpeg`); tests need `ffmpeg`, `python3` and
   `unshare`/`ip` (util-linux, iproute2), never yt-dlp or the real separation model.
 - Server: `cargo build --release -p calliope-stems` gives `target/release/calliope-stems`
@@ -250,7 +266,7 @@ test keeps Tauri/GTK out of the server and common crates and the server out of t
   `dist/index.html` is missing, `build.rs` stops with a message naming `npm run build:app`.
   If `src/ui/` is newer than `dist/index.html`, a debug build prints a `cargo:warning` and a
   release build fails (naming `npm run build:app`).
-  Vite/Vitest cache lives in the root `node_modules/.vite` (`cacheDir`), not in `src/ui/`,
+  Vite/Vitest cache lives in the GUI crate's `node_modules/.vite` (`cacheDir`), not in `src/ui/`,
   because build.rs watches `src/ui`.
 - Dev: `npm run dev:app` (= `tauri dev --config tauri.dev.conf.json`, with `@tauri-apps/cli`
   as an npm dev-dependency). It starts the Vite dev server on `http://localhost:5173` (hot
@@ -608,4 +624,16 @@ The import GUI tests start the app inside `unshare -rn` with only loopback up an
 `calliope-stems` (with the stub separator) inside the same namespace, while the fake yt-dlp
 comes first on `PATH`. Even a
 bug in the code or a misconfigured test cannot reach YouTube or the LAN.
+
+### 2026-10-07: One folder per crate: `src/calliope-gui`, `src/calliope-lib`, `src/calliope-stems`   (owner decision)
+The GUI package used to be the repository root, with the other crates nested in its `src/`.
+The owner wants the three crates side by side. Choice: a virtual workspace `Cargo.toml` at
+the root (members + `default-members = ["src/calliope-gui"]`); the whole GUI package (Rust,
+frontend, npm project, Tauri config, tests) moved to `src/calliope-gui/`; `calliope-common`
+renamed to `calliope-lib` (lib `calliope_lib`). One `Cargo.lock` and `target/` stay at the root.
+npm commands now run in `src/calliope-gui/`. The shared test fixtures stay in the GUI crate's
+`tests/` (moving them to a neutral place is possible later). This replaces the layout parts
+of "Single Cargo package at the repo root" (2026-10-04), "npm project at the root" (2026-10-04)
+and the crate name in "Cargo workspace with shared `calliope-common`" (2026-10-06); their
+other content still applies.
 

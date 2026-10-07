@@ -12,7 +12,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use calliope_common::process;
+use calliope_lib::process;
 
 use crate::media::{clean_text, year_from, Cancel};
 use crate::track_meta::TrackEdits;

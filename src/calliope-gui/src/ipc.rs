@@ -17,7 +17,7 @@ use crate::picker::{
 };
 use crate::tools::{Tools, ToolState, ToolStatus};
 use crate::track_meta::TrackEdits;
-use calliope_common::stems_client::{ClientError, StemsClient};
+use calliope_lib::stems_client::{ClientError, StemsClient};
 use crate::repository::{self, Library, RepoStatus, Repository, SaveResult, SaveTrackRequest};
 use crate::settings::{self, Settings, SettingsStore, Theme};
 

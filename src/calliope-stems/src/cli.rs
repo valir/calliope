@@ -76,7 +76,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
     let mut separator: Option<PathBuf> = None;
     let mut model = DEFAULT_MODEL.to_string();
     let mut max_upload_mb = DEFAULT_MAX_UPLOAD_MB;
-    let mut max_duration_s = calliope_common::stems_api::MAX_DURATION_S;
+    let mut max_duration_s = calliope_lib::stems_api::MAX_DURATION_S;
     let mut queue = DEFAULT_QUEUE;
     let mut timeout_min = DEFAULT_SEPARATOR_TIMEOUT_MIN;
     let mut retention_hours = DEFAULT_RETENTION_HOURS;
@@ -163,7 +163,7 @@ mod tests {
     use super::*;
 
     fn stub() -> String {
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/support/stub-separator").to_string()
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../calliope-gui/tests/support/stub-separator").to_string()
     }
 
     fn args(a: &[&str]) -> Vec<String> {

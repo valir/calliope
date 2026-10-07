@@ -1,8 +1,13 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// The repository root (workspace): `target/`, `docs/`, `specs/` and the workspace Cargo.toml.
+fn repo() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
 }
 
 #[test]
@@ -258,15 +263,16 @@ fn cargo_dependency_names(toml: &str) -> Vec<String> {
 
 #[test]
 fn licence_record_lists_every_direct_dependency() {
-    let record = fs::read_to_string(root().join("docs/licences.md")).expect("docs/licences.md");
-    let root_toml = fs::read_to_string(root().join("Cargo.toml")).unwrap();
-    let mut names = cargo_dependency_names(&root_toml);
+    let record = fs::read_to_string(repo().join("docs/licences.md")).expect("docs/licences.md");
+    let gui_toml = fs::read_to_string(root().join("Cargo.toml")).unwrap();
+    let mut names = cargo_dependency_names(&gui_toml);
     assert!(names.len() >= 8, "Cargo.toml parsing found too few dependencies: {names:?}");
-    // Every other workspace member's manifest too (the `members = [...]` list of the root).
-    let members = names_between(&root_toml, "members = [", "]");
-    assert!(members.len() >= 2, "workspace members not found: {members:?}");
+    // Every workspace member's manifest too (the `members = [...]` list of the workspace root).
+    let workspace_toml = fs::read_to_string(repo().join("Cargo.toml")).unwrap();
+    let members = names_between(&workspace_toml, "members = [", "]");
+    assert!(members.len() >= 3, "workspace members not found: {members:?}");
     for m in &members {
-        let toml = fs::read_to_string(root().join(m).join("Cargo.toml")).unwrap_or_else(|e| panic!("{m}/Cargo.toml: {e}"));
+        let toml = fs::read_to_string(repo().join(m).join("Cargo.toml")).unwrap_or_else(|e| panic!("{m}/Cargo.toml: {e}"));
         let member_names = cargo_dependency_names(&toml);
         assert!(!member_names.is_empty(), "no dependencies parsed in {m}/Cargo.toml");
         names.extend(member_names);
@@ -336,11 +342,11 @@ fn server_side_crates_stay_separate_from_the_gui() {
         .filter(|p| meta["workspace_members"].as_array().unwrap().contains(&p["id"]))
         .map(|p| p["name"].as_str().unwrap())
         .collect();
-    assert!(members.contains(&"calliope-gui") && members.contains(&"calliope-common"), "{members:?}");
+    assert!(members.contains(&"calliope-gui") && members.contains(&"calliope-lib"), "{members:?}");
 
     let is_ui = |n: &str| n.starts_with("tauri") || n.starts_with("gtk") || n.starts_with("webkit");
     // calliope-stems is added by a later task; check it as soon as it exists.
-    for krate in ["calliope-common", "calliope-stems"] {
+    for krate in ["calliope-lib", "calliope-stems"] {
         if !members.contains(&krate) {
             assert_eq!(krate, "calliope-stems", "{krate} must be a workspace member");
             continue;
@@ -350,8 +356,8 @@ fn server_side_crates_stay_separate_from_the_gui() {
     }
     let gui = reachable_packages(&meta, "calliope-gui");
     assert!(!gui.contains("calliope-stems"), "calliope-gui must not depend on calliope-stems");
-    assert!(!reachable_packages(&meta, "calliope-common").contains("calliope-gui"));
+    assert!(!reachable_packages(&meta, "calliope-lib").contains("calliope-gui"));
     for server in ["tiny_http", "hyper", "axum", "actix-web", "warp"] {
-        assert!(!reachable_packages(&meta, "calliope-common").contains(server), "calliope-common must not contain an HTTP server ({server})");
+        assert!(!reachable_packages(&meta, "calliope-lib").contains(server), "calliope-lib must not contain an HTTP server ({server})");
     }
 }

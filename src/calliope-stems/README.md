@@ -5,7 +5,7 @@ GUI uploads a FLAC file, the server runs a separator command on it (on the owner
 Demucs `htdemucs_6s` through `audio-separator`, on the GPU) and the GUI downloads six FLAC stems
 (vocals, drums, bass, guitar, piano, other). It is a workspace member of the Calliope repository
 (`src/calliope-stems`), has no Tauri or GTK dependency and is not used by the GUI at build time
-(the GUI only shares `calliope-common` with it).
+(the GUI only shares `calliope-lib` with it).
 
 ## Build
 
@@ -87,7 +87,7 @@ Two implementations live in this repository:
   `htdemucs_6s` model on the GPU). It looks for `$STEMS_HOME/.venv/bin/audio-separator` and
   `$STEMS_HOME/models/` (default `~/edge-ai/stems`) and, if less than 2500 MiB of VRAM are free,
   asks a local Ollama (`$OLLAMA`, default `http://127.0.0.1:11434`) to unload its models first.
-* `tests/support/stub-separator` (at the repository root): copies canned stems, with failure
+* `src/calliope-gui/tests/support/stub-separator` (the shared test stubs live in the GUI crate's `tests/`): copies canned stems, with failure
   modes. All automated tests use the stub; no test runs the real model.
 
 ## Manual deployment (by the owner)

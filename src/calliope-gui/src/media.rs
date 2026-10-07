@@ -1,6 +1,6 @@
 //! Media handling for the stem import (plan section 2.6): `ffprobe` metadata, the mapping of
 //! file tags to track fields, conversion to FLAC (44.1 kHz stereo) with `ffmpeg`, and the
-//! 15-minute limit. Pure logic, no Tauri. Tools are started through `calliope_common::process`
+//! 15-minute limit. Pure logic, no Tauri. Tools are started through `calliope_lib::process`
 //! (argv only, never a shell); sources are only read, as `file:<absolute path>` inputs, and
 //! all output goes into the job folder given by the caller.
 #![allow(dead_code)] // used by the import job (a later task) and the tests
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use calliope_common::process::{self, CancelHandle};
+use calliope_lib::process::{self, CancelHandle};
 
 use crate::track_meta::TrackEdits;
 
