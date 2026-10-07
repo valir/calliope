@@ -115,9 +115,9 @@ No task was marked routine. The local model has failed every task beyond a few l
   | audio-separator | MIT |
   | PyTorch | BSD-3-Clause, plus NVIDIA libraries |
 
-- **To be confirmed by you:**
-  - the licence of the htdemucs_6s model weights (downloaded from Meta's `dl.fbaipublicfiles.com`)
-  - the Demucs code licence (no LICENSE file was found locally)
+- **Confirmed by you (2026-10-07):**
+  - the Demucs code is MIT (github.com/facebookresearch/demucs)
+  - the official htdemucs_6s weights are MIT (stated on the derived guitar fine-tune's model card). That fine-tune is itself Apache-2.0 and trained on MoisesDB; Calliope doesn't use it.
 
 ## How to try it
 ```sh
@@ -146,6 +146,6 @@ On the laptop (use a copy of `tests/fixtures/library-v2` first):
 - [ ] Close Calliope during "Working...": it quits within a few seconds, no yt-dlp or ffmpeg is left, and the server log shows the job cancelled
 - [ ] Readable from 1–2 m in a dim room; a keyboard-only run works
 - [ ] Edit and Save an old v1 track: it now has `"schema_version": 2` and `"type": "backing"`, with everything else unchanged
-- [ ] Confirm the licences of the htdemucs_6s weights and the Demucs code
+- [x] Confirm the licences of the htdemucs_6s weights and the Demucs code (MIT, confirmed 2026-10-07)
 
 Once you've verified it, tick **gui-stem-extraction** in the roadmap of `specs/overview.md`.

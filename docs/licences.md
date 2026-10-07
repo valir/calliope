@@ -99,9 +99,9 @@ only), not from memory, except where marked.
 | Component | Licence | Notes |
 |---|---|---|
 | `audio-separator` 0.47.0 | MIT | `License: MIT` in its package metadata; it bundles the Demucs inference code (copyright Meta). |
-| Demucs (inference code inside `audio_separator/separator/uvr_lib_v5/demucs`) | MIT (upstream Demucs repository) | The source headers only say "licensed under the license found in the LICENSE file" and `audio-separator` does not ship that file locally, so the MIT licence is the upstream project's, **to be confirmed by the owner**. |
+| Demucs (inference code inside `audio_separator/separator/uvr_lib_v5/demucs`) | MIT | Upstream https://github.com/facebookresearch/demucs is MIT ("Demucs is released under the MIT license as found in the LICENSE file"). Confirmed by the owner 2026-10-07. |
 | PyTorch (`torch` 2.11.0+cu128) | BSD-3-Clause | `License: BSD-3-Clause` in its package metadata (the CUDA wheels also bring NVIDIA libraries under NVIDIA's own licence, which is the owner's install). |
-| `htdemucs_6s` model weights (`5c90dfd2-34c22ccb.th`) | **to be confirmed by the owner** | The file is Meta's Demucs checkpoint (`dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th`, from `models/download_checks.json`). No licence file or metadata for the weights exists locally; the Demucs project is MIT-licensed, but whether that extends to the weights could not be determined from local files. Calliope does not ship the weights; the stems it produces are the owner's own use. |
+| `htdemucs_6s` model weights (`5c90dfd2-34c22ccb.th`) | MIT | Meta's official checkpoint (`dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th`), released with the MIT-licensed Demucs project; the model card of the derived https://huggingface.co/adityalakhani/htdemucs-6s-guitar-ft states "The base `htdemucs_6s` weights (Meta AI) are released under MIT". Confirmed by the owner 2026-10-07. Calliope does not ship the weights. Note: that Hugging Face model is a different checkpoint (a guitar fine-tune, Apache-2.0, trained on MoisesDB under Moises.ai research terms); Calliope does not use it. |
 
 The server's Rust code (`calliope-stems`) only runs `audio-separator` through the adapter script
 `src/calliope-stems/separators/audio-separator.sh`; it contains no model or Python code.
