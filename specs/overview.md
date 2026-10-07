@@ -140,7 +140,7 @@ tester for the features.
 - [x] `gui-skeleton.md`: calliope-gui skeleton written using Rust and Tauri
 - [x] `gui-frontend-foundation.md`: frontend toolchain (Svelte), theme and navigation shell
 - [x] `gui-tracks-repository.md`: manage the backing track repository
-- [ ] `gui-stem-extracting.md`: calliope imports a music track and places stems in the repository
+- [x] `gui-stem-extracting.md`: calliope imports a music track and places stems in the repository
 - [ ] `gui-backing-track-assembly.md`: create backing track out of extracted stems
 - [ ] `gui-existing-track-import.md`: import an existing backing track from various sources
 - [ ] `gui-tablatures.md`: associate tablature to backing track
