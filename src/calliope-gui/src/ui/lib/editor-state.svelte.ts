@@ -18,8 +18,9 @@ import {
   type LaneState,
   type TrackRecord,
   type TransportState,
+  watchEditor,
 } from './ipc';
-import { load } from './library-state.svelte';
+import { load, selectTrack } from './library-state.svelte';
 import { formatPosition } from './time-format';
 
 export type EditorStatus = 'inactive' | 'loading' | 'active' | 'error';
@@ -148,6 +149,24 @@ function applySnapshot(s: EditorSnapshot): void {
   ed.transport = { ...s.transport };
   ed.variant = { ...s.variant };
   ed.saving = s.saving;
+}
+
+/** Re-attaches to an open backend session after a webview reload (nothing is selected yet then). */
+export async function attachEditor(): Promise<void> {
+  if (key !== undefined && key !== null) return;
+  const gen = ++generation;
+  try {
+    const snap = await watchEditor((e) => onEvent(gen, e));
+    if (gen !== generation) return;
+    if (!snap) { generation++; return; }
+    key = snap.id;
+    sessionOpen = true;
+    applySnapshot(snap);
+    selectTrack(snap.id);
+    log(`editor active id=${snap.id} stems=${snap.stems.length}`);
+  } catch (err) {
+    fail('watch_editor', err);
+  }
 }
 
 /** Stops playback when the view is left; the session and the mix stay. */

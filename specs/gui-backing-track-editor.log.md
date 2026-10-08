@@ -14,3 +14,4 @@ task 12 | Gain formatting | local | done
 task 13 | Shared tree column, Editor layout, Library backings row | implementer | done
 task 14 | Slider and checkbox components | implementer | done
 task 15 | Editor frontend state | implementer | done
+task 16 | Editor pane components | implementer | done
