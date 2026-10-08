@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::thread::JoinHandle;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,9 +15,12 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::audio_out::{OutputBackend, OutputHandle};
+use crate::backing_render::{self, RenderInput, RenderStem, SaveParams, SaveShared};
+use crate::import_job::RepoLock;
+use crate::repository::{Repository, TrackRecord};
 use crate::mixer;
 use crate::stem_audio::{self, Common, StemPcm};
-use crate::track_meta::StemEntry;
+use crate::track_meta::{BackingVariant, StemEntry};
 use crate::transport::Transport;
 
 /// Frames mixed per step in the render callback.
@@ -70,6 +74,7 @@ pub struct EditorSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[allow(clippy::large_enum_variant)] // short-lived values, serialised at once
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum EditorEvent {
     Loading { id: String, done: usize, total: usize },
@@ -79,20 +84,21 @@ pub enum EditorEvent {
         state: TransportState,
     },
     AudioError { id: String, message: String },
+    Saving { id: String, progress: f32 },
+    Saved {
+        id: String,
+        file: String,
+        clipped_samples: u64,
+        track: TrackRecord,
+        warnings: Vec<String>,
+    },
+    SaveFailed { id: String, message: String },
+    SaveCancelled { id: String },
 }
 
 pub type EventSink = Arc<dyn Fn(EditorEvent) + Send + Sync>;
 
 // ---------------------------------------------------------------- open inputs
-
-/// The first backing variant of a track, as far as the editor needs it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct VariantSpec {
-    pub id: String,
-    pub name: String,
-    pub file: String,
-    pub mix: Value,
-}
 
 /// What the IPC layer extracts from the track record.
 #[derive(Debug, Clone)]
@@ -103,7 +109,8 @@ pub struct OpenSpec {
     pub stems: Vec<StemEntry>,
     /// The record's `missing` list (paths relative to `dir`).
     pub missing: Vec<String>,
-    pub variant: Option<VariantSpec>,
+    /// The first entry of the track's `backings`.
+    pub variant: Option<BackingVariant>,
 }
 
 /// Handed out by `begin_open`; a later `begin_open` or `close` cancels it.
@@ -246,6 +253,9 @@ struct Session {
     sample_rate: u32,
     lanes: Vec<LaneState>,
     variant: VariantTarget,
+    dir: PathBuf,
+    stems: Vec<StemEntry>,
+    bits_out: u32,
     shared: Arc<PlayerShared>,
     transport: Transport,
     solo: Option<usize>,
@@ -327,11 +337,19 @@ pub struct EditorManager {
     remembered: HashMap<String, Vec<LaneState>>,
     pending: Option<OpenTicket>,
     generation: u64,
+    save: Option<SaveRun>,
+}
+
+/// The running (or just finished, not yet reaped) save job.
+struct SaveRun {
+    id: String,
+    shared: Arc<SaveShared>,
+    handle: JoinHandle<()>,
 }
 
 impl EditorManager {
     pub fn new(backend: Box<dyn OutputBackend>, sink: EventSink) -> Self {
-        Self { backend, sink, session: None, remembered: HashMap::new(), pending: None, generation: 0 }
+        Self { backend, sink, session: None, remembered: HashMap::new(), pending: None, generation: 0, save: None }
     }
 
     pub fn sink(&self) -> EventSink {
@@ -392,6 +410,9 @@ impl EditorManager {
             sample_rate: common.sample_rate,
             lanes,
             variant,
+            dir: spec.dir.clone(),
+            stems: spec.stems.clone(),
+            bits_out: common.bits_out,
             shared,
             transport: Transport::new(),
             solo: None,
@@ -407,7 +428,7 @@ impl EditorManager {
         let snap = session.snapshot();
         eprintln!("calliope: editor open id={} stems={} duration_ms={}", snap.id, snap.stems.len(), snap.duration_ms);
         self.session = Some(session);
-        Ok(snap)
+        Ok(self.decorate(snap))
     }
 
     /// Whole open in one call (begin, load, finish); the IPC layer splits it to keep the
@@ -444,14 +465,104 @@ impl EditorManager {
 
     pub fn snapshot(&self, id: &str) -> Result<EditorSnapshot, String> {
         match self.session.as_ref() {
-            Some(s) if s.id == id => Ok(s.snapshot()),
+            Some(s) if s.id == id => Ok(self.decorate(s.snapshot())),
             _ => Err(format!("no editor session for {id}")),
         }
     }
 
     /// The open session's snapshot, if any (re-attach after a webview reload).
     pub fn current(&self) -> Option<EditorSnapshot> {
-        self.session.as_ref().map(Session::snapshot)
+        self.session.as_ref().map(|s| self.decorate(s.snapshot()))
+    }
+
+    /// Adds the save state to a snapshot: progress while a job runs, the written variant
+    /// once it succeeded.
+    fn decorate(&self, mut snap: EditorSnapshot) -> EditorSnapshot {
+        if let Some(run) = self.save.as_ref().filter(|r| r.id == snap.id) {
+            if run.shared.is_finished() {
+                if let Some(v) = run.shared.outcome() {
+                    snap.variant = v;
+                }
+            } else {
+                snap.saving = Some(run.shared.progress());
+            }
+        }
+        snap
+    }
+
+    /// Drops a finished save job; a successful one updates the session's target variant.
+    fn reap(&mut self) {
+        let Some(run) = self.save.as_ref().filter(|r| r.shared.is_finished()) else { return };
+        let (id, outcome) = (run.id.clone(), run.shared.outcome());
+        self.save = None;
+        if let (Some(v), Some(s)) = (outcome, self.session.as_mut()) {
+            if s.id == id {
+                s.variant = v;
+            }
+        }
+    }
+
+    /// Starts the save job for the checked stems (solo ignored). The mix is the current
+    /// lanes; the file is the session's target variant, replaced if it exists.
+    pub fn start_save(&mut self, id: &str, repo: Repository, lock: Arc<dyn RepoLock>) -> Result<EditorSnapshot, String> {
+        self.reap();
+        if self.save.is_some() {
+            return Err("A save is already running".into());
+        }
+        let sink = self.sink.clone();
+        let s = self.session(id)?;
+        if !s.lanes.iter().any(|l| l.unmuted) {
+            return Err("Check a stem first".into());
+        }
+        let stems = s
+            .lanes
+            .iter()
+            .zip(&s.stems)
+            .filter(|(l, _)| l.unmuted)
+            .map(|(l, e)| RenderStem { path: s.dir.join(&e.file), gain: mixer::gain_factor(l.gain_db, l.unmuted) })
+            .collect();
+        let mix = serde_json::json!({
+            "stems": s.lanes.iter().map(|l| serde_json::json!({
+                "name": l.name, "gain_db": l.gain_db, "unmuted": l.unmuted,
+            })).collect::<Vec<_>>()
+        });
+        let params = SaveParams {
+            id: s.id.clone(),
+            variant: s.variant.id.clone(),
+            dir: s.dir.clone(),
+            stems: s.stems.clone(),
+            input: RenderInput {
+                stems,
+                sample_rate: s.sample_rate,
+                bits: s.bits_out,
+                frames: s.shared.total_frames,
+            },
+            mix,
+            repo,
+            lock,
+        };
+        let shared = SaveShared::new();
+        let handle = backing_render::spawn(params, shared.clone(), sink);
+        self.save = Some(SaveRun { id: id.to_string(), shared, handle });
+        self.snapshot(id)
+    }
+
+    /// Asks the running save of `id` to stop; the job answers with `save-cancelled`.
+    pub fn cancel_save(&mut self, id: &str) -> Result<(), String> {
+        if let Some(run) = self.save.as_ref().filter(|r| r.id == id) {
+            run.shared.cancel.store(true, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    /// App exit: cancels a running save and waits up to `cap` for it to clean up.
+    pub fn shutdown_save(&mut self, cap: Duration) {
+        let Some(run) = self.save.take() else { return };
+        run.shared.cancel.store(true, Ordering::Relaxed);
+        let end = Instant::now() + cap;
+        while !run.handle.is_finished() && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn ensure_output(backend: &dyn OutputBackend, s: &mut Session) -> Result<(), String> {
@@ -608,6 +719,7 @@ impl EditorManager {
     /// Called every ~20 ms by the ticker thread.
     pub fn tick(&mut self, now: Instant) {
         let sink = self.sink.clone();
+        self.reap();
         let Some(s) = self.session.as_mut() else { return };
         if let Some(msg) = s.output.as_ref().and_then(|o| o.error()) {
             Self::stop_session(&sink, s, now);

@@ -167,7 +167,7 @@ impl<F: Fn(&mut dyn FnMut()) + Send + Sync> RepoLock for F {
     }
 }
 
-fn locked<T>(lock: &dyn RepoLock, f: impl FnOnce() -> T) -> T {
+pub(crate) fn locked<T>(lock: &dyn RepoLock, f: impl FnOnce() -> T) -> T {
     let mut f = Some(f);
     let mut out = None;
     lock.run(&mut || {

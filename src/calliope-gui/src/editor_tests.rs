@@ -37,12 +37,10 @@ fn spec_of(id: &str) -> (tempfile::TempDir, OpenSpec) {
         .map(|s| StemEntry { name: s["name"].as_str().unwrap().into(), file: s["file"].as_str().unwrap().into() })
         .collect();
     let missing = stems.iter().filter(|s| !dir.join(&s.file).is_file()).map(|s| s.file.clone()).collect();
-    let variant = v["backings"].as_array().and_then(|a| a.first()).map(|b| VariantSpec {
-        id: b["id"].as_str().unwrap().into(),
-        name: b["name"].as_str().unwrap().into(),
-        file: b["file"].as_str().unwrap().into(),
-        mix: b["mix"].clone(),
-    });
+    let variant = v["backings"]
+        .as_array()
+        .and_then(|a| a.first())
+        .map(|b| serde_json::from_value::<BackingVariant>(b.clone()).unwrap());
     let spec = OpenSpec { id: id.into(), title: v["title"].as_str().unwrap().into(), dir, stems, missing, variant };
     (tmp, spec)
 }
@@ -462,4 +460,214 @@ fn opening_another_track_closes_the_first() {
     assert!(m.snapshot(FOUR).is_err());
     assert!(m.snapshot(MIXED).is_ok());
     let _ = spec;
+}
+
+// ------------------------------------------------------------------ save job
+
+use crate::import_job::RepoLock;
+use crate::repository::Repository;
+use std::time::Instant as Clock;
+
+/// A repository with the fixture track copied to `tracks/<id>`.
+fn repo_spec(id: &str) -> (tempfile::TempDir, Repository, OpenSpec) {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-editor/tracks").join(id);
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = Repository::new(tmp.path().join("repo"));
+    repo.ensure_layout().unwrap();
+    let dir = tmp.path().join("repo/tracks").join(id);
+    copy_tree(&src, &dir);
+    let (_t, mut spec) = spec_of(id);
+    spec.dir = dir;
+    (tmp, repo, spec)
+}
+
+fn no_lock() -> Arc<dyn RepoLock> {
+    Arc::new(|f: &mut dyn FnMut()| f())
+}
+
+fn events_only() -> Events {
+    Arc::new(Mutex::new(Vec::new()))
+}
+
+fn final_event(events: &Events) -> EditorEvent {
+    let end = Clock::now() + Duration::from_secs(60);
+    loop {
+        let found = events.lock().unwrap().iter().find(|e| {
+            matches!(e, EditorEvent::Saved { .. } | EditorEvent::SaveFailed { .. } | EditorEvent::SaveCancelled { .. })
+        }).cloned();
+        if let Some(e) = found {
+            return e;
+        }
+        assert!(Clock::now() < end, "the save did not finish");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn parts_in(dir: &Path) -> Vec<String> {
+    fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with(".calliope-backing-"))
+        .collect()
+}
+
+fn read_flac(path: &Path) -> (claxon::metadata::StreamInfo, Vec<i32>) {
+    let mut r = claxon::FlacReader::open(path).unwrap();
+    let info = r.streaminfo();
+    (info, r.samples().map(|s| s.unwrap()).collect())
+}
+
+#[test]
+fn save_ignores_solo_and_replaces_the_variant() {
+    let (_t, repo, spec) = repo_spec(FOUR);
+    let (mut m, _b, ev) = manager();
+    m.open(&spec).unwrap();
+    m.set_stem(FOUR, "vocals", Some(-6.0), true).unwrap();
+    m.set_stem(FOUR, "drums", Some(0.0), true).unwrap();
+    m.lane_play(FOUR, "vocals").unwrap(); // solo on vocals; drums stays checked
+    assert_eq!(m.snapshot(FOUR).unwrap().transport.solo.as_deref(), Some("vocals"));
+    let snap = m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
+    assert!(snap.saving.is_some());
+    assert_eq!(m.start_save(FOUR, repo.clone(), no_lock()).unwrap_err(), "A save is already running");
+    let EditorEvent::Saved { file, clipped_samples, .. } = final_event(&ev) else { panic!("{:?}", ev.lock().unwrap()) };
+    assert_eq!(file, "backings/backing.flac");
+
+    // exactly vocals(-6 dB) + drums(0 dB), as 16 bits
+    let (v, d) = (decoded(&spec, "vocals"), decoded(&spec, "drums"));
+    let (gv, gd) = (mixer::gain_factor(Some(-6.0), true), mixer::gain_factor(Some(0.0), true));
+    let frames = v.frames.max(d.frames) as usize;
+    let (sv, sd) = (stereo(&v, 0, frames), stereo(&d, 0, frames));
+    let mut clipped = 0;
+    let want: Vec<i32> = (0..frames * 2)
+        .map(|i| {
+            let x = sv[i] * gv + sd[i] * gd;
+            clipped += u64::from(x.abs() > 1.0);
+            mixer::quantise(x.clamp(-1.0, 1.0), 16)
+        })
+        .collect();
+    let (info, got) = read_flac(&spec.dir.join(&file));
+    assert_eq!((info.sample_rate, info.bits_per_sample, info.channels), (22050, 16, 2));
+    assert!(got == want, "saved mix differs");
+    assert_eq!(clipped_samples, clipped);
+    assert!(parts_in(&spec.dir).is_empty());
+
+    // the session now points at the saved variant and the save is over
+    m.tick(Clock::now());
+    let snap = m.snapshot(FOUR).unwrap();
+    assert_eq!(snap.saving, None);
+    assert_eq!(snap.variant, VariantTarget { id: "backing".into(), name: "Backing".into(), file, exists: true });
+    let meta: Value = serde_json::from_slice(&fs::read(spec.dir.join("track.json")).unwrap()).unwrap();
+    assert_eq!(meta["backings"][0]["mix"]["stems"][0], serde_json::json!({"name": "vocals", "gain_db": -6.0, "unmuted": true}));
+    assert_eq!(meta["backings"][0]["mix"]["stems"][2]["unmuted"], false);
+
+    // a second save replaces the same variant (no backing-2) and trashes the old file
+    ev.lock().unwrap().clear();
+    m.start_save(FOUR, repo, no_lock()).unwrap();
+    let EditorEvent::Saved { file, .. } = final_event(&ev) else { panic!() };
+    assert_eq!(file, "backings/backing.flac");
+    let meta: Value = serde_json::from_slice(&fs::read(spec.dir.join("track.json")).unwrap()).unwrap();
+    assert_eq!(meta["backings"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn save_refuses_without_a_checked_stem() {
+    let (_t, repo, spec) = repo_spec(FOUR);
+    let (mut m, _b, ev) = manager();
+    m.open(&spec).unwrap();
+    assert_eq!(m.start_save(FOUR, repo.clone(), no_lock()).unwrap_err(), "Check a stem first");
+    assert_eq!(m.start_save("other", repo, no_lock()).unwrap_err(), "no editor session for other");
+    assert!(ev.lock().unwrap().iter().all(|e| !matches!(e, EditorEvent::Saving { .. })));
+    assert!(parts_in(&spec.dir).is_empty());
+}
+
+#[test]
+fn save_conflict_fails_and_leaves_no_part() {
+    let (_t, repo, spec) = repo_spec(FOUR);
+    let (mut m, _b, ev) = manager();
+    m.open(&spec).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true).unwrap();
+    // the stems change on disk after the session opened
+    let path = spec.dir.join("track.json");
+    let text = fs::read_to_string(&path).unwrap().replace("\"name\": \"guitar\"", "\"name\": \"lead\"");
+    fs::write(&path, &text).unwrap();
+    m.start_save(FOUR, repo, no_lock()).unwrap();
+    let EditorEvent::SaveFailed { message, .. } = final_event(&ev) else { panic!() };
+    assert!(message.starts_with("conflict:"), "{message}");
+    assert!(parts_in(&spec.dir).is_empty());
+    assert!(!spec.dir.join("backings").exists());
+    assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    // the failed job is over: another save may start
+    m.tick(Clock::now());
+    assert_eq!(m.snapshot(FOUR).unwrap().saving, None);
+}
+
+#[test]
+fn save_cancel_leaves_track_json_unchanged() {
+    let (_t, repo, spec) = repo_spec(FOUR);
+    let ev = events_only();
+    let path = spec.dir.join("track.json");
+    let before = fs::read(&path).unwrap();
+    // cancel from the first progress event, i.e. in the middle of the render
+    let ev2 = ev.clone();
+    let shared = crate::backing_render::SaveShared::new();
+    let sh = shared.clone();
+    let sink: EventSink = Arc::new(move |e| {
+        if matches!(e, EditorEvent::Saving { .. }) {
+            sh.cancel.store(true, Ordering::Relaxed);
+        }
+        ev2.lock().unwrap().push(e);
+    });
+    let params = crate::backing_render::SaveParams {
+        id: FOUR.into(),
+        variant: "backing".into(),
+        dir: spec.dir.clone(),
+        stems: spec.stems.clone(),
+        input: crate::backing_render::RenderInput {
+            stems: vec![crate::backing_render::RenderStem { path: spec.dir.join(&spec.stems[2].file), gain: 1.0 }],
+            sample_rate: 22050,
+            bits: 16,
+            frames: 12 * 22050,
+        },
+        mix: serde_json::json!({}),
+        repo,
+        lock: no_lock(),
+    };
+    crate::backing_render::spawn(params, shared, sink).join().unwrap();
+    assert!(matches!(final_event(&ev), EditorEvent::SaveCancelled { .. }));
+    assert!(parts_in(&spec.dir).is_empty());
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert!(!spec.dir.join("backings").exists());
+}
+
+#[test]
+fn cancel_through_the_manager_finishes_the_job() {
+    let (_t, repo, spec) = repo_spec(FOUR);
+    let (mut m, _b, ev) = manager();
+    m.open(&spec).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true).unwrap();
+    m.start_save(FOUR, repo, no_lock()).unwrap();
+    m.cancel_save(FOUR).unwrap();
+    // either the cancel won or the (fast) job had already saved; never a leftover part
+    let _ = final_event(&ev);
+    assert!(parts_in(&spec.dir).is_empty());
+    m.shutdown_save(Duration::from_secs(2));
+}
+
+#[test]
+fn save_progress_is_monotonic_and_ends_at_one() {
+    let (_t, repo, spec) = repo_spec(FOUR);
+    let (mut m, _b, ev) = manager();
+    m.open(&spec).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true).unwrap();
+    m.start_save(FOUR, repo, no_lock()).unwrap();
+    assert!(matches!(final_event(&ev), EditorEvent::Saved { .. }));
+    let p: Vec<f32> = ev
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|e| if let EditorEvent::Saving { progress, .. } = e { Some(*progress) } else { None })
+        .collect();
+    assert!(!p.is_empty() && p.windows(2).all(|w| w[0] <= w[1]), "{p:?}");
+    assert_eq!(p.last(), Some(&1.0));
 }

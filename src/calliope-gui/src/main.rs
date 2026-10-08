@@ -1,4 +1,5 @@
 mod audio_out;
+mod backing_render;
 mod cli;
 mod download;
 mod editor;
