@@ -6,6 +6,7 @@ mod import_tmp;
 mod gui;
 mod ipc;
 mod media;
+mod mixer;
 mod picker;
 mod repository;
 mod settings;
