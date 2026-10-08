@@ -27,8 +27,8 @@
 <!-- Main structure. The views come from specs/overview.md; adjust freely. -->
 - Navigation on the left (collapsible), with the content area on the right and a
   slim footer (status, edge-AI server state, version).
-- Views: Library · Import · Track · Playlists · Player · Settings
--  In the Player, the tablature takes most of the screen, with transport controls
+- Views: Library · Import · Editor · Playlists · Player · Settings
+- In the Player, the tablature takes most of the screen, with transport controls
   (play/pause, position, loop, tempo) in a bar that stays visible beneath the
   tablature
 
@@ -37,7 +37,7 @@
 ┌──────────┬──────────────────────────────────────────────┐
 │ Library  │                                              │
 │ Import   │              current view                    │
-│ Track    │                                              │
+│ Editor   │                                              │
 │ Player   │                                              │
 │ Playlists│                                              │
 │ Settings │                                              │
