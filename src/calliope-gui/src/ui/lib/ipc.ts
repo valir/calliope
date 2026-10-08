@@ -17,6 +17,17 @@ export const frontendLog = (message: string): Promise<void> =>
 // Track repository: mirrors src/track_meta.rs, src/repository.rs and src/ipc.rs.
 export type TrackType = 'backing' | 'stem';
 export interface StemEntry { name: string; file: string }
+export interface BackingVariant {
+  id: string;
+  name: string;
+  /** Always `backings/<file name>`. */
+  file: string;
+  created: string;
+  modified: string;
+  sample_rate: number;
+  bits: number;
+  mix: unknown;
+}
 export interface TrackRecord {
   id: string;
   type: TrackType;
@@ -33,6 +44,7 @@ export interface TrackRecord {
   stems: StemEntry[];
   stem_model: string | null;
   tablatures: string[];
+  backings: BackingVariant[];
   imported: string;
   modified: string;
   revision: string;
@@ -157,3 +169,76 @@ export const getImportJob = (): Promise<JobSnapshot | null> =>
   invoke<JobSnapshot | null>('get_import_job');
 export const watchImport = (onEvent: (e: ImportEvent) => void): Promise<JobSnapshot | null> =>
   invoke<JobSnapshot | null>('watch_import', { events: channel(onEvent) });
+
+// Backing-track editor: mirrors src/editor.rs and src/ipc.rs.
+export interface LaneState { name: string; /** null = Off */ gain_db: number | null; unmuted: boolean }
+export interface TransportState {
+  /** shows_playing */
+  playing: boolean;
+  position_ms: number;
+  resume_pending: boolean;
+  solo: string | null;
+  clipping: boolean;
+}
+export interface EditorSnapshot {
+  id: string;
+  title: string;
+  stems: LaneState[];
+  duration_ms: number;
+  sample_rate: number;
+  transport: TransportState;
+  variant: { id: string; name: string; file: string; exists: boolean };
+  /** 0..1 while a save runs */
+  saving: number | null;
+}
+export type EditorEvent =
+  | { kind: 'loading'; id: string; done: number; total: number }
+  | ({ kind: 'transport'; id: string } & TransportState)
+  | { kind: 'saving'; id: string; progress: number }
+  | { kind: 'saved'; id: string; file: string; clipped_samples: number; track: TrackRecord; warnings: string[] }
+  | { kind: 'save-failed'; id: string; message: string }
+  | { kind: 'save-cancelled'; id: string }
+  | { kind: 'audio-error'; id: string; message: string };
+
+function editorChannel(onEvent: (e: EditorEvent) => void): Channel<EditorEvent> {
+  const ch = new Channel<EditorEvent>();
+  ch.onmessage = onEvent;
+  return ch;
+}
+
+/** A superseded load fails with this message; the UI ignores it. */
+export const EDITOR_SUPERSEDED = 'superseded';
+
+export const openEditor = (id: string, onEvent: (e: EditorEvent) => void): Promise<EditorSnapshot> =>
+  invoke<EditorSnapshot>('open_editor', { id, events: editorChannel(onEvent) });
+export const closeEditor = (): Promise<void> => invoke<void>('close_editor');
+export const getEditor = (): Promise<EditorSnapshot | null> => invoke<EditorSnapshot | null>('get_editor');
+export const watchEditor = (onEvent: (e: EditorEvent) => void): Promise<EditorSnapshot | null> =>
+  invoke<EditorSnapshot | null>('watch_editor', { events: editorChannel(onEvent) });
+export const editorPlay = (id: string): Promise<TransportState> =>
+  invoke<TransportState>('editor_play', { id });
+export const editorLanePlay = (id: string, name: string): Promise<TransportState> =>
+  invoke<TransportState>('editor_lane_play', { id, name });
+export const editorEndSolo = (id: string): Promise<TransportState> =>
+  invoke<TransportState>('editor_end_solo', { id });
+export const editorPause = (id: string): Promise<TransportState> =>
+  invoke<TransportState>('editor_pause', { id });
+export const editorStop = (id: string): Promise<TransportState> =>
+  invoke<TransportState>('editor_stop', { id });
+/** `position` in milliseconds. */
+export const editorSeek = (id: string, position: number): Promise<TransportState> =>
+  invoke<TransportState>('editor_seek', { id, position });
+/** `delta` in milliseconds (negative = back). */
+export const editorNudge = (id: string, delta: number): Promise<TransportState> =>
+  invoke<TransportState>('editor_nudge', { id, delta });
+/** `gain` in dB, null = Off. */
+export const editorSetStem = (
+  id: string,
+  name: string,
+  gain: number | null,
+  unmuted: boolean,
+): Promise<LaneState> => invoke<LaneState>('editor_set_stem', { id, name, gain, unmuted });
+export const saveBacking = (id: string): Promise<EditorSnapshot> =>
+  invoke<EditorSnapshot>('save_backing', { id });
+export const cancelBackingSave = (id: string): Promise<void> =>
+  invoke<void>('cancel_backing_save', { id });

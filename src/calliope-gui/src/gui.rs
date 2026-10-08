@@ -40,6 +40,13 @@ pub fn run() {
             let discover = || Tools::discover(&std::env::var_os("PATH").unwrap_or_default());
             app.manage(ImportState::new(discover(), repo.repo_lock(), ipc::IMPORT_POLL).with_rediscovery(discover));
             app.manage(repo);
+            let backend = crate::audio_out::select_backend();
+            app.manage(ipc::EditorState::new(backend));
+            let handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(ipc::EDITOR_TICK);
+                handle.state::<ipc::EditorState>().tick(std::time::Instant::now());
+            });
             // Start-up health check of the edge-AI server (only when one is configured).
             if url.is_some() {
                 std::thread::spawn(move || ipc::startup_health_check(url));
@@ -72,12 +79,29 @@ pub fn run() {
             ipc::cancel_import,
             ipc::discard_import,
             ipc::get_import_job,
-            ipc::watch_import
+            ipc::watch_import,
+            ipc::open_editor,
+            ipc::close_editor,
+            ipc::get_editor,
+            ipc::watch_editor,
+            ipc::editor_play,
+            ipc::editor_lane_play,
+            ipc::editor_end_solo,
+            ipc::editor_pause,
+            ipc::editor_stop,
+            ipc::editor_seek,
+            ipc::editor_nudge,
+            ipc::editor_set_stem,
+            ipc::save_backing,
+            ipc::cancel_backing_save
         ])
         .build(tauri::generate_context!())
         .expect("error while building calliope-gui")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                if let Some(editor) = app.try_state::<ipc::EditorState>() {
+                    editor.shutdown(ipc::SHUTDOWN_WAIT);
+                }
                 // Stop a running import (child processes, edge-AI job) before the process ends.
                 if let Some(import) = app.try_state::<ImportState>() {
                     if !import.shutdown(ipc::SHUTDOWN_WAIT) {

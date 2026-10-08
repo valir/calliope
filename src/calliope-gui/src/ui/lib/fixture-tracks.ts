@@ -1,4 +1,4 @@
-import type { TrackRecord } from './ipc';
+import type { BackingVariant, TrackRecord } from './ipc';
 
 /** The six tracks of tests/fixtures/library-sample plus one stem track, as list_tracks returns them. */
 export const FIXTURE_TRACKS: TrackRecord[] = [
@@ -17,6 +17,7 @@ export const FIXTURE_TRACKS: TrackRecord[] = [
     stems: [],
     stem_model: null,
     tablatures: ["slow-burn.gp5", "slow-burn-solo.gp"],
+    backings: [],
     imported: "2026-10-01T12:00:00Z",
     modified: "2026-10-01T12:00:00Z",
     revision: "r1",
@@ -37,6 +38,7 @@ export const FIXTURE_TRACKS: TrackRecord[] = [
     stems: [],
     stem_model: null,
     tablatures: [],
+    backings: [],
     imported: "2026-10-01T12:00:00Z",
     modified: "2026-10-01T12:00:00Z",
     revision: "r2",
@@ -57,6 +59,7 @@ export const FIXTURE_TRACKS: TrackRecord[] = [
     stems: [],
     stem_model: null,
     tablatures: ["copper-sky.gp5"],
+    backings: [],
     imported: "2026-10-01T12:00:00Z",
     modified: "2026-10-01T12:00:00Z",
     revision: "r3",
@@ -77,6 +80,7 @@ export const FIXTURE_TRACKS: TrackRecord[] = [
     stems: [],
     stem_model: null,
     tablatures: [],
+    backings: [],
     imported: "2026-10-01T12:00:00Z",
     modified: "2026-10-01T12:00:00Z",
     revision: "r4",
@@ -97,6 +101,7 @@ export const FIXTURE_TRACKS: TrackRecord[] = [
     stems: [],
     stem_model: null,
     tablatures: ["open-water-rhythm.gp5", "open-water-lead.gp5", "open-water-bass.gp5", "open-water-intro.gp", "open-water-full.gpx"],
+    backings: [],
     imported: "2026-10-01T12:00:00Z",
     modified: "2026-10-01T12:00:00Z",
     revision: "r5",
@@ -117,6 +122,7 @@ export const FIXTURE_TRACKS: TrackRecord[] = [
     stems: [],
     stem_model: null,
     tablatures: [],
+    backings: [],
     imported: "2026-10-01T12:00:00Z",
     modified: "2026-10-01T12:00:00Z",
     revision: "r6",
@@ -140,9 +146,33 @@ export const FIXTURE_TRACKS: TrackRecord[] = [
     })),
     stem_model: "htdemucs_6s",
     tablatures: [],
+    backings: [],
     imported: "2026-10-06T18:00:00Z",
     modified: "2026-10-06T18:00:00Z",
     revision: "r7",
     missing: [],
+  },
+];
+
+/** A saved backing variant, as `track.json` lists it. */
+export const EDITOR_FIXTURE_VARIANT: BackingVariant = {
+  id: "backing",
+  name: "Backing",
+  file: "backings/backing.flac",
+  created: "2026-10-08T09:00:00Z",
+  modified: "2026-10-08T09:00:00Z",
+  sample_rate: 44100,
+  bits: 16,
+  mix: { stems: [{ name: "drums", gain_db: -3, unmuted: true }] },
+};
+
+/** Editor fixtures: a stem track with a saved backing, and one with a missing stem file. */
+export const EDITOR_FIXTURE_TRACKS: TrackRecord[] = [
+  { ...FIXTURE_TRACKS[FIXTURE_TRACKS.length - 1], backings: [EDITOR_FIXTURE_VARIANT] },
+  {
+    ...FIXTURE_TRACKS[FIXTURE_TRACKS.length - 1],
+    id: "0199b0a0-0000-7000-8000-0000000000e2",
+    title: "Broken Stems",
+    missing: ["stems/drums.flac"],
   },
 ];

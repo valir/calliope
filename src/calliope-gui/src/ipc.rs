@@ -15,6 +15,7 @@ use crate::picker::{
     DialogKind, FileReq, FolderReq, PickRegistry, Picker, SaveReq, AUDIO_EXTENSIONS,
     TABLATURE_EXTENSIONS, VIDEO_EXTENSIONS,
 };
+use crate::editor::{self, EditorEvent, EditorManager, EditorSnapshot, EventSink, LaneState, OpenSpec, TransportState};
 use crate::tools::{Tools, ToolState, ToolStatus};
 use crate::track_meta::TrackEdits;
 use calliope_lib::stems_client::{ClientError, StemsClient};
@@ -450,6 +451,103 @@ fn channel_sink(events: tauri::ipc::Channel<ImportEvent>) -> Sink {
     })
 }
 
+// ---- editor: state and command bodies ----
+
+/// Managed app state of the backing-track editor: the session manager plus the slot holding
+/// the webview's current event channel (replaced by `open_editor` and `watch_editor`).
+pub struct EditorState {
+    mgr: Mutex<EditorManager>,
+    slot: Arc<Mutex<Option<EventSink>>>,
+}
+
+impl EditorState {
+    pub fn new(backend: Box<dyn crate::audio_out::OutputBackend>) -> Self {
+        let slot: Arc<Mutex<Option<EventSink>>> = Arc::new(Mutex::new(None));
+        let forward = slot.clone();
+        let sink: EventSink = Arc::new(move |ev| {
+            let target = forward.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            if let Some(t) = target {
+                t(ev);
+            }
+        });
+        Self { mgr: Mutex::new(EditorManager::new(backend, sink)), slot }
+    }
+
+    fn mgr(&self) -> MutexGuard<'_, EditorManager> {
+        self.mgr.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn set_sink(&self, sink: EventSink) {
+        *self.slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(sink);
+    }
+
+    /// Ticker body (every 20 ms).
+    pub fn tick(&self, now: std::time::Instant) {
+        self.mgr().tick(now);
+    }
+
+    /// App exit: stops playback and ends a running save.
+    pub fn shutdown(&self, cap: Duration) {
+        let mut m = self.mgr();
+        m.close();
+        m.shutdown_save(cap);
+    }
+}
+
+/// How often the editor ticker runs.
+pub const EDITOR_TICK: Duration = Duration::from_millis(20);
+
+pub fn do_open_editor(st: &EditorState, repo: &RepoState, id: &str, sink: EventSink) -> Result<EditorSnapshot, String> {
+    st.set_sink(sink);
+    let spec = {
+        let root = repo.lock();
+        let r = Repository::new(root.clone());
+        let rec = r.load_record(id)?;
+        OpenSpec {
+            dir: r.tracks_dir().join(&rec.id),
+            id: rec.id,
+            title: rec.title,
+            stems: rec.stems,
+            missing: rec.missing,
+            variant: rec.backings.into_iter().next(),
+        }
+    };
+    let (ticket, events) = {
+        let mut m = st.mgr();
+        (m.begin_open(), m.sink())
+    };
+    let loaded = editor::load(&spec, &ticket, &*events)?;
+    st.mgr().finish_open(&ticket, &spec, loaded)
+}
+
+pub fn do_close_editor(st: &EditorState) {
+    st.mgr().close();
+}
+
+pub fn do_watch_editor(st: &EditorState, sink: EventSink) -> Option<EditorSnapshot> {
+    st.set_sink(sink);
+    st.mgr().current()
+}
+
+pub fn do_editor_seek(st: &EditorState, id: &str, position: u64) -> Result<TransportState, String> {
+    st.mgr().seek(id, position, std::time::Instant::now())
+}
+
+pub fn do_editor_nudge(st: &EditorState, id: &str, delta: i64) -> Result<TransportState, String> {
+    st.mgr().nudge(id, delta, std::time::Instant::now())
+}
+
+pub fn do_save_backing(st: &EditorState, repo: &RepoState, id: &str) -> Result<EditorSnapshot, String> {
+    let r = Repository::new(repo.current_root());
+    st.mgr().start_save(id, r, repo.repo_lock())
+}
+
+fn event_sink(events: tauri::ipc::Channel<EditorEvent>) -> EventSink {
+    Arc::new(move |ev| {
+        let _ = events.send(ev);
+    })
+}
+
 // ---- Tauri commands ----
 
 fn home(app: &tauri::AppHandle) -> Option<PathBuf> {
@@ -661,6 +759,96 @@ pub async fn watch_import(
     let import = app.state::<ImportState>();
     import.replace_sink(channel_sink(events));
     Ok(import.snapshot())
+}
+
+#[tauri::command]
+pub async fn open_editor(
+    app: tauri::AppHandle,
+    id: String,
+    events: tauri::ipc::Channel<EditorEvent>,
+) -> Result<EditorSnapshot, String> {
+    blocking(move || {
+        do_open_editor(&app.state::<EditorState>(), &app.state::<RepoState>(), &id, event_sink(events))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn close_editor(app: tauri::AppHandle) -> Result<(), String> {
+    blocking(move || {
+        do_close_editor(&app.state::<EditorState>());
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_editor(app: tauri::AppHandle) -> Result<Option<EditorSnapshot>, String> {
+    Ok(app.state::<EditorState>().mgr().current())
+}
+
+#[tauri::command]
+pub async fn watch_editor(
+    app: tauri::AppHandle,
+    events: tauri::ipc::Channel<EditorEvent>,
+) -> Result<Option<EditorSnapshot>, String> {
+    Ok(do_watch_editor(&app.state::<EditorState>(), event_sink(events)))
+}
+
+#[tauri::command]
+pub async fn editor_play(app: tauri::AppHandle, id: String) -> Result<TransportState, String> {
+    app.state::<EditorState>().mgr().play(&id)
+}
+
+#[tauri::command]
+pub async fn editor_lane_play(app: tauri::AppHandle, id: String, name: String) -> Result<TransportState, String> {
+    app.state::<EditorState>().mgr().lane_play(&id, &name)
+}
+
+#[tauri::command]
+pub async fn editor_end_solo(app: tauri::AppHandle, id: String) -> Result<TransportState, String> {
+    app.state::<EditorState>().mgr().end_solo(&id)
+}
+
+#[tauri::command]
+pub async fn editor_pause(app: tauri::AppHandle, id: String) -> Result<TransportState, String> {
+    app.state::<EditorState>().mgr().pause(&id)
+}
+
+#[tauri::command]
+pub async fn editor_stop(app: tauri::AppHandle, id: String) -> Result<TransportState, String> {
+    app.state::<EditorState>().mgr().stop(&id)
+}
+
+#[tauri::command]
+pub async fn editor_seek(app: tauri::AppHandle, id: String, position: u64) -> Result<TransportState, String> {
+    do_editor_seek(&app.state::<EditorState>(), &id, position)
+}
+
+#[tauri::command]
+pub async fn editor_nudge(app: tauri::AppHandle, id: String, delta: i64) -> Result<TransportState, String> {
+    do_editor_nudge(&app.state::<EditorState>(), &id, delta)
+}
+
+#[tauri::command]
+pub async fn editor_set_stem(
+    app: tauri::AppHandle,
+    id: String,
+    name: String,
+    gain: Option<f32>,
+    unmuted: bool,
+) -> Result<LaneState, String> {
+    app.state::<EditorState>().mgr().set_stem(&id, &name, gain, unmuted)
+}
+
+#[tauri::command]
+pub async fn save_backing(app: tauri::AppHandle, id: String) -> Result<EditorSnapshot, String> {
+    blocking(move || do_save_backing(&app.state::<EditorState>(), &app.state::<RepoState>(), &id)).await
+}
+
+#[tauri::command]
+pub async fn cancel_backing_save(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    app.state::<EditorState>().mgr().cancel_save(&id)
 }
 
 #[tauri::command]
@@ -1007,5 +1195,51 @@ mod tests {
         let mut ran = false;
         lock.run(&mut || ran = true);
         assert!(ran);
+    }
+
+    // ---- editor command bodies (null audio backend; never a device) ----
+
+    fn editor_state() -> EditorState {
+        EditorState::new(Box::new(crate::audio_out::NullBackend::new(None)))
+    }
+
+    fn null_editor_sink() -> EventSink {
+        Arc::new(|_| {})
+    }
+
+    #[test]
+    fn editor_commands_reject_unknown_sessions() {
+        let st = editor_state();
+        assert!(st.mgr().current().is_none());
+        assert!(do_watch_editor(&st, null_editor_sink()).is_none());
+        assert_eq!(st.mgr().play("x").unwrap_err(), "no editor session for x");
+        assert!(do_editor_seek(&st, "x", 1000).unwrap_err().contains("no editor session"));
+        assert!(do_editor_nudge(&st, "x", -100).unwrap_err().contains("no editor session"));
+        assert!(st.mgr().set_stem("x", "drums", None, true).is_err());
+        do_close_editor(&st);
+        st.tick(std::time::Instant::now());
+    }
+
+    #[test]
+    fn open_editor_of_unknown_track_fails_and_save_needs_a_session() {
+        let e = env("");
+        let st = editor_state();
+        assert!(do_open_editor(&st, &e.st, "0199b0a0-0000-7000-8000-00000000dead", null_editor_sink()).is_err());
+        assert!(do_save_backing(&st, &e.st, "x").unwrap_err().contains("no editor session"));
+    }
+
+    #[test]
+    fn events_follow_the_latest_sink() {
+        let st = editor_state();
+        let got = Arc::new(Mutex::new(0usize));
+        let g = got.clone();
+        do_watch_editor(&st, Arc::new(move |_| *g.lock().unwrap() += 1));
+        let sink = st.mgr().sink();
+        sink(EditorEvent::SaveCancelled { id: "x".into() });
+        assert_eq!(*got.lock().unwrap(), 1);
+        let g2 = got.clone();
+        do_watch_editor(&st, Arc::new(move |_| *g2.lock().unwrap() += 10));
+        sink(EditorEvent::SaveCancelled { id: "x".into() });
+        assert_eq!(*got.lock().unwrap(), 11);
     }
 }

@@ -20,6 +20,20 @@
     "allow-cancel-import",
     "allow-discard-import",
     "allow-get-import-job",
-    "allow-watch-import"
+    "allow-watch-import",
+    "allow-open-editor",
+    "allow-close-editor",
+    "allow-get-editor",
+    "allow-watch-editor",
+    "allow-editor-play",
+    "allow-editor-lane-play",
+    "allow-editor-end-solo",
+    "allow-editor-pause",
+    "allow-editor-stop",
+    "allow-editor-seek",
+    "allow-editor-nudge",
+    "allow-editor-set-stem",
+    "allow-save-backing",
+    "allow-cancel-backing-save"
   ]
 }

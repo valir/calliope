@@ -23,6 +23,7 @@ const rec = (n: number, p: Partial<TrackRecord>): TrackRecord => ({
   stems: [],
   stem_model: null,
   tablatures: [],
+  backings: [],
   imported: '2026-10-01T12:00:00Z',
   modified: '2026-10-01T12:00:00Z',
   revision: `rev${n}`,

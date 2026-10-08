@@ -24,6 +24,18 @@ mod download;
 mod tools;
 #[path = "../src/import_job.rs"]
 mod import_job;
+#[path = "../src/transport.rs"]
+mod transport;
+#[path = "../src/mixer.rs"]
+mod mixer;
+#[path = "../src/stem_audio.rs"]
+mod stem_audio;
+#[path = "../src/audio_out.rs"]
+mod audio_out;
+#[path = "../src/backing_render.rs"]
+mod backing_render;
+#[path = "../src/editor.rs"]
+mod editor;
 #[path = "../src/ipc.rs"]
 mod ipc;
 
@@ -644,7 +656,7 @@ fn newer_schema_track_is_a_problem_and_never_rewritten_or_deleted() {
     let fake = TrackRecord {
         id: ID1.into(), band: "".into(), album: "".into(), title: "T".into(), composers: vec![], year: None,
         source_url: None, copyright: None, audio: Some("backing.mp3".into()), tablatures: vec![],
-        track_type: track_meta::TrackType::Backing, original: None, stems: vec![], stem_model: None, imported: "".into(),
+        track_type: track_meta::TrackType::Backing, original: None, stems: vec![], stem_model: None, backings: vec![], imported: "".into(),
         modified: "".into(), revision: fsutil::fnv1a64_hex(&bytes), missing: vec![],
     };
     assert!(e.repo.save_track(e.req(&fake, vec![]), &|_| None).is_err());

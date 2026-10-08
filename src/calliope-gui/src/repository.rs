@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::fsutil;
-use crate::track_meta::{self, StemEntry, TrackEdits, TrackMeta, TrackType};
+use crate::track_meta::{self, BackingVariant, StemEntry, TrackEdits, TrackMeta, TrackType};
 
 pub const MARKER: &str = "calliope-repository.json";
 pub const REPO_SCHEMA: u64 = 1;
@@ -49,6 +49,7 @@ pub struct TrackRecord {
     pub stems: Vec<StemEntry>,
     pub stem_model: Option<String>,
     pub tablatures: Vec<String>,
+    pub backings: Vec<BackingVariant>,
     pub imported: String,
     pub modified: String,
     pub revision: String,
@@ -231,7 +232,7 @@ impl Repository {
         Self { root: root.into() }
     }
 
-    fn tracks_dir(&self) -> PathBuf {
+    pub fn tracks_dir(&self) -> PathBuf {
         self.root.join("tracks")
     }
 
@@ -290,6 +291,7 @@ impl Repository {
             stems: m.stems,
             stem_model: m.stem_model,
             tablatures: m.tablatures,
+            backings: m.backings,
             imported: m.imported,
             modified: m.modified,
             revision: l.revision,
@@ -297,7 +299,7 @@ impl Repository {
         }
     }
 
-    fn load_record(&self, id: &str) -> Result<TrackRecord, String> {
+    pub fn load_record(&self, id: &str) -> Result<TrackRecord, String> {
         let (dir, l) = self.load(id)?;
         Ok(Self::record(&dir, l))
     }

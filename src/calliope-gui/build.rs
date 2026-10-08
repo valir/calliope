@@ -35,6 +35,20 @@ const COMMANDS: &[&str] = &[
     "discard_import",
     "get_import_job",
     "watch_import",
+    "open_editor",
+    "close_editor",
+    "get_editor",
+    "watch_editor",
+    "editor_play",
+    "editor_lane_play",
+    "editor_end_solo",
+    "editor_pause",
+    "editor_stop",
+    "editor_seek",
+    "editor_nudge",
+    "editor_set_stem",
+    "save_backing",
+    "cancel_backing_save",
 ];
 
 fn git(args: &[&str]) -> Option<String> {
