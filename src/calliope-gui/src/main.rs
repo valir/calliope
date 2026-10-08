@@ -12,6 +12,7 @@ mod repository;
 mod settings;
 mod stem_audio;
 mod tools;
+mod transport;
 mod track_meta;
 #[allow(dead_code)] // only build.rs uses it outside tests
 mod version;
