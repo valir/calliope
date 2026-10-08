@@ -10,7 +10,7 @@ this directory. Build output goes to the workspace's `target/` at the repository
 ## Prerequisites (Arch Linux)
 
 * Rust toolchain (cargo)
-* Packages: webkit2gtk-4.1, gtk3, base-devel
+* Packages: webkit2gtk-4.1, gtk3, base-devel, alsa-lib
 * Node.js >= 22.12 with npm
 * Optional: xorg-server-xvfb for headless GUI runs
 * For Import: `sudo pacman -S yt-dlp ffmpeg` (see "Import and stem extraction"; the app runs without them, Import then says what is missing)

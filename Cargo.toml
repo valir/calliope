@@ -7,3 +7,10 @@
 members = ["src/calliope-gui", "src/calliope-lib", "src/calliope-stems"]
 default-members = ["src/calliope-gui"]
 resolver = "2"
+
+# Decoding/encoding FLAC is slow at opt-level 0; keep these hot crates optimised in dev and test builds.
+[profile.dev.package.claxon]
+opt-level = 3
+
+[profile.dev.package.flacenc]
+opt-level = 3
