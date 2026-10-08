@@ -48,7 +48,7 @@ Starts the Vite dev server with hot reload plus the debug app. It uses a dev-onl
 
 ## Keyboard
 
-* Alt+1 ... Alt+6: Library, Import, Track, Playlists, Player, Settings
+* Alt+1 ... Alt+6: Library, Import, Editor, Playlists, Player, Settings
 * Ctrl+B: collapse navigation
 
 ## Track repository

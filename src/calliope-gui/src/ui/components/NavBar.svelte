@@ -14,7 +14,7 @@
   const icons: Record<ViewId, Component> = {
     library: LibraryIcon,
     import: FileInputIcon,
-    track: AudioWaveformIcon,
+    editor: AudioWaveformIcon,
     playlists: ListMusicIcon,
     player: PlayIcon,
     settings: SettingsIcon,

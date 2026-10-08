@@ -20,7 +20,7 @@ const key = (code: string, o: Partial<KeyLike> = {}): KeyLike => ({
 
 describe('views', () => {
   it('has labels in order', () => {
-    expect(VIEWS.map((v) => v.label)).toEqual(['Library', 'Import', 'Track', 'Playlists', 'Player', 'Settings']);
+    expect(VIEWS.map((v) => v.label)).toEqual(['Library', 'Import', 'Editor', 'Playlists', 'Player', 'Settings']);
   });
   it('has digits 1..6', () => {
     expect(VIEWS.map((v) => v.digit)).toEqual([1, 2, 3, 4, 5, 6]);
@@ -38,7 +38,7 @@ describe('views', () => {
   it('viewForKey maps Alt+digit', () => {
     expect(viewForKey(key('Digit1', { altKey: true }))).toBe('library');
     expect(viewForKey(key('Digit6', { altKey: true }))).toBe('settings');
-    expect(viewForKey(key('Numpad3', { altKey: true }))).toBe('track');
+    expect(viewForKey(key('Numpad3', { altKey: true }))).toBe('editor');
     expect(viewForKey(key('Digit4', { altKey: true }))).toBe('playlists');
     expect(viewForKey(key('Digit5', { altKey: true }))).toBe('player');
   });

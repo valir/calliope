@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as Tabs from '$lib/components/ui/tabs/index.js';
   import { TRACK_TABS, VIEWS } from '$lib/views';
-  const view = VIEWS.find((v) => v.id === 'track')!;
+  const view = VIEWS.find((v) => v.id === 'editor')!;
 </script>
 
 <section class="flex flex-col gap-4 p-8" aria-labelledby="view-heading">

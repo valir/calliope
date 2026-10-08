@@ -7,12 +7,12 @@ import App from './App.svelte';
 import { ui } from '$lib/app-state.svelte';
 import { resetLibrary } from '$lib/library-state.svelte';
 
-const NAV_ORDER = ['Library', 'Import', 'Track', 'Playlists', 'Player', 'Settings'];
+const NAV_ORDER = ['Library', 'Import', 'Editor', 'Playlists', 'Player', 'Settings'];
 // Spec requirement 4: which future feature each view names.
 const FEATURES: Record<string, string[]> = {
   // Library has no placeholder any more: gui-tracks-repository replaced it with the real view.
   // Import has no placeholder any more: gui-stem-extraction replaced it with the real view.
-  Track: ['gui-backing-track-assembly', 'gui-tablatures', 'gui-manipulate-backing-track'],
+  Editor: ['gui-backing-track-assembly', 'gui-tablatures', 'gui-manipulate-backing-track'],
   Player: ['gui-play-backing-track'],
 };
 let logs: string[] = [];
@@ -89,9 +89,9 @@ describe('acceptance: navigation (req 4, AC2, AC3)', () => {
     expect(main().querySelector('h1')!.textContent).toBe('Library');
   });
 
-  it('Track view has tabs for stems, assembly, BPM/sections, tablature, MIDI cues', async () => {
+  it('Editor view has tabs for stems, assembly, BPM/sections, tablature, MIDI cues', async () => {
     render(App);
-    await fireEvent.click(entry('Track'));
+    await fireEvent.click(entry('Editor'));
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent!.trim());
     expect(tabs).toEqual(['Stems', 'Assembly', 'BPM & sections', 'Tablature', 'MIDI cues']);
   });

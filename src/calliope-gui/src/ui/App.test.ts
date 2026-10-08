@@ -56,7 +56,7 @@ describe('App shell', () => {
     expect(screen.getByRole('button', { name: 'Stem Extraction' })).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Playlists' }));
     expect(screen.getByTestId('placeholder').textContent).toContain('no feature spec');
-    await fireEvent.click(screen.getByRole('button', { name: 'Track' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Editor' }));
     expect(screen.getAllByTestId('placeholder')[0].textContent).toContain('gui-backing-track-assembly');
   });
 
@@ -116,8 +116,8 @@ describe('App shell', () => {
     render(App);
     const msgs = () => calls.filter((c) => c.cmd === 'frontend_log').map((c) => (c.args as { message: string }).message);
     await waitFor(() => expect(msgs()).toEqual(['ready view=library theme=dark version=26.10.0042']));
-    await fireEvent.click(screen.getByRole('button', { name: 'Track' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Editor' }));
     await tick();
-    expect(msgs()).toContain('view=track');
+    expect(msgs()).toContain('view=editor');
   });
 });

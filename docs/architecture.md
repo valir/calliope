@@ -637,3 +637,11 @@ of "Single Cargo package at the repo root" (2026-10-04), "npm project at the roo
 and the crate name in "Cargo workspace with shared `calliope-common`" (2026-10-06); their
 other content still applies.
 
+
+### 2026-10-08: The Track view is renamed Editor   (owner decision)
+The third main view (Alt+3) is called **Editor**: nav label and heading "Editor", view id
+`editor` (log line `view=editor`), component `EditorView.svelte`. It hosts the per-track
+editing work (stems, assembly, BPM/sections, tablature, MIDI cues; see
+`specs/gui-backing-track-editor.md`). This replaces the name "Track" in "Navigation order
+Library, Import, Track, Playlists, Player, Settings" (2026-10-04); the order is unchanged.
+The Library's track pane and the "Track repository" settings card keep their names.

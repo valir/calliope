@@ -75,7 +75,7 @@
 <!-- The agents record here UI choices they made where this guide was silent, so the next
      feature reuses them. Edit or overrule anything. -->
 - (gui-frontend-foundation, **owner decision**) Navigation order and `Alt+1`...`Alt+6`:
-  Library, Import, Track, Playlists, Player, Settings (Alt+4 = Playlists, Alt+5 = Player).
+  Library, Import, Editor, Playlists, Player, Settings (Alt+4 = Playlists, Alt+5 = Player).
   Note: the ASCII sketch under "Layout and navigation" still shows the old order (Player
   before Playlists); the owner will update it.
 - Font: Inter Variable, bundled with the app (shadcn-svelte itself sets no font; the system
@@ -98,7 +98,7 @@
 - Settings: "Appearance" (theme: Dark / Light) comes first, then MIDI interface, Audio output
   and Edge-AI server.
 - Placeholder views show the title, a one-line summary and "This view will be filled by:
-  <feature>". Track shows tabs (Stems, Assembly, BPM & sections, Tablature, MIDI cues).
+  <feature>". Editor shows tabs (Stems, Assembly, BPM & sections, Tablature, MIDI cues).
 - Window: 1280x800 centred on first start; afterwards the last size and position.
 - Components: shadcn-svelte button, input, label, dialog, tabs, radio-group, separator, card.
   No toast library (sonner), which also fits "no pop-ups interrupting playback".

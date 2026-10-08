@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { cleanup, render } from '@testing-library/svelte';
-import TrackView from '../views/TrackView.svelte';
+import EditorView from '../views/EditorView.svelte';
 
 const css = readFileSync(resolve(process.cwd(), 'src/ui/app.css'), 'utf8');
 
@@ -10,7 +10,7 @@ afterEach(cleanup);
 
 describe('shadcn variants match bits-ui attributes', () => {
   it('bits-ui emits the attributes the variants map onto', () => {
-    const { container } = render(TrackView);
+    const { container } = render(EditorView);
     const root = container.querySelector('[data-slot="tabs"]')!;
     expect(root.getAttribute('data-orientation')).toBe('horizontal');
     expect(root.className).toContain('data-horizontal:flex-col');

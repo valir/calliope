@@ -4,7 +4,7 @@
   import StatusFooter from './components/StatusFooter.svelte';
   import LibraryView from './views/LibraryView.svelte';
   import ImportView from './views/ImportView.svelte';
-  import TrackView from './views/TrackView.svelte';
+  import EditorView from './views/EditorView.svelte';
   import PlaylistsView from './views/PlaylistsView.svelte';
   import PlayerView from './views/PlayerView.svelte';
   import SettingsView from './views/SettingsView.svelte';
@@ -56,8 +56,8 @@
       <LibraryView />
     {:else if ui.view === 'import'}
       <ImportView />
-    {:else if ui.view === 'track'}
-      <TrackView />
+    {:else if ui.view === 'editor'}
+      <EditorView />
     {:else if ui.view === 'playlists'}
       <PlaylistsView />
     {:else if ui.view === 'player'}
