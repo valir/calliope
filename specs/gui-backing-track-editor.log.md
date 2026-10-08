@@ -13,3 +13,4 @@ task 11 | Time formatting and parsing | local | done
 task 12 | Gain formatting | local | done
 task 13 | Shared tree column, Editor layout, Library backings row | implementer | done
 task 14 | Slider and checkbox components | implementer | done
+task 15 | Editor frontend state | implementer | done

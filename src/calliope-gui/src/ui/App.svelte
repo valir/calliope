@@ -10,12 +10,14 @@
   import SettingsView from './views/SettingsView.svelte';
   import { ui } from '$lib/app-state.svelte';
   import { appVersion, frontendLog } from '$lib/ipc';
+  import { leaveEditor } from '$lib/editor-state.svelte';
   import { isNavToggleKey, viewForKey } from '$lib/views';
 
   let lastView = ui.view;
   $effect(() => {
     const v = ui.view;
     if (v !== lastView) {
+      if (lastView === 'editor') leaveEditor();
       lastView = v;
       void frontendLog(`view=${v}`);
     }
