@@ -30,7 +30,13 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (media) | Laptop | ffprobe JSON → audio check/duration/tags → `TrackEdits`; ffmpeg → FLAC 44.1 kHz stereo | Rust, pure | `src/media.rs` |
 | calliope-gui (download) | Laptop | URL validation/normalisation (`url` crate), yt-dlp args, progress/error parsing, `info.json` mapping | Rust | `src/download.rs` |
 | calliope-gui (import job) | Laptop | The single import job: state machine, events, cancel, shutdown | Rust, pure (std threads) | `src/import_job.rs` |
-| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
+| calliope-gui (stem audio) | Laptop | FLAC stem probing/compatibility rules, decoding into memory as 16-bit for playback, full-precision streaming reader for rendering | Rust, `claxon` | `src/stem_audio.rs` |
+| calliope-gui (mixer) | Laptop | Pure mixing shared by playback and Save: dB gains (-60 = Off .. +12), unmuted, mono->stereo, sum, hard clip with clipped-sample count, quantise | Rust, std only | `src/mixer.rs` |
+| calliope-gui (transport) | Laptop | Play/pause/stop/seek state machine with the 0.3 s scrub-resume rule; time injected | Rust, pure | `src/transport.rs` |
+| calliope-gui (audio output) | Laptop | `OutputBackend` trait: `CpalBackend` (default device), `NullBackend` (paced, optional WAV capture; the only backend in `e2e-hooks` builds), `ManualBackend` (unit tests) | Rust, `cpal` (ALSA on Linux) | `src/audio_out.rs` |
+| calliope-gui (editor engine) | Laptop | Editor sessions: load stems, lock-free render callback, transport, transient solo, clip indicator, events, remembered mixes, the backing save job | Rust (std threads) | `src/editor.rs` (+ `src/editor_tests.rs`) |
+| calliope-gui (backing render) | Laptop | Offline render of the mix to FLAC | Rust, `flacenc` | `src/backing_render.rs` |
+| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Editor: shared track tree + stem mixer; Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
 | calliope-lib (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation, FLAC STREAMINFO parser, HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel). No Tauri/GTK | Rust; `serde`, `libc`, `ureq` 3 without TLS (feature) | `src/calliope-lib/` |
 | calliope-stems (edge-AI stems service) | archserver (LAN), deployed by hand as a systemd user unit | HTTP server for "calliope-stems API v1": validates FLAC uploads (≤ 15 min), queues jobs (1 running), runs a configurable separator command, serves the stems, cleans up. No Tauri/GTK; the GUI doesn't depend on it | Rust; `tiny_http`, `calliope-lib` | `src/calliope-stems/` |
 | separator adapter | archserver | `<sep> <input.flac> <out_dir> <model>` → `<out_dir>/<stem>.flac`; the real one runs the owner's audio-separator venv with `htdemucs_6s` (frees VRAM from Ollama first) | bash | `src/calliope-stems/separators/audio-separator.sh` |
@@ -83,8 +89,14 @@ the GUI crate, `src/calliope-gui/`.
     `check_edge_ai()`, `check_tools()`, `prepare_url_import(url)`,
     `start_url_import(url, resume, events)`, `import_file(kind, events)`,
     `start_stem_extraction(job, edits)`, `cancel_import(job)`, `discard_import(job)`,
-    `get_import_job()`, `watch_import(events)`.
-    Types are in `src/ui/lib/ipc.ts` and in the plans (tracks-repository §2.7, stem-extraction §2.10).
+    `get_import_job()`, `watch_import(events)`; editor (gui-backing-track-editor plan §2.7):
+    `open_editor(id, events)`, `close_editor()`, `get_editor()`, `watch_editor(events)`, `editor_play(id)`,
+    `editor_lane_play(id, name)` (check + solo + play), `editor_end_solo(id)`, `editor_pause(id)`,
+    `editor_stop(id)`, `editor_seek(id, position)`, `editor_nudge(id, delta)` (ms),
+    `editor_set_stem(id, name, gain, unmuted)` (gain in dB or null = Off), `save_backing(id)`,
+    `cancel_backing_save(id)`.
+    Types are in `src/ui/lib/ipc.ts` and in the plans (tracks-repository §2.7, stem-extraction §2.10,
+    backing-track-editor §2.7).
   - **Long-running jobs and progress**: a command that starts a job takes a
     `tauri::ipc::Channel<Event>` argument (`events`), returns a snapshot at once and runs the
     work on its own std thread; progress goes over the channel (tagged JSON, `phase` field,
@@ -99,7 +111,9 @@ the GUI crate, `src/calliope-gui/`.
     Commands that consume a choice take the token. Track ids and file names sent by the
     frontend are validated and resolved strictly inside `<root>/tracks/<id>/`.
   - The frontend never keeps time. Audio/MIDI/sync logic stays in Rust; the frontend displays
-    state and sends commands.
+    state and sends commands. Audio is played by Rust (`cpal`), never by the webview (no Web
+    Audio, no `<audio>`, so the CSP needs no `media-src`/`blob:`). Playback position reaches the UI
+    as `transport` events on the editor channel (on every change, else every 100 ms while playing).
 - **Frontend log lines** (stderr, prefix `calliope-ui: `), used by the GUI tests:
   `ready view=<id> theme=<t> version=<v>`, `view=<id>`, `theme=<t>`,
   `csp-violation directive=<d> blocked=<uri>`, `error <context>: <msg>`; Library:
@@ -108,8 +122,15 @@ the GUI crate, `src/calliope-gui/`.
   `tab-staged <add|update|remove> name=<n>`, `repository root=<p> default=<bool>`.
   Import: `import mode=stem-extraction`, `import source=url|audio|video`,
   `import phase=<phase> job=<job>`, `import error stage=<s> message=<m>`, `import saved id=<id> stems=<n>`.
+  Editor: `editor active id=<id> stems=<n>`, `editor inactive id=<id|none>`,
+  `editor play|pause|stop position=<ms>`, `editor solo name=<n|none>`, `editor leave stop`,
+  `editor seek position=<ms>`, `editor nudge delta=<ms>`,
+  `editor stem name=<n> gain=<db|off> unmuted=<b>`, `editor saved id=<id> file=<f> clipped=<n>`.
   Rust lines (prefix `calliope: `): `dialog kind=<add-tablature|update-tablature|repository-root|export-track|export-tablature|import-audio|import-video> result=<picked|cancelled>`,
-  `import job=<job> phase=<phase>`, `tool <name> found=<bool> version=<v>`.
+  `import job=<job> phase=<phase>`, `tool <name> found=<bool> version=<v>`,
+  `audio backend=<cpal|null|capture> rate=<hz>`, `editor open id=<id> stems=<n> duration_ms=<ms>`,
+  `editor transport playing=<b> audible=<b> position_ms=<ms> solo=<n|none> clipping=<b>` (changes only),
+  `editor saved id=<id> file=<f> bits=<b> clipped=<n>`.
 - **Settings file**: `$XDG_CONFIG_HOME/app.calliope.gui/settings.json` (Tauri
   `app_config_dir()`), e.g. `{"theme": "dark", "repository_root": null, "edge_ai_url": null, "keep_original": false}`
   (`repository_root`: `null`/absent = the default root, must be an absolute path;
@@ -128,12 +149,16 @@ the GUI crate, `src/calliope-gui/`.
       <audio>, <tablatures>       plain file names listed in track.json
       stems/<name>.flac           stems of a "stem" track, listed as "stems/<name>.flac"
       original.flac               the full mix, only when kept at import (setting)
+      backings/<variant-id>.flac  backing-track variants of a stem track made in the Editor (listed in
+                                  `backings`); this feature writes `backings/backing.flac` (`backing-2`..
+                                  if a user file already has the name)
+      .calliope-backing-<uuid>.part  a backing being rendered (removed on success/failure/cancel)
     tracks/.staging-<id>/         a new track being assembled (marker .calliope-staging);
                                   renamed to tracks/<id> in one step; scan skips dot names
     import-tmp/                   Calliope's own import working space
       url-<fnv16hex>/             per URL (resumable): job.json, download.<ext>[.part], info.json, audio.flac
       file-<uuid>/                per local-file import: job.json, audio.flac
-    trash/<UTCstamp>-<id>[-tablatures]/   deleted tracks / removed tablatures; never emptied
+    trash/<UTCstamp>-<id>[-tablatures|-backing]/   deleted tracks / removed tablatures / replaced backing files; never emptied
       (a deleted track folder is renamed to trash/<stamp>-<id>/ itself, no extra nesting; all
       tablature files removed or replaced in one save go into ONE trash/<stamp>-<id>-tablatures/,
       a name clash inside it suffixes the file as `name (2).ext`; `-2`.. suffix on folder clash)
@@ -141,7 +166,18 @@ the GUI crate, `src/calliope-gui/`.
   `track.json` fields: `schema_version, id, type ("backing"|"stem"), band, album, title,
   composers[], year, source_url, copyright, audio (required for backing, null allowed for stem),
   original (optional plain file name of the kept full mix), stems[{name, file}], stem_model,
-  tablatures[], imported, modified` (RFC 3339 UTC).
+  tablatures[], imported, modified` (RFC 3339 UTC), and the optional list `backings[{id, name, file,
+  created, modified, sample_rate, bits, mix: {stems[{name, gain_db (number on a 0.5 dB grid, -59.5..12,
+  or null = Off), unmuted}]}}]` of backing-track variants of a stem track. `id` is a stable slug
+  (stem-name rules, unique) and names the file `backings/<id>.flac`; `name` is the display name
+  (editable later without renaming files). A stem track keeps `type: "stem"`, its stems and
+  `audio: null` (`audio` stays the single file of a plain backing track; the Player picks a variant from
+  `backings`, the first being the default). `backings` is additive (no schema bump), omitted when empty;
+  ids and file names are validated on read (unsafe ones make the track a problem), backing files count
+  in `missing`, `mix` is read leniently. The Editor's Save creates or replaces one variant (default id
+  `backing`, name "Backing"), changes only `backings` and `modified`, refuses (`conflict:`) if the stems
+  list changed on disk since the Editor loaded it, and moves a replaced file to
+  `trash/<stamp>-<id>-backing/`.
   **Schema migration**: v1 files are migrated in memory (`type: "backing"`, `stems: []`) and are
   never rewritten by scans, lists, exports or imports; a Library Save writes schema 2 (lazy
   migration). Older builds show such a track as "written by a newer Calliope" and leave it
@@ -216,22 +252,26 @@ src/                      ALL source (owner requirement), one folder per crate
     README.md             build, run, test and usage of the GUI
     src/*.rs              Rust modules (main, cli, version, gui, ipc, settings, fsutil,
                           track_meta, repository (+ repository_tests), picker, import_tmp,
-                          tools, media, download, import_job, ...)
+                          tools, media, download, import_job, stem_audio, mixer, transport,
+                          audio_out, editor (+ editor_tests), backing_render, ...)
     src/ui/               frontend: index.html, main.ts, app.css, App.svelte,
                           components/ (library/ = tree, pane, tablature panel;
                           import/ = source page, edit pane, extraction progress;
+                          editor/ = EditorPane, StemLane, MixLane, TimeField;
+                          library/TrackBrowser.svelte = tree column shared by Library and Editor;
                           TrackFields.svelte shared by Library and Import),
                           views/ (one file per main view),
                           lib/ (ipc.ts, views.ts, theme.ts, app-state.svelte.ts,
                           fuzzy.ts, library-tree.ts, track-draft.ts, library-state.svelte.ts,
-                          url-check.ts, import-state.svelte.ts,
+                          url-check.ts, import-state.svelte.ts, editor-state.svelte.ts, time-format.ts,
                           utils.ts, components/ui/ = shadcn components owned by us),
                           *.test.ts next to the code
     dist/                 generated by `vite build`, gitignored, embedded into the binary
     tests/                cargo integration tests (cli, frontend, acceptance_*, gui_smoke, gui_e2e,
-                          gui_library_e2e, gui_import_e2e); fixtures/library-sample/ = sample
+                          gui_library_e2e, gui_import_e2e, gui_editor_e2e); fixtures/library-sample/ = sample
                           repository (v1), library-v2/ = mixed v1/v2 incl. a stem track,
-                          import/ = generated audio/video/stem fixtures (make-fixtures.sh)
+                          import/ = generated audio/video/stem fixtures (make-fixtures.sh),
+                          library-editor/ = stem tracks for the Editor (editor/make-fixtures.sh)
       support/            test-only stand-ins: stub-separator (bash), bin/yt-dlp (Python 3 stdlib)
   calliope-lib/           shared library (package calliope-lib, lib calliope_lib): Cargo.toml,
                           src/{lib,stems_api,stems_client,process}.rs, tests/; no Tauri
@@ -252,7 +292,7 @@ the server out of the GUI.
 - All `npm` commands run in `src/calliope-gui/`; build output goes to the workspace
   `target/` at the repository root. `cargo` commands work from anywhere in the repository
   (`-p <crate>` or `--workspace` pick the crate).
-- Prerequisites: Rust, `webkit2gtk-4.1 gtk3 base-devel`, Node.js >= 22.12 with npm; run
+- Prerequisites: Rust, `webkit2gtk-4.1 gtk3 base-devel alsa-lib`, Node.js >= 22.12 with npm; run
   `npm ci` (in `src/calliope-gui/`) once after cloning and after `package-lock.json` changes. At run time the import
   needs `yt-dlp` and `ffmpeg` (`pacman -S yt-dlp ffmpeg`); tests need `ffmpeg`, `python3` and
   `unshare`/`ip` (util-linux, iproute2), never yt-dlp or the real separation model.
@@ -268,6 +308,8 @@ the server out of the GUI.
   release build fails (naming `npm run build:app`).
   Vite/Vitest cache lives in the GUI crate's `node_modules/.vite` (`cacheDir`), not in `src/ui/`,
   because build.rs watches `src/ui`.
+- The workspace `Cargo.toml` builds `claxon` and `flacenc` with `opt-level = 3` even in the dev
+  profile, so debug builds and tests decode/encode audio at a usable speed.
 - Dev: `npm run dev:app` (= `tauri dev --config tauri.dev.conf.json`, with `@tauri-apps/cli`
   as an npm dev-dependency). It starts the Vite dev server on `http://localhost:5173` (hot
   reload), then `cargo run` with the dev overlay passed in `TAURI_CONFIG`. The overlay has a
@@ -356,8 +398,15 @@ the server out of the GUI.
   `unshare -rn` with only loopback up, and `calliope-stems` (stub separator) inside the same
   namespace on 127.0.0.1:8765; tests use `127.0.0.1` and `.example` URLs only. Agents never
   deploy, install or start `calliope-stems` with the real separator.
-- Hardware (MIDI, audio): no fakes yet. Each feature that adds one must also add a
-  simulator/fake and list it here.
+- **Audio output** → `src/audio_out.rs` backends. Unit tests use `ManualBackend` (the test pulls
+  samples from the real render callback and compares them with the expected mix). Builds with
+  `e2e-hooks` (GUI tests) can only use `NullBackend`, which consumes audio in real time on a thread;
+  `CALLIOPE_E2E_AUDIO=capture:<abs path>` also writes what would have been heard to a float32 WAV
+  that tests analyse (tone energy per stem frequency). `CpalBackend` (the real device) is never
+  constructed by any test (a static test limits where it is referenced), so no test can make a sound
+  or needs a sound card. Timing rules (0.3 s resume) are tested with injected `Instant`s, not sleeps.
+  Rendered files are decoded and compared sample by sample. Real playback is a manual check.
+- MIDI: no fake yet. Each feature that adds hardware must also add a simulator/fake and list it here.
 
 ## Decision log
 <!-- Newest last. Format:
@@ -645,3 +694,68 @@ editing work (stems, assembly, BPM/sections, tablature, MIDI cues; see
 `specs/gui-backing-track-editor.md`). This replaces the name "Track" in "Navigation order
 Library, Import, Track, Playlists, Player, Settings" (2026-10-04); the order is unchanged.
 The Library's track pane and the "Track repository" settings card keep their names.
+
+### 2026-10-08: Audio playback in Rust with `cpal`; the CSP stays unchanged   (feature: gui-backing-track-editor)
+The Editor plays and mixes stems. Choice: Rust plays audio through `cpal` (ALSA on Linux, reaching
+PipeWire/PulseAudio via the default device); the webview only shows state. Reasons: the existing rule
+that the frontend never keeps time, the coming audio-output setting and MIDI/tablature sync in the
+Player, and no CSP change. Alternatives: Web Audio in the webview (rejected: WebKitGTK/GStreamer
+latency, no device choice, needs `media-src`/`blob:` or large IPC transfers), `rodio` (rejected: several
+sinks can't be kept sample-synchronous and seeking/position are coarse). The default output device is
+used until the Player feature adds the "Audio output" setting. Position = frames handed to the device
+(device latency, tens of ms, is not compensated; the Player feature must revisit this for sync).
+
+### 2026-10-08: Stems decoded into memory as 16-bit for playback; full precision for Save   (feature: gui-backing-track-editor)
+Each stem of the open track is decoded once (`claxon`, Apache-2.0) into interleaved `i16`. The audio
+callback mixes directly from memory: sample-exact instant seeks, gain/mute/solo effective within one
+device buffer, no decoder threads or ring buffers, lock-free (atomics; the position advances with a
+compare-exchange so a seek always wins). Cost: about 10.6 MB per stereo stem-minute at 44.1 kHz;
+a 1.5 GiB cap refuses larger sets with a message. Save re-reads the files at full precision and uses the
+same `mixer::mix`, so the file matches what was heard (except 24-bit stems being rounded for listening).
+Alternative: streaming decode with a ring buffer: less memory, but a more complex engine; and the
+usual Rust streaming decoder (`symphonia`) is excluded (next entry).
+
+### 2026-10-08: `symphonia` (MPL-2.0) is rejected   (owner decision)
+The owner rejected `symphonia` permanently; no MPL-2.0 decoder is used. FLAC is decoded with `claxon`.
+The Player and later features must handle other formats (e.g. imported `backing.mp3`) another way, such
+as converting once with the external `ffmpeg` (already required for imports) to FLAC.
+
+### 2026-10-08: Gain in dB with boost; hard clip with a visible indicator   (feature: gui-backing-track-editor, owner decision on the dB scale)
+Lane volume is -60 dB (= Off) to +12 dB in 0.5 dB steps, default 0 dB. Boost can exceed full scale, so
+`mixer::mix` hard-clips at +/-1.0 and returns the clipped-sample count; playback and Save share it, so
+both clip identically. Playback shows a CLIP indicator (held 1 s in Rust), and Save reports the count
+inline. A limiter was rejected: it changes the sound in ways that are hard to test exactly, and the
+indicator lets the user fix the gains.
+
+### 2026-10-08: Lane Play = transient solo; playback stops on track or view change   (feature: gui-backing-track-editor, owner decisions)
+Lane Play checks the stem (spec), solos it and plays. Solo is a listening state in the Rust session
+only: it never changes other lanes' checkboxes or gains and is never saved. It ends on Mix Play, the
+same lane's button again, unchecking the stem, Stop/end of track, a track change or leaving the Editor;
+Pause keeps it; another lane's Play moves it. Selecting another track stops and closes the session (the
+mix is remembered for the app run); leaving the Editor view calls `editor_stop` from the frontend's
+view switch (Rust knows nothing about views). A never-saved track starts with every stem unchecked at
+0 dB, so Mix Play stays disabled until a stem is checked; a saved variant restores its mix.
+
+### 2026-10-08: Backing tracks = a list of named variants in `backings/`, `audio` untouched   (feature: gui-backing-track-editor, owner decisions)
+The owner plans several named backing variants per stem track, in FLAC. `track.json` gets `backings`
+(id, name, file, timestamps, format, mix per variant); files are `backings/<id>.flac`, with the id a
+stable slug so renaming a variant never renames files, and `-2`, `-3`.. on clashes so it scales to many
+variants without overwriting user files. `audio` is not used for stem tracks: it is one file and would
+duplicate or contradict the list. This feature creates/replaces only the default variant (`backing`,
+"Backing"); naming and choosing variants is a later UI. The rendered FLAC uses the stems' rate, stereo,
+16-bit (24-bit if a stem is), no dither, encoded in-process with `flacenc` (Apache-2.0), so the Editor
+needs no ffmpeg. Re-saving moves the old file to the repository trash (no dialog). The save checks the
+stems list instead of the whole-file revision, so a Library edit made meanwhile doesn't block it.
+Alternatives: `audio: "backing.flac"` (rejected: single-valued), a new track of type `backing`
+(rejected: the spec wants the backing next to the stems, and metadata would be duplicated), WAV (large).
+
+### 2026-10-08: GUI tests can never open a real audio device   (feature: gui-backing-track-editor)
+The agents' machine is the owner's laptop with live PipeWire; a test must never make a sound. Builds
+with the `e2e-hooks` feature (only `npm run test:gui`) always use `NullBackend`, whatever the
+environment says, and every GUI test asserts that the logged backend is not `cpal`. Unit tests use
+`ManualBackend`.
+
+### 2026-10-08: The Editor reuses the Library's tree column and selection   (feature: gui-backing-track-editor)
+The Library's tree column is the shared component `TrackBrowser.svelte`, and both views use the same
+`lib` state, so the selected track is the same in the Library and the Editor (one "current track"
+concept, which the Player can reuse). A Library edit in progress locks the tree in both views.
