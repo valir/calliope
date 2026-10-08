@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "id": "0199c0a0-0000-7000-8000-000000000203",
+  "type": "backing",
+  "band": "The Example Band",
+  "album": "Editor Tests",
+  "title": "Plain Backing",
+  "composers": [],
+  "year": null,
+  "source_url": null,
+  "copyright": null,
+  "audio": "backing.mp3",
+  "original": null,
+  "stems": [],
+  "stem_model": null,
+  "tablatures": [],
+  "imported": "2026-10-07T10:00:00Z",
+  "modified": "2026-10-07T10:00:00Z"
+}

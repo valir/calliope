@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "id": "0199c0a0-0000-7000-8000-000000000205",
+  "type": "stem",
+  "band": "The Example Band",
+  "album": "Editor Tests",
+  "title": "Missing Stem",
+  "composers": [],
+  "year": null,
+  "source_url": null,
+  "copyright": null,
+  "audio": null,
+  "original": null,
+  "stems": [
+    {"name": "vocals", "file": "stems/vocals.flac"},
+    {"name": "drums", "file": "stems/drums.flac"}
+  ],
+  "stem_model": "htdemucs_6s",
+  "tablatures": [],
+  "imported": "2026-10-07T10:00:00Z",
+  "modified": "2026-10-07T10:00:00Z"
+}

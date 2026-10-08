@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "id": "0199c0a0-0000-7000-8000-000000000202",
+  "type": "stem",
+  "band": "The Example Band",
+  "album": "Editor Tests",
+  "title": "Mixed Before",
+  "composers": [],
+  "year": null,
+  "source_url": null,
+  "copyright": null,
+  "audio": null,
+  "original": null,
+  "stems": [
+    {"name": "vocals", "file": "stems/vocals.flac"},
+    {"name": "guitar", "file": "stems/guitar.flac"}
+  ],
+  "stem_model": "htdemucs_6s",
+  "tablatures": [],
+  "backings": [{"id": "backing", "name": "Backing", "file": "backings/backing.flac", "created": "2026-10-07T10:00:00Z", "modified": "2026-10-07T10:00:00Z", "sample_rate": 22050, "bits": 16, "mix": {"stems": [{"name": "vocals", "gain_db": -6.0, "unmuted": true}, {"name": "guitar", "gain_db": 0.0, "unmuted": false}]}}],
+  "imported": "2026-10-07T10:00:00Z",
+  "modified": "2026-10-07T10:00:00Z"
+}
