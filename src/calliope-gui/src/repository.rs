@@ -104,6 +104,39 @@ pub struct NewTrack {
     pub tablatures: Vec<(String, PathBuf)>,
 }
 
+#[allow(dead_code)] // used by the save job (task 9)
+/// What the editor's save job hands to `Repository::save_backing`.
+pub struct BackingSave<'a> {
+    pub id: &'a str,
+    /// The session's target variant id (`None` = the default `backing`).
+    pub variant: Option<&'a str>,
+    /// The stems of the editor session; must equal the track's current list.
+    pub stems: &'a [StemEntry],
+    /// The rendered FLAC, inside the track folder.
+    pub part: &'a Path,
+    pub mix: serde_json::Value,
+    pub sample_rate: u32,
+    pub bits: u32,
+}
+
+/// Hard-links `src` to `dest` (fails with `AlreadyExists` if `dest` exists). Where links are
+/// unsupported, copies without clobbering instead.
+#[allow(dead_code)] // used by the save job (task 9)
+fn link_no_clobber(src: &Path, dest: &Path) -> io::Result<()> {
+    match fs::hard_link(src, dest) {
+        Ok(()) => {
+            if let Some(p) = dest.parent() {
+                fsutil::sync_dir(p);
+            }
+            Ok(())
+        }
+        Err(e) if matches!(e.kind(), io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied) => {
+            fsutil::copy_no_clobber(src, dest)
+        }
+        Err(e) => Err(e),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Repository {
     pub root: PathBuf,
@@ -189,6 +222,7 @@ fn track_files(m: &TrackMeta) -> Vec<String> {
     v.extend(m.original.iter().cloned());
     v.extend(m.stems.iter().map(|s| s.file.clone()));
     v.extend(m.tablatures.iter().cloned());
+    v.extend(m.backings.iter().map(|b| b.file.clone()));
     v
 }
 
@@ -322,6 +356,7 @@ impl Repository {
             stems: Vec::new(),
             stem_model: None,
             tablatures: new.tablatures.iter().map(|(n, _)| n.clone()).collect(),
+            backings: Vec::new(),
             imported: now.clone(),
             modified: now,
             extra: Default::default(),
@@ -427,6 +462,7 @@ impl Repository {
             .iter()
             .chain(old.original.iter())
             .chain(old.stems.iter().map(|s| &s.file))
+            .chain(old.backings.iter().map(|b| &b.file))
             .map(|a| a.to_lowercase())
             .collect();
         for p in &plan {
@@ -484,7 +520,7 @@ impl Repository {
 
         // 5. old files to the trash; failures are warnings
         let mut warnings = Vec::new();
-        let mut trash = fsutil::TablatureTrash::new(&self.root, &stamp_now(), &req.id);
+        let mut trash = fsutil::FileTrash::new(&self.root, &stamp_now(), &req.id, "tablatures");
         let mut to_trash: Vec<&String> = old.tablatures.iter().filter(|t| !used_old.contains(t)).collect();
         to_trash.extend(plan.iter().filter_map(|p| p.replaces.as_ref()));
         for name in to_trash {
@@ -523,6 +559,123 @@ impl Repository {
 
         // 6. re-scan the record
         let track = self.load_record(&req.id)?;
+        Ok(SaveResult { track, warnings })
+    }
+
+    /// The backing save transaction (plan 2.6). `save.part` is the finished render, a file of
+    /// ours inside the track folder; it is removed on success only (the caller removes it on
+    /// failure). The track must still be a stem track with the same stems as the session.
+    #[allow(dead_code)] // used by the save job (task 9)
+    pub fn save_backing(&self, save: BackingSave) -> Result<SaveResult, String> {
+        const DEFAULT_ID: &str = "backing";
+        let (dir, loaded) = self.load(save.id)?;
+        let old = loaded.meta;
+        if old.track_type != TrackType::Stem || old.stems != save.stems {
+            return Err("conflict: the stems of this track changed on disk; select it again".into());
+        }
+        let part_ok = fs::symlink_metadata(save.part).map(|m| m.is_file()).unwrap_or(false);
+        if !part_ok || save.part.parent() != Some(dir.as_path()) {
+            return Err("the rendered backing file is missing".into());
+        }
+        if let Some(v) = save.variant {
+            if !track_meta::is_valid_stem_name(v) {
+                return Err(format!("invalid backing id \"{v}\""));
+            }
+        }
+        let backings_dir = dir.join("backings");
+        match fs::symlink_metadata(&backings_dir) {
+            Ok(m) if m.is_dir() => {}
+            Ok(_) => return Err("backings is not a real folder (a symlink or file); nothing was changed".into()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(io_err("cannot read the backings folder", e)),
+        }
+
+        // target variant: replace the existing one, or create with a free id and file name
+        let existing = save.variant.and_then(|v| old.backings.iter().position(|b| b.id == v));
+        let now = track_meta::now_rfc3339();
+        let mut meta = old.clone();
+        let (index, rel_file) = match existing {
+            Some(i) => (i, old.backings[i].file.clone()),
+            None => {
+                let base = save.variant.unwrap_or(DEFAULT_ID);
+                let base_name = if base == DEFAULT_ID { "Backing".to_string() } else { base.to_string() };
+                let taken = |id: &str, file: &str| {
+                    old.backings.iter().any(|b| b.id == id || b.file.eq_ignore_ascii_case(file))
+                        || track_files(&old).iter().any(|f| f.to_lowercase() == file.to_lowercase())
+                        || dir.join(file).symlink_metadata().is_ok()
+                };
+                let (mut id, mut name) = (base.to_string(), base_name.clone());
+                let mut n = 1u32;
+                while taken(&id, &format!("backings/{id}.flac")) {
+                    n += 1;
+                    id = format!("{base}-{n}");
+                    name = format!("{base_name} {n}");
+                    if n > 999 {
+                        return Err("no free backing name".into());
+                    }
+                }
+                meta.backings.push(track_meta::BackingVariant {
+                    id: id.clone(),
+                    name,
+                    file: format!("backings/{id}.flac"),
+                    created: now.clone(),
+                    modified: now.clone(),
+                    sample_rate: save.sample_rate,
+                    bits: save.bits,
+                    mix: save.mix.clone(),
+                });
+                (meta.backings.len() - 1, format!("backings/{id}.flac"))
+            }
+        };
+        {
+            let b = &mut meta.backings[index];
+            b.modified = now.clone();
+            b.sample_rate = save.sample_rate;
+            b.bits = save.bits;
+            b.mix = save.mix.clone();
+        }
+        meta.modified = now;
+        track_meta::validate_for_read(&meta)?;
+
+        if !backings_dir.exists() {
+            fs::create_dir(&backings_dir).map_err(|e| io_err("cannot create the backings folder", e))?;
+        }
+        let dest = dir.join(&rel_file);
+        let mut warnings = Vec::new();
+
+        // replace: old file to the trash first, then link (no clobber)
+        let mut trashed: Option<PathBuf> = None;
+        if existing.is_some() && dest.symlink_metadata().is_ok() {
+            let mut trash = fsutil::FileTrash::new(&self.root, &stamp_now(), save.id, "backing");
+            let moved = trash
+                .move_in(&dest)
+                .map_err(|e| io_err(&format!("could not move \"{rel_file}\" to the trash (nothing was changed)"), e))?;
+            trashed = Some(moved);
+        }
+        let restore = |trashed: &Option<PathBuf>| {
+            if let Some(t) = trashed {
+                if dest.symlink_metadata().is_err() {
+                    let _ = fs::rename(t, &dest);
+                }
+            }
+        };
+        if let Err(e) = link_no_clobber(save.part, &dest) {
+            restore(&trashed);
+            return Err(io_err(&format!("cannot put \"{rel_file}\" in place"), e));
+        }
+        if let Err(e) = fsutil::write_atomic(&dir.join(TRACK_FILE), track_meta::to_json_pretty(&meta).as_bytes()) {
+            // the linked file is ours (just created); undo
+            let _ = fs::remove_file(&dest);
+            restore(&trashed);
+            return Err(io_err("cannot write track.json (nothing was changed)", e));
+        }
+        if let Err(e) = fs::remove_file(save.part) {
+            warnings.push(format!("could not remove the temporary file {}: {e}", save.part.display()));
+        }
+        for w in &warnings {
+            eprintln!("calliope: repository warning: {w}");
+        }
+        let track = self.load_record(save.id)?;
         Ok(SaveResult { track, warnings })
     }
 
@@ -568,21 +721,23 @@ impl Repository {
         let dest = fsutil::create_unique_dir(dest_parent, &folder)
             .map_err(|e| io_err("cannot create the export folder", e))?;
         let mut created: Vec<PathBuf> = Vec::new();
-        let mut made_stems = false;
+        let mut made_dirs: Vec<PathBuf> = Vec::new();
         for n in &names {
             let target = dest.join(n);
-            let r = if n.starts_with("stems/") && !made_stems {
-                fs::create_dir(dest.join("stems")).map(|()| made_stems = true)
-            } else {
-                Ok(())
+            let sub = ["stems", "backings"].into_iter().find(|d| n.starts_with(&format!("{d}/")));
+            let r = match sub {
+                Some(d) if !made_dirs.contains(&dest.join(d)) => {
+                    fs::create_dir(dest.join(d)).map(|()| made_dirs.push(dest.join(d)))
+                }
+                _ => Ok(()),
             }
             .and_then(|()| fsutil::copy_no_clobber(&dir.join(n), &target));
             if let Err(e) = r {
                 for f in created {
                     let _ = fs::remove_file(f);
                 }
-                if made_stems {
-                    let _ = fs::remove_dir(dest.join("stems"));
+                for d in &made_dirs {
+                    let _ = fs::remove_dir(d);
                 }
                 let _ = fs::remove_dir(&dest);
                 return Err(io_err(&format!("cannot export \"{n}\""), e));

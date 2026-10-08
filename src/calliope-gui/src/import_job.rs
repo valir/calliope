@@ -325,6 +325,7 @@ fn build_meta(id: &str, edits: &TrackEdits, stems: &[String], model: &str, keep:
         tablatures: Vec::new(),
         imported: now.clone(),
         modified: now,
+        backings: Vec::new(),
         extra: serde_json::Map::new(),
     };
     track_meta::apply_edits(&mut meta, edits.clone())?;

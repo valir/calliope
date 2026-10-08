@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-fn sync_dir(dir: &Path) {
+pub(crate) fn sync_dir(dir: &Path) {
     #[cfg(unix)]
     {
         let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir };
@@ -248,21 +248,21 @@ pub fn move_track_to_trash(root: &Path, src: &Path, stamp: &str, id: &str) -> io
     unreachable!()
 }
 
-/// One trash folder `root/trash/<stamp>-<id>-tablatures/` for all tablature files removed or
-/// replaced in one save. The folder is created on the first `move_in` (`-2`, ... if the name
+/// One trash folder `root/trash/<stamp>-<id>-<suffix>/` (suffix `tablatures` or `backing`) for all
+/// files removed or replaced in one save. The folder is created on the first `move_in` (`-2`, ... if the name
 /// is taken) and reused for the following files; a name clash inside it gives the file a
 /// ` (2)` suffix instead of a new folder.
-pub struct TablatureTrash {
+pub struct FileTrash {
     root: PathBuf,
     base: String,
     dir: Option<PathBuf>,
 }
 
-impl TablatureTrash {
-    pub fn new(root: &Path, stamp: &str, id: &str) -> Self {
+impl FileTrash {
+    pub fn new(root: &Path, stamp: &str, id: &str, suffix: &str) -> Self {
         Self {
             root: root.to_path_buf(),
-            base: format!("{stamp}-{id}-tablatures"),
+            base: format!("{stamp}-{id}-{suffix}"),
             dir: None,
         }
     }
@@ -369,7 +369,7 @@ mod tests {
         fs::create_dir_all(root.join("tracks/a")).unwrap();
         fs::write(root.join("tracks/a/real.gp5"), b"real").unwrap();
         std::os::unix::fs::symlink(root.join("tracks/a/real.gp5"), root.join("tracks/a/link.gp5")).unwrap();
-        let mut tt = TablatureTrash::new(&root, "S", "a");
+        let mut tt = FileTrash::new(&root, "S", "a", "tablatures");
         tt.move_in(&root.join("tracks/a/link.gp5")).unwrap();
         assert!(root.join("tracks/a/real.gp5").exists());
         assert!(root.join("tracks/a/link.gp5").symlink_metadata().is_err());
@@ -479,7 +479,7 @@ mod tests {
         fs::create_dir_all(&t).unwrap();
         fs::write(t.join("a.gp5"), b"a1").unwrap();
         fs::write(t.join("b.gp5"), b"b").unwrap();
-        let mut tt = TablatureTrash::new(root, "S", "abc");
+        let mut tt = FileTrash::new(root, "S", "abc", "tablatures");
         assert!(tt.dir().is_none());
         assert!(!root.join("trash").exists());
         let m1 = tt.move_in(&t.join("a.gp5")).unwrap();
@@ -497,7 +497,7 @@ mod tests {
         assert_eq!(fs::read_dir(root.join("trash")).unwrap().count(), 1);
         // a later save gets a new folder
         fs::write(t.join("c.gp5"), b"c").unwrap();
-        let mut t2 = TablatureTrash::new(root, "S", "abc");
+        let mut t2 = FileTrash::new(root, "S", "abc", "tablatures");
         t2.move_in(&t.join("c.gp5")).unwrap();
         assert!(root.join("trash/S-abc-tablatures-2/c.gp5").exists());
     }
@@ -512,7 +512,7 @@ mod tests {
         assert!(move_track_to_trash(&root, &outside, "S", "abc").is_err());
         assert!(outside.exists());
         assert!(move_track_to_trash(&root, &root, "S", "abc").is_err());
-        assert!(TablatureTrash::new(&root, "S", "abc").move_in(&outside).is_err());
+        assert!(FileTrash::new(&root, "S", "abc", "tablatures").move_in(&outside).is_err());
         assert!(!root.join("trash").exists());
         fs::create_dir_all(root.join("trash/old")).unwrap();
         assert!(move_track_to_trash(&root, &root.join("trash/old"), "S", "abc").is_err());

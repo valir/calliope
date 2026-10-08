@@ -9,6 +9,8 @@ pub const CURRENT_SCHEMA: u32 = 2;
 const MAX_STEMS: usize = 16;
 const MAX_STEM_MODEL: usize = 100;
 const STEMS_DIR: &str = "stems/";
+pub const BACKINGS_DIR: &str = "backings/";
+const MAX_BACKING_NAME: usize = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -22,6 +24,21 @@ pub struct StemEntry {
     pub name: String,
     /// Always `stems/<plain file name>`.
     pub file: String,
+}
+
+/// One mixed-down backing of a stem track (plan 2.5). `mix` is interpreted only by the editor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BackingVariant {
+    pub id: String,
+    pub name: String,
+    /// Always `backings/<plain file name>`.
+    pub file: String,
+    pub created: String,
+    pub modified: String,
+    pub sample_rate: u32,
+    pub bits: u32,
+    #[serde(default)]
+    pub mix: Value,
 }
 
 const MAX_NAME: usize = 200;
@@ -60,6 +77,9 @@ pub struct TrackMeta {
     pub stem_model: Option<String>,
     #[serde(default)]
     pub tablatures: Vec<String>,
+    /// Mixed-down backings of a stem track; absent from the file when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backings: Vec<BackingVariant>,
     /// Kept verbatim as read; may be non-canonical, or empty when missing (unknown).
     #[serde(default)]
     pub imported: String,
@@ -236,6 +256,26 @@ pub fn validate_for_read(meta: &TrackMeta) -> Result<(), String> {
     for t in &meta.tablatures {
         crate::fsutil::validate_file_name(t).map_err(|e| format!("tablature: {e}"))?;
         claim("tablature", t)?;
+    }
+    let mut ids: Vec<&str> = Vec::new();
+    for b in &meta.backings {
+        if !is_valid_stem_name(&b.id) {
+            return Err(format!("invalid backing id \"{}\"", b.id));
+        }
+        if ids.contains(&b.id.as_str()) {
+            return Err(format!("backing \"{}\" is listed twice", b.id));
+        }
+        ids.push(&b.id);
+        let n = b.name.chars().count();
+        if n == 0 || n > MAX_BACKING_NAME {
+            return Err(format!("backing \"{}\" has a name of {n} characters (1 to {MAX_BACKING_NAME})", b.id));
+        }
+        let plain = b
+            .file
+            .strip_prefix(BACKINGS_DIR)
+            .ok_or_else(|| format!("backing file \"{}\" is not inside backings/", b.file))?;
+        crate::fsutil::validate_file_name(plain).map_err(|e| format!("backing file: {e}"))?;
+        claim("backing file", &b.file)?;
     }
     Ok(())
 }
@@ -695,5 +735,62 @@ mod tests {
         assert_eq!(rfc3339_utc(1_790_000_000), "2026-09-21T14:13:20Z");
         let now = now_rfc3339();
         assert!(check_timestamp("now", &now).is_ok());
+    }
+
+    fn stem_with_backings(backings: &str) -> String {
+        STEM.replace(
+            "\"tablatures\": [\"tab.gp5\"],",
+            &format!("\"tablatures\": [\"tab.gp5\"], \"backings\": {backings},"),
+        )
+    }
+    fn variant(id: &str, name: &str, file: &str) -> String {
+        format!(
+            r#"{{"id":"{id}","name":"{name}","file":"{file}","created":"2026-10-08T12:00:00Z","modified":"2026-10-08T12:00:00Z","sample_rate":44100,"bits":16,"mix":{{"stems":[]}}}}"#
+        )
+    }
+
+    #[test]
+    fn backings_parse_and_round_trip_and_are_absent_when_empty() {
+        let json = stem_with_backings(&format!("[{}]", variant("backing", "Backing", "backings/backing.flac")));
+        let m = parse(json.as_bytes(), ID).unwrap();
+        assert_eq!(m.backings.len(), 1);
+        assert_eq!(m.backings[0].sample_rate, 44100);
+        assert!(!m.extra.contains_key("backings"));
+        let again = parse(to_json_pretty(&m).as_bytes(), ID).unwrap();
+        assert_eq!(again, m);
+        let plain = parse(STEM.as_bytes(), ID).unwrap();
+        assert!(!to_json_pretty(&plain).contains("backings"));
+    }
+
+    #[test]
+    fn bad_backings_make_the_track_a_problem() {
+        let one = |id: &str, file: &str| format!("[{}]", variant(id, "Backing", file));
+        for (what, b) in [
+            ("bad id", one("Bad Id", "backings/x.flac")),
+            ("outside backings/", one("backing", "stems/x.flac")),
+            ("nested", one("backing", "backings/sub/x.flac")),
+            ("traversal", one("backing", "backings/../x.flac")),
+            ("clash with a stem", one("backing", "backings/../stems/vocals.flac")),
+            (
+                "duplicate id",
+                format!("[{},{}]", variant("a", "A", "backings/a.flac"), variant("a", "A", "backings/b.flac")),
+            ),
+            (
+                "duplicate file",
+                format!("[{},{}]", variant("a", "A", "backings/a.flac"), variant("b", "B", "backings/A.flac")),
+            ),
+            ("empty name", format!("[{}]", variant("a", "", "backings/a.flac"))),
+            ("long name", format!("[{}]", variant("a", &"x".repeat(101), "backings/a.flac"))),
+        ] {
+            assert!(parse(stem_with_backings(&b).as_bytes(), ID).is_err(), "{what}");
+        }
+    }
+
+    #[test]
+    fn a_malformed_mix_is_not_a_problem() {
+        for mix in ["null", "42", "\"x\"", "{\"stems\": 3}", "[1]"] {
+            let v = variant("backing", "Backing", "backings/backing.flac").replace("{\"stems\":[]}", mix);
+            assert!(parse(stem_with_backings(&format!("[{v}]")).as_bytes(), ID).is_ok(), "{mix}");
+        }
     }
 }

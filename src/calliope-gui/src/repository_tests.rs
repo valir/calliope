@@ -934,6 +934,7 @@ mod staging {
             tablatures: vec![],
             imported: now.clone(),
             modified: now,
+            backings: Vec::new(),
             extra: Default::default(),
         }
     }
@@ -1163,5 +1164,260 @@ mod staging {
         std::os::unix::fs::symlink(&elsewhere, root.join("tracks")).unwrap();
         assert!(Repository::new(&root).begin_staged_track(ID).is_err());
         assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
+    }
+}
+
+mod backing {
+    use super::*;
+
+    const FOUR: &str = "0199c0a0-0000-7000-8000-000000000201";
+    const MIXED: &str = "0199c0a0-0000-7000-8000-000000000202";
+    const PLAIN: &str = "0199c0a0-0000-7000-8000-000000000203";
+
+    /// A copy of `tests/fixtures/library-editor` plus an "outside" folder that must not change.
+    struct Ed {
+        _tmp: TempDir,
+        outside: PathBuf,
+        before: BTreeMap<String, Vec<u8>>,
+        repo: Repository,
+    }
+
+    impl Ed {
+        fn new() -> Ed {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path().join("library");
+            let outside = tmp.path().join("outside");
+            fs::create_dir_all(&outside).unwrap();
+            fs::write(outside.join("keep.txt"), b"KEEP").unwrap();
+            copy_tree(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-editor"), &root);
+            let before = snapshot(&outside);
+            Ed { _tmp: tmp, outside, before, repo: Repository::new(root) }
+        }
+        fn dir(&self, id: &str) -> PathBuf {
+            self.repo.root.join("tracks").join(id)
+        }
+        fn record(&self, id: &str) -> TrackRecord {
+            self.repo.scan().tracks.into_iter().find(|t| t.id == id).unwrap()
+        }
+        fn json(&self, id: &str) -> serde_json::Value {
+            serde_json::from_slice(&fs::read(self.dir(id).join("track.json")).unwrap()).unwrap()
+        }
+        fn part(&self, id: &str, content: &[u8]) -> PathBuf {
+            let p = self.dir(id).join(".calliope-backing-test.part");
+            fs::write(&p, content).unwrap();
+            p
+        }
+        fn save(&self, id: &str, variant: Option<&str>, content: &[u8]) -> Result<SaveResult, String> {
+            let part = self.part(id, content);
+            let stems = self.record(id).stems;
+            let r = self.repo.save_backing(BackingSave {
+                id,
+                variant,
+                stems: &stems,
+                part: &part,
+                mix: serde_json::json!({"stems": [{"name": "vocals", "gain_db": -3.5, "unmuted": true}]}),
+                sample_rate: 44100,
+                bits: 16,
+            });
+            if r.is_err() {
+                let _ = fs::remove_file(&part); // the caller's job on failure
+            }
+            r
+        }
+    }
+
+    impl Drop for Ed {
+        fn drop(&mut self) {
+            if !std::thread::panicking() {
+                assert_eq!(snapshot(&self.outside), self.before, "the outside folder changed");
+            }
+        }
+    }
+
+    #[test]
+    fn first_save_creates_the_file_and_one_variant() {
+        let e = Ed::new();
+        let before = e.json(FOUR);
+        e.save(FOUR, None, b"FLAC1").unwrap();
+        assert_eq!(fs::read(e.dir(FOUR).join("backings/backing.flac")).unwrap(), b"FLAC1");
+        assert!(!e.dir(FOUR).join(".calliope-backing-test.part").exists());
+        let j = e.json(FOUR);
+        let b = &j["backings"];
+        assert_eq!(b.as_array().unwrap().len(), 1);
+        assert_eq!((b[0]["id"].as_str(), b[0]["name"].as_str()), (Some("backing"), Some("Backing")));
+        assert_eq!(b[0]["file"], "backings/backing.flac");
+        assert_eq!(b[0]["created"], b[0]["modified"]);
+        assert_eq!(b[0]["created"], j["modified"]);
+        assert_eq!((b[0]["sample_rate"].as_u64(), b[0]["bits"].as_u64()), (Some(44100), Some(16)));
+        assert_eq!(b[0]["mix"]["stems"][0]["name"], "vocals");
+        for k in ["type", "audio", "stems", "title", "imported", "band", "album", "stem_model", "tablatures"] {
+            assert_eq!(j[k], before[k], "{k}");
+        }
+        assert!(e.record(FOUR).missing.is_empty());
+        assert!(j["modified"].as_str().unwrap() >= before["modified"].as_str().unwrap());
+        assert_ne!(j["modified"], before["modified"]);
+    }
+
+    #[test]
+    fn second_save_trashes_the_previous_file_and_keeps_created() {
+        let e = Ed::new();
+        e.save(FOUR, None, b"FLAC1").unwrap();
+        let created = e.json(FOUR)["backings"][0]["created"].clone();
+        // make the stored timestamps distinguishable
+        let tj = e.dir(FOUR).join("track.json");
+        let text = fs::read_to_string(&tj).unwrap().replace(created.as_str().unwrap(), "2020-01-01T00:00:00Z");
+        fs::write(&tj, text).unwrap();
+        e.save(FOUR, Some("backing"), b"FLAC2").unwrap();
+        assert_eq!(fs::read(e.dir(FOUR).join("backings/backing.flac")).unwrap(), b"FLAC2");
+        let b = &e.json(FOUR)["backings"];
+        assert_eq!(b.as_array().unwrap().len(), 1);
+        assert_eq!(b[0]["created"], "2020-01-01T00:00:00Z");
+        assert_ne!(b[0]["modified"], "2020-01-01T00:00:00Z");
+        let trash: Vec<_> = fs::read_dir(e.repo.root.join("trash")).unwrap().flatten().collect();
+        assert_eq!(trash.len(), 1);
+        let name = trash[0].file_name().to_string_lossy().into_owned();
+        assert!(name.ends_with(&format!("-{FOUR}-backing")), "{name}");
+        assert_eq!(fs::read(trash[0].path().join("backing.flac")).unwrap(), b"FLAC1");
+    }
+
+    #[test]
+    fn replacing_the_fixture_variant_works() {
+        let e = Ed::new();
+        let old = fs::read(e.dir(MIXED).join("backings/backing.flac")).unwrap();
+        e.save(MIXED, Some("backing"), b"NEW").unwrap();
+        assert_eq!(fs::read(e.dir(MIXED).join("backings/backing.flac")).unwrap(), b"NEW");
+        assert_eq!(e.json(MIXED)["backings"][0]["sample_rate"], 44100);
+        let trash: Vec<_> = fs::read_dir(e.repo.root.join("trash")).unwrap().flatten().collect();
+        assert_eq!(fs::read(trash[0].path().join("backing.flac")).unwrap(), old);
+    }
+
+    #[test]
+    fn an_unlisted_user_file_is_never_overwritten() {
+        let e = Ed::new();
+        fs::create_dir(e.dir(FOUR).join("backings")).unwrap();
+        fs::write(e.dir(FOUR).join("backings/backing.flac"), b"USER").unwrap();
+        e.save(FOUR, None, b"MINE").unwrap();
+        assert_eq!(fs::read(e.dir(FOUR).join("backings/backing.flac")).unwrap(), b"USER");
+        assert_eq!(fs::read(e.dir(FOUR).join("backings/backing-2.flac")).unwrap(), b"MINE");
+        let j = e.json(FOUR);
+        assert_eq!(j["backings"][0]["id"], "backing-2");
+        assert_eq!(j["backings"][0]["file"], "backings/backing-2.flac");
+        assert!(!e.repo.root.join("trash").exists());
+    }
+
+    #[test]
+    fn a_new_variant_id_next_to_an_existing_one_gets_a_suffix() {
+        let e = Ed::new();
+        e.save(MIXED, Some("other"), b"X").unwrap(); // not existing: created
+        e.save(MIXED, Some("other"), b"Y").unwrap(); // now existing: replaced
+        let ids: Vec<_> = e.json(MIXED)["backings"].as_array().unwrap().iter().map(|b| b["id"].clone()).collect();
+        assert_eq!(ids, vec!["backing", "other"]);
+        // no target while `backing` is already listed: a new variant `backing-2`, never a replace
+        e.save(MIXED, None, b"Z").unwrap();
+        let j = e.json(MIXED);
+        assert_eq!(j["backings"].as_array().unwrap().len(), 3);
+        assert_eq!(j["backings"][2]["id"], "backing-2");
+    }
+
+    #[test]
+    fn a_changed_stem_list_is_a_conflict_and_nothing_changes() {
+        let e = Ed::new();
+        let part = e.part(FOUR, b"P");
+        let mut stems = e.record(FOUR).stems;
+        stems.pop();
+        let snap = snapshot(&e.repo.root);
+        let r = e.repo.save_backing(BackingSave {
+            id: FOUR,
+            variant: None,
+            stems: &stems,
+            part: &part,
+            mix: serde_json::Value::Null,
+            sample_rate: 44100,
+            bits: 16,
+        });
+        assert!(r.unwrap_err().starts_with("conflict:"));
+        assert_eq!(snapshot(&e.repo.root), snap);
+        // a track that is not a stem track conflicts too
+        let part = e.part(PLAIN, b"P");
+        let r = e.repo.save_backing(BackingSave {
+            id: PLAIN,
+            variant: None,
+            stems: &[],
+            part: &part,
+            mix: serde_json::Value::Null,
+            sample_rate: 44100,
+            bits: 16,
+        });
+        assert!(r.unwrap_err().starts_with("conflict:"));
+    }
+
+    #[test]
+    fn edits_made_meanwhile_are_kept() {
+        let e = Ed::new();
+        let tj = e.dir(FOUR).join("track.json");
+        let text = fs::read_to_string(&tj).unwrap().replace("Four Lanes", "Edited On Disk");
+        fs::write(&tj, text).unwrap();
+        e.save(FOUR, None, b"F").unwrap();
+        assert_eq!(e.json(FOUR)["title"], "Edited On Disk");
+    }
+
+    #[test]
+    fn the_library_save_keeps_backings_and_adds_none_to_other_tracks() {
+        let e = Ed::new();
+        let plain_before = fs::read(e.dir(PLAIN).join("track.json")).unwrap();
+        let scan_before = snapshot(&e.repo.root);
+        e.repo.scan();
+        assert_eq!(snapshot(&e.repo.root), scan_before);
+        for (id, has) in [(PLAIN, false), (MIXED, true)] {
+            let rec = e.record(id);
+            let mut r = req(&rec, vec![]);
+            r.tablatures = rec.tablatures.iter().map(|n| keep(n)).collect();
+            r.edits.title = format!("{} x", rec.title);
+            let before = e.json(id);
+            e.repo.save_track(r, &|_| None).unwrap();
+            let after = e.json(id);
+            assert_eq!(after.get("backings").is_some(), has, "{id}");
+            assert_eq!(after["backings"], before["backings"], "{id}");
+        }
+        assert!(!String::from_utf8(fs::read(e.dir(PLAIN).join("track.json")).unwrap()).unwrap().contains("backings"));
+        let _ = plain_before;
+    }
+
+    #[test]
+    fn missing_backing_files_are_listed_and_export_includes_them() {
+        let e = Ed::new();
+        fs::remove_file(e.dir(MIXED).join("backings/backing.flac")).unwrap();
+        assert_eq!(e.record(MIXED).missing, vec!["backings/backing.flac"]);
+        assert!(e.repo.export_track(MIXED, &e.outside.join("nowhere")).is_err());
+        let e = Ed::new();
+        let dest = e.outside.parent().unwrap().join("exports");
+        fs::create_dir(&dest).unwrap();
+        let out = e.repo.export_track(MIXED, &dest).unwrap();
+        assert!(out.join("backings/backing.flac").is_file());
+        assert!(out.join("stems/vocals.flac").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_backings_folder_is_refused() {
+        let e = Ed::new();
+        std::os::unix::fs::symlink(&e.outside, e.dir(FOUR).join("backings")).unwrap();
+        let err = e.save(FOUR, None, b"X").unwrap_err();
+        assert!(err.contains("backings"), "{err}");
+        assert_eq!(snapshot(&e.outside), e.before);
+        assert!(e.json(FOUR).get("backings").is_none());
+        fs::remove_file(e.dir(FOUR).join("backings")).unwrap();
+    }
+
+    #[test]
+    fn a_failed_metadata_write_leaves_the_old_state() {
+        let e = Ed::new();
+        e.save(MIXED, Some("backing"), b"NEW").unwrap_or_else(|x| panic!("{x}"));
+        let snap = snapshot(&e.dir(MIXED));
+        crate::fsutil::FAIL_WRITE_OF.with(|f| *f.borrow_mut() = Some("track.json".into()));
+        let r = e.save(MIXED, Some("backing"), b"NEWER");
+        crate::fsutil::FAIL_WRITE_OF.with(|f| *f.borrow_mut() = None);
+        assert!(r.is_err());
+        assert_eq!(snapshot(&e.dir(MIXED)), snap);
     }
 }
