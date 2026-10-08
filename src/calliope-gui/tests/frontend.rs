@@ -361,3 +361,18 @@ fn server_side_crates_stay_separate_from_the_gui() {
         assert!(!reachable_packages(&meta, "calliope-lib").contains(server), "calliope-lib must not contain an HTTP server ({server})");
     }
 }
+
+#[test]
+fn cpal_backend_is_only_named_in_audio_out_and_gui() {
+    let mut files = files_under(&root().join("src"), "rs");
+    files.extend(files_under(&root().join("tests"), "rs"));
+    for f in files {
+        let name = f.file_name().unwrap().to_str().unwrap().to_string();
+        let in_src = f.starts_with(root().join("src"));
+        if (in_src && (name == "audio_out.rs" || name == "gui.rs")) || name == "frontend.rs" {
+            continue;
+        }
+        let text = fs::read_to_string(&f).unwrap();
+        assert!(!text.contains("CpalBackend"), "{} must not name CpalBackend", f.display());
+    }
+}

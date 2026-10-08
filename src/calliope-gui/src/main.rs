@@ -1,3 +1,4 @@
+mod audio_out;
 mod cli;
 mod download;
 mod fsutil;
