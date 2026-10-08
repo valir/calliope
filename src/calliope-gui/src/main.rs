@@ -1,6 +1,7 @@
 mod audio_out;
 mod cli;
 mod download;
+mod editor;
 mod fsutil;
 mod import_job;
 mod import_tmp;

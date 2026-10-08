@@ -5,3 +5,4 @@ task 3 | Stem decoding (stem_audio.rs) | implementer | done
 task 4 | Mixer (mixer.rs) | implementer | done
 task 5 | Transport state machine (transport.rs) | implementer | done
 task 6 | Audio output backends (audio_out.rs) | implementer | done
+task 7 | Editor sessions and playback engine (editor.rs) | implementer | done
