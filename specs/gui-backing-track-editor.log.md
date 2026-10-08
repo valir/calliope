@@ -15,3 +15,4 @@ task 13 | Shared tree column, Editor layout, Library backings row | implementer 
 task 14 | Slider and checkbox components | implementer | done
 task 15 | Editor frontend state | implementer | done
 task 16 | Editor pane components | implementer | done
+task 17 | Time field (edit and wheel) | implementer | done

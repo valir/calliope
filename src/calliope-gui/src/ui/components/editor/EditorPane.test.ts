@@ -123,7 +123,7 @@ describe('controls', () => {
     await active();
     expect(screen.queryByTestId('clip-badge')).toBeNull();
     send({ kind: 'transport', id: stemTrack.id, ...idle, playing: true, position_ms: 5000, clipping: true });
-    await waitFor(() => expect(screen.getByTestId('time-text').textContent).toBe('0:05.0'));
+    await waitFor(() => expect((screen.getByTestId('time-text') as HTMLInputElement).value).toBe('0:05.0'));
     expect(thumb('Position').getAttribute('aria-valuenow')).toBe('5000');
     expect(screen.getByTestId('clip-badge').textContent).toBe('CLIP');
   });

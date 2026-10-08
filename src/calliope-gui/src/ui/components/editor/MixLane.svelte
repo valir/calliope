@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from '$lib/components/ui/button/index.js';
   import { Progress } from '$lib/components/ui/progress/index.js';
+  import TimeField from './TimeField.svelte';
   import { Slider } from '$lib/components/ui/slider/index.js';
   import {
     canPlay, cancelSave, ed, positionText, save, saveEnabled, seek, stop, stopEnabled, togglePlay,
@@ -52,8 +53,7 @@
         aria-valuetext={positionText()}
       />
     </div>
-    <!-- Task 17 replaces this with the editable TimeField. -->
-    <span class="w-28 shrink-0 text-center text-2xl font-semibold tabular-nums" data-testid="time-text">{positionText()}</span>
+    <TimeField />
     {#if soloName}
       <span class="text-lg font-medium text-amber-500" data-testid="solo-text">Solo: {soloName}</span>
     {/if}
