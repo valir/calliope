@@ -9,3 +9,5 @@ task 7 | Editor sessions and playback engine (editor.rs) | implementer | done
 task 8 | backings metadata and repository save_backing | implementer | done
 task 9 | Offline render and the save job (backing_render.rs) | implementer | done
 task 10 | IPC commands and TS wrappers | implementer | done
+task 11 | Time formatting and parsing | local | done
+task 12 | Gain formatting | local | done
