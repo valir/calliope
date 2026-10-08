@@ -117,6 +117,14 @@
           {/each}
         </ul>
       {/if}
+      {#if selected && selected.backings.length > 0}
+        <span id="track-backings-label" class="pt-1.5 text-sm font-medium text-muted-foreground">Backing tracks</span>
+        <ul aria-labelledby="track-backings-label" class="flex flex-wrap gap-1.5 pt-1" data-testid="track-backings">
+          {#each selected.backings as b (b.id)}
+            <li class="rounded-md border border-border px-2 py-0.5 text-sm text-muted-foreground">{b.name} ({b.file})</li>
+          {/each}
+        </ul>
+      {/if}
     </TrackFields>
   </div>
 

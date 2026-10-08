@@ -59,7 +59,7 @@ describe('views', () => {
     expect(isNavToggleKey(key('KeyC', { ctrlKey: true }))).toBe(false);
   });
   it('has tabs and settings placeholders', () => {
-    expect(TRACK_TABS).toHaveLength(5);
+    expect(TRACK_TABS).toHaveLength(4);
     expect(SETTINGS_PLACEHOLDERS).toHaveLength(2);
   });
 });

@@ -11,3 +11,4 @@ task 9 | Offline render and the save job (backing_render.rs) | implementer | don
 task 10 | IPC commands and TS wrappers | implementer | done
 task 11 | Time formatting and parsing | local | done
 task 12 | Gain formatting | local | done
+task 13 | Shared tree column, Editor layout, Library backings row | implementer | done

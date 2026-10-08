@@ -11,7 +11,7 @@ export interface ViewInfo {
 export const VIEWS: readonly ViewInfo[] = [
   { id: 'library', label: 'Library', digit: 1, summary: 'The backing-track repository.', features: ['gui-tracks-repository'] },
   { id: 'import', label: 'Import', digit: 2, summary: 'Import a music track for stem extraction, or an existing backing track.', features: ['gui-stem-extracting', 'gui-existing-track-import'] },
-  { id: 'editor', label: 'Editor', digit: 3, summary: 'One track: stems, assembly, BPM and sections, tablature, MIDI cues.', features: ['gui-backing-track-assembly', 'gui-tablatures', 'gui-manipulate-backing-track'] },
+  { id: 'editor', label: 'Editor', digit: 3, summary: 'One track: stems and backing mix, BPM and sections, tablature, MIDI cues.', features: ['gui-backing-track-editor', 'gui-tablatures', 'gui-manipulate-backing-track'] },
   { id: 'playlists', label: 'Playlists', digit: 4, summary: 'Backing-track playlists.', features: [] },
   { id: 'player', label: 'Player', digit: 5, summary: 'Playback with the tablature view.', features: ['gui-play-backing-track'] },
   { id: 'settings', label: 'Settings', digit: 6, summary: 'MIDI interface, audio output, edge-AI server and theme.', features: ['gui-play-backing-track', 'gui-stem-extracting'] },
@@ -19,8 +19,7 @@ export const VIEWS: readonly ViewInfo[] = [
 
 export interface TrackTab { id: string; label: string; feature: string }
 export const TRACK_TABS: readonly TrackTab[] = [
-  { id: 'stems', label: 'Stems', feature: 'gui-backing-track-assembly' },
-  { id: 'assembly', label: 'Assembly', feature: 'gui-backing-track-assembly' },
+  { id: 'stems', label: 'Stems', feature: 'gui-backing-track-editor' },
   { id: 'tempo', label: 'BPM & sections', feature: 'gui-manipulate-backing-track' },
   { id: 'tablature', label: 'Tablature', feature: 'gui-tablatures' },
   { id: 'cues', label: 'MIDI cues', feature: 'gui-manipulate-backing-track' },

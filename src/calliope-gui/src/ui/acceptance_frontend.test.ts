@@ -12,7 +12,8 @@ const NAV_ORDER = ['Library', 'Import', 'Editor', 'Playlists', 'Player', 'Settin
 const FEATURES: Record<string, string[]> = {
   // Library has no placeholder any more: gui-tracks-repository replaced it with the real view.
   // Import has no placeholder any more: gui-stem-extraction replaced it with the real view.
-  Editor: ['gui-backing-track-assembly', 'gui-tablatures', 'gui-manipulate-backing-track'],
+  // The Stems tab is the real editor now (gui-backing-track-editor); the other tabs stay placeholders.
+  Editor: ['gui-tablatures', 'gui-manipulate-backing-track'],
   Player: ['gui-play-backing-track'],
 };
 let logs: string[] = [];
@@ -93,7 +94,7 @@ describe('acceptance: navigation (req 4, AC2, AC3)', () => {
     render(App);
     await fireEvent.click(entry('Editor'));
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent!.trim());
-    expect(tabs).toEqual(['Stems', 'Assembly', 'BPM & sections', 'Tablature', 'MIDI cues']);
+    expect(tabs).toEqual(['Stems', 'BPM & sections', 'Tablature', 'MIDI cues']);
   });
 });
 

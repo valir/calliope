@@ -4,7 +4,7 @@ import { tick } from 'svelte';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import LibraryView from './LibraryView.svelte';
 import { resetLibrary } from '$lib/library-state.svelte';
-import { FIXTURE_TRACKS } from '$lib/fixture-tracks';
+import { EDITOR_FIXTURE_TRACKS, FIXTURE_TRACKS } from '$lib/fixture-tracks';
 import type { Picked, SaveTrackRequest, TrackRecord } from '$lib/ipc';
 
 let tracks: TrackRecord[] = [];
@@ -186,6 +186,18 @@ describe('Track pane: stem tracks', () => {
     expect(field('Audio file').value).toBe('backing.mp3');
     expect(screen.queryByLabelText('Original')).toBeNull();
     expect(screen.queryByRole('list', { name: 'Stems' })).toBeNull();
+  });
+});
+
+describe('Track pane: backing tracks row', () => {
+  it('lists name (file) for a track with backings, and nothing without', async () => {
+    tracks = structuredClone([...FIXTURE_TRACKS.slice(0, 6), EDITOR_FIXTURE_TRACKS[0]]);
+    await open('Glass Harbour');
+    const items = within(screen.getByRole('list', { name: 'Backing tracks' })).getAllByRole('listitem');
+    expect(items.map((n) => n.textContent!.trim())).toEqual(['Backing (backings/backing.flac)']);
+    cleanup();
+    await open('Slow Burn');
+    expect(screen.queryByRole('list', { name: 'Backing tracks' })).toBeNull();
   });
 });
 
