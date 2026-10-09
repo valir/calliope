@@ -913,6 +913,7 @@ fn run_extract(
         _ => return fail(Stage::Server, "The job was cancelled on the edge-AI server"),
     }
     let stems = st.stems.unwrap_or_default();
+    let stem_peaks = st.stem_peaks.unwrap_or_default();
     if stems.is_empty() {
         return fail(Stage::Server, "The edge-AI server returned no stems");
     }
@@ -932,8 +933,22 @@ fn run_extract(
     ctx.phase(Phase::Receiving, ImportEvent::Receiving { done: 0, total });
     let mut kept: Vec<String> = Vec::new();
     let mut dropped: Vec<DroppedStem> = Vec::new();
+    let mut server_measured = 0usize;
     for (i, name) in stems.iter().enumerate() {
         ctx.check_cancel()?;
+        // the server's measurement decides here too; a silent stem is never fetched
+        if let Some(sp) = stem_peaks.iter().find(|p| &p.name == name) {
+            server_measured += 1;
+            if let Level::Silent { peak_dbfs } = stem_audio::level_of_peak(sp.peak, sp.bits) {
+                let shown = peak_dbfs.map_or("-inf".to_string(), |p| format!("{p:.1}"));
+                eprintln!("calliope: import job={} stem={name} dropped source=server peak_dbfs={shown} threshold_dbfs={SILENT_STEM_DBFS}", ctx.id);
+                dropped.push(DroppedStem { name: name.clone(), peak_dbfs });
+                let done = i as u32 + 1;
+                ctx.update(|j| j.snap.stems_done = done);
+                ctx.progress(ImportEvent::Receiving { done, total });
+                continue;
+            }
+        }
         let part = staging.as_ref().expect("staging").stem_part_path(name).map_err(save_err)?;
         client.fetch_stem(&id, name, &part, ctx.cancel.flag()).map_err(client_stop)?;
         // a stem is dropped only after it is proven silent; an unreadable one is kept
@@ -941,7 +956,7 @@ fn run_extract(
             Ok(Level::Silent { peak_dbfs }) => {
                 staging.as_ref().expect("staging").discard_stem_part(name).map_err(save_err)?;
                 let shown = peak_dbfs.map_or("-inf".to_string(), |p| format!("{p:.1}"));
-                eprintln!("calliope: import job={} stem={name} dropped peak_dbfs={shown} threshold_dbfs={SILENT_STEM_DBFS}", ctx.id);
+                eprintln!("calliope: import job={} stem={name} dropped source=local peak_dbfs={shown} threshold_dbfs={SILENT_STEM_DBFS}", ctx.id);
                 dropped.push(DroppedStem { name: name.clone(), peak_dbfs });
             }
             Ok(Level::Audible) => {
@@ -959,7 +974,7 @@ fn run_extract(
         ctx.progress(ImportEvent::Receiving { done, total });
     }
     let dropped_names = if dropped.is_empty() { "none".to_string() } else { dropped.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(",") };
-    eprintln!("calliope: import job={} stems kept={} dropped={dropped_names}", ctx.id, kept.join(","));
+    eprintln!("calliope: import job={} stems kept={} dropped={dropped_names} server_peaks={server_measured}/{total}", ctx.id, kept.join(","));
     if kept.is_empty() {
         return fail(Stage::Server, format!("Every stem is silent (below {SILENT_STEM_DBFS:.0} dBFS), so no track was saved"));
     }

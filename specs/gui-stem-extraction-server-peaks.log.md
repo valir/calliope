@@ -5,3 +5,4 @@ task 2 | App silent_peak uses the shared scan; level_of_peak | implementer | don
 task 3 | stem_peaks in the protocol: StemPeak, JobStatus.stem_peaks, client validation | implementer | done (flake seen once: acceptance_silent_stems cancel_while_the_check_runs_leaves_nothing, passed 3/3 alone)
 task 4 | Stub separator mode undecodable | local (orchestrator fixed a doubled backslash) | done
 task 5 | The server measures and reports stem peaks; --no-stem-peaks | implementer | done (shutdown during measuring fails the job; measuring 6 test stems takes ~1 ms)
+task 6 | Import job skips stems the server reports silent | implementer | done (no separate cancel-right-after-done test; cancel path unchanged)

@@ -42,6 +42,10 @@ impl Drop for TestServer {
 
 impl TestServer {
     fn start(mode: &str) -> TestServer {
+        TestServer::start_with(mode, &[])
+    }
+
+    fn start_with(mode: &str, extra_args: &[&str]) -> TestServer {
         let outer = tempfile::tempdir().unwrap();
         let work = outer.path().join("work");
         fs::create_dir_all(&work).unwrap();
@@ -51,6 +55,7 @@ impl TestServer {
             .arg(project().join("tests/support/stub-separator"))
             .args(["--listen", "127.0.0.1:0", "--work-dir"])
             .arg(&work)
+            .args(extra_args)
             .env_remove("STUB_SEPARATOR_MODE")
             .stderr(Stdio::piped())
             .spawn()
@@ -94,6 +99,15 @@ impl TestServer {
             std::thread::sleep(Duration::from_millis(20));
         }
         false
+    }
+
+    fn stem_gets(&self, name: &str) -> usize {
+        let suffix = format!("/stems/{name} ");
+        self.log.lock().unwrap().iter().filter(|l| l.contains("method=GET path=/v1/jobs/") && l.contains(&suffix)).count()
+    }
+
+    fn all_stem_gets(&self) -> usize {
+        self.log.lock().unwrap().iter().filter(|l| l.contains("method=GET path=/v1/jobs/") && l.contains("/stems/")).count()
     }
 
     fn job_dirs(&self) -> usize {
@@ -803,6 +817,60 @@ fn a_track_of_only_silent_stems_fails_and_keeps_the_prepared_audio() {
     assert_eq!(server.job_dirs(), 0);
     assert!(rig.state.is_active(), "the failed job stays for a retry");
     rig.check_clean();
+}
+
+#[test]
+fn server_silent_stems_are_never_fetched() {
+    let server = TestServer::start("sparse");
+    let rig = Rig::new();
+    let done = extract_to_end(&rig, &server, false);
+    check_sparse(&rig, &done);
+    for n in ["vocals", "drums", "bass", "guitar"] {
+        assert_eq!(server.stem_gets(n), 1, "{n}");
+    }
+    assert_eq!(server.stem_gets("piano"), 0);
+    assert_eq!(server.stem_gets("other"), 0);
+}
+
+#[test]
+fn an_old_server_without_peaks_gives_the_same_result_with_all_stems_fetched() {
+    let server = TestServer::start_with("sparse", &["--no-stem-peaks"]);
+    let rig = Rig::new();
+    let done = extract_to_end(&rig, &server, false);
+    check_sparse(&rig, &done);
+    assert_eq!(server.all_stem_gets(), 6);
+    assert_eq!(server.stem_gets("piano"), 1);
+    assert_eq!(server.stem_gets("other"), 1);
+}
+
+#[test]
+fn all_silent_by_the_server_fetches_nothing() {
+    let server = TestServer::start("silent");
+    let rig = Rig::new();
+    let done = extract_to_end(&rig, &server, true);
+    assert_eq!(done.phase, Phase::Failed);
+    assert!(done.error.clone().unwrap().message.starts_with("Every stem is silent"));
+    assert_eq!(server.all_stem_gets(), 0);
+    assert!(Rig::names_in(&rig.tracks_dir()).is_empty());
+    let tmp = rig.root.join("import-tmp");
+    let job_dirs = Rig::names_in(&tmp);
+    assert_eq!(job_dirs.len(), 1);
+    assert!(tmp.join(&job_dirs[0]).join("audio.flac").is_file());
+    rig.check_clean();
+}
+
+#[test]
+fn an_undecodable_stem_is_fetched_and_kept_while_the_server_silent_one_is_not() {
+    let server = TestServer::start("undecodable");
+    let rig = Rig::new();
+    let done = extract_to_end(&rig, &server, false);
+    assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
+    let names: Vec<String> = done.track.unwrap().stems.iter().map(|s| s.name.clone()).collect();
+    assert_eq!(names, ["vocals", "drums", "bass", "guitar", "piano"]);
+    assert_eq!(done.dropped.len(), 1);
+    assert_eq!(done.dropped[0].name, "other");
+    assert_eq!(server.stem_gets("piano"), 1);
+    assert_eq!(server.stem_gets("other"), 0);
 }
 
 #[test]
