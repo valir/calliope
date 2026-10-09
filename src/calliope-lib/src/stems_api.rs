@@ -58,6 +58,43 @@ pub struct JobStatus {
     pub progress: Option<f64>,
     pub stems: Option<Vec<String>>,
     pub error: Option<String>,
+    /// Peak of every stem the server measured; only on a `done` job, and the key is omitted when
+    /// the server measured nothing (an old server, or `--no-stem-peaks`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stem_peaks: Option<Vec<StemPeak>>,
+}
+
+/// One measured stem. `peak` (max |sample| over all channels) and `bits` are the data: the app
+/// decides with `flac_peak::is_below(peak, bits, ..)`. `peak_dbfs` is for humans (`null` for
+/// digital silence) and is ignored by the client.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StemPeak {
+    pub name: String,
+    pub peak: u64,
+    pub bits: u32,
+    pub peak_dbfs: Option<f64>,
+}
+
+/// Checks a server's peak list against its stem list: every name is in `stems`, no duplicates,
+/// `bits` in 4..=32 and `peak <= 2^(bits-1)`. A stem without an entry is "not measured".
+pub fn check_stem_peaks(stems: &[String], peaks: &[StemPeak]) -> Result<(), String> {
+    let mut seen: Vec<&str> = Vec::new();
+    for p in peaks {
+        if !stems.contains(&p.name) {
+            return Err(format!("peak for unknown stem {:?}", p.name));
+        }
+        if seen.contains(&p.name.as_str()) {
+            return Err(format!("duplicate peak for {:?}", p.name));
+        }
+        seen.push(&p.name);
+        if !(4..=32).contains(&p.bits) {
+            return Err(format!("bits {} out of range", p.bits));
+        }
+        if p.peak > 1u64 << (p.bits - 1) {
+            return Err(format!("peak {} too large for {} bits", p.peak, p.bits));
+        }
+    }
+    Ok(())
 }
 
 /// Body of every 4xx/5xx answer.
@@ -303,6 +340,7 @@ mod tests {
             progress: Some(0.42),
             stems: Some(vec!["vocals".into()]),
             error: None,
+            stem_peaks: None,
         };
         let text = serde_json::to_string(&st).unwrap();
         assert!(text.contains("\"error\":null"));
@@ -312,5 +350,57 @@ mod tests {
         assert_eq!(queued.progress, None);
         let e = ErrorBody { error: "bad".into() };
         assert_eq!(serde_json::from_str::<ErrorBody>(&serde_json::to_string(&e).unwrap()).unwrap(), e);
+    }
+
+    fn sp(name: &str, peak: u64, bits: u32) -> StemPeak {
+        StemPeak { name: name.into(), peak, bits, peak_dbfs: None }
+    }
+
+    #[test]
+    fn stem_peaks_serde_and_compat() {
+        let base = r#"{"job":"ab","state":"done","progress":1.0,"stems":["vocals","piano"],"error":null"#;
+        let absent: JobStatus = serde_json::from_str(&format!("{base}}}")).unwrap();
+        assert_eq!(absent.stem_peaks, None);
+        let null: JobStatus = serde_json::from_str(&format!(r#"{base},"stem_peaks":null}}"#)).unwrap();
+        assert_eq!(null.stem_peaks, None);
+        assert!(!serde_json::to_string(&absent).unwrap().contains("stem_peaks"));
+        let full = format!(
+            r#"{base},"stem_peaks":[{{"name":"vocals","peak":21450,"bits":16,"peak_dbfs":-3.68}},{{"name":"piano","peak":0,"bits":16,"peak_dbfs":null}}]}}"#
+        );
+        let st: JobStatus = serde_json::from_str(&full).unwrap();
+        let peaks = st.stem_peaks.clone().unwrap();
+        assert_eq!(peaks.len(), 2);
+        assert_eq!(peaks[1], StemPeak { name: "piano".into(), peak: 0, bits: 16, peak_dbfs: None });
+        let text = serde_json::to_string(&st).unwrap();
+        assert!(text.contains("\"stem_peaks\""));
+        assert_eq!(serde_json::from_str::<JobStatus>(&text).unwrap(), st);
+
+        // The JobStatus of f62ecf9 (no deny_unknown_fields) still parses the new JSON.
+        #[derive(Debug, Deserialize)]
+        #[allow(dead_code)]
+        struct OldJobStatus {
+            job: String,
+            state: JobState,
+            progress: Option<f64>,
+            stems: Option<Vec<String>>,
+            error: Option<String>,
+        }
+        let old: OldJobStatus = serde_json::from_str(&full).unwrap();
+        assert_eq!(old.stems.unwrap().len(), 2);
+    }
+
+    #[test]
+    fn check_stem_peaks_rules() {
+        let stems: Vec<String> = vec!["vocals".into(), "piano".into()];
+        assert!(check_stem_peaks(&stems, &[]).is_ok());
+        assert!(check_stem_peaks(&stems, &[sp("piano", 0, 16)]).is_ok());
+        assert!(check_stem_peaks(&stems, &[sp("vocals", 1 << 15, 16), sp("piano", 1 << 31, 32)]).is_ok());
+        assert!(check_stem_peaks(&stems, &[sp("vocals", 5, 4), sp("piano", 8, 4)]).is_ok());
+        assert!(check_stem_peaks(&stems, &[sp("drums", 1, 16)]).is_err());
+        assert!(check_stem_peaks(&stems, &[sp("piano", 1, 16), sp("piano", 2, 16)]).is_err());
+        assert!(check_stem_peaks(&stems, &[sp("piano", 1, 3)]).is_err());
+        assert!(check_stem_peaks(&stems, &[sp("piano", 1, 33)]).is_err());
+        assert!(check_stem_peaks(&stems, &[sp("piano", (1 << 15) + 1, 16)]).is_err());
+        assert!(check_stem_peaks(&stems, &[sp("piano", 9, 4)]).is_err());
     }
 }

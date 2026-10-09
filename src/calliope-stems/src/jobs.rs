@@ -131,6 +131,7 @@ impl Manager {
             progress: if j.state == JobState::Done { Some(1.0) } else { j.progress },
             stems: j.stems.clone(),
             error: j.error.clone(),
+            stem_peaks: None,
         })
     }
 

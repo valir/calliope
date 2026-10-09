@@ -229,6 +229,46 @@ fn status_validates_stems_and_job_binding() {
 }
 
 #[test]
+fn status_validates_stem_peak_list() {
+    let job = "0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b";
+    let pk = |n: &str, peak: u64, bits: u32| serde_json::json!({"name":n,"peak":peak,"bits":bits,"peak_dbfs":null});
+    let with = |peaks: serde_json::Value| {
+        serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["vocals","piano"],"error":null,"stem_peaks":peaks})
+    };
+    let cases: Vec<(&str, serde_json::Value, bool)> = vec![
+        ("ok", with(serde_json::json!([pk("vocals", 100, 16), pk("piano", 0, 16)])), true),
+        ("empty", with(serde_json::json!([])), true),
+        ("unknown name", with(serde_json::json!([pk("drums", 1, 16)])), false),
+        ("duplicate", with(serde_json::json!([pk("piano", 1, 16), pk("piano", 1, 16)])), false),
+        ("bits 3", with(serde_json::json!([pk("piano", 1, 3)])), false),
+        ("bits 33", with(serde_json::json!([pk("piano", 1, 33)])), false),
+        ("bits 0", with(serde_json::json!([pk("piano", 0, 0)])), false),
+        ("peak too big", with(serde_json::json!([pk("piano", 32769, 16)])), false),
+        ("negative peak", with(serde_json::json!([{"name":"piano","peak":-1,"bits":16,"peak_dbfs":null}])), false),
+        ("peak string", with(serde_json::json!([{"name":"piano","peak":"0","bits":16,"peak_dbfs":null}])), false),
+        ("not a list", with(serde_json::json!("lots")), false),
+        ("17 entries", with(serde_json::json!((0..17).map(|_| pk("piano", 1, 16)).collect::<Vec<_>>())), false),
+        ("peaks without stems", serde_json::json!({"job":job,"state":"running","progress":0.5,"stems":null,"error":null,"stem_peaks":[pk("piano", 1, 16)]}), false),
+    ];
+    for (name, body, ok) in cases {
+        let fake = serve(move |_, s| json(s, "200 OK", body.clone()));
+        let r = fake.client().status(job);
+        assert_eq!(r.is_ok(), ok, "{name}: {r:?}");
+        // Type errors are an unusable answer; rule breaks are Invalid.
+        let wrong_type = ["negative peak", "peak string", "not a list"].contains(&name);
+        match r {
+            Err(ClientError::Incompatible(_)) => assert!(wrong_type, "{name}"),
+            Err(ClientError::Invalid(m)) => assert!(!wrong_type && m == "bad stem peak list", "{name}: {m}"),
+            _ => {}
+        }
+    }
+    // No key: fine, and nothing measured.
+    let body = serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["vocals"],"error":null});
+    let fake = serve(move |_, s| json(s, "200 OK", body.clone()));
+    assert_eq!(fake.client().status(job).unwrap().stem_peaks, None);
+}
+
+#[test]
 fn fetch_stem_refuses_non_flac_and_cleans_up() {
     let job = "0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b";
     let cases: Vec<(&str, Box<dyn Fn(&mut TcpStream) + Send + Sync>)> = vec![
