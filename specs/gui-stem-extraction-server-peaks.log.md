@@ -7,3 +7,5 @@ task 4 | Stub separator mode undecodable | local (orchestrator fixed a doubled b
 task 5 | The server measures and reports stem peaks; --no-stem-peaks | implementer | done (shutdown during measuring fails the job; measuring 6 test stems takes ~1 ms)
 task 6 | Import job skips stems the server reports silent | implementer | done (no separate cancel-right-after-done test; cancel path unchanged)
 task 7 | GUI e2e: silent stems never fetched (server request log) | implementer | done
+reviewer | APPROVED (0 blockers, 0 majors; minors: record the trust model in architecture.md; commit the tester files) | done
+tester | 23 acceptance checks PASS, no production defects; test-harness race found in the wait helpers (import_job_tests.rs, acceptance_silent_stems.rs) | done
