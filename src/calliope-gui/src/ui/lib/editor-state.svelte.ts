@@ -57,6 +57,7 @@ let generation = 0;
 /** A backend session may exist (so it has to be closed on a change). */
 let sessionOpen = false;
 let key: string | null | undefined = undefined;
+const OPEN_ATTEMPTS = 3;
 
 function resetFields(): void {
   ed.message = '';
@@ -72,6 +73,7 @@ function resetFields(): void {
   ed.audioError = '';
   gainPending.clear();
   seekPending = null;
+  seekGuard = null;
 }
 
 export function resetEditor(): void {
@@ -121,19 +123,29 @@ export function syncSelection(track: TrackRecord | null): void {
   resetFields();
   ed.loading = { done: 0, total: track.stems.length };
   void closing.then(async () => {
-    if (gen !== generation) return;
     sessionOpen = true;
-    try {
-      const snap = await openEditor(track.id, (e) => onEvent(gen, e));
+    for (let attempt = 1; ; attempt++) {
       if (gen !== generation) return;
-      applySnapshot(snap);
-      log(`editor active id=${snap.id} stems=${snap.stems.length}`);
-    } catch (err) {
-      if (gen !== generation || String(err).includes(EDITOR_SUPERSEDED)) return;
-      ed.status = 'error';
-      ed.loading = null;
-      ed.message = `Could not open "${track.title}": ${String(err).replace(/^Error: /, '')}`;
-      fail('open_editor', err);
+      try {
+        const snap = await openEditor(track.id, (e) => onEvent(gen, e));
+        if (gen !== generation) return;
+        applySnapshot(snap);
+        log(`editor active id=${snap.id} stems=${snap.stems.length}`);
+        return;
+      } catch (err) {
+        if (gen !== generation) return;
+        // Superseded while this is still the current open: a stale open of an earlier
+        // selection overtook this one in the backend. Ask again, a few times at most.
+        if (String(err).includes(EDITOR_SUPERSEDED) && attempt < OPEN_ATTEMPTS) {
+          log(`editor open superseded, retrying id=${track.id}`);
+          continue;
+        }
+        ed.status = 'error';
+        ed.loading = null;
+        ed.message = `Could not open "${track.title}": ${String(err).replace(/^Error: /, '')}`;
+        fail('open_editor', err);
+        return;
+      }
     }
   });
 }
@@ -191,6 +203,19 @@ function onEvent(gen: number, e: EditorEvent): void {
     case 'transport': {
       if (ed.status !== 'active') break;
       const { kind: _k, id: _i, ...t } = e;
+      // While a seek is in flight, or until an event shows it took effect, positions of
+      // earlier events are stale: keep the slider where the user put it.
+      if (seekGuardActive()) {
+        const g = seekGuard!;
+        const reached = t.position_ms >= g.target && t.position_ms <= g.target + SEEK_SETTLE_MS;
+        // Play/stop/end of track decide the position themselves.
+        const moved = t.playing !== ed.transport.playing;
+        if (moved || (!seekRunning && seekPending === null && reached)) {
+          seekGuard = null;
+        } else {
+          t.position_ms = ed.transport.position_ms;
+        }
+      }
       ed.transport = t;
       break;
     }
@@ -344,6 +369,17 @@ export const setUnmuted = (name: string, unmuted: boolean): void => setLane(name
 
 let seekPending: number | null = null;
 let seekRunning = false;
+/** The last sought position; positions from events are ignored until one reaches it. */
+let seekGuard: { target: number; until: number } | null = null;
+const SEEK_SETTLE_MS = 1500;
+const SEEK_GUARD_MS = 1000;
+
+function seekGuardActive(): boolean {
+  if (seekRunning || seekPending !== null) return true;
+  if (seekGuard && Date.now() < seekGuard.until) return true;
+  seekGuard = null;
+  return false;
+}
 
 async function drainSeek(): Promise<void> {
   if (seekRunning) return;
@@ -366,6 +402,7 @@ async function drainSeek(): Promise<void> {
     }
   } finally {
     seekRunning = false;
+    if (seekGuard) seekGuard.until = Date.now() + SEEK_GUARD_MS;
     if (seekPending !== null && gen === generation) void drainSeek();
   }
 }
@@ -375,6 +412,7 @@ export function seek(positionMs: number): void {
   const p = Math.min(Math.max(0, Math.round(positionMs)), ed.durationMs);
   ed.transport.position_ms = p;
   seekPending = p;
+  seekGuard = { target: p, until: Date.now() + SEEK_GUARD_MS };
   void drainSeek();
 }
 

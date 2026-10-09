@@ -5,6 +5,7 @@ use super::*;
 use crate::audio_out::ManualBackend;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 const FOUR: &str = "0199c0a0-0000-7000-8000-000000000201";
@@ -670,4 +671,26 @@ fn save_progress_is_monotonic_and_ends_at_one() {
         .collect();
     assert!(!p.is_empty() && p.windows(2).all(|w| w[0] <= w[1]), "{p:?}");
     assert_eq!(p.last(), Some(&1.0));
+}
+
+#[test]
+fn a_panic_in_the_save_thread_fails_the_save_and_frees_the_slot() {
+    let (_t, repo, spec) = repo_spec(FOUR);
+    let events = events_only();
+    let (ev, armed) = (events.clone(), Arc::new(AtomicBool::new(true)));
+    let sink: EventSink = Arc::new(move |e| {
+        if matches!(e, EditorEvent::Saving { .. }) && armed.swap(false, Ordering::SeqCst) {
+            panic!("simulated bug in the save thread");
+        }
+        ev.lock().unwrap().push(e);
+    });
+    let mut m = EditorManager::new(Box::new(ManualBackend::new()), sink);
+    m.open(&spec).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true).unwrap();
+    m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
+    assert!(matches!(final_event(&events), EditorEvent::SaveFailed { .. }));
+    assert!(parts_in(&spec.dir).is_empty());
+    // the job counts as finished: another save can start
+    m.start_save(FOUR, repo, no_lock()).unwrap();
+    m.shutdown_save(Duration::from_secs(30));
 }

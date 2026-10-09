@@ -300,6 +300,31 @@ fn build_stream(
     Ok(stream)
 }
 
+/// Frames the cpal callback renders at once (larger device buffers are split).
+const MAX_BLOCK_FRAMES: usize = 8192;
+
+/// One device callback: renders through the fixed `scratch` in chunks (the device may ask
+/// for more frames than it holds), so the callback never allocates.
+fn fill_device<T: SizedSample + FromSample<f32>>(data: &mut [T], channels: usize, scratch: &mut [f32], render: &mut RenderFn) {
+    for part in data.chunks_mut(MAX_BLOCK_FRAMES * channels) {
+        let frames = part.len() / channels;
+        let block = &mut scratch[..frames * 2];
+        block.fill(0.0);
+        render(block);
+        for (out, src) in part.chunks_mut(channels).zip(block.chunks(2)) {
+            if channels == 1 {
+                out[0] = T::from_sample((src[0] + src[1]) * 0.5);
+            } else {
+                out[0] = T::from_sample(src[0]);
+                out[1] = T::from_sample(src[1]);
+                for extra in &mut out[2..] {
+                    *extra = T::from_sample(0.0);
+                }
+            }
+        }
+    }
+}
+
 fn typed<T>(
     device: &cpal::Device,
     config: cpal::StreamConfig,
@@ -310,30 +335,11 @@ where
     T: SizedSample + FromSample<f32>,
 {
     let channels = config.channels as usize;
-    let mut scratch = vec![0.0f32; 8192 * 2];
+    let mut scratch = vec![0.0f32; MAX_BLOCK_FRAMES * 2];
     device
         .build_output_stream(
             config,
-            move |data: &mut [T], _| {
-                let frames = data.len() / channels;
-                if scratch.len() < frames * 2 {
-                    scratch.resize(frames * 2, 0.0);
-                }
-                let block = &mut scratch[..frames * 2];
-                block.fill(0.0);
-                render(block);
-                for (out, src) in data.chunks_mut(channels).zip(block.chunks(2)) {
-                    if channels == 1 {
-                        out[0] = T::from_sample((src[0] + src[1]) * 0.5);
-                    } else {
-                        out[0] = T::from_sample(src[0]);
-                        out[1] = T::from_sample(src[1]);
-                        for extra in &mut out[2..] {
-                            *extra = T::from_sample(0.0);
-                        }
-                    }
-                }
-            },
+            move |data: &mut [T], _| fill_device(data, channels, &mut scratch, &mut render),
             on_err,
             None,
         )
@@ -412,6 +418,33 @@ impl Drop for ManualHandle {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn device_callback_larger_than_the_scratch_is_rendered_in_chunks() {
+        let mut scratch = vec![0.0f32; MAX_BLOCK_FRAMES * 2];
+        let (ptr, len) = (scratch.as_ptr(), scratch.len());
+        let mut sizes = Vec::new();
+        let mut counter = 0.0f32;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let s2 = seen.clone();
+        let mut render: RenderFn = Box::new(move |out| {
+            s2.lock().unwrap().push(out.len() / 2);
+            for f in out.chunks_mut(2) {
+                counter += 1.0;
+                f[0] = counter;
+                f[1] = -counter;
+            }
+        });
+        let frames = MAX_BLOCK_FRAMES * 2 + 100;
+        let mut data = vec![0.0f32; frames * 3]; // three device channels
+        fill_device(&mut data, 3, &mut scratch, &mut render);
+        sizes.extend(seen.lock().unwrap().iter().copied());
+        assert_eq!(sizes, vec![MAX_BLOCK_FRAMES, MAX_BLOCK_FRAMES, 100]);
+        assert_eq!((scratch.as_ptr(), scratch.len()), (ptr, len), "the scratch must not be reallocated");
+        for (i, f) in data.chunks(3).enumerate() {
+            assert_eq!(f, [(i + 1) as f32, -((i + 1) as f32), 0.0]);
+        }
+    }
 
     #[test]
     fn manual_pull_returns_what_render_produced() {

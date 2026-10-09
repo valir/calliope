@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ed, nudge, positionText, seek } from '$lib/editor-state.svelte';
-  import { parsePosition } from '$lib/time-format';
+  import { formatPosition, parsePosition } from '$lib/time-format';
 
   // Unsaved text while the user edits; null means the field follows the transport position.
   let text = $state<string | null>(null);
@@ -12,7 +12,7 @@
     if (text === null) return;
     const ms = parsePosition(text);
     if (ms === null || ms > ed.durationMs) {
-      invalid = ms === null ? 'Enter a time like 1:23.4' : 'That time is past the end of the track';
+      invalid = `Enter a time between 0:00.0 and ${formatPosition(ed.durationMs)}`;
       return;
     }
     text = null;

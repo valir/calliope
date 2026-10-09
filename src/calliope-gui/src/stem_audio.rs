@@ -168,6 +168,8 @@ pub struct StemReader {
     label: String,
     reader: FlacReader<BufReader<File>>,
     channels: u32,
+    sample_rate: u32,
+    bits: u32,
     scale: f32,
     buf: Vec<i32>,
     /// Current block as interleaved source samples, and the read position in frames.
@@ -186,6 +188,8 @@ impl StemReader {
         Ok(Self {
             label: file_label(path),
             channels: si.channels,
+            sample_rate: si.sample_rate,
+            bits: si.bits_per_sample,
             scale: 1.0 / (1u64 << (si.bits_per_sample - 1)) as f32,
             reader,
             buf: Vec::new(),
@@ -193,6 +197,18 @@ impl StemReader {
             pos: 0,
             finished: false,
         })
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    pub fn bits(&self) -> u32 {
+        self.bits
+    }
+
+    pub fn label(&self) -> &str {
+        &self.label
     }
 
     /// Fills `out` (interleaved stereo, `frames` frames) and returns the number of frames

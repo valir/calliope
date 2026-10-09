@@ -458,6 +458,8 @@ fn channel_sink(events: tauri::ipc::Channel<ImportEvent>) -> Sink {
 pub struct EditorState {
     mgr: Mutex<EditorManager>,
     slot: Arc<Mutex<Option<EventSink>>>,
+    /// The running save's flag, reachable without the manager lock.
+    live_save: Arc<Mutex<Option<Arc<crate::backing_render::SaveShared>>>>,
 }
 
 impl EditorState {
@@ -470,9 +472,26 @@ impl EditorState {
                 t(ev);
             }
         });
-        Self { mgr: Mutex::new(EditorManager::new(backend, sink)), slot }
+        let mut mgr = EditorManager::new(backend, sink);
+        // Closing a real device can block: handles are dropped after the lock is released.
+        mgr.defer_drops();
+        let live_save = mgr.live_save();
+        Self { mgr: Mutex::new(mgr), slot, live_save }
     }
 
+    /// Runs `f` on the manager. Output handles it retired are dropped after the lock is
+    /// released, so a stalled audio device never blocks other commands or the ticker.
+    pub fn with<R>(&self, f: impl FnOnce(&mut EditorManager) -> R) -> R {
+        let (r, trash) = {
+            let mut m = self.mgr.lock().unwrap_or_else(|e| e.into_inner());
+            let r = f(&mut m);
+            (r, m.take_trash())
+        };
+        drop(trash);
+        r
+    }
+
+    #[cfg(test)]
     fn mgr(&self) -> MutexGuard<'_, EditorManager> {
         self.mgr.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -483,14 +502,51 @@ impl EditorState {
 
     /// Ticker body (every 20 ms).
     pub fn tick(&self, now: std::time::Instant) {
-        self.mgr().tick(now);
+        self.with(|m| m.tick(now));
     }
 
-    /// App exit: stops playback and ends a running save.
+    /// App exit: stops playback and ends a running save, within about `cap`. When the
+    /// manager stays locked (a stuck command) the save is still cancelled through its flag.
     pub fn shutdown(&self, cap: Duration) {
-        let mut m = self.mgr();
-        m.close();
-        m.shutdown_save(cap);
+        let end = std::time::Instant::now() + cap;
+        let lock_end = std::time::Instant::now() + cap / 2;
+        let guard = loop {
+            match self.mgr.try_lock() {
+                Ok(g) => break Some(g),
+                Err(std::sync::TryLockError::Poisoned(e)) => break Some(e.into_inner()),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    if std::time::Instant::now() >= lock_end {
+                        break None;
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+        };
+        match guard {
+            Some(mut m) => {
+                m.close();
+                m.shutdown_save(end.saturating_duration_since(std::time::Instant::now()));
+                let trash = m.take_trash();
+                drop(m);
+                // Closing the device may hang: do it on a helper thread and wait a little.
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    drop(trash);
+                    let _ = tx.send(());
+                });
+                let _ = rx.recv_timeout(end.saturating_duration_since(std::time::Instant::now()));
+            }
+            None => {
+                eprintln!("calliope: editor busy at exit; cancelling the save without the lock");
+                let shared = self.live_save.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                if let Some(sh) = shared {
+                    sh.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                    while !sh.is_finished() && std::time::Instant::now() < end {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -498,48 +554,73 @@ impl EditorState {
 pub const EDITOR_TICK: Duration = Duration::from_millis(20);
 
 pub fn do_open_editor(st: &EditorState, repo: &RepoState, id: &str, sink: EventSink) -> Result<EditorSnapshot, String> {
-    st.set_sink(sink);
-    let spec = {
-        let root = repo.lock();
-        let r = Repository::new(root.clone());
-        let rec = r.load_record(id)?;
-        OpenSpec {
-            dir: r.tracks_dir().join(&rec.id),
-            id: rec.id,
-            title: rec.title,
-            stems: rec.stems,
-            missing: rec.missing,
-            variant: rec.backings.into_iter().next(),
-        }
-    };
-    let (ticket, events) = {
-        let mut m = st.mgr();
+    // The open is registered before anything slow, so overlapping opens are ordered by
+    // their arrival here and the newest one owns the event sink.
+    let (ticket, events) = st.with(|m| {
+        st.set_sink(sink);
         (m.begin_open(), m.sink())
-    };
-    let loaded = editor::load(&spec, &ticket, &*events)?;
-    st.mgr().finish_open(&ticket, &spec, loaded)
+    });
+    let result = (|| {
+        let spec = {
+            let root = repo.lock();
+            let r = Repository::new(root.clone());
+            let rec = r.load_record(id)?;
+            OpenSpec {
+                dir: r.tracks_dir().join(&rec.id),
+                id: rec.id,
+                title: rec.title,
+                stems: rec.stems,
+                missing: rec.missing,
+                variant: rec.backings.into_iter().next(),
+            }
+        };
+        let loaded = editor::load(&spec, &ticket, &*events)?;
+        st.with(|m| m.finish_open(&ticket, &spec, loaded))
+    })();
+    if result.is_err() {
+        st.with(|m| m.abort_open(&ticket));
+    }
+    result
 }
 
 pub fn do_close_editor(st: &EditorState) {
-    st.mgr().close();
+    st.with(|m| m.close());
 }
 
+/// Re-attach after a webview reload. It does not take the sink from an open in progress.
 pub fn do_watch_editor(st: &EditorState, sink: EventSink) -> Option<EditorSnapshot> {
-    st.set_sink(sink);
-    st.mgr().current()
+    st.with(|m| {
+        if !m.is_opening() {
+            st.set_sink(sink);
+        }
+        m.current()
+    })
+}
+
+pub fn do_editor_play(st: &EditorState, id: &str) -> Result<TransportState, String> {
+    let req = st.with(|m| m.play_request(id))?;
+    // The device is opened without the manager lock.
+    let opened = req.map(editor::OutputRequest::open).transpose()?;
+    st.with(|m| m.play_with(id, opened))
+}
+
+pub fn do_editor_lane_play(st: &EditorState, id: &str, name: &str) -> Result<TransportState, String> {
+    let req = st.with(|m| m.lane_play_request(id, name))?;
+    let opened = req.map(editor::OutputRequest::open).transpose()?;
+    st.with(|m| m.lane_play_with(id, name, opened))
 }
 
 pub fn do_editor_seek(st: &EditorState, id: &str, position: u64) -> Result<TransportState, String> {
-    st.mgr().seek(id, position, std::time::Instant::now())
+    st.with(|m| m.seek(id, position, std::time::Instant::now()))
 }
 
 pub fn do_editor_nudge(st: &EditorState, id: &str, delta: i64) -> Result<TransportState, String> {
-    st.mgr().nudge(id, delta, std::time::Instant::now())
+    st.with(|m| m.nudge(id, delta, std::time::Instant::now()))
 }
 
 pub fn do_save_backing(st: &EditorState, repo: &RepoState, id: &str) -> Result<EditorSnapshot, String> {
     let r = Repository::new(repo.current_root());
-    st.mgr().start_save(id, r, repo.repo_lock())
+    st.with(|m| m.start_save(id, r, repo.repo_lock()))
 }
 
 fn event_sink(events: tauri::ipc::Channel<EditorEvent>) -> EventSink {
@@ -784,7 +865,7 @@ pub async fn close_editor(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn get_editor(app: tauri::AppHandle) -> Result<Option<EditorSnapshot>, String> {
-    Ok(app.state::<EditorState>().mgr().current())
+    blocking(move || Ok(app.state::<EditorState>().with(|m| m.current()))).await
 }
 
 #[tauri::command]
@@ -792,42 +873,42 @@ pub async fn watch_editor(
     app: tauri::AppHandle,
     events: tauri::ipc::Channel<EditorEvent>,
 ) -> Result<Option<EditorSnapshot>, String> {
-    Ok(do_watch_editor(&app.state::<EditorState>(), event_sink(events)))
+    blocking(move || Ok(do_watch_editor(&app.state::<EditorState>(), event_sink(events)))).await
 }
 
 #[tauri::command]
 pub async fn editor_play(app: tauri::AppHandle, id: String) -> Result<TransportState, String> {
-    app.state::<EditorState>().mgr().play(&id)
+    blocking(move || do_editor_play(&app.state::<EditorState>(), &id)).await
 }
 
 #[tauri::command]
 pub async fn editor_lane_play(app: tauri::AppHandle, id: String, name: String) -> Result<TransportState, String> {
-    app.state::<EditorState>().mgr().lane_play(&id, &name)
+    blocking(move || do_editor_lane_play(&app.state::<EditorState>(), &id, &name)).await
 }
 
 #[tauri::command]
 pub async fn editor_end_solo(app: tauri::AppHandle, id: String) -> Result<TransportState, String> {
-    app.state::<EditorState>().mgr().end_solo(&id)
+    blocking(move || app.state::<EditorState>().with(|m| m.end_solo(&id))).await
 }
 
 #[tauri::command]
 pub async fn editor_pause(app: tauri::AppHandle, id: String) -> Result<TransportState, String> {
-    app.state::<EditorState>().mgr().pause(&id)
+    blocking(move || app.state::<EditorState>().with(|m| m.pause(&id))).await
 }
 
 #[tauri::command]
 pub async fn editor_stop(app: tauri::AppHandle, id: String) -> Result<TransportState, String> {
-    app.state::<EditorState>().mgr().stop(&id)
+    blocking(move || app.state::<EditorState>().with(|m| m.stop(&id))).await
 }
 
 #[tauri::command]
 pub async fn editor_seek(app: tauri::AppHandle, id: String, position: u64) -> Result<TransportState, String> {
-    do_editor_seek(&app.state::<EditorState>(), &id, position)
+    blocking(move || do_editor_seek(&app.state::<EditorState>(), &id, position)).await
 }
 
 #[tauri::command]
 pub async fn editor_nudge(app: tauri::AppHandle, id: String, delta: i64) -> Result<TransportState, String> {
-    do_editor_nudge(&app.state::<EditorState>(), &id, delta)
+    blocking(move || do_editor_nudge(&app.state::<EditorState>(), &id, delta)).await
 }
 
 #[tauri::command]
@@ -838,7 +919,7 @@ pub async fn editor_set_stem(
     gain: Option<f32>,
     unmuted: bool,
 ) -> Result<LaneState, String> {
-    app.state::<EditorState>().mgr().set_stem(&id, &name, gain, unmuted)
+    blocking(move || app.state::<EditorState>().with(|m| m.set_stem(&id, &name, gain, unmuted))).await
 }
 
 #[tauri::command]
@@ -848,7 +929,7 @@ pub async fn save_backing(app: tauri::AppHandle, id: String) -> Result<EditorSna
 
 #[tauri::command]
 pub async fn cancel_backing_save(app: tauri::AppHandle, id: String) -> Result<(), String> {
-    app.state::<EditorState>().mgr().cancel_save(&id)
+    blocking(move || app.state::<EditorState>().with(|m| m.cancel_save(&id))).await
 }
 
 #[tauri::command]
@@ -1243,3 +1324,7 @@ mod tests {
         assert_eq!(*got.lock().unwrap(), 11);
     }
 }
+
+#[cfg(test)]
+#[path = "editor_ipc_tests.rs"]
+mod editor_ipc_tests;

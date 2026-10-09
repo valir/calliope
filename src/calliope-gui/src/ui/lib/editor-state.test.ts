@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import type { Channel } from '@tauri-apps/api/core';
 import {
-  canPlay, ed, lanePlay, leaveEditor, resetEditor, save, saveEnabled, setGain, setUnmuted, stopEnabled,
+  canPlay, ed, lanePlay, leaveEditor, resetEditor, save, saveEnabled, seek, setGain, setUnmuted, stopEnabled,
   syncSelection,
 } from './editor-state.svelte';
 import { resetLibrary } from './library-state.svelte';
@@ -107,11 +107,41 @@ describe('activation', () => {
     expect(ed.transport.playing).toBe(false);
   });
 
-  it('ignores a superseded load', async () => {
+  it('asks again when its own open was superseded by a stale one', async () => {
+    let n = 0;
+    handlers.open_editor = (a) => {
+      if (++n === 1) throw 'superseded';
+      return snapshot(a.id as string);
+    };
+    syncSelection(stemTrack);
+    await sleep(20);
+    expect(names().filter((c) => c === 'open_editor')).toHaveLength(2);
+    expect(ed.status).toBe('active');
+  });
+
+  it('gives up with an error when every open is superseded', async () => {
     handlers.open_editor = () => { throw 'superseded'; };
     syncSelection(stemTrack);
+    await sleep(20);
+    expect(names().filter((c) => c === 'open_editor')).toHaveLength(3);
+    expect(ed.status).toBe('error');
+  });
+
+  it('ignores a superseded open of an older selection', async () => {
+    let release: () => void = () => {};
+    handlers.open_editor = (a) => {
+      if (a.id === stemTrack.id) return new Promise((_, rej) => { release = () => rej('superseded'); });
+      return snapshot(a.id as string);
+    };
+    syncSelection(stemTrack);
     await flush();
-    expect(ed.status).toBe('loading');
+    syncSelection(otherStemTrack);
+    await flush();
+    release();
+    await sleep(10);
+    expect(ed.status).toBe('active');
+    expect(ed.trackId).toBe('other');
+    expect(names().filter((c) => c === 'open_editor')).toHaveLength(2);
   });
 
   it('shows other load errors', async () => {
@@ -224,6 +254,60 @@ describe('leaving the view', () => {
     leaveEditor();
     await flush();
     expect(names()).not.toContain('editor_stop');
+  });
+});
+
+describe('seeking', () => {
+  const at = (position_ms: number, playing = false) =>
+    channels[0].onmessage({ kind: 'transport', id: stemTrack.id, ...idle, playing, position_ms });
+
+  it('keeps the slider at the sought position until an event reflects the seek', async () => {
+    let finish: (t: TransportState) => void = () => {};
+    handlers.editor_seek = () => new Promise<TransportState>((r) => { finish = r; });
+    syncSelection(stemTrack);
+    await flush();
+    at(1000, true);
+    expect(ed.transport.position_ms).toBe(1000);
+    seek(6000);
+    expect(ed.transport.position_ms).toBe(6000);
+    at(1100, true); // stale event from before the seek, while the call runs
+    expect(ed.transport.position_ms).toBe(6000);
+    finish({ ...idle, playing: true, position_ms: 6000 });
+    await flush();
+    at(1200, true); // stale event that was already in flight
+    expect(ed.transport.position_ms).toBe(6000);
+    at(6100, true); // the first event after the seek
+    expect(ed.transport.position_ms).toBe(6100);
+    at(6200, true);
+    expect(ed.transport.position_ms).toBe(6200);
+  });
+
+  it('a later seek during a running one keeps the newest position', async () => {
+    const finish: ((t: TransportState) => void)[] = [];
+    handlers.editor_seek = () => new Promise<TransportState>((r) => { finish.push(r); });
+    syncSelection(stemTrack);
+    await flush();
+    seek(3000);
+    seek(4000);
+    at(500);
+    expect(ed.transport.position_ms).toBe(4000);
+    finish[0]({ ...idle, position_ms: 3000 });
+    await flush();
+    expect(ed.transport.position_ms).toBe(4000);
+    finish[1]({ ...idle, position_ms: 4000 });
+    await flush();
+    expect(ed.transport.position_ms).toBe(4000);
+  });
+
+  it('a stop or end of track after a seek is not held back', async () => {
+    syncSelection(stemTrack);
+    await flush();
+    at(1000, true);
+    seek(6000);
+    await flush();
+    at(0, false); // playback ended and stopped
+    expect(ed.transport.position_ms).toBe(0);
+    expect(ed.transport.playing).toBe(false);
   });
 });
 

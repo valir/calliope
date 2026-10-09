@@ -171,6 +171,7 @@ describe('through the whole app', () => {
     await flush();
     expect(calls.filter((c) => c[0] === 'editor_seek')).toHaveLength(n);
     expect(f.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByTestId('time-error').textContent).toBe('Enter a time between 0:00.0 and 3:07.4');
     // the exact end is allowed
     await fireEvent.input(f, { target: { value: '3:07.4' } });
     await fireEvent.keyDown(f, { key: 'Enter' });

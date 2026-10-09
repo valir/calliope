@@ -12,8 +12,9 @@
   onMount(() => {
     // An unfinished Library edit keeps its data; otherwise rescan.
     if (lib.mode !== 'edit') void load();
-    // After a webview reload the backend may still hold a session.
-    void attachEditor();
+    // After a webview reload the backend may still hold a session. With a track selected
+    // the editor opens that one instead, and a late attach must not take its event sink.
+    if (!lib.selectedId) void attachEditor();
   });
 
   // The editor follows the selected track (shared with the Library).

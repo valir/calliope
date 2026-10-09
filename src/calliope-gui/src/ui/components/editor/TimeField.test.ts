@@ -62,7 +62,7 @@ describe('TimeField', () => {
     await type(t);
     expect(seeks()).toHaveLength(0);
     expect(field().getAttribute('aria-invalid')).toBe('true');
-    expect(screen.getByTestId('time-error')).toBeTruthy();
+    expect(screen.getByTestId('time-error').textContent).toBe('Enter a time between 0:00.0 and 3:07.4');
   });
 
   it('Escape reverts', async () => {

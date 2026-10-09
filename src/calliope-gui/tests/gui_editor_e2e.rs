@@ -4,7 +4,9 @@
 //!
 //! Every test works on a copy of `tests/fixtures/library-editor` under `target/gui-e2e/<test>/`.
 //! The audio goes to the capturing fake backend (a float32 WAV that the tests analyse); the
-//! real sound device is never opened.
+//! real sound device is never opened. Without the `e2e-hooks` feature the app would open the
+//! real device, so the whole file is compiled out then (and `start_editor` asserts it too).
+#![cfg(feature = "e2e-hooks")]
 
 mod common;
 

@@ -150,7 +150,24 @@ fn render_inner(
     let mut readers = Vec::new();
     for s in &input.stems {
         if s.gain != 0.0 {
-            readers.push((StemReader::open(&s.path)?, s.gain));
+            let reader = StemReader::open(&s.path)?;
+            // The file may have been replaced since the session was opened.
+            if reader.sample_rate() != input.sample_rate {
+                return Err(format!(
+                    "Stem {} changed on disk: it has {} Hz, the session uses {} Hz. Reopen the track.",
+                    reader.label(),
+                    reader.sample_rate(),
+                    input.sample_rate
+                ));
+            }
+            if reader.bits() > 16 && input.bits == 16 {
+                return Err(format!(
+                    "Stem {} changed on disk: it has {} bits per sample, the session uses 16. Reopen the track.",
+                    reader.label(),
+                    reader.bits()
+                ));
+            }
+            readers.push((reader, s.gain));
         }
     }
     let scratch = vec![Vec::new(); readers.len()];
@@ -289,7 +306,10 @@ pub struct SaveParams {
 pub fn spawn(params: SaveParams, shared: Arc<SaveShared>, sink: EventSink) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let id = params.id.clone();
-        let result = run(&params, &shared, &sink);
+        let part = params.dir.join(format!(".calliope-backing-{}.part", uuid::Uuid::now_v7()));
+        // A panic must not leave the job "running" forever or the part file behind.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&params, &shared, &sink, &part)))
+            .unwrap_or_else(|_| Err((Some(part.clone()), "The save stopped unexpectedly".to_string())));
         let part_cleanup = |p: &Path| {
             let _ = fs::remove_file(p);
         };
@@ -314,10 +334,7 @@ pub fn spawn(params: SaveParams, shared: Arc<SaveShared>, sink: EventSink) -> Jo
 
 type JobError = (Option<PathBuf>, String);
 
-fn run(p: &SaveParams, shared: &SaveShared, sink: &EventSink) -> Result<EditorEvent, JobError> {
-    let part = p
-        .dir
-        .join(format!(".calliope-backing-{}.part", uuid::Uuid::now_v7()));
+fn run(p: &SaveParams, shared: &SaveShared, sink: &EventSink, part: &Path) -> Result<EditorEvent, JobError> {
     let mut throttle = Throttle::new(PROGRESS_INTERVAL);
     let mut report = |fraction: f32| {
         shared.progress.store(fraction.to_bits(), Ordering::Relaxed);
@@ -328,8 +345,8 @@ fn run(p: &SaveParams, shared: &SaveShared, sink: &EventSink) -> Result<EditorEv
             });
         }
     };
-    let stats = render_flac(&p.input, &part, &shared.cancel, &mut report).map_err(|e| (None, e))?;
-    let fail = |msg: String| (Some(part.clone()), msg);
+    let stats = render_flac(&p.input, part, &shared.cancel, &mut report).map_err(|e| (None, e))?;
+    let fail = |msg: String| (Some(part.to_path_buf()), msg);
     if shared.cancel.load(Ordering::Relaxed) {
         return Err(fail(CANCELLED.into()));
     }
@@ -339,7 +356,7 @@ fn run(p: &SaveParams, shared: &SaveShared, sink: &EventSink) -> Result<EditorEv
             id: &p.id,
             variant: Some(&p.variant),
             stems: &p.stems,
-            part: &part,
+            part,
             mix: p.mix.clone(),
             sample_rate: p.input.sample_rate,
             bits: p.input.bits,

@@ -266,3 +266,37 @@ fn throttle_allows_ten_per_second() {
     assert_eq!(allowed.len(), 11); // 0, 100, ..., 1000
     assert!(allowed.windows(2).all(|w| w[1] - w[0] >= 100));
 }
+
+fn write_flac_at(path: &Path, samples: &[i32], bits: usize, rate: usize) {
+    let config = flacenc::config::Encoder::default().into_verified().unwrap();
+    let src = flacenc::source::MemSource::from_samples(samples, 2, bits, rate);
+    let stream = flacenc::encode_with_fixed_block_size(&config, src, config.block_size).unwrap();
+    let mut sink = flacenc::bitsink::ByteSink::new();
+    stream.write(&mut sink).unwrap();
+    fs::write(path, sink.as_slice()).unwrap();
+}
+
+#[test]
+fn a_stem_that_changed_rate_or_depth_fails_the_render_naming_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let part = dir.path().join("out.part");
+    let run = |bits_in: usize, rate_in: usize, session_bits: u32| {
+        let p = dir.path().join("vocals.flac");
+        write_flac_at(&p, &noise(2000 * 2, bits_in as u32, 0.5, 1), bits_in, rate_in);
+        let input = RenderInput {
+            stems: vec![RenderStem { path: p, gain: 1.0 }],
+            sample_rate: RATE as u32,
+            bits: session_bits,
+            frames: 2000,
+        };
+        render_flac(&input, &part, &AtomicBool::new(false), &mut |_| {})
+    };
+    let err = run(16, 44100, 16).unwrap_err();
+    assert!(err.contains("vocals.flac") && err.contains("44100 Hz") && err.contains("22050 Hz"), "{err}");
+    let err = run(24, RATE, 16).unwrap_err();
+    assert!(err.contains("vocals.flac") && err.contains("24 bits"), "{err}");
+    assert!(!part.exists());
+    assert!(run(16, RATE, 16).is_ok());
+    fs::remove_file(&part).unwrap();
+    assert!(run(16, RATE, 24).is_ok());
+}

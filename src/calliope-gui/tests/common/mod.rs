@@ -72,6 +72,9 @@ impl App {
     }
 
     pub fn start_with(dirs: &Dirs, offline: bool, env: &[(&str, &Path)]) -> App {
+        if !cfg!(feature = "e2e-hooks") && env.iter().any(|(k, _)| *k == "CALLIOPE_E2E_AUDIO") {
+            panic!("the audio fake needs --features e2e-hooks; without it the app would open the real sound device");
+        }
         let mut cmd = if offline {
             let mut c = Command::new("unshare");
             c.args(["-rn", BIN]);
@@ -591,6 +594,9 @@ pub fn editor_dirs(test: &str) -> Dirs {
 /// Starts the e2e app on the editor fixture with the capturing fake audio backend (never a real
 /// device), floats the window at 1280x800 and opens the Editor (Alt+3).
 pub fn start_editor(dirs: &Dirs) -> (App, String) {
+    if !cfg!(feature = "e2e-hooks") {
+        panic!("Editor GUI tests need --features e2e-hooks; without it the app would open the real sound device");
+    }
     let cap = dirs.capture();
     let audio = format!("capture:{}", cap.display());
     // Offline too: nothing in the editor needs a network.

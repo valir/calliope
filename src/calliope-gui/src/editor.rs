@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::thread::JoinHandle;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -32,6 +32,7 @@ pub const EVENT_INTERVAL: Duration = Duration::from_millis(100);
 /// `clipping` stays true this long after the last clipped sample.
 pub const CLIP_HOLD: Duration = Duration::from_secs(1);
 pub const SUPERSEDED: &str = "superseded";
+const OUTPUT_LOST: &str = "Playback was interrupted; try again";
 
 // ------------------------------------------------------------------ IPC types
 
@@ -331,13 +332,43 @@ fn ms_to_frames(ms: u64, rate: u32) -> u64 {
 // --------------------------------------------------------------------- manager
 
 pub struct EditorManager {
-    backend: Box<dyn OutputBackend>,
+    backend: Arc<dyn OutputBackend>,
     sink: EventSink,
     session: Option<Session>,
     remembered: HashMap<String, Vec<LaneState>>,
     pending: Option<OpenTicket>,
     generation: u64,
     save: Option<SaveRun>,
+    /// Output handles taken out of sessions. Closing a real device can block, so when
+    /// `defer_drops` is set they wait here until the caller has released the manager lock
+    /// (`take_trash`); otherwise they are dropped at once.
+    trash: Vec<Box<dyn OutputHandle>>,
+    defer_drops: bool,
+    /// The running save's shared state, readable without the manager lock (app exit).
+    live_save: Arc<Mutex<Option<Arc<SaveShared>>>>,
+}
+
+/// What it takes to open the device for a session; `open` blocks and must run without the
+/// manager lock. Hand the result to `play_with`/`lane_play_with`.
+pub struct OutputRequest {
+    backend: Arc<dyn OutputBackend>,
+    shared: Arc<PlayerShared>,
+    rate: u32,
+}
+
+pub struct OpenedOutput {
+    shared: Arc<PlayerShared>,
+    handle: Box<dyn OutputHandle>,
+}
+
+impl OutputRequest {
+    pub fn open(self) -> Result<OpenedOutput, String> {
+        let shared = self.shared.clone();
+        let mut scratch: Vec<Vec<f32>> = (0..shared.stems.len()).map(|_| vec![0.0; CHUNK * 2]).collect();
+        let render_shared = self.shared.clone();
+        let handle = self.backend.open(self.rate, Box::new(move |out| render(&render_shared, &mut scratch, out)))?;
+        Ok(OpenedOutput { shared, handle })
+    }
 }
 
 /// The running (or just finished, not yet reaped) save job.
@@ -349,7 +380,42 @@ struct SaveRun {
 
 impl EditorManager {
     pub fn new(backend: Box<dyn OutputBackend>, sink: EventSink) -> Self {
-        Self { backend, sink, session: None, remembered: HashMap::new(), pending: None, generation: 0, save: None }
+        Self {
+            backend: Arc::from(backend),
+            sink,
+            session: None,
+            remembered: HashMap::new(),
+            pending: None,
+            generation: 0,
+            save: None,
+            trash: Vec::new(),
+            defer_drops: false,
+            live_save: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Keep closed output handles until `take_trash` (see `trash`).
+    pub fn defer_drops(&mut self) {
+        self.defer_drops = true;
+    }
+
+    /// The handles to drop once the manager lock is released.
+    pub fn take_trash(&mut self) -> Vec<Box<dyn OutputHandle>> {
+        std::mem::take(&mut self.trash)
+    }
+
+    pub fn live_save(&self) -> Arc<Mutex<Option<Arc<SaveShared>>>> {
+        self.live_save.clone()
+    }
+
+    fn retire(&mut self, handle: Option<Box<dyn OutputHandle>>) {
+        if let Some(h) = handle {
+            if self.defer_drops {
+                self.trash.push(h);
+            } else {
+                drop(h);
+            }
+        }
     }
 
     pub fn sink(&self) -> EventSink {
@@ -364,6 +430,23 @@ impl EditorManager {
         let ticket = OpenTicket { gen: self.generation, cancel: Arc::new(AtomicBool::new(false)) };
         self.pending = Some(ticket.clone());
         ticket
+    }
+
+    #[cfg(test)]
+    pub fn generation_for_test(&self) -> u64 {
+        self.generation
+    }
+
+    /// An open is in progress (begun, not yet finished or aborted).
+    pub fn is_opening(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// Ends a failed open: the ticket stops counting as in progress (if still current).
+    pub fn abort_open(&mut self, ticket: &OpenTicket) {
+        if self.pending.as_ref().is_some_and(|t| t.gen == ticket.gen) {
+            self.pending = None;
+        }
     }
 
     /// Installs a loaded track unless a newer `begin_open`/`close` superseded the ticket.
@@ -427,7 +510,8 @@ impl EditorManager {
         session.sync_shared();
         let snap = session.snapshot();
         eprintln!("calliope: editor open id={} stems={} duration_ms={}", snap.id, snap.stems.len(), snap.duration_ms);
-        self.session = Some(session);
+        let old = self.session.replace(session).and_then(|s| s.output);
+        self.retire(old);
         Ok(self.decorate(snap))
     }
 
@@ -448,7 +532,7 @@ impl EditorManager {
         if let Some(s) = self.session.take() {
             s.shared.audible.store(false, Ordering::Release);
             self.remembered.insert(s.id.clone(), s.lanes.clone());
-            drop(s.output);
+            self.retire(s.output);
         }
     }
 
@@ -495,6 +579,7 @@ impl EditorManager {
         let Some(run) = self.save.as_ref().filter(|r| r.shared.is_finished()) else { return };
         let (id, outcome) = (run.id.clone(), run.shared.outcome());
         self.save = None;
+        *self.live_save.lock().unwrap_or_else(|e| e.into_inner()) = None;
         if let (Some(v), Some(s)) = (outcome, self.session.as_mut()) {
             if s.id == id {
                 s.variant = v;
@@ -543,6 +628,7 @@ impl EditorManager {
         };
         let shared = SaveShared::new();
         let handle = backing_render::spawn(params, shared.clone(), sink);
+        *self.live_save.lock().unwrap_or_else(|e| e.into_inner()) = Some(shared.clone());
         self.save = Some(SaveRun { id: id.to_string(), shared, handle });
         self.snapshot(id)
     }
@@ -558,22 +644,12 @@ impl EditorManager {
     /// App exit: cancels a running save and waits up to `cap` for it to clean up.
     pub fn shutdown_save(&mut self, cap: Duration) {
         let Some(run) = self.save.take() else { return };
+        *self.live_save.lock().unwrap_or_else(|e| e.into_inner()) = None;
         run.shared.cancel.store(true, Ordering::Relaxed);
         let end = Instant::now() + cap;
         while !run.handle.is_finished() && Instant::now() < end {
             std::thread::sleep(Duration::from_millis(10));
         }
-    }
-
-    fn ensure_output(backend: &dyn OutputBackend, s: &mut Session) -> Result<(), String> {
-        if s.output.is_some() {
-            return Ok(());
-        }
-        let shared = s.shared.clone();
-        let mut scratch: Vec<Vec<f32>> = (0..shared.stems.len()).map(|_| vec![0.0; CHUNK * 2]).collect();
-        let handle = backend.open(s.sample_rate, Box::new(move |out| render(&shared, &mut scratch, out)))?;
-        s.output = Some(handle);
-        Ok(())
     }
 
     /// Commits a state change: pushes shared state and emits a transport event if needed.
@@ -605,45 +681,105 @@ impl EditorManager {
         state
     }
 
-    /// Mix Play: ends solo; needs a checked stem.
-    pub fn play(&mut self, id: &str) -> Result<TransportState, String> {
-        let (backend, sink) = (&*self.backend, &self.sink);
-        let s = match self.session.as_mut() {
-            Some(s) if s.id == id => s,
-            _ => return Err(format!("no editor session for {id}")),
-        };
+    /// The request to open the output for `id`'s session, `None` when it is already open.
+    pub fn output_request(&self, id: &str) -> Result<Option<OutputRequest>, String> {
+        match self.session.as_ref() {
+            Some(s) if s.id == id => Ok(if s.output.is_some() {
+                None
+            } else {
+                Some(OutputRequest { backend: self.backend.clone(), shared: s.shared.clone(), rate: s.sample_rate })
+            }),
+            _ => Err(format!("no editor session for {id}")),
+        }
+    }
+
+    /// Mix Play, step 1 (under the lock): checks the rules, says whether the device must
+    /// be opened (by the caller, without the lock).
+    pub fn play_request(&self, id: &str) -> Result<Option<OutputRequest>, String> {
+        let req = self.output_request(id)?;
+        if !self.session.as_ref().is_some_and(|s| s.lanes.iter().any(|l| l.unmuted)) {
+            return Err("Check a stem first".into());
+        }
+        Ok(req)
+    }
+
+    /// Mix Play, step 2: ends solo and starts. Nothing changes if the device failed to open.
+    pub fn play_with(&mut self, id: &str, opened: Option<OpenedOutput>) -> Result<TransportState, String> {
+        self.session(id)?;
+        self.install(opened);
+        let sink = self.sink.clone();
+        let s = self.session(id)?;
         if !s.lanes.iter().any(|l| l.unmuted) {
             return Err("Check a stem first".into());
         }
+        if s.output.is_none() {
+            return Err(OUTPUT_LOST.into());
+        }
         s.solo = None;
-        Self::start(backend, sink, s)
+        Ok(Self::start(&sink, s))
     }
 
-    fn start(backend: &dyn OutputBackend, sink: &EventSink, s: &mut Session) -> Result<TransportState, String> {
-        Self::ensure_output(backend, s)?;
+    /// Mix Play in one call (opens the device while holding `&mut self`).
+    pub fn play(&mut self, id: &str) -> Result<TransportState, String> {
+        let opened = self.play_request(id)?.map(OutputRequest::open).transpose()?;
+        self.play_with(id, opened)
+    }
+
+    /// Stores a freshly opened handle unless the session went away or has one already.
+    fn install(&mut self, opened: Option<OpenedOutput>) {
+        let Some(o) = opened else { return };
+        match self.session.as_mut() {
+            Some(s) if s.output.is_none() && Arc::ptr_eq(&s.shared, &o.shared) => s.output = Some(o.handle),
+            _ => self.retire(Some(o.handle)),
+        }
+    }
+
+    fn start(sink: &EventSink, s: &mut Session) -> TransportState {
         if s.shared.position.load(Ordering::Acquire) >= s.shared.total_frames {
             s.shared.position.store(0, Ordering::Release);
         }
         s.shared.ended.store(false, Ordering::Release);
         s.transport.play();
-        Ok(Self::publish(sink, s, Instant::now()))
+        Self::publish(sink, s, Instant::now())
     }
 
-    /// Lane Play: checks the stem, solos it and plays; on the soloed stem it ends the solo.
-    pub fn lane_play(&mut self, id: &str, name: &str) -> Result<TransportState, String> {
-        let (backend, sink) = (&*self.backend, &self.sink);
-        let s = match self.session.as_mut() {
+    /// Lane Play, step 1: `None` when no device needs opening.
+    pub fn lane_play_request(&self, id: &str, name: &str) -> Result<Option<OutputRequest>, String> {
+        let s = match self.session.as_ref() {
             Some(s) if s.id == id => s,
             _ => return Err(format!("no editor session for {id}")),
         };
         let idx = s.lanes.iter().position(|l| l.name == name).ok_or_else(|| format!("no stem {name}"))?;
         if s.solo == Some(idx) {
+            return Ok(None);
+        }
+        self.output_request(id)
+    }
+
+    /// Lane Play, step 2: checks the stem, solos it and plays; on the soloed stem it ends
+    /// the solo. Nothing changes if the device failed to open.
+    pub fn lane_play_with(&mut self, id: &str, name: &str, opened: Option<OpenedOutput>) -> Result<TransportState, String> {
+        self.session(id)?;
+        self.install(opened);
+        let sink = self.sink.clone();
+        let s = self.session(id)?;
+        let idx = s.lanes.iter().position(|l| l.name == name).ok_or_else(|| format!("no stem {name}"))?;
+        if s.solo == Some(idx) {
             s.solo = None;
-            return Ok(Self::publish(sink, s, Instant::now()));
+            return Ok(Self::publish(&sink, s, Instant::now()));
+        }
+        if s.output.is_none() {
+            return Err(OUTPUT_LOST.into());
         }
         s.lanes[idx].unmuted = true;
         s.solo = Some(idx);
-        Self::start(backend, sink, s)
+        Ok(Self::start(&sink, s))
+    }
+
+    /// Lane Play in one call (opens the device while holding `&mut self`).
+    pub fn lane_play(&mut self, id: &str, name: &str) -> Result<TransportState, String> {
+        let opened = self.lane_play_request(id, name)?.map(OutputRequest::open).transpose()?;
+        self.lane_play_with(id, name, opened)
     }
 
     pub fn end_solo(&mut self, id: &str) -> Result<TransportState, String> {
@@ -665,17 +801,21 @@ impl EditorManager {
     pub fn stop(&mut self, id: &str) -> Result<TransportState, String> {
         let sink = self.sink.clone();
         let s = self.session(id)?;
-        Ok(Self::stop_session(&sink, s, Instant::now()))
+        let (state, old) = Self::stop_session(&sink, s, Instant::now());
+        self.retire(old);
+        Ok(state)
     }
 
-    fn stop_session(sink: &EventSink, s: &mut Session, now: Instant) -> TransportState {
+    /// Silences first, then resets; the closed output is handed back to the caller to drop
+    /// (after the manager lock is released).
+    fn stop_session(sink: &EventSink, s: &mut Session, now: Instant) -> (TransportState, Option<Box<dyn OutputHandle>>) {
         s.transport.stop();
         s.shared.audible.store(false, Ordering::Release);
+        let old = s.output.take();
         s.shared.position.store(0, Ordering::Release);
         s.shared.ended.store(false, Ordering::Release);
         s.solo = None;
-        s.output = None;
-        Self::publish(sink, s, now)
+        (Self::publish(sink, s, now), old)
     }
 
     pub fn seek(&mut self, id: &str, position_ms: u64, now: Instant) -> Result<TransportState, String> {
@@ -721,13 +861,14 @@ impl EditorManager {
         let sink = self.sink.clone();
         self.reap();
         let Some(s) = self.session.as_mut() else { return };
-        if let Some(msg) = s.output.as_ref().and_then(|o| o.error()) {
-            Self::stop_session(&sink, s, now);
-            sink(EditorEvent::AudioError { id: s.id.clone(), message: msg });
-            return;
-        }
-        if s.shared.ended.swap(false, Ordering::AcqRel) {
-            Self::stop_session(&sink, s, now);
+        let failed = s.output.as_ref().and_then(|o| o.error());
+        if failed.is_some() || s.shared.ended.swap(false, Ordering::AcqRel) {
+            let (_, old) = Self::stop_session(&sink, s, now);
+            let id = s.id.clone();
+            self.retire(old);
+            if let Some(message) = failed {
+                sink(EditorEvent::AudioError { id, message });
+            }
             return;
         }
         s.transport.tick(now);

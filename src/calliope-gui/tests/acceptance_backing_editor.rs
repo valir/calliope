@@ -658,7 +658,6 @@ fn safety_stem_file_removed_during_save_does_not_corrupt_anything() {
 }
 
 #[test]
-#[ignore = "DEFECT (low): StemReader/render do not re-check the stem's sample rate; see QA report"]
 fn safety_stem_replaced_by_other_sample_rate_during_session_must_not_save_a_mislabelled_file() {
     // The stems keep their names/files, so the "same stems" check passes; the render must
     // still not label audio of another rate with the session's rate.
