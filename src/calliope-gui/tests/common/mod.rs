@@ -563,3 +563,82 @@ impl App {
         tagged_pids(&format!("CALLIOPE_E2E_TAG={}", self.tag.clone().unwrap()))
     }
 }
+
+
+// ---- editor helpers ----
+
+pub const ED_FOUR: &str = "0199c0a0-0000-7000-8000-000000000201";
+pub const ED_MIXED: &str = "0199c0a0-0000-7000-8000-000000000202";
+pub const ED_PLAIN: &str = "0199c0a0-0000-7000-8000-000000000203";
+pub const ED_SIX: &str = "0199c0a0-0000-7000-8000-000000000204";
+pub const ED_MISSING: &str = "0199c0a0-0000-7000-8000-000000000205";
+
+impl Dirs {
+    /// The WAV the capture audio backend writes.
+    pub fn capture(&self) -> PathBuf {
+        self.0.join("capture.wav")
+    }
+}
+
+/// A temp dir with the `library-editor` fixture as the default repository.
+pub fn editor_dirs(test: &str) -> Dirs {
+    let dirs = Dirs::new(test);
+    assert!(dirs.0.starts_with(repo().join("target")), "temp dir is not under target/");
+    copy_dir(&root().join("tests/fixtures/library-editor"), &dirs.repo());
+    dirs
+}
+
+/// Starts the e2e app on the editor fixture with the capturing fake audio backend (never a real
+/// device), floats the window at 1280x800 and opens the Editor (Alt+3).
+pub fn start_editor(dirs: &Dirs) -> (App, String) {
+    let cap = dirs.capture();
+    let audio = format!("capture:{}", cap.display());
+    // Offline too: nothing in the editor needs a network.
+    let mut app = App::start_with(dirs, true, &[("CALLIOPE_E2E_AUDIO", Path::new(&audio))]);
+    app.wait_ready();
+    app.wait_line(|l| l.contains("library root="), Duration::from_secs(20));
+    let wid = app.wid();
+    float(&wid);
+    size(&wid, 1280, 800);
+    app.key(&wid, "alt+3");
+    app.wait_view("editor");
+    (app, wid)
+}
+
+impl App {
+    /// Left-clicks at (x, y) relative to the window.
+    pub fn click(&self, wid: &str, x: i32, y: i32) {
+        let s = Command::new("xdotool")
+            .args(["windowactivate", "--sync", wid, "mousemove", "--window", wid, &x.to_string(), &y.to_string(), "click", "1"])
+            .status()
+            .unwrap();
+        assert!(s.success(), "xdotool click");
+    }
+
+    /// Mouse wheel (`up` = button 4) `n` times at (x, y) relative to the window.
+    pub fn wheel(&self, wid: &str, x: i32, y: i32, up: bool, n: u32) {
+        let b = if up { "4" } else { "5" };
+        let s = Command::new("xdotool")
+            .args(["windowactivate", "--sync", wid, "mousemove", "--window", wid, &x.to_string(), &y.to_string()])
+            .status()
+            .unwrap();
+        assert!(s.success(), "xdotool mousemove");
+        for _ in 0..n {
+            let s = Command::new("xdotool").args(["click", b]).status().unwrap();
+            assert!(s.success(), "xdotool wheel");
+            sleep(Duration::from_millis(60));
+        }
+    }
+
+    /// Lines logged so far that contain `what`.
+    pub fn count(&self, what: &str) -> usize {
+        self.all_lines().iter().filter(|l| l.contains(what)).count()
+    }
+
+    /// The test never opened the real device.
+    pub fn assert_no_real_audio(&self) {
+        let lines = self.all_lines();
+        assert!(!lines.iter().any(|l| l.contains("audio backend=cpal")), "the real audio device was opened");
+        assert!(!lines.iter().any(|l| l.contains("audio backend=") && !(l.contains("backend=capture") || l.contains("backend=null"))));
+    }
+}

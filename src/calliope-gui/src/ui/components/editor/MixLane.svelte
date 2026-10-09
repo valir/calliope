@@ -21,6 +21,9 @@
   const sliderValue = $derived(dragging ? dragValue : ed.transport.position_ms);
 
   function onValue(v: number): void {
+    // While playing, the slider snaps the incoming position to its 100 ms step and reports that
+    // as a change; it is not the user moving it (it would seek on every transport event).
+    if (!dragging && v === Math.round(ed.transport.position_ms / 100) * 100) return;
     dragValue = v;
     seek(v);
   }
