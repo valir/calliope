@@ -735,3 +735,86 @@ fn a_vanished_root_before_start_extraction_is_a_clean_error() {
     rig.state.discard(&ready.job).unwrap();
     assert!(rig.state.snapshot().is_none());
 }
+
+fn extract_to_end(rig: &Rig, server: &TestServer, keep: bool) -> JobSnapshot {
+    rig.file("tagged.mp3").unwrap();
+    let ready = rig.ready();
+    rig.extract(&ready, server, keep).unwrap();
+    rig.wait("the end", |s| matches!(s.phase, Phase::Saved | Phase::Failed) && !rig.state.is_running())
+}
+
+fn check_sparse(rig: &Rig, done: &JobSnapshot) -> TrackRecord {
+    assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
+    let track = done.track.clone().unwrap();
+    let names: Vec<&str> = track.stems.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["vocals", "drums", "bass", "guitar"]);
+    let tdir = rig.tracks_dir().join(&track.id);
+    assert_eq!(Rig::names_in(&tdir.join("stems")), ["bass.flac", "drums.flac", "guitar.flac", "vocals.flac"]);
+    assert_eq!(done.dropped.len(), 2);
+    assert_eq!(done.dropped[0], DroppedStem { name: "piano".into(), peak_dbfs: None });
+    assert_eq!(done.dropped[1].name, "other");
+    let p = done.dropped[1].peak_dbfs.unwrap();
+    assert!(p > -61.0 && p < -59.0, "{p}");
+    let Some(ImportEvent::Saved { dropped, .. }) = rig.events.lock().unwrap().last().cloned() else { panic!("no saved event") };
+    assert_eq!(dropped, done.dropped);
+    assert!(!rig.state.is_active(), "a finished job is not active");
+    assert!(Repository::new(&rig.root).scan().problems.is_empty());
+    assert!(Rig::names_in(&rig.root.join("import-tmp")).is_empty());
+    rig.check_clean();
+    track
+}
+
+#[test]
+fn silent_stems_are_dropped_from_the_saved_track() {
+    let server = TestServer::start("sparse");
+    let rig = Rig::new();
+    let done = extract_to_end(&rig, &server, false);
+    let track = check_sparse(&rig, &done);
+    assert_eq!(track.original, None);
+    assert!(server.wait_for("method=DELETE"));
+}
+
+#[test]
+fn silent_stems_are_dropped_with_keep_original_too() {
+    let server = TestServer::start("sparse");
+    let rig = Rig::new();
+    let done = extract_to_end(&rig, &server, true);
+    let track = check_sparse(&rig, &done);
+    assert_eq!(track.original.as_deref(), Some("original.flac"));
+    assert!(rig.tracks_dir().join(&track.id).join("original.flac").is_file());
+}
+
+#[test]
+fn a_track_of_only_silent_stems_fails_and_keeps_the_prepared_audio() {
+    let server = TestServer::start("silent");
+    let rig = Rig::new();
+    let done = extract_to_end(&rig, &server, true);
+    assert_eq!(done.phase, Phase::Failed);
+    let e = done.error.clone().unwrap();
+    assert_eq!(e.stage, Stage::Server);
+    assert_eq!(e.message, "Every stem is silent (below -50 dBFS), so no track was saved");
+    assert!(done.dropped.is_empty());
+    assert!(Rig::names_in(&rig.tracks_dir()).is_empty());
+    let tmp = rig.root.join("import-tmp");
+    let job_dirs = Rig::names_in(&tmp);
+    assert_eq!(job_dirs.len(), 1);
+    assert!(tmp.join(&job_dirs[0]).join("audio.flac").is_file());
+    assert!(server.wait_for("method=DELETE"));
+    assert_eq!(server.job_dirs(), 0);
+    assert!(rig.state.is_active(), "the failed job stays for a retry");
+    rig.check_clean();
+}
+
+#[test]
+fn a_normal_extraction_drops_nothing() {
+    let server = TestServer::start("ok");
+    let rig = Rig::new();
+    let done = extract_to_end(&rig, &server, false);
+    assert_eq!(done.phase, Phase::Saved);
+    assert_eq!(done.track.unwrap().stems.len(), 6);
+    assert!(done.dropped.is_empty());
+    let Some(ImportEvent::Saved { dropped, .. }) = rig.events.lock().unwrap().last().cloned() else { panic!() };
+    assert!(dropped.is_empty());
+    let v = serde_json::to_value(rig.events.lock().unwrap().last().unwrap()).unwrap();
+    assert_eq!(v["dropped"], serde_json::json!([]));
+}

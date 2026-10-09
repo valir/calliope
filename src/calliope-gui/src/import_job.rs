@@ -30,6 +30,7 @@ use serde::Serialize;
 use crate::download::{self, DownloadError};
 use crate::import_tmp::{self, ImportTmp};
 use crate::media::{self, Cancel, MediaError, Probe};
+use crate::stem_audio::{self, Level, SILENT_STEM_DBFS};
 use crate::repository::{self, RepoStatus, Repository, Staging, TrackRecord, ORIGINAL_NAME};
 use crate::tools::{ToolName, Tools};
 use crate::track_meta::{self, StemEntry, TrackEdits, TrackMeta, TrackType};
@@ -106,6 +107,14 @@ pub struct JobError {
     pub http_status: Option<u16>,
 }
 
+/// A stem left out of the saved track because it is silent. `peak_dbfs` is `None` for digital
+/// silence (-inf).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DroppedStem {
+    pub name: String,
+    pub peak_dbfs: Option<f64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct JobSnapshot {
     pub job: String,
@@ -121,6 +130,7 @@ pub struct JobSnapshot {
     pub metadata: Option<TrackEdits>,
     pub error: Option<JobError>,
     pub track: Option<TrackRecord>,
+    pub dropped: Vec<DroppedStem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -135,7 +145,7 @@ pub enum ImportEvent {
     Working { progress: Option<f64> },
     Receiving { done: u32, total: u32 },
     Saving,
-    Saved { track: TrackRecord },
+    Saved { track: TrackRecord, dropped: Vec<DroppedStem> },
     Failed { stage: Stage, message: String, http_status: Option<u16> },
     Cancelled { back_to: BackTo },
 }
@@ -300,6 +310,7 @@ fn new_snapshot(job: String, kind: SourceKind, label: String, phase: Phase) -> J
         metadata: None,
         error: None,
         track: None,
+        dropped: Vec::new(),
     }
 }
 
@@ -535,6 +546,7 @@ impl ImportState {
         j.snap.progress = None;
         j.snap.stems_done = 0;
         j.snap.stems_total = 0;
+        j.snap.dropped.clear();
         let out = j.snap.clone();
         let ctx = Ctx { inner: self.inner.clone(), id: j.snap.job.clone(), cancel, root: j.root.clone(), tmp };
         let dir = j.dir.clone();
@@ -857,7 +869,7 @@ fn run_extract(
     keep_original: bool,
     staging: &mut Option<Staging>,
     server_job: &mut Option<String>,
-) -> R<TrackRecord> {
+) -> R<(TrackRecord, Vec<DroppedStem>)> {
     let client = StemsClient::new(edge_url);
     ctx.check_cancel()?;
     let health = client.health().map_err(client_stop)?;
@@ -918,21 +930,45 @@ fn run_extract(
         j.snap.stems_done = 0;
     });
     ctx.phase(Phase::Receiving, ImportEvent::Receiving { done: 0, total });
+    let mut kept: Vec<String> = Vec::new();
+    let mut dropped: Vec<DroppedStem> = Vec::new();
     for (i, name) in stems.iter().enumerate() {
         ctx.check_cancel()?;
         let part = staging.as_ref().expect("staging").stem_part_path(name).map_err(save_err)?;
         client.fetch_stem(&id, name, &part, ctx.cancel.flag()).map_err(client_stop)?;
-        staging.as_ref().expect("staging").finish_stem(name).map_err(save_err)?;
+        // a stem is dropped only after it is proven silent; an unreadable one is kept
+        match stem_audio::silent_peak(&part) {
+            Ok(Level::Silent { peak_dbfs }) => {
+                staging.as_ref().expect("staging").discard_stem_part(name).map_err(save_err)?;
+                let shown = peak_dbfs.map_or("-inf".to_string(), |p| format!("{p:.1}"));
+                eprintln!("calliope: import job={} stem={name} dropped peak_dbfs={shown} threshold_dbfs={SILENT_STEM_DBFS}", ctx.id);
+                dropped.push(DroppedStem { name: name.clone(), peak_dbfs });
+            }
+            Ok(Level::Audible) => {
+                staging.as_ref().expect("staging").finish_stem(name).map_err(save_err)?;
+                kept.push(name.clone());
+            }
+            Err(e) => {
+                eprintln!("calliope: import job={} stem={name} kept level=unknown ({e})", ctx.id);
+                staging.as_ref().expect("staging").finish_stem(name).map_err(save_err)?;
+                kept.push(name.clone());
+            }
+        }
         let done = i as u32 + 1;
         ctx.update(|j| j.snap.stems_done = done);
         ctx.progress(ImportEvent::Receiving { done, total });
+    }
+    let dropped_names = if dropped.is_empty() { "none".to_string() } else { dropped.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(",") };
+    eprintln!("calliope: import job={} stems kept={} dropped={dropped_names}", ctx.id, kept.join(","));
+    if kept.is_empty() {
+        return fail(Stage::Server, format!("Every stem is silent (below {SILENT_STEM_DBFS:.0} dBFS), so no track was saved"));
     }
     ctx.check_cancel()?;
     ctx.phase(Phase::Saving, ImportEvent::Saving);
     if keep_original {
         staging.as_mut().expect("staging").adopt_original(audio).map_err(save_err)?;
     }
-    let meta = build_meta(&new_id, edits, &stems, &model, keep_original).map_err(save_err)?;
+    let meta = build_meta(&new_id, edits, &kept, &model, keep_original).map_err(save_err)?;
     let record = locked(&*ctx.inner.lock, || staging.as_ref().expect("staging").commit(&meta)).map_err(save_err)?;
     // the track exists now: nothing to abandon any more
     *staging = None;
@@ -942,15 +978,16 @@ fn run_extract(
     if let Err(e) = ctx.tmp.remove_job_dir(dir) {
         eprintln!("calliope: import cleanup: {e}");
     }
-    Ok(record)
+    Ok((record, dropped))
 }
 
-fn finish_extract(ctx: &Ctx, r: R<TrackRecord>) {
+fn finish_extract(ctx: &Ctx, r: R<(TrackRecord, Vec<DroppedStem>)>) {
     match r {
-        Ok(track) => {
+        Ok((track, dropped)) => {
             ctx.update(|j| {
                 j.snap.phase = Phase::Saved;
                 j.snap.track = Some(track.clone());
+                j.snap.dropped = dropped.clone();
                 j.snap.error = None;
                 j.audio = None;
                 j.running = false;
@@ -958,7 +995,7 @@ fn finish_extract(ctx: &Ctx, r: R<TrackRecord>) {
                 j.cancel = None;
             });
             eprintln!("calliope: import job={} phase=Saved", ctx.id);
-            ctx.emit(ImportEvent::Saved { track });
+            ctx.emit(ImportEvent::Saved { track, dropped });
         }
         Err(Stop::Cancelled) => {
             ctx.update(|j| {
@@ -967,6 +1004,7 @@ fn finish_extract(ctx: &Ctx, r: R<TrackRecord>) {
                 j.snap.progress = None;
                 j.snap.stems_done = 0;
                 j.snap.stems_total = 0;
+                j.snap.dropped.clear();
                 j.running = false;
                 j.cancel = None;
             });

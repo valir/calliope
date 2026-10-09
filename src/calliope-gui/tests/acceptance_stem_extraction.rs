@@ -25,6 +25,8 @@ mod media;
 mod download;
 #[path = "../src/tools.rs"]
 mod tools;
+#[path = "../src/stem_audio.rs"]
+mod stem_audio;
 #[path = "../src/import_job.rs"]
 mod import_job;
 
