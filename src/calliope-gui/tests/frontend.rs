@@ -301,6 +301,56 @@ fn dist_ships_the_inter_font_licence() {
     assert!(shipped.contains("SIL OPEN FONT LICENSE Version 1.1"));
 }
 
+/// Every third-party crate linked into calliope-gui (normal dependencies, host platform) and the
+/// main bundled npm packages must be listed in the notices file the build embeds, with licence texts.
+#[test]
+fn dist_ships_third_party_notices_for_every_linked_crate() {
+    let notices = fs::read_to_string(root().join("dist/licenses/THIRD-PARTY-NOTICES.txt"))
+        .expect("dist/licenses/THIRD-PARTY-NOTICES.txt missing; run `npm run build` first");
+    let rustc = std::process::Command::new("rustc").arg("-vV").output().expect("run rustc -vV");
+    let host = String::from_utf8(rustc.stdout).unwrap();
+    let host = host.lines().find_map(|l| l.strip_prefix("host: ")).unwrap().to_string();
+    let out = std::process::Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+        .args(["metadata", "--format-version", "1", "--locked", "--filter-platform", &host])
+        .current_dir(root())
+        .output()
+        .expect("run cargo metadata");
+    assert!(out.status.success(), "cargo metadata failed: {}", String::from_utf8_lossy(&out.stderr));
+    let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let members = meta["workspace_members"].as_array().unwrap();
+    let packages = meta["packages"].as_array().unwrap();
+    let nodes = meta["resolve"]["nodes"].as_array().unwrap();
+    let start = packages.iter().find(|p| p["name"] == "calliope-gui").unwrap()["id"].clone();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut todo = vec![start];
+    while let Some(id) = todo.pop() {
+        if !seen.insert(id.to_string()) {
+            continue;
+        }
+        let node = nodes.iter().find(|n| n["id"] == id).unwrap();
+        for d in node["deps"].as_array().unwrap() {
+            if d["dep_kinds"].as_array().unwrap().iter().any(|k| k["kind"].is_null()) {
+                todo.push(d["pkg"].clone());
+            }
+        }
+    }
+    let mut missing = Vec::new();
+    for p in packages.iter().filter(|p| seen.contains(&p["id"].to_string()) && !members.contains(&p["id"])) {
+        let line = format!("\n{} {}  [", p["name"].as_str().unwrap(), p["version"].as_str().unwrap());
+        if !notices.contains(&line) {
+            missing.push(line.trim().to_string());
+        }
+    }
+    assert!(missing.is_empty(), "crates missing from THIRD-PARTY-NOTICES.txt: {missing:?}");
+    assert!(seen.len() > 100, "suspiciously few crates: {}", seen.len());
+    for pkg in ["@tauri-apps/api", "@fontsource-variable/inter", "svelte", "bits-ui", "tailwindcss"] {
+        assert!(notices.contains(&format!("\n{pkg} ")), "npm package {pkg} missing from the notices");
+    }
+    for text in ["Apache License", "Permission is hereby granted", "Mozilla Public License Version 2.0", "SIL OPEN FONT LICENSE"] {
+        assert!(notices.contains(text), "licence text {text:?} missing from the notices");
+    }
+}
+
 /// Names of the packages reachable from `start` through normal, build and dev dependencies.
 fn reachable_packages(meta: &serde_json::Value, start: &str) -> std::collections::BTreeSet<String> {
     let nodes = meta["resolve"]["nodes"].as_array().unwrap();

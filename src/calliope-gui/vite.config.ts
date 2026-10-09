@@ -3,7 +3,9 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
+import { thirdPartyNotices } from './third-party-notices';
 
+const stylesheet = fileURLToPath(new URL('./src/ui/app.css', import.meta.url));
 const lib = fileURLToPath(new URL('./src/ui/lib', import.meta.url));
 const cacheDir = fileURLToPath(new URL('./node_modules/.vite', import.meta.url));
 
@@ -25,7 +27,12 @@ const fontLicence = {
 export default defineConfig({
   root: 'src/ui',
   cacheDir,
-  plugins: [tailwindcss(), svelte(), fontLicence],
+  plugins: [
+    tailwindcss(),
+    svelte(),
+    fontLicence,
+    thirdPartyNotices({ crate: 'calliope-gui', stylesheet }),
+  ],
   resolve: {
     alias: { $lib: lib },
     ...(process.env.VITEST ? { conditions: ['browser'] } : {}),

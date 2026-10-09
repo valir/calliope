@@ -21,6 +21,17 @@ licence.
 Calliope itself (all crates and the npm project) is licensed under Apache-2.0: see
 `LICENSE` at the repository root and `license` in `Cargo.toml` and `package.json`.
 
+**Third-party notices.** Every `vite build` (so every `npm run build:app`) generates
+`dist/licenses/THIRD-PARTY-NOTICES.txt`, which is embedded in the binary with the rest of
+`dist/`. It lists every third-party crate linked into calliope-gui (normal dependencies from
+`cargo metadata`, host platform) and every npm package in the frontend bundle (plus the
+packages `app.css` imports), followed by each distinct licence text once. Generator:
+`src/calliope-gui/third-party-notices.ts`. A package that ships no licence file gets the
+standard text of its declared licence from `src/calliope-gui/licence-templates/` (SPDX texts;
+Apache-2.0 comes from `LICENSE`), and the build fails if no template fits. Checked by
+`tests/frontend.rs` (`dist_ships_third_party_notices_for_every_linked_crate`). The
+`calliope-stems` server binary is not covered yet.
+
 ## Rust crates of calliope-gui (`src/calliope-gui/Cargo.toml`)
 
 | Name | Kind | Range | Locked | Licence | Purpose |

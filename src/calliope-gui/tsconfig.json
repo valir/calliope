@@ -12,5 +12,5 @@
     "types": ["svelte", "vite/client", "node"],
     "paths": { "$lib": ["./src/ui/lib"], "$lib/*": ["./src/ui/lib/*"] }
   },
-  "include": ["src/ui/**/*.ts", "src/ui/**/*.svelte", "vite.config.ts"]
+  "include": ["src/ui/**/*.ts", "src/ui/**/*.svelte", "vite.config.ts", "third-party-notices.ts"]
 }
