@@ -208,3 +208,18 @@ describe('through the whole app', () => {
     await waitFor(() => expect(names().filter((n) => n === 'save_backing')).toHaveLength(1));
   });
 });
+
+describe('fix round 1 probes', () => {
+  it('fast A -> B -> A track switching ends with A active and one live session', async () => {
+    await openEditorOn(stemA);
+    selectTrack(stemB.id);
+    selectTrack(stemA.id);
+    selectTrack(stemB.id);
+    selectTrack(stemA.id);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(ed.trackId).toBe(stemA.id);
+    expect(ed.status).toBe('active');
+    const opens = calls.filter((c) => c[0] === 'open_editor').map((c) => c[1].id);
+    expect(opens[opens.length - 1]).toBe(stemA.id);
+  });
+});

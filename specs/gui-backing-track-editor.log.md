@@ -21,3 +21,5 @@ task 19 | Visual review, docs | implementer | done
 tester | all 17 criteria + owner decisions PASS; 1 low defect (stem swapped at other rate), e2e guard gap | tester | done
 reviewer | CHANGES REQUIRED: 1 major (audio device opened under manager lock), 9 minor | reviewer | done
 fix round 1 | M1 device I/O outside lock + bounded shutdown; m1 m2 m3 m4 m5 m7 m8; tester defects 1-3 | implementer | done
+tester | re-test after fix round 1: all PASS, defects fixed, 2 probes added | tester | done
+reviewer | re-review after fix round 1: APPROVED (3 optional minors) | reviewer | done

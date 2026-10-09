@@ -844,3 +844,45 @@ fn nodevice_play_on_a_failing_backend_is_a_message_not_a_panic() {
     assert!(e.contains("cannot be opened"), "{e}");
     assert!(!m.snapshot(FOUR).unwrap().transport.playing, "a failed Play must not show Pause");
 }
+
+// ============================================================ fix round 1 probes
+
+struct FlakyBackend {
+    inner: ManualBackend,
+    fail: Arc<std::sync::atomic::AtomicBool>,
+}
+impl audio_out::OutputBackend for FlakyBackend {
+    fn name(&self) -> &'static str {
+        "flaky"
+    }
+    fn open(&self, rate: u32, render: audio_out::RenderFn) -> Result<Box<dyn audio_out::OutputHandle>, String> {
+        if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("no device".into());
+        }
+        self.inner.open(rate, render)
+    }
+}
+
+#[test]
+fn fix_play_after_a_failed_device_open_leaves_lanes_and_transport_unchanged() {
+    use std::sync::atomic::Ordering;
+    let (_tmp, repo) = fixture_repo();
+    let sp = spec(&repo, FOUR);
+    let fail = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let inner = ManualBackend::new();
+    let sink: EventSink = Arc::new(|_| {});
+    let mut m = EditorManager::new(Box::new(FlakyBackend { inner: inner.clone(), fail: fail.clone() }), sink);
+    m.open(&sp).unwrap();
+    m.set_stem(FOUR, "vocals", Some(-3.0), true).unwrap();
+    let before = m.snapshot(FOUR).unwrap();
+    assert!(m.play(FOUR).is_err());
+    assert!(m.lane_play(FOUR, "drums").is_err());
+    let after = m.snapshot(FOUR).unwrap();
+    assert_eq!(serde_json::to_value(&before.stems).unwrap(), serde_json::to_value(&after.stems).unwrap());
+    assert!(!after.transport.playing);
+    assert!(after.transport.solo.is_none());
+    // The device comes back: Play now works and plays the checked stem only.
+    fail.store(false, Ordering::SeqCst);
+    assert!(m.play(FOUR).unwrap().playing);
+    assert!(inner.is_open());
+}
