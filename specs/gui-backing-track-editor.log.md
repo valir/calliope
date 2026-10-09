@@ -18,3 +18,5 @@ task 16 | Editor pane components | implementer | done
 task 17 | Time field (edit and wheel) | implementer | done
 task 18 | GUI end-to-end tests (gui_editor_e2e.rs); fixed self-seeking position slider | implementer | done
 task 19 | Visual review, docs | implementer | done
+tester | all 17 criteria + owner decisions PASS; 1 low defect (stem swapped at other rate), e2e guard gap | tester | done
+reviewer | CHANGES REQUIRED: 1 major (audio device opened under manager lock), 9 minor | reviewer | done
