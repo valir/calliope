@@ -3,7 +3,7 @@ import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import type { Channel } from '@tauri-apps/api/core';
 import {
   canPlay, ed, lanePlay, leaveEditor, resetEditor, save, saveEnabled, seek, setGain, setUnmuted, stopEnabled,
-  syncSelection,
+  syncSelection, togglePlay,
 } from './editor-state.svelte';
 import { resetLibrary } from './library-state.svelte';
 import { FIXTURE_TRACKS } from './fixture-tracks';
@@ -164,6 +164,26 @@ describe('solo', () => {
     expect(ed.stems.find((l) => l.name === 'guitar')!.unmuted).toBe(true);
     expect(ed.transport.solo).toBe('guitar');
     expect(logs()).toContain('editor solo name=guitar');
+  });
+});
+
+describe('play errors', () => {
+  it('a Play that cannot open the output shows why, and a later Play clears it', async () => {
+    syncSelection(stemTrack);
+    await flush();
+    handlers.editor_set_stem = (a) => ({ name: a.name, gain_db: 0, unmuted: a.unmuted });
+    await setUnmuted('guitar', true);
+    handlers.editor_play = () => {
+      throw 'The audio output cannot be opened: Device or resource busy';
+    };
+    await togglePlay();
+    expect(ed.audioError).toBe('The audio output cannot be opened: Device or resource busy');
+    expect(ed.transport.playing).toBe(false);
+    expect(logs()).toContain('error editor editor_play: The audio output cannot be opened: Device or resource busy');
+    handlers.editor_play = () => ({ ...idle, playing: true });
+    await togglePlay();
+    expect(ed.audioError).toBe('');
+    expect(ed.transport.playing).toBe(true);
   });
 });
 

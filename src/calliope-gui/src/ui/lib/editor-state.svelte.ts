@@ -277,10 +277,14 @@ async function transportCall(
     const t = await run(id);
     if (gen !== generation) return null;
     ed.transport = t;
+    ed.audioError = '';
     if (logLine) log(logLine(t));
     return t;
   } catch (err) {
-    if (gen === generation) fail(command, err);
+    if (gen !== generation) return null;
+    // Shown under the Mix lane: a Play that cannot open the audio output must not fail silently.
+    ed.audioError = String(err).replace(/^Error: /, '');
+    fail(command, err);
     return null;
   }
 }
