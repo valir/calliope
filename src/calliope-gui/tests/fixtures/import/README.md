@@ -15,6 +15,7 @@ Total size about 300 KB.
 | `not-audio.mp3` | a text file with an mp3 name |
 | `download.webm`, `info.json` | what the fake yt-dlp "downloads" (Opus 5 s; title "The Example Band - Night Drive", `https://media.example/watch?v=abc123`, upload_date 20200115) |
 | `stems/{vocals,drums,bass,guitar,piano,other}.flac` | 1 s, mono 8 kHz, different tones (used by the stub separator) |
+| `stems-quiet/{silent,minus60,minus45}.flac` | 1 s, mono 8 kHz, 16-bit: digital silence, a 440 Hz sine at about -60 dBFS, and one at about -45 dBFS (used by the stub separator's `sparse` and `silent` modes) |
 | `long.flac` | 16 min (960 s) of silence, mono 8 kHz, about 100 KB (FLAC compresses silence); committed, not generated at test time |
 | `not-flac.flac` | an Ogg file with a .flac name |
 

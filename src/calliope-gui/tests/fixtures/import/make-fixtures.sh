@@ -65,6 +65,12 @@ for name in vocals drums bass guitar piano other; do
   ff -f lavfi -i "sine=frequency=$f:duration=1:sample_rate=8000" -ac 1 -c:a flac "stems/$name.flac"
 done
 
+# quiet stems for the empty-stem check: digital silence, about -60 dBFS, about -45 dBFS
+mkdir -p stems-quiet
+ff -f lavfi -i "anullsrc=r=8000:cl=mono" -t 1 -sample_fmt s16 -c:a flac stems-quiet/silent.flac
+ff -f lavfi -i "aevalsrc=0.001*sin(2*PI*440*t):s=8000:d=1" -ac 1 -sample_fmt s16 -c:a flac stems-quiet/minus60.flac
+ff -f lavfi -i "aevalsrc=0.005623*sin(2*PI*440*t):s=8000:d=1" -ac 1 -sample_fmt s16 -c:a flac stems-quiet/minus45.flac
+
 # 16 min of silence, mono 8 kHz (FLAC compresses silence to a few KB)
 ff -f lavfi -i "anullsrc=r=8000:cl=mono" -t 960 -c:a flac long.flac
 
