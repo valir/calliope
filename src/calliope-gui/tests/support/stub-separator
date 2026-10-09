@@ -14,6 +14,9 @@
 #   hang        sleep until killed
 #   bad-output  write README.txt instead of stems
 #   not-flac    one stem without the "fLaC" magic
+#   sparse      the stems, but piano is digital silence, other about -60 dBFS and guitar about
+#               -45 dBFS (from ../fixtures/import/stems-quiet/): piano and other get dropped
+#   silent      all six stems are digital silence
 # $STUB_SEPARATOR_LOG, if set, gets the argv (one line, tab separated) appended.
 set -euo pipefail
 
@@ -25,6 +28,7 @@ in=$1 out=$2 model=$3
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STEMS="$HERE/../fixtures/import/stems"
+QUIET="$HERE/../fixtures/import/stems-quiet"
 
 if [[ -n "${STUB_SEPARATOR_LOG:-}" ]]; then
   printf '%s\t%s\t%s\n' "$in" "$out" "$model" >>"$STUB_SEPARATOR_LOG"
@@ -46,7 +50,7 @@ mkdir -p -- "$out"
 
 step_sleep=0
 case $mode in
-  ok | bad-output | not-flac) ;;
+  ok | bad-output | not-flac | sparse | silent) ;;
   fail)
     echo "stub-separator: simulated failure" >&2
     exit 3
@@ -74,6 +78,17 @@ case $mode in
   not-flac)
     cp -- "$STEMS"/*.flac "$out/"
     printf 'this is not flac\n' >"$out/vocals.flac"
+    ;;
+  sparse)
+    cp -- "$STEMS"/*.flac "$out/"
+    cp -- "$QUIET/silent.flac" "$out/piano.flac"
+    cp -- "$QUIET/minus60.flac" "$out/other.flac"
+    cp -- "$QUIET/minus45.flac" "$out/guitar.flac"
+    ;;
+  silent)
+    for f in "$STEMS"/*.flac; do
+      cp -- "$QUIET/silent.flac" "$out/$(basename -- "$f")"
+    done
     ;;
   *)
     cp -- "$STEMS"/*.flac "$out/"
