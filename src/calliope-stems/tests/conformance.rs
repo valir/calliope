@@ -26,6 +26,8 @@ struct Server {
     addr: SocketAddr,
     /// Parent of the work dir: nothing but `work` may ever appear in here.
     outer: tempfile::TempDir,
+    /// Everything the server wrote to stderr so far.
+    log: std::sync::Arc<std::sync::Mutex<String>>,
 }
 
 impl Drop for Server {
@@ -41,6 +43,9 @@ impl Server {
     }
     fn jobs(&self) -> PathBuf {
         self.work().join("jobs")
+    }
+    fn log(&self) -> String {
+        self.log.lock().unwrap().clone()
     }
     fn client(&self) -> StemsClient {
         StemsClient::new(&format!("http://{}", self.addr))
@@ -68,13 +73,16 @@ fn start_in(outer: tempfile::TempDir, mode: &str, extra: &[&str]) -> Server {
         }
     };
     assert!(addr.ip().is_loopback());
+    let log = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let sink_log = log.clone();
     std::thread::spawn(move || {
         let mut sink = String::new();
         while lines.read_line(&mut sink).unwrap_or(0) > 0 {
+            sink_log.lock().unwrap().push_str(&sink);
             sink.clear();
         }
     });
-    Server { child, addr, outer }
+    Server { child, addr, outer, log }
 }
 
 fn start(mode: &str, extra: &[&str]) -> Server {
@@ -528,4 +536,80 @@ fn stalled_job_is_reported() {
         .unwrap_err();
     assert_eq!(e, ClientError::Stalled);
     assert_eq!(e.to_string(), "The edge-AI server stopped responding");
+}
+
+const SIX: [&str; 6] = ["vocals", "drums", "bass", "guitar", "piano", "other"];
+
+#[test]
+fn sparse_stems_report_their_peaks() {
+    let s = start("sparse", &[]);
+    let job = submit_raw(&s);
+    // While the job is not done, the key is absent (never null).
+    loop {
+        let v = raw_status(s.addr, &job);
+        if v["state"] == "done" {
+            break;
+        }
+        assert!(v.get("stem_peaks").is_none(), "{v}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let done = raw_status(s.addr, &job);
+    let peaks = done["stem_peaks"].as_array().unwrap();
+    assert_eq!(peaks.iter().map(|p| p["name"].as_str().unwrap()).collect::<Vec<_>>(), SIX);
+    assert!(peaks.iter().all(|p| p["bits"] == 16));
+    let by = |n: &str| peaks.iter().find(|p| p["name"] == n).unwrap();
+    assert_eq!(by("piano")["peak"], 0);
+    assert!(by("piano")["peak_dbfs"].is_null());
+    assert!((30..=34).contains(&by("other")["peak"].as_u64().unwrap()), "{}", by("other"));
+    assert!((175..=185).contains(&by("guitar")["peak"].as_u64().unwrap()), "{}", by("guitar"));
+    let vocals = by("vocals");
+    assert!(!calliope_lib::flac_peak::is_below(vocals["peak"].as_u64().unwrap(), 16, -50.0), "{vocals}");
+    assert!(vocals["peak_dbfs"].is_number());
+
+    // The shared client sees the same peaks.
+    let st = s.client().status(&job).unwrap();
+    let got = st.stem_peaks.unwrap();
+    assert_eq!(got.len(), 6);
+    for p in &got {
+        assert_eq!(p.peak, by(&p.name)["peak"].as_u64().unwrap(), "{}", p.name);
+        assert_eq!(p.bits, 16);
+    }
+
+    let log = s.log();
+    assert!(log.contains(&format!("job id={job} stem=piano peak=0 bits=16 peak_dbfs=-inf")), "{log}");
+    assert!(log.contains(&format!("job id={job} stem=vocals peak=")), "{log}");
+    assert!(log.contains(&format!("job id={job} measured=6/6 ms=")), "{log}");
+    // The stems are still served.
+    assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/piano"), &[], b"").status, 200);
+}
+
+#[test]
+fn undecodable_stem_gets_no_entry_but_the_job_succeeds() {
+    let s = start("undecodable", &[]);
+    let job = submit_raw(&s);
+    let done = wait_state(s.addr, &job, "done");
+    let peaks = done["stem_peaks"].as_array().unwrap();
+    let names: Vec<&str> = peaks.iter().map(|p| p["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["vocals", "drums", "bass", "guitar", "other"]);
+    assert_eq!(done["stems"].as_array().unwrap().len(), 6);
+    let log = s.log();
+    assert!(log.contains(&format!("job id={job} stem=piano peak=unknown")), "{log}");
+    assert!(log.contains(&format!("job id={job} measured=5/6 ms=")), "{log}");
+    assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/piano"), &[], b"").status, 200);
+}
+
+#[test]
+fn no_stem_peaks_flag_gives_the_old_json() {
+    let s = start("ok", &["--no-stem-peaks"]);
+    let job = submit_raw(&s);
+    let done = wait_state(s.addr, &job, "done");
+    let keys: Vec<&str> = done.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+    let mut sorted = keys.clone();
+    sorted.sort();
+    assert_eq!(sorted, ["error", "job", "progress", "state", "stems"], "{done}");
+    assert!(s.client().status(&job).unwrap().stem_peaks.is_none());
+    assert!(!s.log().contains("measured="));
+    for n in SIX {
+        assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/{n}"), &[], b"").status, 200);
+    }
 }

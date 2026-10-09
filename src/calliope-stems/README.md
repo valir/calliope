@@ -33,6 +33,7 @@ calliope-stems --separator PATH [options]
 | `--queue N` | 2 | jobs allowed to wait behind the running one |
 | `--separator-timeout-min N` | 30 | a separator running longer is killed |
 | `--retention-hours N` | 24 | finished jobs are deleted after this |
+| `--no-stem-peaks` | off | do not measure the stems' peak levels; the job status then has no `stem_peaks` (the pre-peaks JSON) |
 | `--help`, `--version` | | |
 | `--licenses` | | prints the licences of the third-party code in the binary (`THIRD-PARTY-NOTICES.txt`; regenerate with `npm run notices:stems` in `src/calliope-gui` after changing dependencies) |
 
@@ -46,9 +47,30 @@ expose it to the internet. The GUI talks plain `http://` to it (Settings > Stem 
 * `POST /v1/jobs[?model=NAME]`: the FLAC as the request body (`Content-Type: audio/flac`, a
   `Content-Length` is required); returns the job id (413 too large or too long, 415 not FLAC,
   503 queue full)
-* `GET /v1/jobs/<id>`: status and progress
+* `GET /v1/jobs/<id>`: status and progress. When the job is `done` the status also has
+  `stem_peaks`, measured by the server (see below)
 * `GET /v1/jobs/<id>/stems/<name>`: one finished stem as FLAC
 * `DELETE /v1/jobs/<id>`: cancel (kills the separator) and remove the job's files
+
+### `stem_peaks`
+
+After the separator succeeds the server decodes every stem once (in stem order, a few seconds
+per song; the job stays `running` meanwhile) and reports its loudest sample:
+
+```json
+{"job":"…","state":"done","progress":1.0,"stems":["vocals","drums","bass","guitar","piano","other"],"error":null,
+ "stem_peaks":[{"name":"vocals","peak":21450,"bits":16,"peak_dbfs":-3.68},
+               {"name":"piano","peak":0,"bits":16,"peak_dbfs":null}]}
+```
+
+* `peak` is the exact maximum absolute sample over the whole stem and all channels (integer) and
+  `bits` its bits per sample; together they are the data. `peak_dbfs` is only for humans
+  (`null` for digital silence, `peak` 0); clients ignore it.
+* Not measured is not silence. A stem the server could not decode has **no entry** (the job still
+  succeeds, and the server log says `stem=<name> peak=unknown`). The key is absent (never `null`)
+  while the job is not `done`, on servers without this feature and with `--no-stem-peaks`.
+* The log has one line per stem (`job id=… stem=… peak=… bits=… peak_dbfs=…`) and a summary
+  `job id=… measured=<n>/<total> ms=<ms>`.
 
 `src/calliope-stems/tests/conformance.rs` is the executable specification of every endpoint,
 status code and limit.
