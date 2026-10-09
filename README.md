@@ -29,3 +29,9 @@ npm test                    # the whole headless suite (all three crates)
 
 The stem server: `cargo build --release -p calliope-stems` (from anywhere in the repository),
 then see its README for deployment.
+
+## Licence
+
+Calliope is licensed under the [Apache License, Version 2.0](LICENSE)
+(SPDX: `Apache-2.0`). Copyright 2026 Valentin Rusu. The licences of its dependencies and
+of the external tools it runs are recorded in [`docs/licences.md`](docs/licences.md).

@@ -12,7 +12,14 @@ read from the package metadata) whenever you add a dependency.
 
 **Flagged (not permissive): none among the bundled code and assets below.** Every entry is MIT, Apache-2.0, ISC or OFL-1.1; no GPL,
 LGPL, MPL or unknown licences. Where a crate is dual-licensed ("MIT OR Apache-2.0") either
-may be chosen. Transitive dependencies are not listed here.
+may be chosen. Transitive dependencies are not listed here; among them, Tauri pulls in five
+MPL-2.0 crates (`cssparser`, `cssparser-macros`, `dtoa-short`, `selectors` via `tauri-utils`,
+and `option-ext` via `dirs`). MPL-2.0 is file-level copyleft: it covers only those crates'
+own files, which Calliope uses unmodified from crates.io, and does not constrain Calliope's
+licence.
+
+Calliope itself (all crates and the npm project) is licensed under Apache-2.0: see
+`LICENSE` at the repository root and `license` in `Cargo.toml` and `package.json`.
 
 ## Rust crates of calliope-gui (`src/calliope-gui/Cargo.toml`)
 
