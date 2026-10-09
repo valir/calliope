@@ -460,6 +460,19 @@ fn import_drops_silent_stems() {
     for n in ["piano", "other"] {
         assert!(!on_disk.iter().any(|f| f.contains(n)), "{on_disk:?}");
     }
+    // The server's request log proves the silent stems were never downloaded.
+    let log = r.dirs.stems_log();
+    let fetches = |name: &str| {
+        log.lines()
+            .filter(|l| l.contains("request method=GET") && l.split_whitespace().any(|w| w.strip_prefix("path=").is_some_and(|p| p.ends_with(&format!("/stems/{name}")))))
+            .count()
+    };
+    for n in ["piano", "other"] {
+        assert_eq!(fetches(n), 0, "{n} was fetched:\n{log}");
+    }
+    for n in ["vocals", "drums", "bass", "guitar"] {
+        assert_eq!(fetches(n), 1, "{n} fetch count:\n{log}");
+    }
     r.check_disk(Some(&id));
     r.assert_no_children();
 }
