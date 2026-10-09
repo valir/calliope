@@ -13,6 +13,7 @@
     "dev:app": "tauri dev --config tauri.dev.conf.json",
     "dev:ui": "vite --port 5173 --strictPort --host localhost",
     "build": "vite build",
+    "notices:stems": "node third-party-notices.ts calliope-stems ../calliope-stems/THIRD-PARTY-NOTICES.txt",
     "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "test:ui": "vitest run",
     "test": "npm run check && npm run test:ui && npm run build && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",

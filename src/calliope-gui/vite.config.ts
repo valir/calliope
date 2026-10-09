@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
-import { thirdPartyNotices } from './third-party-notices';
+import { thirdPartyNotices } from './third-party-notices.ts';
 
 const stylesheet = fileURLToPath(new URL('./src/ui/app.css', import.meta.url));
 const lib = fileURLToPath(new URL('./src/ui/lib', import.meta.url));

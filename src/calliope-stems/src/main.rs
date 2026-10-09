@@ -43,6 +43,10 @@ fn main() {
             println!("calliope-stems {}", cli::VERSION);
             return;
         }
+        Ok(Parsed::Licenses) => {
+            print!("{}", cli::THIRD_PARTY_NOTICES);
+            return;
+        }
         Ok(Parsed::Run(cfg)) => Arc::new(*cfg),
         Err(msg) => {
             eprintln!("calliope-stems: {msg}");

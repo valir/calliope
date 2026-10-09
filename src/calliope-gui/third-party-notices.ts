@@ -3,8 +3,10 @@
 // frontend, as MIT, Apache-2.0, BSD, MPL-2.0 and friends require when distributing binaries.
 // Runs as a Vite plugin at `vite build` (dist/ is embedded in the binary), so the file is
 // regenerated on every build and never goes stale. Checked by tests/frontend.rs.
+// Also a command for the calliope-stems server, whose notices are committed and embedded:
+//   node third-party-notices.ts <crate> <output file>   (npm run notices:stems)
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -149,7 +151,7 @@ export function cssImports(cssFile: string): string[] {
 }
 
 /** Renders the notices file: a package index, then each distinct licence text once. */
-export function render(packages: Package[]): string {
+export function render(packages: Package[], crate: string): string {
   const key = (p: Package) => `${p.kind} ${p.name} ${p.version}`;
   const sorted = [...new Map(packages.map((p) => [key(p), p])).values()].sort(
     (a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name) || a.version.localeCompare(b.version),
@@ -168,16 +170,18 @@ export function render(packages: Package[]): string {
     'THIRD-PARTY SOFTWARE IN CALLIOPE',
     '',
     'Calliope is licensed under the Apache License 2.0. It includes the third-party',
-    'software listed below, each under its own licence. Generated at build time from',
-    'Cargo.lock and the bundled npm modules; the licence texts follow the list.',
+    'software listed below, each under its own licence. Generated from Cargo.lock',
+    '(and, for the app, its bundled npm modules); the licence texts follow the list.',
     '',
   ];
   for (const [kind, title] of [
-    ['crate', 'Rust crates compiled into calliope-gui'],
+    ['crate', `Rust crates compiled into ${crate}`],
     ['npm', 'npm packages bundled into the user interface'],
   ] as const) {
+    const listed = sorted.filter((q) => q.kind === kind);
+    if (!listed.length) continue;
     out.push(`== ${title} ==`, '');
-    for (const p of sorted.filter((q) => q.kind === kind)) {
+    for (const p of listed) {
       out.push(`${p.name} ${p.version}  [${p.licence}]  ${p.source}`);
       if (p.note) out.push(`    ${p.note}`);
     }
@@ -206,7 +210,13 @@ export function thirdPartyNotices(opts: { crate: string; stylesheet: string }) {
       }
       for (const name of cssImports(opts.stylesheet)) dirs.add(join(here, 'node_modules', name));
       const packages = [...crates(opts.crate), ...[...dirs].map(npmPackage)];
-      this.emitFile({ type: 'asset', fileName: OUT, source: render(packages) });
+      this.emitFile({ type: 'asset', fileName: OUT, source: render(packages, opts.crate) });
     },
   };
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const [crate, out] = process.argv.slice(2);
+  if (!crate || !out) throw new Error('usage: node third-party-notices.ts <crate> <output file>');
+  writeFileSync(out, render(crates(crate), crate));
 }

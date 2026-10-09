@@ -232,6 +232,15 @@ fn separator_flag_is_required() {
 }
 
 #[test]
+fn licenses_flag_prints_the_third_party_notices() {
+    let out = Command::new(env!("CARGO_BIN_EXE_calliope-stems")).arg("--licenses").output().unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.starts_with("THIRD-PARTY SOFTWARE IN CALLIOPE"));
+    assert!(text.contains("\ntiny_http ") && text.contains("Apache License"), "notices incomplete");
+}
+
+#[test]
 fn sigterm_stops_the_server_and_its_separator() {
     let mut s = start("hang", &[]);
     let job = post(s.addr, "", "untagged.flac").json()["job"].as_str().unwrap().to_string();

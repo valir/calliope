@@ -34,6 +34,7 @@ calliope-stems --separator PATH [options]
 | `--separator-timeout-min N` | 30 | a separator running longer is killed |
 | `--retention-hours N` | 24 | finished jobs are deleted after this |
 | `--help`, `--version` | | |
+| `--licenses` | | prints the licences of the third-party code in the binary (`THIRD-PARTY-NOTICES.txt`; regenerate with `npm run notices:stems` in `src/calliope-gui` after changing dependencies) |
 
 The service has no authentication and no TLS: it is meant for a trusted home network. Do not
 expose it to the internet. The GUI talks plain `http://` to it (Settings > Stem extraction).

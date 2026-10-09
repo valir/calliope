@@ -29,8 +29,13 @@ packages `app.css` imports), followed by each distinct licence text once. Genera
 `src/calliope-gui/third-party-notices.ts`. A package that ships no licence file gets the
 standard text of its declared licence from `src/calliope-gui/licence-templates/` (SPDX texts;
 Apache-2.0 comes from `LICENSE`), and the build fails if no template fits. Checked by
-`tests/frontend.rs` (`dist_ships_third_party_notices_for_every_linked_crate`). The
-`calliope-stems` server binary is not covered yet.
+`tests/frontend.rs` (`dist_ships_third_party_notices_for_every_linked_crate`).
+
+The `calliope-stems` server has its own `src/calliope-stems/THIRD-PARTY-NOTICES.txt`, committed
+because the server has no frontend build: it is embedded in the binary and printed by
+`calliope-stems --licenses`. Regenerate it with `npm run notices:stems` (in `src/calliope-gui`)
+after changing the server's dependencies; `src/calliope-stems/tests/notices.rs` fails until
+you do.
 
 ## Rust crates of calliope-gui (`src/calliope-gui/Cargo.toml`)
 

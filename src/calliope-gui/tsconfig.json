@@ -9,6 +9,7 @@
     "isolatedModules": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["svelte", "vite/client", "node"],
     "paths": { "$lib": ["./src/ui/lib"], "$lib/*": ["./src/ui/lib/*"] }
   },
