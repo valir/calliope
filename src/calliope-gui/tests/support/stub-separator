@@ -17,6 +17,7 @@
 #   sparse      the stems, but piano is digital silence, other about -60 dBFS and guitar about
 #               -45 dBFS (from ../fixtures/import/stems-quiet/): piano and other get dropped
 #   silent      all six stems are digital silence
+#   undecodable the sparse stems, but piano is "fLaC" + junk (passes the server's check, cannot be decoded)
 # $STUB_SEPARATOR_LOG, if set, gets the argv (one line, tab separated) appended.
 set -euo pipefail
 
@@ -50,7 +51,7 @@ mkdir -p -- "$out"
 
 step_sleep=0
 case $mode in
-  ok | bad-output | not-flac | sparse | silent) ;;
+  ok | bad-output | not-flac | sparse | silent | undecodable) ;;
   fail)
     echo "stub-separator: simulated failure" >&2
     exit 3
@@ -89,6 +90,11 @@ case $mode in
     for f in "$STEMS"/*.flac; do
       cp -- "$QUIET/silent.flac" "$out/$(basename -- "$f")"
     done
+    ;;
+  undecodable)
+    cp -- "$STEMS"/*.flac "$out/"
+    cp -- "$QUIET/minus60.flac" "$out/other.flac"
+    printf 'fLaC this is not a decodable stream\n' >"$out/piano.flac"
     ;;
   *)
     cp -- "$STEMS"/*.flac "$out/"
