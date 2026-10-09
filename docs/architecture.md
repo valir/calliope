@@ -817,3 +817,7 @@ the decision belongs to the app), sending only `peak_dbfs` (rejected: float boun
 `stems` as objects (rejected: breaks old clients), a new endpoint or API v2 (rejected: unnecessary for an
 additive field), trusting server peaks for kept stems without a local check (rejected: no saving worth a
 second code path).
+Trust model: the app drops stems it never downloads on the server's word. Accepted because the server is
+LAN-only, unauthenticated by design, and already supplies the stem audio itself. A server claiming every
+stem silent makes the import fail visibly; a stem claimed audible but actually silent is still caught by
+the local check. The user sees dropped stems in the dropped list (the server-reported level is in the log).

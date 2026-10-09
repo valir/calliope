@@ -184,7 +184,17 @@ impl Rig {
     }
 
     fn wait_idle(&self, what: &str) -> JobSnapshot {
-        self.wait(what, |_| !self.state.is_running())
+        // Take the snapshot AFTER seeing the job stopped; reading it first returns a stale phase.
+        let end = Instant::now() + Duration::from_secs(60);
+        loop {
+            if !self.state.is_running() {
+                if let Some(s) = self.state.snapshot() {
+                    return s;
+                }
+            }
+            assert!(Instant::now() < end, "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn ready(&self) -> JobSnapshot {

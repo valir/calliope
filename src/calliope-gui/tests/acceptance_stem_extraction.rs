@@ -436,7 +436,17 @@ impl Rig {
         }
     }
     fn idle(&self) -> JobSnapshot {
-        self.wait("idle", |_| !self.state.is_running())
+        // Take the snapshot AFTER seeing the job stopped; reading it first returns a stale phase.
+        let end = Instant::now() + Duration::from_secs(90);
+        loop {
+            if !self.state.is_running() {
+                if let Some(s) = self.state.snapshot() {
+                    return s;
+                }
+            }
+            assert!(Instant::now() < end, "timed out waiting for idle");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
     fn ready(&self) -> JobSnapshot {
         let s = self.idle();
@@ -1245,7 +1255,7 @@ fn cancel_storm_leaves_no_zombies_no_staging_and_a_consistent_state() {
         let s = r.unwrap_or_else(|e| panic!("iteration {i}: {e}"));
         std::thread::sleep(Duration::from_millis((i * 37) % 150));
         let _ = rig.state.cancel(&s.job);
-        let end = rig.wait("idle", |_| !rig.state.is_running());
+        let end = rig.idle();
         if !rig.state.is_active() {
             continue;
         }
