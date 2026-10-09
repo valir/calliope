@@ -25,6 +25,8 @@ backing track" feature, but for now we stick to stem extraction.
    of tracks
 7. Metadata should be extracted from the input file or stream, then presented
    to the user in an edit step before stem extraction
+8. Empty stemps should not be kept in the repository, so some tracks will only
+   have, for exemple, bass, drums, guitar and vocals, but not piano or other
 
 ## Constraints
 <!-- Language/framework, libraries allowed or forbidden, performance, platforms,
@@ -93,6 +95,8 @@ backing track" feature, but for now we stick to stem extraction.
   extract the metadata into the repository format
 - [ ] Given an audio file is available, then display the track edit pane with
   the initial extracted metadata is displayed
+- [ ] Given the stem extraction is ongoing, when operation is complete, then
+  check if any stem is all empty (all zeroes) and drop it
 
 ## Open questions
 <!-- Things you haven't decided yet. The architect will ask about anything else it finds. -->
