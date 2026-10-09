@@ -17,6 +17,7 @@
 
   const current = $derived(step());
   const track = $derived(imp.job?.track ?? null);
+  const dropped = $derived(imp.job?.dropped ?? []);
 
   // A job may be running or waiting for the user while this view was away: re-attach.
   onMount(() => void attach());
@@ -45,6 +46,9 @@
     {:else if current === 'done' && track}
       <section class="flex max-w-xl flex-col gap-4" aria-label="Import finished">
         <p role="status" class="text-lg">Saved {track.title} with {track.stems.length} stems.</p>
+        {#if dropped.length > 0}
+          <p class="text-lg">Dropped silent stems: {dropped.map((s) => s.name).join(', ')}.</p>
+        {/if}
         <div class="flex gap-2">
           <Button onclick={showInLibrary}>Show in Library</Button>
           <Button variant="outline" onclick={importAnother}>Import another track</Button>

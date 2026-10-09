@@ -5,3 +5,4 @@ task 2 | Stub separator modes sparse and silent | local (orchestrator fixed a qu
 task 3 | The measure: silent_peak + SILENT_STEM_DBFS | implementer | done (plan off by one at the 24-bit boundary: 26527 is -50.00004 dBFS, silent; 26528 first audible)
 task 4 | Staging::discard_stem_part | implementer | done
 task 5 | Import job: check, drop, log, all-silent failure, dropped in the result | implementer | done
+task 6 | Frontend: dropped stems on the Import finished page and in the log | implementer | done

@@ -26,7 +26,7 @@ const META: TrackEdits = {
 const snap = (over: Partial<JobSnapshot> = {}): JobSnapshot => ({
   job: 'job-1', source: { kind: 'url', label: URL_OK }, phase: 'downloading', downloaded: 0, total: null,
   sent: 0, stems_done: 0, stems_total: 0, progress: null, duration_s: null, metadata: null, error: null,
-  track: null, ...over,
+  track: null, dropped: [], ...over,
 });
 const emit = (e: ImportEvent) => act(() => channel!(e));
 const names = () => calls.map((c) => c[0]);

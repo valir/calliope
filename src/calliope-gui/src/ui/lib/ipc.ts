@@ -105,6 +105,8 @@ export type JobPhase =
 export type JobStage = 'download' | 'prepare' | 'server' | 'save';
 export interface JobSource { kind: 'url' | 'audio-file' | 'video-file'; label: string }
 export interface JobError { stage: JobStage; message: string; http_status: number | null }
+/** A stem the server returned but the import dropped as silent; `peak_dbfs` null = digital silence. */
+export interface DroppedStem { name: string; peak_dbfs: number | null }
 export interface JobSnapshot {
   job: string;
   source: JobSource;
@@ -119,6 +121,7 @@ export interface JobSnapshot {
   metadata: TrackEdits | null;
   error: JobError | null;
   track: TrackRecord | null;
+  dropped: DroppedStem[];
 }
 export type ImportEvent =
   | { phase: 'downloading'; downloaded: number; total: number | null }
@@ -129,7 +132,7 @@ export type ImportEvent =
   | { phase: 'working'; progress: number | null }
   | { phase: 'receiving'; done: number; total: number }
   | { phase: 'saving' }
-  | { phase: 'saved'; track: TrackRecord }
+  | { phase: 'saved'; track: TrackRecord; dropped: DroppedStem[] }
   | { phase: 'failed'; stage: JobStage; message: string; http_status: number | null }
   | { phase: 'cancelled'; back_to: 'source' | 'edit' };
 

@@ -110,8 +110,13 @@ function stubJob(): JobSnapshot {
   return {
     job: '', source: { kind: 'url', label: '' }, phase: 'downloading', downloaded: 0, total: null,
     sent: 0, stems_done: 0, stems_total: 0, progress: null, duration_s: null, metadata: null,
-    error: null, track: null,
+    error: null, track: null, dropped: [],
   };
+}
+
+/** `piano,other`, or `none`: the log form of a job's dropped stems. */
+function droppedNames(d: { name: string }[]): string {
+  return d.length > 0 ? d.map((s) => s.name).join(',') : 'none';
 }
 
 function setDraftFrom(j: JobSnapshot): void {
@@ -167,7 +172,10 @@ export function applyEvent(e: ImportEvent): void {
     case 'saved':
       j.phase = 'saved';
       j.track = e.track;
-      log(`saved id=${e.track.id} stems=${e.track.stems.length} original=${e.track.original !== null}`);
+      j.dropped = e.dropped;
+      log(
+        `saved id=${e.track.id} stems=${e.track.stems.length} original=${e.track.original !== null} dropped=${droppedNames(e.dropped)}`,
+      );
       void load();
       break;
     case 'failed':

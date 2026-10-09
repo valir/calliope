@@ -14,7 +14,7 @@ const edits: TrackEdits = {
 const snapshot: JobSnapshot = {
   job: 'j1', source: { kind: 'url', label: 'https://x.example/a' }, phase: 'downloading',
   downloaded: 0, total: null, sent: 0, stems_done: 0, stems_total: 6, progress: null,
-  duration_s: null, metadata: null, error: null, track: null,
+  duration_s: null, metadata: null, error: null, track: null, dropped: [],
 };
 
 describe('import ipc wrappers', () => {

@@ -26,7 +26,7 @@ const META: TrackEdits = {
 const snap = (over: Partial<JobSnapshot> = {}): JobSnapshot => ({
   job: 'job-1', source: { kind: 'url', label: URL_OK }, phase: 'downloading', downloaded: 0, total: null,
   sent: 0, stems_done: 0, stems_total: 0, progress: null, duration_s: null, metadata: null, error: null,
-  track: null, ...over,
+  track: null, dropped: [], ...over,
 });
 const stemTrack: TrackRecord = {
   ...FIXTURE_TRACKS[0], type: 'stem', audio: null,
@@ -36,6 +36,7 @@ const stemTrack: TrackRecord = {
 
 const names = () => calls.map((c) => c[0]);
 const callsOf = (cmd: string) => calls.filter((c) => c[0] === cmd).map((c) => c[1]);
+const frontendLogs = () => callsOf('frontend_log').map((a) => a.message as string);
 const emit = (e: ImportEvent) => act(() => channel!(e));
 
 beforeEach(() => {
@@ -345,7 +346,7 @@ describe('Import view: edit pane and extraction', () => {
   it('saved shows the done panel; Show in Library selects the track in the Library', async () => {
     await toEditPane();
     await click('button', 'Extract');
-    await emit({ phase: 'saved', track: stemTrack });
+    await emit({ phase: 'saved', track: stemTrack, dropped: [] });
     expect(screen.getByText('Saved Slow Burn with 6 stems.')).toBeTruthy();
     await waitFor(() => expect(names()).toContain('list_tracks'));
     await click('button', 'Show in Library');
@@ -354,10 +355,29 @@ describe('Import view: edit pane and extraction', () => {
     expect(screen.getByRole('button', { name: 'Stem Extraction' })).toBeTruthy();
   });
 
+  it('saved with dropped stems shows the line and logs them', async () => {
+    await toEditPane();
+    await click('button', 'Extract');
+    await emit({
+      phase: 'saved', track: stemTrack,
+      dropped: [{ name: 'piano', peak_dbfs: -61 }, { name: 'other', peak_dbfs: null }],
+    });
+    expect(screen.getByText('Dropped silent stems: piano, other.')).toBeTruthy();
+    expect(frontendLogs().some((m) => m.startsWith('import saved id=') && m.endsWith(' dropped=piano,other'))).toBe(true);
+  });
+
+  it('saved with no dropped stems shows no line and logs dropped=none', async () => {
+    await toEditPane();
+    await click('button', 'Extract');
+    await emit({ phase: 'saved', track: stemTrack, dropped: [] });
+    expect(screen.queryByText(/Dropped silent stems/)).toBeNull();
+    expect(frontendLogs().some((m) => m.startsWith('import saved id=') && m.endsWith(' dropped=none'))).toBe(true);
+  });
+
   it('Import another returns to a fresh source page', async () => {
     await toEditPane();
     await click('button', 'Extract');
-    await emit({ phase: 'saved', track: stemTrack });
+    await emit({ phase: 'saved', track: stemTrack, dropped: [] });
     await click('button', 'Import another track');
     expect(screen.getByRole('radio', { name: 'URL' })).toBeTruthy();
     expect(imp.job).toBeNull();
@@ -405,6 +425,15 @@ describe('Import view: edit pane and extraction', () => {
 });
 
 describe('Import view: re-attach and footer', () => {
+  it('re-mounting after a finished job shows the dropped stems line', async () => {
+    watchResult = snap({
+      phase: 'saved', metadata: META, track: stemTrack,
+      dropped: [{ name: 'piano', peak_dbfs: -62.5 }, { name: 'other', peak_dbfs: null }],
+    });
+    render(ImportView);
+    expect(await screen.findByText('Dropped silent stems: piano, other.')).toBeTruthy();
+  });
+
   it('re-mounting during a download re-attaches to the running job', async () => {
     watchResult = snap({ downloaded: 2097152, total: 8388608 });
     render(ImportView);
