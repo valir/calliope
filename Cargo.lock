@@ -287,6 +287,8 @@ dependencies = [
 name = "calliope-lib"
 version = "0.1.0"
 dependencies = [
+ "claxon",
+ "flacenc",
  "libc",
  "serde",
  "serde_json",

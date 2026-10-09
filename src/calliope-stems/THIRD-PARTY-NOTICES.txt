@@ -11,6 +11,7 @@ base64 0.23.1  [MIT OR Apache-2.0]  https://github.com/marshallpierce/rust-base6
 bytes 1.12.1  [MIT]  https://github.com/tokio-rs/bytes
 cfg-if 1.0.5  [MIT OR Apache-2.0]  https://github.com/rust-lang/cfg-if
 chunked_transfer 1.5.0  [MIT OR Apache-2.0]  https://github.com/frewsxcv/rust-chunked-transfer
+claxon 0.4.3  [Apache-2.0]  https://github.com/ruuda/claxon
 getrandom 0.4.3  [MIT OR Apache-2.0]  https://github.com/rust-random/getrandom
 http 1.5.0  [MIT OR Apache-2.0]  https://github.com/hyperium/http
 httparse 1.10.1  [MIT OR Apache-2.0]  https://github.com/seanmonstar/httparse
@@ -271,7 +272,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-Used by: base64 0.23.1 (LICENSE-APACHE), cfg-if 1.0.5 (LICENSE-APACHE), chunked_transfer 1.5.0 (LICENSE-APACHE), httparse 1.10.1 (LICENSE-APACHE), httpdate 1.0.3 (LICENSE-APACHE), log 0.4.34 (LICENSE-APACHE), percent-encoding 2.3.2 (LICENSE-APACHE), tiny_http 0.12.0 (LICENSE-APACHE), ureq 3.4.2 (LICENSE-APACHE), ureq-proto 0.6.4 (LICENSE-APACHE.txt), uuid 1.27.0 (LICENSE-APACHE)
+Used by: base64 0.23.1 (LICENSE-APACHE), cfg-if 1.0.5 (LICENSE-APACHE), chunked_transfer 1.5.0 (LICENSE-APACHE), claxon 0.4.3 (license), httparse 1.10.1 (LICENSE-APACHE), httpdate 1.0.3 (LICENSE-APACHE), log 0.4.34 (LICENSE-APACHE), percent-encoding 2.3.2 (LICENSE-APACHE), tiny_http 0.12.0 (LICENSE-APACHE), ureq 3.4.2 (LICENSE-APACHE), ureq-proto 0.6.4 (LICENSE-APACHE.txt), uuid 1.27.0 (LICENSE-APACHE)
 ------------------------------------------------------------------------------
 
 Apache License
