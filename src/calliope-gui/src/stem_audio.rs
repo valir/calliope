@@ -162,6 +162,56 @@ pub fn decode_i16(
     Ok(StemPcm { channels, frames: done, samples })
 }
 
+/// A stem whose peak is below this level (dBFS) counts as silent and is dropped at import.
+/// This is the only place the number appears.
+pub const SILENT_STEM_DBFS: f64 = -50.0;
+
+/// Result of [`silent_peak`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Level {
+    /// Some sample reaches `SILENT_STEM_DBFS` or more.
+    Audible,
+    /// Every sample of every channel is below `SILENT_STEM_DBFS`. `peak_dbfs` is the sample
+    /// peak, `None` for digital silence (-inf). For logging only.
+    Silent { peak_dbfs: Option<f64> },
+}
+
+/// Measures the sample peak over all channels of a stem (any channel count, 4..=32 bits) and
+/// stops at the first sample at or above `SILENT_STEM_DBFS`. The decision uses integers.
+pub fn silent_peak(path: &Path) -> Result<Level, String> {
+    let label = file_label(path);
+    let mut reader = open(path)?;
+    let bits = reader.streaminfo().bits_per_sample;
+    let channels = reader.streaminfo().channels;
+    if !(4..=32).contains(&bits) || channels == 0 {
+        return Err(format!("Stem {label} has an unsupported format"));
+    }
+    let full_scale = (1u64 << (bits - 1)) as f64;
+    // Smallest |s| that is not below the threshold: |s| / full_scale >= 10^(dBFS/20).
+    let limit = (full_scale * 10f64.powf(SILENT_STEM_DBFS / 20.0)).ceil() as i64;
+    let mut peak = 0i64;
+    let mut blocks = reader.blocks();
+    let mut buf = Vec::new();
+    loop {
+        let block = blocks
+            .read_next_or_eof(std::mem::take(&mut buf))
+            .map_err(|e| format!("Cannot decode stem {label}: {e}"))?;
+        let Some(block) = block else { break };
+        for ch in 0..channels {
+            for &v in block.channel(ch) {
+                let a = i64::from(v).abs();
+                if a >= limit {
+                    return Ok(Level::Audible);
+                }
+                peak = peak.max(a);
+            }
+        }
+        buf = block.into_buffer();
+    }
+    let peak_dbfs = (peak > 0).then(|| 20.0 * (peak as f64 / full_scale).log10());
+    Ok(Level::Silent { peak_dbfs })
+}
+
 /// Streaming full-precision reader for the render: f32 stereo, mono duplicated, silence
 /// after the end.
 pub struct StemReader {
@@ -449,5 +499,90 @@ mod tests {
         std::fs::write(&bad, b"this is not a flac file at all").unwrap();
         assert!(probe(&bad).unwrap_err().contains("bad.flac"));
         assert!(StemReader::open(&bad).err().unwrap().contains("bad.flac"));
+    }
+
+    fn fixture(name: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/import").join(name)
+    }
+
+    fn level_of(samples: &[i32], channels: usize, bits: usize) -> Level {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("l.flac");
+        write_flac(&p, samples, channels, bits, 8000);
+        silent_peak(&p).unwrap()
+    }
+
+    /// 40 mono frames of zeros with `v` at frame `at`.
+    fn spike(v: i32, at: usize) -> Vec<i32> {
+        let mut s = vec![0; 40];
+        s[at] = v;
+        s
+    }
+
+    #[test]
+    fn silent_peak_all_zero_is_digital_silence() {
+        assert_eq!(level_of(&vec![0; 2 * 40], 2, 16), Level::Silent { peak_dbfs: None });
+    }
+
+    #[test]
+    fn silent_peak_16_bit_boundary() {
+        match level_of(&spike(103, 5), 1, 16) {
+            Level::Silent { peak_dbfs: Some(db) } => assert!((db + 50.05).abs() < 0.01, "{db}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(level_of(&spike(104, 5), 1, 16), Level::Audible);
+        assert_eq!(level_of(&spike(-104, 5), 1, 16), Level::Audible);
+        assert!(matches!(level_of(&spike(-103, 5), 1, 16), Level::Silent { .. }));
+        assert_eq!(level_of(&spike(-32768, 5), 1, 16), Level::Audible);
+    }
+
+    #[test]
+    fn silent_peak_24_bit_boundary() {
+        // 10^(-2.5) * 2^23 = 26527.1, so 26527 is -50.00003 dBFS (silent) and 26528 is audible.
+        assert!(matches!(level_of(&spike(26527, 3), 1, 24), Level::Silent { .. }));
+        assert_eq!(level_of(&spike(26528, 3), 1, 24), Level::Audible);
+    }
+
+    #[test]
+    fn silent_peak_loud_sample_only_in_right_channel_of_last_block() {
+        // 10000 frames > one block; the only loud sample is the last right-channel sample.
+        let mut s = vec![0; 2 * 10000];
+        assert!(matches!(level_of(&s, 2, 16), Level::Silent { peak_dbfs: None }));
+        *s.last_mut().unwrap() = 5000;
+        assert_eq!(level_of(&s, 2, 16), Level::Audible);
+    }
+
+    #[test]
+    fn silent_peak_single_spike_in_long_silence() {
+        // 1 sample at -49.9 dBFS (32768 * 10^(-49.9/20) = 104.8 -> 105) in 10 s at 8 kHz.
+        let mut s = vec![0; 80_000];
+        s[41_234] = 105;
+        assert_eq!(level_of(&s, 1, 16), Level::Audible);
+    }
+
+    #[test]
+    fn silent_peak_rejects_non_flac() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("bad.flac");
+        std::fs::write(&bad, b"this is not a flac file at all").unwrap();
+        assert!(silent_peak(&bad).unwrap_err().contains("bad.flac"));
+        assert!(silent_peak(&dir.path().join("gone.flac")).is_err());
+    }
+
+    #[test]
+    fn silent_peak_committed_fixtures() {
+        assert_eq!(
+            silent_peak(&fixture("stems-quiet/silent.flac")).unwrap(),
+            Level::Silent { peak_dbfs: None }
+        );
+        match silent_peak(&fixture("stems-quiet/minus60.flac")).unwrap() {
+            Level::Silent { peak_dbfs: Some(db) } => assert!(db > -61.0 && db < -59.0, "{db}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(silent_peak(&fixture("stems-quiet/minus45.flac")).unwrap(), Level::Audible);
+        for name in ["bass", "drums", "guitar", "other", "piano", "vocals"] {
+            let p = fixture(&format!("stems/{name}.flac"));
+            assert_eq!(silent_peak(&p).unwrap(), Level::Audible, "{name}");
+        }
     }
 }
