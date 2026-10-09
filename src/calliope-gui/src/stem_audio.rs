@@ -9,6 +9,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use claxon::FlacReader;
+use calliope_lib::flac_peak;
 
 /// Cap on decoded audio per track: sum(frames x channels x 2 bytes).
 pub const MAX_DECODED_BYTES: u64 = 3 * 512 * 1024 * 1024; // 1.5 GiB
@@ -177,39 +178,23 @@ pub enum Level {
 }
 
 /// Measures the sample peak over all channels of a stem (any channel count, 4..=32 bits) and
-/// stops at the first sample at or above `SILENT_STEM_DBFS`. The decision uses integers.
+/// stops at the first sample at or above `SILENT_STEM_DBFS`. The decision uses integers; the
+/// scan is shared with the server (`calliope_lib::flac_peak`).
 pub fn silent_peak(path: &Path) -> Result<Level, String> {
-    let label = file_label(path);
-    let mut reader = open(path)?;
-    let bits = reader.streaminfo().bits_per_sample;
-    let channels = reader.streaminfo().channels;
-    if !(4..=32).contains(&bits) || channels == 0 {
-        return Err(format!("Stem {label} has an unsupported format"));
+    let scan = flac_peak::scan(path, Some(SILENT_STEM_DBFS))?;
+    if !scan.complete {
+        return Ok(Level::Audible);
     }
-    let full_scale = (1u64 << (bits - 1)) as f64;
-    // Smallest |s| that is not below the threshold: |s| / full_scale >= 10^(dBFS/20).
-    let limit = (full_scale * 10f64.powf(SILENT_STEM_DBFS / 20.0)).ceil() as i64;
-    let mut peak = 0i64;
-    let mut blocks = reader.blocks();
-    let mut buf = Vec::new();
-    loop {
-        let block = blocks
-            .read_next_or_eof(std::mem::take(&mut buf))
-            .map_err(|e| format!("Cannot decode stem {label}: {e}"))?;
-        let Some(block) = block else { break };
-        for ch in 0..channels {
-            for &v in block.channel(ch) {
-                let a = i64::from(v).abs();
-                if a >= limit {
-                    return Ok(Level::Audible);
-                }
-                peak = peak.max(a);
-            }
-        }
-        buf = block.into_buffer();
+    Ok(level_of_peak(scan.peak, scan.bits))
+}
+
+/// The same decision for a peak reported by the server (integer sample peak, bits per sample).
+pub fn level_of_peak(peak: u64, bits: u32) -> Level {
+    if flac_peak::is_below(peak, bits, SILENT_STEM_DBFS) {
+        Level::Silent { peak_dbfs: flac_peak::to_dbfs(peak, bits) }
+    } else {
+        Level::Audible
     }
-    let peak_dbfs = (peak > 0).then(|| 20.0 * (peak as f64 / full_scale).log10());
-    Ok(Level::Silent { peak_dbfs })
 }
 
 /// Streaming full-precision reader for the render: f32 stereo, mono duplicated, silence
@@ -517,6 +502,16 @@ mod tests {
         let mut s = vec![0; 40];
         s[at] = v;
         s
+    }
+
+    #[test]
+    fn level_of_peak_boundaries() {
+        match level_of_peak(103, 16) {
+            Level::Silent { peak_dbfs: Some(d) } => assert!((d + 50.05).abs() < 0.01, "{d}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(level_of_peak(104, 16), Level::Audible);
+        assert_eq!(level_of_peak(0, 24), Level::Silent { peak_dbfs: None });
     }
 
     #[test]
