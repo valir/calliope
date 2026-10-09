@@ -912,6 +912,16 @@ impl Staging {
         self.stem_file(name, ".part")
     }
 
+    /// Deletes `stems/<name>.flac.part` (a stem that is not kept). Only a real file is removed:
+    /// a symlink, a folder or a missing file is an error and nothing is touched.
+    pub fn discard_stem_part(&self, name: &str) -> Result<(), String> {
+        let part = self.stem_file(name, ".part")?;
+        if !is_real_file(&part) {
+            return Err(format!("stem \"{name}\" has no part file to discard"));
+        }
+        fs::remove_file(&part).map_err(|e| io_err(&format!("cannot discard stem \"{name}\""), e))
+    }
+
     /// Renames `stems/<name>.flac.part` to `stems/<name>.flac` (never replacing a file).
     pub fn finish_stem(&self, name: &str) -> Result<PathBuf, String> {
         let part = self.stem_file(name, ".part")?;

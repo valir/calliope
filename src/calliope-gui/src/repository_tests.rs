@@ -1047,6 +1047,67 @@ mod staging {
     }
 
     #[test]
+    fn discard_stem_part_removes_only_that_part_file() {
+        let env = Env::new();
+        let st = env.repo.begin_staged_track(ID).unwrap();
+        fill(&st);
+        let other = st.stem_part_path("piano").unwrap();
+        fs::write(&other, "x").unwrap();
+        st.discard_stem_part("piano").unwrap();
+        assert!(!other.exists());
+        assert!(st.dir().join("stems/vocals.flac").is_file());
+        assert!(st.dir().join("stems/drums.flac").is_file());
+        // missing now
+        assert!(st.discard_stem_part("piano").is_err());
+        // a finished stem has no part: refused, file stays
+        assert!(st.discard_stem_part("vocals").is_err());
+        assert!(st.dir().join("stems/vocals.flac").is_file());
+        for bad in ["../x", "a/b", "", "Vocals", ".hidden"] {
+            assert!(st.discard_stem_part(bad).is_err(), "{bad}");
+        }
+        st.abandon().unwrap();
+    }
+
+    #[test]
+    fn discard_stem_part_refuses_a_symlink_and_a_folder() {
+        let env = Env::new();
+        let st = env.repo.begin_staged_track(ID).unwrap();
+        let target = env.outside.join("precious");
+        fs::write(&target, "keep me").unwrap();
+        let link = st.stem_part_path("other").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(st.discard_stem_part("other").is_err());
+        assert!(link.symlink_metadata().is_ok());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "keep me");
+        fs::remove_file(&link).unwrap();
+        fs::create_dir(&link).unwrap();
+        fs::write(link.join("f"), "1").unwrap();
+        assert!(st.discard_stem_part("other").is_err());
+        assert!(link.join("f").is_file());
+        fs::remove_file(link.join("f")).unwrap();
+        fs::remove_dir(&link).unwrap();
+        st.abandon().unwrap();
+        fs::remove_file(&target).unwrap();
+    }
+
+    #[test]
+    fn commit_after_discarding_a_stem_leaves_no_part_file() {
+        let env = Env::new();
+        let st = env.repo.begin_staged_track(ID).unwrap();
+        fill(&st);
+        fs::write(st.stem_part_path("piano").unwrap(), "quiet").unwrap();
+        st.discard_stem_part("piano").unwrap();
+        st.commit(&stem_meta(ID, false)).unwrap();
+        let names: Vec<String> = fs::read_dir(env.dir(ID).join("stems"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.iter().all(|n| !n.ends_with(".part")), "{names:?}");
+        assert_eq!(names.len(), 2);
+    }
+
+    #[test]
     fn abandon_after_adopt_original_puts_audio_back() {
         let env = Env::new();
         let src = job_audio(&env);
