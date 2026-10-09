@@ -6,3 +6,4 @@ task 3 | The measure: silent_peak + SILENT_STEM_DBFS | implementer | done (plan 
 task 4 | Staging::discard_stem_part | implementer | done
 task 5 | Import job: check, drop, log, all-silent failure, dropped in the result | implementer | done
 task 6 | Frontend: dropped stems on the Import finished page and in the log | implementer | done
+task 7 | GUI e2e import_drops_silent_stems | implementer | done

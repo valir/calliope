@@ -138,11 +138,17 @@ impl Rig {
     }
 
     fn saved(&mut self) -> (String, serde_json::Value) {
+        let (id, json, _) = self.saved_line("6");
+        (id, json)
+    }
+
+    /// The "saved" log line with the expected stem count; returns the id, track.json and the line.
+    fn saved_line(&mut self, stems: &str) -> (String, serde_json::Value, String) {
         let l = self.wait_ui("saved id=");
         let id = field(&l, "id");
-        assert_eq!(field(&l, "stems"), "6", "{l}");
+        assert_eq!(field(&l, "stems"), stems, "{l}");
         let json = self.dirs.json(&id);
-        (id, json)
+        (id, json, l)
     }
 
     /// Disk checks after any test: sources, fixtures, leftovers, the real user's folders.
@@ -419,6 +425,41 @@ fn import_local_audio() {
     r.check_stem_track(&id, &json, false);
     assert_eq!(json["title"], "Glass Harbour", "fields are prefilled from the tags");
     assert_eq!(json["band"], "The Example Band");
+    r.check_disk(Some(&id));
+    r.assert_no_children();
+}
+
+#[test]
+#[ignore]
+fn import_drops_silent_stems() {
+    if !ready() {
+        return;
+    }
+    let mut r = Rig::new("import_drops_silent_stems", "sparse", false, &["import-audio {media}/tagged.ogg".into()]);
+    r.open_source(1);
+    r.browse();
+    r.wait("dialog kind=import-audio result=picked");
+    r.wait_ui("phase=ready");
+    r.extract();
+    let (id, json, line) = r.saved_line("4");
+    assert!(line.contains("dropped=piano,other"), "{line}");
+    settle();
+    shot("import-done-dropped");
+    assert_eq!(json["type"], "stem");
+    let mut names: Vec<&str> = json["stems"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
+    names.sort();
+    assert_eq!(names, ["bass", "drums", "guitar", "vocals"]);
+    let dir = r.dirs.track_dir(&id);
+    for s in json["stems"].as_array().unwrap() {
+        let f = dir.join(s["file"].as_str().unwrap());
+        assert!(std::fs::read(&f).unwrap().starts_with(b"fLaC"), "{} is not FLAC", f.display());
+    }
+    let mut on_disk: Vec<String> = std::fs::read_dir(dir.join("stems")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    on_disk.sort();
+    assert_eq!(on_disk.len(), 4, "{on_disk:?}");
+    for n in ["piano", "other"] {
+        assert!(!on_disk.iter().any(|f| f.contains(n)), "{on_disk:?}");
+    }
     r.check_disk(Some(&id));
     r.assert_no_children();
 }
