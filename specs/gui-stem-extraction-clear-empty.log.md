@@ -9,3 +9,4 @@ task 6 | Frontend: dropped stems on the Import finished page and in the log | im
 task 7 | GUI e2e import_drops_silent_stems | implementer | done
 reviewer | APPROVED (0 blockers, 0 majors; 2 minors: no cancel check inside silent_peak, no job-level test of an undecodable stem) | done
 tester | 24 acceptance checks PASS, no defects (acceptance_silent_stems.rs, acceptance_silent_stems.test.ts) | done
+report | specs/gui-stem-extraction-clear-empty.report.md | done
