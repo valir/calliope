@@ -30,7 +30,7 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (media) | Laptop | ffprobe JSON → audio check/duration/tags → `TrackEdits`; ffmpeg → FLAC 44.1 kHz stereo | Rust, pure | `src/media.rs` |
 | calliope-gui (download) | Laptop | URL validation/normalisation (`url` crate), yt-dlp args, progress/error parsing, `info.json` mapping | Rust | `src/download.rs` |
 | calliope-gui (import job) | Laptop | The single import job: state machine, events, cancel, shutdown | Rust, pure (std threads) | `src/import_job.rs` |
-| calliope-gui (stem audio) | Laptop | FLAC stem probing/compatibility rules, decoding into memory as 16-bit for playback, full-precision streaming reader for rendering | Rust, `claxon` | `src/stem_audio.rs` |
+| calliope-gui (stem audio) | Laptop | FLAC stem probing/compatibility rules, decoding into memory as 16-bit for playback, full-precision streaming reader for rendering, the empty-stem measure for imports (`silent_peak`, `SILENT_STEM_DBFS = -50.0`) | Rust, `claxon` | `src/stem_audio.rs` |
 | calliope-gui (mixer) | Laptop | Pure mixing shared by playback and Save: dB gains (-60 = Off .. +12), unmuted, mono->stereo, sum, hard clip with clipped-sample count, quantise | Rust, std only | `src/mixer.rs` |
 | calliope-gui (transport) | Laptop | Play/pause/stop/seek state machine with the 0.3 s scrub-resume rule; time injected | Rust, pure | `src/transport.rs` |
 | calliope-gui (audio output) | Laptop | `OutputBackend` trait: `CpalBackend` (default device), `NullBackend` (paced, optional WAV capture; the only backend in `e2e-hooks` builds), `ManualBackend` (unit tests) | Rust, `cpal` (ALSA on Linux) | `src/audio_out.rs` |
@@ -121,7 +121,8 @@ the GUI crate, `src/calliope-gui/`.
   `saved id=<id> tablatures=<n> warnings=<w>`, `deleted id=<id>`, `exported id=<id>`,
   `tab-staged <add|update|remove> name=<n>`, `repository root=<p> default=<bool>`.
   Import: `import mode=stem-extraction`, `import source=url|audio|video`,
-  `import phase=<phase> job=<job>`, `import error stage=<s> message=<m>`, `import saved id=<id> stems=<n>`.
+  `import phase=<phase> job=<job>`, `import error stage=<s> message=<m>`,
+  `import saved id=<id> stems=<n> original=<b> dropped=<a,b|none>`.
   Editor: `editor active id=<id> stems=<n>`, `editor inactive id=<id|none>`,
   `editor play|pause|stop position=<ms>`, `editor solo name=<n|none>`, `editor leave stop`,
   `editor seek position=<ms>`, `editor nudge delta=<ms>`,
@@ -147,7 +148,8 @@ the GUI crate, `src/calliope-gui/`.
     tracks/<track-id>/            folder name == track id (UUIDv7 for new tracks)
       track.json                  metadata, "schema_version": 2 (1 still read)
       <audio>, <tablatures>       plain file names listed in track.json
-      stems/<name>.flac           stems of a "stem" track, listed as "stems/<name>.flac"
+      stems/<name>.flac           stems of a "stem" track, listed as "stems/<name>.flac"; 1..16 of them
+                                  (an import leaves out silent stems, so often fewer than the model's 6)
       original.flac               the full mix, only when kept at import (setting)
       backings/<variant-id>.flac  backing-track variants of a stem track made in the Editor (listed in
                                   `backings`); this feature writes `backings/backing.flac` (`backing-2`..
@@ -210,7 +212,10 @@ the GUI crate, `src/calliope-gui/`.
   connect 5 s / request 30 s timeouts, 1 s polling, job id and stem names validated, ≤ 16
   stems, ≤ 1 GiB each, FLAC magic checked. "running" = the server confirmed processing start
   (UI shows "Working..."). A protocol conformance suite (`src/calliope-stems/tests/conformance.rs`)
-  pins it.
+  pins it. The protocol never promises a stem count; the GUI drops silent stems itself after
+  fetching them (gui-stem-extraction-clear-empty plan §2.2): `ImportEvent::Saved` and `JobSnapshot`
+  carry `dropped: [{name, peak_dbfs (null = digital silence)}]`; an all-silent result fails the
+  import (stage `server`, "Every stem is silent (below -50 dBFS), so no track was saved").
 - **`calliope-stems` command line**: `--listen ADDR:PORT` (default `0.0.0.0:8765`; prints
   `calliope-stems listening addr=…` on stderr), `--work-dir` (default
   `~/.local/state/calliope-stems`), `--separator PATH` (**required**, so nothing starts the real
@@ -384,7 +389,9 @@ the server out of the GUI.
 - **Edge-AI server** → the real `calliope-stems` binary (`target/debug/calliope-stems`, or
   `CARGO_BIN_EXE_calliope-stems` in its own tests) with `--listen 127.0.0.1:0` (port printed
   on stderr) and `--separator tests/support/stub-separator` (canned stems from
-  `tests/fixtures/import/stems/`; modes `ok|fail|slow|hang|bad-output|not-flac` via
+  `tests/fixtures/import/stems/`; modes `ok|fail|slow|hang|bad-output|not-flac|sparse|silent`
+  (`sparse`: piano all zeroes, other about -60 dBFS, guitar about -45 dBFS, from
+  `tests/fixtures/import/stems-quiet/`; `silent`: all six all zeroes) via
   `STUB_SEPARATOR_MODE` or `<work dir>/stub-mode`; argv logged to `$STUB_SEPARATOR_LOG`). The
   real adapter is only syntax-checked (`bash -n`); no test runs audio-separator or the model.
   The conformance suite `src/calliope-stems/tests/conformance.rs` checks every endpoint with
@@ -759,3 +766,22 @@ environment says, and every GUI test asserts that the logged backend is not `cpa
 The Library's tree column is the shared component `TrackBrowser.svelte`, and both views use the same
 `lib` state, so the selected track is the same in the Library and the Editor (one "current track"
 concept, which the Player can reuse). A Library edit in progress locks the tree in both views.
+
+### 2026-10-09: Silent stems are dropped by the GUI at import; "silent" = sample peak below -50 dBFS   (feature: gui-stem-extraction, increment clear-empty; threshold is an owner decision)
+Requirement 8 asks that empty stems are not kept. Demucs leaks faint noise into the stems of absent
+instruments, so the owner set "empty" to "below -50 dBFS" instead of all zeroes. Measure: the sample
+peak over the whole stem, all channels (`max|s| / 2^(bits-1)`), and a stem is dropped only if it is
+strictly below `stem_audio::SILENT_STEM_DBFS` (-50.0, the single place the number lives). Peak was
+chosen over RMS/loudness because dropping is irreversible and a whole-stem average would discard an
+instrument that plays only briefly; peak is also the direct generalisation of "all zeroes". Decoding
+stops at the first loud sample. The check runs in the GUI import job on each downloaded `.part` in the
+staging folder (silent ones are removed with `Staging::discard_stem_part`, Calliope's own staging
+file, not user data), not in `calliope-stems`: API v1 already allows 1..16 stems, the deployed server
+needs no update, the GUI already has `claxon`, and the GUI can tell the user what was dropped
+("Dropped silent stems: ..." on the finished page, plus a log line with each peak). A stem that cannot
+be decoded is kept (only proven silence is dropped). If every stem is silent the import fails with a
+clear message and creates nothing (a stem track needs at least one stem; the prepared audio stays for
+a retry). Existing tracks are not re-measured or rewritten. `original.flac` is unaffected.
+Alternatives: in the server (rejected: needs a FLAC decoder dependency and a redeploy, and the client
+would not learn the peaks without an API addition), RMS/LUFS threshold (rejected: drops sparse parts),
+keeping all stems when all are silent (rejected: contradicts requirement 8 and saves a useless track).
