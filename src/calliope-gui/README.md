@@ -11,6 +11,8 @@ this directory. Build output goes to the workspace's `target/` at the repository
 
 * Rust toolchain (cargo)
 * Packages: webkit2gtk-4.1, gtk3, base-devel, alsa-lib
+* On a PipeWire desktop, also `pipewire-alsa` (needed to run, not to build): without it ALSA's
+  default device is the sound card itself, which PipeWire already holds, so Play fails
 * Node.js >= 22.12 with npm
 * Optional: xorg-server-xvfb for headless GUI runs
 * For Import: `sudo pacman -S yt-dlp ffmpeg` (see "Import and stem extraction"; the app runs without them, Import then says what is missing)
@@ -76,7 +78,8 @@ The Editor view (Alt+3) mixes the stems of the track selected in the tree into a
   use the mouse wheel to nudge by 100 ms), the CLIP badge, and Save. Save renders the mix of the
   unmuted stems to `backings/backing.flac` (the old file goes to the trash).
 * Keys: Space play/pause, Ctrl+S save, Ctrl+F search; Tab reaches every control.
-* Audio output needs `alsa-lib` (the `cpal` backend, default device). Tests never open a sound
+* Audio output needs `alsa-lib` (the `cpal` backend, default device) and, on PipeWire,
+  `pipewire-alsa`. Tests never open a sound
   device: unit tests use `ManualBackend`, the GUI tests use `NullBackend` (builds with
   `e2e-hooks` can only use it; `CALLIOPE_E2E_AUDIO=capture:<path>` also writes what would have
   been heard to a WAV).
