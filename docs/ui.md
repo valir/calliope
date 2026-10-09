@@ -122,3 +122,16 @@
   Buttons and badges keep amber-500 fill with dark text in both themes. A failed extraction
   scrolls its message into view (it sits below the fold at 1024x640). The switch's off state has a
   muted border so it stays visible on dark cards.
+- (gui-backing-track-editor, task 19) Editor layout. Each stem lane is one row (name, Play,
+  Unmute, volume slider that takes the remaining width, dB value) when the pane is wide enough
+  (1280x800) and two rows (slider and dB value below) at 1024x640, where the pane is only about
+  380 px wide. The Mix lane is always three rows: Mix cell, Play/Pause, Stop; position slider
+  and time field; Save and the target file. Lanes scroll; the Mix lane and Save never leave the
+  window. Nothing moves when state changes: the solo name and the CLIP badge live in a fixed
+  cell beside "Mix", the save progress replaces the "Save as" text instead of adding a row, and
+  errors and the save result share one reserved two-line slot. Solo is shown by the amber
+  "Solo" button, dimmed other lanes and the "Solo: X" text. The accent text in the Mix lane uses
+  `text-amber-700` in the light theme (contrast). The 0 dB tick is a 2 px line on the volume
+  slider. Control sizes: buttons 3.25 rem high, Play 4.5 rem wide.
+- Known limit: at 1024x640 only about 1.5 stem lanes are visible above the Mix lane, so six
+  stems need scrolling. Collapsing the navigation (Ctrl+B) gives the lanes more width.

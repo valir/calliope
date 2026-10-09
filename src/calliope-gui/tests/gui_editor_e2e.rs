@@ -17,17 +17,16 @@ fn ready() -> bool {
     have_display() && have("xdotool") && have("i3-msg") && have("ffmpeg")
 }
 
-// Positions in the floated 1280x800 window (Editor, four lanes).
-const LANE_Y: [i32; 4] = [102, 194, 286, 378]; // vocals, drums, bass, guitar
-const CHECK_X: i32 = 903;
-const LANE_PLAY_X: i32 = 819;
-const SLIDER_END_X: i32 = 1123;
-const MIX_PLAY: (i32, i32) = (856, 554);
-const TIME: (i32, i32) = (1170, 625);
-const SAVE: (i32, i32) = (712, 691);
-// After a save the "Saved." line makes the Mix lane taller and the lane moves up by 45 px.
-const MIX_PLAY_MSG: (i32, i32) = (856, 510);
-const SAVE_MSG: (i32, i32) = (712, 646);
+// Positions in the floated 1280x800 window (Editor, four lanes). The layout does not shift
+// (the message slot, the solo name and the CLIP badge have reserved space), so one set serves
+// the whole test.
+const LANE_Y: [i32; 4] = [100, 188, 275, 363]; // vocals, drums, bass, guitar
+const CHECK_X: i32 = 845;
+const LANE_PLAY_X: i32 = 775;
+const SLIDER_END_X: i32 = 1120;
+const MIX_PLAY: (i32, i32) = (839, 510);
+const TIME: (i32, i32) = (1175, 571);
+const SAVE: (i32, i32) = (709, 633);
 
 fn select(app: &mut App, wid: &str, query: &str, id: &str) {
     app.key(wid, "ctrl+f ctrl+a");
@@ -279,15 +278,15 @@ fn play_solo_nudge_save_clip() {
     for name in ["vocals", "drums", "bass"] {
         app.wait_line(|l| l.contains(&format!("editor stem name={name} gain=12")), secs(10));
     }
-    app.click(&wid, MIX_PLAY_MSG.0, MIX_PLAY_MSG.1);
+    app.click(&wid, MIX_PLAY.0, MIX_PLAY.1);
     app.wait_line(|l| l.contains("editor play"), secs(10));
     app.wait_line(|l| l.contains("calliope: editor transport") && l.contains("clipping=true"), secs(10));
     settle();
     shot("editor-clip");
-    app.click(&wid, MIX_PLAY_MSG.0, MIX_PLAY_MSG.1);
+    app.click(&wid, MIX_PLAY.0, MIX_PLAY.1);
     app.wait_line(|l| l.contains("editor pause"), secs(10));
     let old = std::fs::read(&flac).unwrap();
-    app.click(&wid, SAVE_MSG.0, SAVE_MSG.1);
+    app.click(&wid, SAVE.0, SAVE.1);
     let l = app.wait_line(|l| l.contains("editor saved"), secs(60));
     let clipped: u64 = field(&l, "clipped").parse().unwrap();
     assert!(clipped > 0, "{l}");

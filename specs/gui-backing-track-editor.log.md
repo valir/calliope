@@ -17,3 +17,4 @@ task 15 | Editor frontend state | implementer | done
 task 16 | Editor pane components | implementer | done
 task 17 | Time field (edit and wheel) | implementer | done
 task 18 | GUI end-to-end tests (gui_editor_e2e.rs); fixed self-seeking position slider | implementer | done
+task 19 | Visual review, docs | implementer | done

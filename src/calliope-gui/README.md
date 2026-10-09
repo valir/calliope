@@ -66,6 +66,22 @@ and choose that folder in Settings.
 
 Library keys: Ctrl+F search, Ctrl+E edit, Ctrl+S save, Escape cancel editing.
 
+## Editor
+
+The Editor view (Alt+3) mixes the stems of the track selected in the tree into a backing track.
+
+* One lane per stem: Play (solo that stem; pressing it again ends the solo), Unmute, a volume
+  slider (-60 to +12 dB, tick at 0 dB; the dB value resets it to 0 dB).
+* The pinned Mix lane has Play/Pause, Stop, the position slider, the time field (type a time, or
+  use the mouse wheel to nudge by 100 ms), the CLIP badge, and Save. Save renders the mix of the
+  unmuted stems to `backings/backing.flac` (the old file goes to the trash).
+* Keys: Space play/pause, Ctrl+S save, Ctrl+F search; Tab reaches every control.
+* Audio output needs `alsa-lib` (the `cpal` backend, default device). Tests never open a sound
+  device: unit tests use `ManualBackend`, the GUI tests use `NullBackend` (builds with
+  `e2e-hooks` can only use it; `CALLIOPE_E2E_AUDIO=capture:<path>` also writes what would have
+  been heard to a WAV).
+* To try it: copy `tests/fixtures/library-editor` to a new folder and choose it in Settings.
+
 ## Import and stem extraction
 
 The Import view (Alt+2) > "Stem Extraction" turns a song into a new "stem" track with six
