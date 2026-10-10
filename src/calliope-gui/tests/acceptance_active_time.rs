@@ -20,6 +20,9 @@ mod repository;
 mod settings;
 #[path = "../src/picker.rs"]
 mod picker;
+#[path = "../src/local_source.rs"]
+#[allow(dead_code)]
+mod local_source;
 #[path = "../src/import_tmp.rs"]
 mod import_tmp;
 #[path = "../src/media.rs"]

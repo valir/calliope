@@ -63,28 +63,7 @@ pub fn is_tablature_name(name: &str) -> bool {
     }
 }
 
-/// Extensions offered for local audio files (lowercase, no dot).
-pub const AUDIO_EXTENSIONS: &[&str] =
-    &["mp3", "flac", "wav", "ogg", "oga", "opus", "m4a", "aac", "wma", "aiff", "aif"];
-
-/// Extensions offered for local video files (lowercase, no dot).
-pub const VIDEO_EXTENSIONS: &[&str] =
-    &["mp4", "mkv", "webm", "mov", "avi", "m4v", "flv", "wmv", "mpg", "mpeg", "ts"];
-
-fn has_extension(name: &str, list: &[&str]) -> bool {
-    match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => list.contains(&ext.to_ascii_lowercase().as_str()),
-        _ => false,
-    }
-}
-
-pub fn is_audio_name(name: &str) -> bool {
-    has_extension(name, AUDIO_EXTENSIONS)
-}
-
-pub fn is_video_name(name: &str) -> bool {
-    has_extension(name, VIDEO_EXTENSIONS)
-}
+pub use crate::local_source::{AUDIO_EXTENSIONS, VIDEO_EXTENSIONS, is_audio_name, is_video_name};
 
 /// Logs the line the e2e tests wait on.
 pub fn log_dialog(kind: DialogKind, picked: bool) {

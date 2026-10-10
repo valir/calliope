@@ -8,6 +8,8 @@ mod import_job;
 mod import_tmp;
 mod gui;
 mod ipc;
+#[allow(dead_code)] // typed-path checks are wired into the IPC in the next task
+mod local_source;
 mod media;
 mod mixer;
 mod picker;
