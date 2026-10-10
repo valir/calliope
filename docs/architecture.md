@@ -30,15 +30,15 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (media) | Laptop | ffprobe JSON → audio check/duration/tags → `TrackEdits`; ffmpeg → FLAC 44.1 kHz stereo | Rust, pure | `src/media.rs` |
 | calliope-gui (download) | Laptop | URL validation/normalisation (`url` crate), yt-dlp args, progress/error parsing, `info.json` mapping | Rust | `src/download.rs` |
 | calliope-gui (import job) | Laptop | The single import job: state machine, events, cancel, shutdown | Rust, pure (std threads) | `src/import_job.rs` |
-| calliope-gui (stem audio) | Laptop | FLAC stem probing/compatibility rules, decoding into memory as 16-bit for playback, full-precision streaming reader for rendering, the empty-stem decision for imports (`silent_peak` over `calliope_lib::flac_peak`, `level_of_peak` for server-reported peaks, `SILENT_STEM_DBFS = -50.0`) | Rust, `claxon`, `calliope-lib` | `src/stem_audio.rs` |
+| calliope-gui (stem audio) | Laptop | FLAC stem probing/compatibility rules, decoding into memory as 16-bit for playback, full-precision streaming reader for rendering, the empty-stem decision for imports (`check_stem` over `calliope_lib::flac_level` with early stop at 15 s, `check_reported` for server-reported audible time, `EMPTY_STEM_MIN_AUDIBLE_MS = 15_000`) | Rust, `claxon`, `calliope-lib` | `src/stem_audio.rs` |
 | calliope-gui (mixer) | Laptop | Pure mixing shared by playback and Save: dB gains (-60 = Off .. +12), unmuted, mono->stereo, sum, hard clip with clipped-sample count, quantise | Rust, std only | `src/mixer.rs` |
 | calliope-gui (transport) | Laptop | Play/pause/stop/seek state machine with the 0.3 s scrub-resume rule; time injected | Rust, pure | `src/transport.rs` |
 | calliope-gui (audio output) | Laptop | `OutputBackend` trait: `CpalBackend` (default device), `NullBackend` (paced, optional WAV capture; the only backend in `e2e-hooks` builds), `ManualBackend` (unit tests) | Rust, `cpal` (ALSA on Linux) | `src/audio_out.rs` |
 | calliope-gui (editor engine) | Laptop | Editor sessions: load stems, lock-free render callback, transport, transient solo, clip indicator, events, remembered mixes, the backing save job | Rust (std threads) | `src/editor.rs` (+ `src/editor_tests.rs`) |
 | calliope-gui (backing render) | Laptop | Offline render of the mix to FLAC | Rust, `flacenc` | `src/backing_render.rs` |
 | calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Editor: shared track tree + stem mixer; Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
-| calliope-lib (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation, FLAC STREAMINFO parser, FLAC sample-peak scan (`flac_peak`, no threshold), HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel). No Tauri/GTK | Rust; `serde`, `libc`, `claxon`, `ureq` 3 without TLS (feature) | `src/calliope-lib/` |
-| calliope-stems (edge-AI stems service) | archserver (LAN), deployed by hand as a systemd user unit | HTTP server for "calliope-stems API v1": validates FLAC uploads (≤ 15 min), queues jobs (1 running), runs a configurable separator command, measures each stem's sample peak, serves the stems, cleans up. No Tauri/GTK; the GUI doesn't depend on it | Rust; `tiny_http`, `calliope-lib` | `src/calliope-stems/` |
+| calliope-lib (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation, FLAC STREAMINFO parser, FLAC audible-time scan (`flac_level`: 100 ms windows, RMS of the loudest channel above `AUDIBLE_LEVEL_DBFS = -40`, integer sum-of-squares comparison, peak for display; no 15 s decision), HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel). No Tauri/GTK | Rust; `serde`, `libc`, `claxon`, `ureq` 3 without TLS (feature) | `src/calliope-lib/` |
+| calliope-stems (edge-AI stems service) | archserver (LAN), deployed by hand as a systemd user unit | HTTP server for "calliope-stems API v1": validates FLAC uploads (≤ 15 min), queues jobs (1 running), runs a configurable separator command, measures each stem's audible time, serves the stems, cleans up; `--measure FILE...` prints audible times without starting a server. No Tauri/GTK; the GUI doesn't depend on it | Rust; `tiny_http`, `calliope-lib` | `src/calliope-stems/` |
 | separator adapter | archserver | `<sep> <input.flac> <out_dir> <model>` → `<out_dir>/<stem>.flac`; the real one runs the owner's audio-separator venv with `htdemucs_6s` (frees VRAM from Ollama first) | bash | `src/calliope-stems/separators/audio-separator.sh` |
 | yt-dlp, ffmpeg, ffprobe | Laptop | External executables, installed by the user, never bundled | upstream | system `PATH` |
 | audio-separator, Demucs, PyTorch | archserver | The real separation model, the owner's existing install in `~/edge-ai/stems/.venv`; never bundled, never run by tests | upstream (Python) | outside this repo |
@@ -149,7 +149,7 @@ the GUI crate, `src/calliope-gui/`.
       track.json                  metadata, "schema_version": 2 (1 still read)
       <audio>, <tablatures>       plain file names listed in track.json
       stems/<name>.flac           stems of a "stem" track, listed as "stems/<name>.flac"; 1..16 of them
-                                  (an import leaves out silent stems, so often fewer than the model's 6)
+                                  (an import leaves out empty stems, so often fewer than the model's 6)
       original.flac               the full mix, only when kept at import (setting)
       backings/<variant-id>.flac  backing-track variants of a stem track made in the Editor (listed in
                                   `backings`); this feature writes `backings/backing.flac` (`backing-2`..
@@ -206,29 +206,34 @@ the GUI crate, `src/calliope-gui/`.
   `POST /v1/jobs?model=<m>` (body = FLAC, `Content-Type: audio/flac`, `Content-Length`) →
   `202 {"job","state":"queued"}` (400 model, 411 no length, 413 size/duration, 415 not FLAC,
   503 queue full);
-  `GET /v1/jobs/<id>` → `{"job","state":"queued|running|done|failed|cancelled","progress","stems","error"[,"stem_peaks"]}` (404 unknown);
-  `stem_peaks` (additive, gui-stem-extraction-server-peaks plan §2.2) is present only when `done` and
-  measured: `[{"name","peak" (exact max |sample|, integer),"bits","peak_dbfs" (display only, null = 0)}]`;
-  a stem without an entry was not measured; no key = an old server or `--no-stem-peaks`. The client
-  validates it (`stems_api::check_stem_peaks`; names in `stems`, unique, bits 4..=32,
-  peak ≤ 2^(bits-1)) and decides only from `peak`/`bits`;
+  `GET /v1/jobs/<id>` → `{"job","state":"queued|running|done|failed|cancelled","progress","stems","error"[,"stem_levels"]}` (404 unknown);
+  `stem_levels` (additive, gui-stem-extraction-active-time plan §2.2; it replaced the never-released
+  `stem_peaks`, which clients ignore if a server-peaks build still sends it) is present only when `done`
+  and measured: `[{"name","audible_ms" (integer, multiple of window_ms),"level_dbfs" (integer, -40),
+  "window_ms" (100),"peak_dbfs" (display only, null = digital silence)}]`; a stem without an entry was
+  not measured; no key = an older server or `--no-stem-levels`. The client validates it only on `done`
+  (`stems_api::check_stem_levels`; names in `stems`, unique, window_ms 1..=1000, level -150..=0,
+  audible_ms ≤ 24 h and a multiple of window_ms; otherwise "bad stem level list") and uses an entry
+  only when its level and window equal its own `flac_level` constants;
   `GET /v1/jobs/<id>/stems/<name>` → FLAC (409 not done); `DELETE /v1/jobs/<id>` → 204 (cancel + cleanup).
   Errors are `{"error": "..."}`. **No auth** (LAN only, owner-approved default). Client:
   connect 5 s / request 30 s timeouts, 1 s polling, job id and stem names validated, ≤ 16
   stems, ≤ 1 GiB each, FLAC magic checked. "running" = the server confirmed processing start
   (UI shows "Working..."). A protocol conformance suite (`src/calliope-stems/tests/conformance.rs`)
-  pins it. The protocol never promises a stem count. The GUI decides which stems are silent
-  (`peak < flac_peak::limit(bits, SILENT_STEM_DBFS)`): stems the server reports silent are not
-  fetched; every fetched stem is measured locally as before (gui-stem-extraction-clear-empty plan
-  §2.2, server-peaks plan §2.4; logs carry `source=server|local` and `server_peaks=<n>/<total>`): `ImportEvent::Saved` and `JobSnapshot`
-  carry `dropped: [{name, peak_dbfs (null = digital silence)}]`; an all-silent result fails the
-  import (stage `server`, "Every stem is silent (below -50 dBFS), so no track was saved").
+  pins it. The protocol never promises a stem count. The GUI decides which stems are empty
+  (`audible_ms < stem_audio::EMPTY_STEM_MIN_AUDIBLE_MS`, 15 s): stems the server reports empty are not
+  fetched; every fetched stem is measured locally (early stop at 15 s; local emptiness wins)
+  (active-time plan §2.4; logs carry `audible_s=…`, `source=server|local` and
+  `server_levels=<n>/<total>`): `ImportEvent::Saved` and `JobSnapshot` carry
+  `dropped: [{name, audible_ms}]`; the finished page says "Dropped empty stems: …"; an all-empty result
+  fails the import (stage `server`, "Every stem is empty (less than 15 s above -40 dBFS), so no track
+  was saved").
 - **`calliope-stems` command line**: `--listen ADDR:PORT` (default `0.0.0.0:8765`; prints
   `calliope-stems listening addr=…` on stderr), `--work-dir` (default
   `~/.local/state/calliope-stems`), `--separator PATH` (**required**, so nothing starts the real
   model by accident), `--model` (`htdemucs_6s`), `--max-upload-mb` (300), `--max-duration-s`
   (900), `--queue` (2 waiting; 1 running, fixed), `--separator-timeout-min` (30),
-  `--retention-hours` (24), `--no-stem-peaks` (don't measure or report `stem_peaks`). Jobs live in memory; job folders `<work>/jobs/<uuid>/` carry a
+  `--retention-hours` (24), `--no-stem-levels` (don't measure or report `stem_levels`); `--measure FILE...` (diagnostic: print each FLAC file's `audible_ms`/`windows`/`peak_dbfs` and exit, no `--separator` needed). Jobs live in memory; job folders `<work>/jobs/<uuid>/` carry a
   marker and are the only things it deletes. Logs on stderr (journald), prefix `calliope-stems: `.
   **Separator contract**: `<separator> <input.flac> <out_dir> <model>`, writes
   `<out_dir>/<stem>.flac`, optional stdout `progress <0..1>`, exit 0; outputs are validated.
@@ -286,7 +291,7 @@ src/                      ALL source (owner requirement), one folder per crate
                           library-editor/ = stem tracks for the Editor (editor/make-fixtures.sh)
       support/            test-only stand-ins: stub-separator (bash), bin/yt-dlp (Python 3 stdlib)
   calliope-lib/           shared library (package calliope-lib, lib calliope_lib): Cargo.toml,
-                          src/{lib,stems_api,stems_client,flac_peak,process}.rs, tests/; no Tauri
+                          src/{lib,stems_api,stems_client,flac_level,process}.rs, tests/; no Tauri
   calliope-stems/         the edge-AI stems server: Cargo.toml, src/*.rs, tests/conformance.rs,
                           separators/audio-separator.sh, deploy/calliope-stems.service, README.md;
                           no Tauri
@@ -396,15 +401,18 @@ the server out of the GUI.
 - **Edge-AI server** → the real `calliope-stems` binary (`target/debug/calliope-stems`, or
   `CARGO_BIN_EXE_calliope-stems` in its own tests) with `--listen 127.0.0.1:0` (port printed
   on stderr) and `--separator tests/support/stub-separator` (canned stems from
-  `tests/fixtures/import/stems/`; modes `ok|fail|slow|hang|bad-output|not-flac|sparse|silent|undecodable`
-  (`sparse`: piano all zeroes, other about -60 dBFS, guitar about -45 dBFS, from
-  `tests/fixtures/import/stems-quiet/`; `silent`: all six all zeroes; `undecodable`: `sparse` stems but
-  piano is `fLaC` + junk, so the server cannot measure it) via
+  `tests/fixtures/import/stems/`; modes `ok|fail|slow|hang|bad-output|not-flac|sparse|silent|undecodable|boundary`
+  (the canned `stems/` are 16 s tones, 16 s audible; `sparse`: piano all zeroes, other = short loud
+  bursts (9.5 s audible, peak -8 dBFS), guitar = eight 2 s phrases (16 s audible), from
+  `tests/fixtures/import/stems-quiet/` and `stems-activity/`; `boundary`: guitar 15.0 s, other 14.9 s,
+  piano bursts; `silent`: all six all zeroes; `undecodable`: piano is `fLaC` + junk, so the server
+  cannot measure it, other is a 1 s quiet tone) via
   `STUB_SEPARATOR_MODE` or `<work dir>/stub-mode`; argv logged to `$STUB_SEPARATOR_LOG`). The
   real adapter is only syntax-checked (`bash -n`); no test runs audio-separator or the model.
   The conformance suite `src/calliope-stems/tests/conformance.rs` checks every endpoint with
-  raw HTTP and with the shared client. An "old server" is the real binary with `--no-stem-peaks`
-  (or the scripted fake in `tests/acceptance_silent_stems.rs`); "a stem was never downloaded" is
+  raw HTTP and with the shared client. An "old server" is the real binary with `--no-stem-levels`
+  (or the scripted fakes in `tests/acceptance_silent_stems.rs` (pre-peaks) and
+  `tests/acceptance_server_levels.rs` (server-peaks era, sends only `stem_peaks`)); "a stem was never downloaded" is
   asserted on the server's stderr request log (`request method=GET path=…/stems/<name>`).
 - **YouTube / yt-dlp** → `tests/support/bin/yt-dlp` (fake; refuses any host not ending in
   `.example`; behaviours by URL path: `ok`, `http403`, `offline`, `slow`, `no-total`; resumes
@@ -777,7 +785,7 @@ The Library's tree column is the shared component `TrackBrowser.svelte`, and bot
 `lib` state, so the selected track is the same in the Library and the Editor (one "current track"
 concept, which the Player can reuse). A Library edit in progress locks the tree in both views.
 
-### 2026-10-09: Silent stems are dropped by the GUI at import; "silent" = sample peak below -50 dBFS   (feature: gui-stem-extraction, increment clear-empty; threshold is an owner decision)
+### 2026-10-09: Silent stems are dropped by the GUI at import; "silent" = sample peak below -50 dBFS   (feature: gui-stem-extraction, increment clear-empty; threshold is an owner decision; the peak criterion is superseded by the 2026-10-10 audible-time entry)
 Requirement 8 asks that empty stems are not kept. Demucs leaks faint noise into the stems of absent
 instruments, so the owner set "empty" to "below -50 dBFS" instead of all zeroes. Measure: the sample
 peak over the whole stem, all channels (`max|s| / 2^(bits-1)`), and a stem is dropped only if it is
@@ -796,7 +804,7 @@ Alternatives: in the server (rejected: needs a FLAC decoder dependency and a red
 would not learn the peaks without an API addition), RMS/LUFS threshold (rejected: drops sparse parts),
 keeping all stems when all are silent (rejected: contradicts requirement 8 and saves a useless track).
 
-### 2026-10-10: The server measures stem peaks; the app skips stems it reports silent   (feature: gui-stem-extraction, increment server-peaks; owner direction)
+### 2026-10-10: The server measures stem peaks; the app skips stems it reports silent   (feature: gui-stem-extraction, increment server-peaks; owner direction; `stem_peaks`/`flac_peak` are replaced by `stem_levels`/`flac_level` in the audible-time entry below, the structure and trust model stay)
 Requirement 9: silent stems should not be downloaded. Owner direction: the server only measures and
 reports; the keep/drop decision and the -50 dBFS threshold stay in the app; the change is additive and
 works across old/new app and server. The integer peak scan moved from the GUI into
@@ -821,3 +829,33 @@ Trust model: the app drops stems it never downloads on the server's word. Accept
 LAN-only, unauthenticated by design, and already supplies the stem audio itself. A server claiming every
 stem silent makes the import fail visibly; a stem claimed audible but actually silent is still caught by
 the local check. The user sees dropped stems in the dropped list (the server-reported level is in the log).
+
+### 2026-10-10: Empty stems are judged by audible time; the server reports `stem_levels`   (feature: gui-stem-extraction, increment active-time; criterion is an owner decision)
+Requirement 9 was rewritten after two real htdemucs_6s imports: empty stems kept separation artifacts
+with peaks up to -8.7 dBFS (a 9 s tonal burst in "other"), while real parts were audible for 200-362 s
+in total but in runs as short as 15 s. A stem is now empty when it is audible for less than 15 s **in
+total**. The measure is `calliope_lib::flac_level`: back-to-back windows of `sample_rate/10` frames
+(always counted as 100 ms; a trailing partial window is ignored), per channel the integer sum of
+squares, the loudest channel decides, and a window is audible when `S > floor(n·4^(bits-1)·10^(T/10))`
+with T = `AUDIBLE_LEVEL_DBFS` = -40. For levels that are multiples of 10 dB this limit is exact integer
+arithmetic, so server and app agree bit for bit. `audible_ms` is an integer (windows × 100), so 14.9 s
+is empty and 15.0 s kept. The level and window are lib constants (what is measured); the 15 s decision
+is `stem_audio::EMPTY_STEM_MIN_AUDIBLE_MS` in the app only. The server scans fully (no threshold) and
+reports `stem_levels: [{name, audible_ms, level_dbfs, window_ms, peak_dbfs}]`; the app uses an entry
+only when level and window equal its constants, so a server built from another version can only cause
+a fallback to downloading. The app's local check stops at 15 s audible (cheap for real parts; a full
+scan only for empty stems, about 0.2 s per 4-minute stem). `stem_peaks`, `flac_peak` and
+`--no-stem-peaks` were removed rather than kept: never released, and a peak can no longer decide
+anything; the new key name means a deployed server-peaks build is simply treated as a server without
+audible time (everything downloaded and checked locally, as the spec asks). `DroppedStem` carries
+`audible_ms`; the UI says "empty" instead of "silent". `calliope-stems --measure FILE...` prints the
+same numbers for any FLAC file, so the owner can check existing tracks. The canned test stems became
+16 s long (1 s stems would all be empty) and `stems-activity/` fixtures cover bursts, phrases and the
+14.9/15.0 s boundary. Alternatives: longest continuous run (rejected: a sung part's longest run was
+14.9 s), peak or whole-stem RMS/LUFS (rejected: artifacts are loud, sparse parts are quiet on average),
+the app sending the level per job as a query parameter (rejected: more protocol for no gain while both
+binaries come from one repository; the echoed level already protects against skew), a per-level
+histogram in the report (rejected as premature; the roadmap item `stems-empty-detection` may change the
+measure itself), using a server-peaks build's `stem_peaks` as a shortcut (peak < -40 dBFS implies empty;
+rejected: extra code path for a never-released server), keeping a trailing partial window (rejected:
+needs its own limit and changes at most 99 ms).
