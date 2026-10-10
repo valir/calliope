@@ -27,10 +27,13 @@ backing track" feature, but for now we stick to stem extraction.
    to the user in an edit step before stem extraction
 8. Empty stemps should not be kept in the repository, so some tracks will only
    have, for exemple, bass, drums, guitar and vocals, but not piano or other
-9. The stem extraction server reports the peak level of each stem when a job is
-   done. The app does not download stems whose peak is below the empty-stem
-   threshold (-50 dBFS). With a server that doesn't report peaks, the app
-   downloads and checks every stem as before.
+9. A stem is empty when it is audible for less than 15 seconds in total, counted
+   in 100 ms steps whose level (loudest channel) is above -40 dBFS. The peak
+   alone is not enough: separation leaves short, loud artifacts in stems that
+   are empty. The stem extraction server measures each stem's audible time when
+   a job is done, and the app does not download the stems it reports as empty.
+   With a server that doesn't report audible time, the app downloads and checks
+   every stem itself.
 
 ## Constraints
 <!-- Language/framework, libraries allowed or forbidden, performance, platforms,
@@ -100,10 +103,13 @@ backing track" feature, but for now we stick to stem extraction.
 - [ ] Given an audio file is available, then display the track edit pane with
   the initial extracted metadata is displayed
 - [ ] Given the stem extraction is ongoing, when operation is complete, then
-  check if any stem is all empty (all zeroes) and drop it
+  every stem audible for less than 15 s in total (above -40 dBFS) is dropped,
+  even when it contains short loud artifacts
+- [ ] Given a stem with a real part interrupted by pauses (vocals between
+  lines), when its audible time adds up to 15 s or more, then it is kept
 - [ ] Given the extraction job is done, when the app fetches the stems, then
-  stems the server reports as below -50 dBFS are not downloaded and are listed
-  as dropped
+  stems the server reports as audible for less than 15 s are not downloaded
+  and are listed as dropped
 
 ## Open questions
 <!-- Things you haven't decided yet. The architect will ask about anything else it finds. -->
