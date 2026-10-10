@@ -844,7 +844,7 @@ fn server_silent_stems_are_never_fetched() {
 
 #[test]
 fn an_old_server_without_peaks_gives_the_same_result_with_all_stems_fetched() {
-    let server = TestServer::start_with("sparse", &["--no-stem-peaks"]);
+    let server = TestServer::start_with("sparse", &["--no-stem-levels"]);
     let rig = Rig::new();
     let done = extract_to_end(&rig, &server, false);
     check_sparse(&rig, &done);

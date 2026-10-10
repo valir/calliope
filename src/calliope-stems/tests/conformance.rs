@@ -559,46 +559,55 @@ fn stalled_job_is_reported() {
 const SIX: [&str; 6] = ["vocals", "drums", "bass", "guitar", "piano", "other"];
 
 #[test]
-fn sparse_stems_report_their_peaks() {
-    let s = start("sparse", &[]);
+fn boundary_stems_report_their_audible_time() {
+    let s = start("boundary", &[]);
     let job = submit_raw(&s);
-    // While the job is not done, the key is absent (never null).
+    // While the job is not done, neither key is present (never null).
     loop {
         let v = raw_status(s.addr, &job);
         if v["state"] == "done" {
             break;
         }
-        assert!(v.get("stem_peaks").is_none(), "{v}");
+        assert!(v.get("stem_levels").is_none() && v.get("stem_peaks").is_none(), "{v}");
         std::thread::sleep(Duration::from_millis(5));
     }
     let done = raw_status(s.addr, &job);
-    let peaks = done["stem_peaks"].as_array().unwrap();
-    assert_eq!(peaks.iter().map(|p| p["name"].as_str().unwrap()).collect::<Vec<_>>(), SIX);
-    assert!(peaks.iter().all(|p| p["bits"] == 16));
-    let by = |n: &str| peaks.iter().find(|p| p["name"] == n).unwrap();
-    assert_eq!(by("piano")["peak"], 0);
-    assert!(by("piano")["peak_dbfs"].is_null());
-    assert!((30..=34).contains(&by("other")["peak"].as_u64().unwrap()), "{}", by("other"));
-    assert!((175..=185).contains(&by("guitar")["peak"].as_u64().unwrap()), "{}", by("guitar"));
-    let vocals = by("vocals");
-    assert!(!calliope_lib::flac_peak::is_below(vocals["peak"].as_u64().unwrap(), 16, -50.0), "{vocals}");
-    assert!(vocals["peak_dbfs"].is_number());
+    let levels = done["stem_levels"].as_array().unwrap();
+    assert_eq!(levels.iter().map(|p| p["name"].as_str().unwrap()).collect::<Vec<_>>(), SIX);
+    assert!(levels.iter().all(|p| p["level_dbfs"] == -40 && p["window_ms"] == 100), "{done}");
+    let by = |n: &str| levels.iter().find(|p| p["name"] == n).unwrap();
+    for n in ["vocals", "drums", "bass"] {
+        assert_eq!(by(n)["audible_ms"], 16000, "{n}");
+    }
+    assert_eq!(by("guitar")["audible_ms"], 15000);
+    assert_eq!(by("other")["audible_ms"], 14900);
+    assert_eq!(by("piano")["audible_ms"], 9500);
+    assert!(by("piano")["peak_dbfs"].as_f64().unwrap() > -9.0, "{}", by("piano"));
 
-    // The shared client sees the same peaks.
+    // The shared client sees the same values.
     let st = s.client().status(&job).unwrap();
-    let got = st.stem_peaks.unwrap();
+    let got = st.stem_levels.unwrap();
     assert_eq!(got.len(), 6);
     for p in &got {
-        assert_eq!(p.peak, by(&p.name)["peak"].as_u64().unwrap(), "{}", p.name);
-        assert_eq!(p.bits, 16);
+        assert_eq!(p.audible_ms, by(&p.name)["audible_ms"].as_u64().unwrap(), "{}", p.name);
+        assert_eq!((p.level_dbfs, p.window_ms), (-40, 100));
     }
 
     let log = s.log();
-    assert!(log.contains(&format!("job id={job} stem=piano peak=0 bits=16 peak_dbfs=-inf")), "{log}");
-    assert!(log.contains(&format!("job id={job} stem=vocals peak=")), "{log}");
+    assert!(log.contains(&format!("job id={job} stem=guitar audible_ms=15000 windows=200 level_dbfs=-40 peak_dbfs=")), "{log}");
     assert!(log.contains(&format!("job id={job} measured=6/6 ms=")), "{log}");
     // The stems are still served.
     assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/piano"), &[], b"").status, 200);
+}
+
+#[test]
+fn silent_stems_report_zero_audible_time_and_null_peak() {
+    let s = start("silent", &[]);
+    let job = submit_raw(&s);
+    let done = wait_state(s.addr, &job, "done");
+    let levels = done["stem_levels"].as_array().unwrap();
+    assert_eq!(levels.len(), 6);
+    assert!(levels.iter().all(|p| p["audible_ms"] == 0 && p["peak_dbfs"].is_null()), "{done}");
 }
 
 #[test]
@@ -606,26 +615,27 @@ fn undecodable_stem_gets_no_entry_but_the_job_succeeds() {
     let s = start("undecodable", &[]);
     let job = submit_raw(&s);
     let done = wait_state(s.addr, &job, "done");
-    let peaks = done["stem_peaks"].as_array().unwrap();
+    let peaks = done["stem_levels"].as_array().unwrap();
     let names: Vec<&str> = peaks.iter().map(|p| p["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["vocals", "drums", "bass", "guitar", "other"]);
     assert_eq!(done["stems"].as_array().unwrap().len(), 6);
     let log = s.log();
-    assert!(log.contains(&format!("job id={job} stem=piano peak=unknown")), "{log}");
+    assert!(log.contains(&format!("job id={job} stem=piano audible=unknown")), "{log}");
     assert!(log.contains(&format!("job id={job} measured=5/6 ms=")), "{log}");
     assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/piano"), &[], b"").status, 200);
 }
 
 #[test]
-fn no_stem_peaks_flag_gives_the_old_json() {
-    let s = start("ok", &["--no-stem-peaks"]);
+fn no_stem_levels_flag_gives_the_old_json() {
+    let s = start("ok", &["--no-stem-levels"]);
     let job = submit_raw(&s);
     let done = wait_state(s.addr, &job, "done");
     let keys: Vec<&str> = done.as_object().unwrap().keys().map(|k| k.as_str()).collect();
     let mut sorted = keys.clone();
     sorted.sort();
     assert_eq!(sorted, ["error", "job", "progress", "state", "stems"], "{done}");
-    assert!(s.client().status(&job).unwrap().stem_peaks.is_none());
+    let st = s.client().status(&job).unwrap();
+    assert!(st.stem_levels.is_none() && st.stem_peaks.is_none());
     assert!(!s.log().contains("measured="));
     for n in SIX {
         assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/{n}"), &[], b"").status, 200);

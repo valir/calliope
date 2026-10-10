@@ -717,7 +717,7 @@ fn partial_report_fetches_the_unreported_stems_and_checks_them_locally() {
 #[test]
 fn old_server_without_the_key_downloads_and_checks_everything() {
     // the real server with the off switch is the "old server"
-    let old = start_real("sparse", &["--no-stem-peaks"]);
+    let old = start_real("sparse", &["--no-stem-levels"]);
     let new = start_real("sparse", &[]);
     let (ra, rb) = (Rig::new(false), Rig::new(false));
     let a = import_with(&ra, &old.url);

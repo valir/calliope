@@ -27,6 +27,6 @@ pub struct Config {
     pub separator_timeout: Duration,
     pub retention: Duration,
     pub janitor_interval: Duration,
-    /// Measure every stem's peak and report it (`--no-stem-peaks` turns it off).
-    pub stem_peaks: bool,
+    /// Measure every stem's audible time and report it (`--no-stem-levels` turns it off).
+    pub stem_levels: bool,
 }

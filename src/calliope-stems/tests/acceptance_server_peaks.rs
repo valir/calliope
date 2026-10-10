@@ -154,7 +154,7 @@ fn key_is_absent_for_failed_and_cancelled_jobs() {
 
 #[test]
 fn no_stem_peaks_flag_omits_the_key_in_every_state() {
-    let s = start("slow", &["--no-stem-peaks"]);
+    let s = start("slow", &["--no-stem-levels"]);
     let job = submit(&s);
     let end = Instant::now() + Duration::from_secs(60);
     loop {
@@ -171,7 +171,7 @@ fn no_stem_peaks_flag_omits_the_key_in_every_state() {
 
 #[test]
 fn entries_have_exact_shape_and_digital_silence_is_peak_zero_null_dbfs() {
-    let s = start("sparse", &[]);
+    let s = start("boundary", &[]);
     let job = submit(&s);
     let (_, v) = wait_done(&s, &job);
     let arr = v["stem_peaks"].as_array().unwrap();
@@ -191,10 +191,11 @@ fn entries_have_exact_shape_and_digital_silence_is_peak_zero_null_dbfs() {
             assert_eq!(e["peak"], 0, "null dbfs only for digital silence: {e}");
         }
     }
-    assert_eq!(arr[4]["peak"], 0);
-    assert!(arr[4]["peak_dbfs"].is_null());
-    assert!(arr[5]["peak_dbfs"].as_f64().unwrap() < -50.0);
-    assert!(arr[3]["peak_dbfs"].as_f64().unwrap() > -50.0);
+    // boundary: guitar/other peak about 3277 (-20 dBFS), piano about 13107 (-8 dBFS)
+    for i in [3, 5] {
+        assert!((3200..=3350).contains(&arr[i]["peak"].as_u64().unwrap()), "{}", arr[i]);
+    }
+    assert!((13000..=13200).contains(&arr[4]["peak"].as_u64().unwrap()), "{}", arr[4]);
 }
 
 #[test]
@@ -215,7 +216,7 @@ fn unmeasurable_stem_has_no_entry_and_empty_list_is_an_array_not_missing() {
     let names: Vec<&str> = v["stem_peaks"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
     assert!(!names.contains(&"piano"));
     assert_eq!(names.len(), 5);
-    assert!(s.log().contains("peak=unknown"));
+    assert!(s.log().contains("audible=unknown"));
 }
 
 #[test]
@@ -229,7 +230,7 @@ fn json_is_still_parseable_by_an_old_shaped_client() {
         stems: Option<Vec<String>>,
         error: Option<String>,
     }
-    let s = start("sparse", &[]);
+    let s = start("boundary", &[]);
     let job = submit(&s);
     let (text, _) = wait_done(&s, &job);
     let old: Old = serde_json::from_str(&text).unwrap();
@@ -291,7 +292,7 @@ fn state_stays_running_while_measuring_and_cancel_during_measuring_gives_cancell
             eprintln!("QA: measuring too fast to cancel on this machine; skipping cancel part");
             return;
         }
-        if s.log().contains("stem=vocals peak=") {
+        if s.log().contains("stem=vocals audible_ms=") {
             assert_eq!(v["state"], "running", "{v}");
             t_measuring = Instant::now();
             break;
@@ -325,7 +326,7 @@ fn sigterm_during_measuring_exits_promptly() {
     let mut s = start_with(&sep, "ok", &[]);
     let job = submit(&s);
     let end = Instant::now() + Duration::from_secs(60);
-    while !s.log().contains("stem=vocals peak=") {
+    while !s.log().contains("stem=vocals audible_ms=") {
         let (_, v) = status_raw(s.addr, &job);
         if v["state"] == "done" {
             eprintln!("QA: too fast; skip");

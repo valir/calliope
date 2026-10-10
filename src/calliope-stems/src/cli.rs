@@ -27,8 +27,8 @@ Options:
   --queue N                   jobs allowed to wait behind the running one (default 2)
   --separator-timeout-min N   a separator running longer is killed (default 30)
   --retention-hours N         finished jobs are deleted after this (default 24)
-  --no-stem-peaks             do not measure the stems' peak levels (the job status then has no
-                              stem_peaks)
+  --no-stem-levels            do not measure the stems' audible time (the job status then has no
+                              stem_levels)
   --help                      show this text
   --version                   show the version
   --licenses                  show the licences of the third-party code in this binary
@@ -88,7 +88,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
     let mut timeout_min = DEFAULT_SEPARATOR_TIMEOUT_MIN;
     let mut retention_hours = DEFAULT_RETENTION_HOURS;
     let mut janitor_interval = DEFAULT_JANITOR_INTERVAL;
-    let mut stem_peaks = true;
+    let mut stem_levels = true;
 
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -100,7 +100,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
             "--help" | "-h" => return Ok(Parsed::Help),
             "--version" | "-V" => return Ok(Parsed::Version),
             "--licenses" => return Ok(Parsed::Licenses),
-            "--no-stem-peaks" if inline.is_none() => stem_peaks = false,
+            "--no-stem-levels" if inline.is_none() => stem_levels = false,
             "--listen" | "--work-dir" | "--separator" | "--model" | "--max-upload-mb" | "--max-duration-s"
             | "--queue" | "--separator-timeout-min" | "--retention-hours" | "--janitor-interval-ms" => {
                 let value = match inline {
@@ -165,7 +165,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
         separator_timeout: Duration::from_secs(timeout_min * 60),
         retention: Duration::from_secs(retention_hours.saturating_mul(3600)),
         janitor_interval,
-        stem_peaks,
+        stem_levels,
     })))
 }
 
@@ -231,15 +231,15 @@ mod tests {
         assert_eq!((c.model.as_str(), c.max_upload_bytes, c.max_duration_s, c.queue), ("m1", 1 << 20, 60, 0));
         assert_eq!((c.separator_timeout.as_secs(), c.retention.as_secs()), (120, 0));
         assert_eq!(c.janitor_interval, Duration::from_millis(50));
-        assert!(c.stem_peaks);
+        assert!(c.stem_levels);
     }
 
     #[test]
-    fn no_stem_peaks_flag() {
-        assert!(run(&["--separator", &stub()]).unwrap().stem_peaks);
-        assert!(!run(&["--separator", &stub(), "--no-stem-peaks"]).unwrap().stem_peaks);
-        assert!(run(&["--separator", &stub(), "--no-stem-peaks=1"]).is_err());
-        assert!(HELP.contains("--no-stem-peaks"));
+    fn no_stem_levels_flag() {
+        assert!(run(&["--separator", &stub()]).unwrap().stem_levels);
+        assert!(!run(&["--separator", &stub(), "--no-stem-levels"]).unwrap().stem_levels);
+        assert!(run(&["--separator", &stub(), "--no-stem-levels=1"]).is_err());
+        assert!(HELP.contains("--no-stem-levels"));
     }
 
     #[test]

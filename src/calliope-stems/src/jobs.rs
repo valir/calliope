@@ -7,8 +7,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use calliope_lib::process::{self, CancelHandle};
-use calliope_lib::flac_peak;
-use calliope_lib::stems_api::{JobState, JobStatus, StemPeak};
+use calliope_lib::flac_level::{self, AUDIBLE_LEVEL_DBFS};
+use calliope_lib::stems_api::{JobState, JobStatus, StemLevel, StemPeak};
 
 use crate::config::Config;
 use crate::separator::{parse_progress, truncate, validate_output};
@@ -19,6 +19,7 @@ struct Job {
     progress: Option<f64>,
     stems: Option<Vec<String>>,
     stem_peaks: Option<Vec<StemPeak>>,
+    stem_levels: Option<Vec<StemLevel>>,
     error: Option<String>,
     dir: PathBuf,
     started: Option<Instant>,
@@ -108,6 +109,7 @@ impl Manager {
                 progress: None,
                 stems: None,
                 stem_peaks: None,
+                stem_levels: None,
                 error: None,
                 dir,
                 started: None,
@@ -135,7 +137,7 @@ impl Manager {
             stems: j.stems.clone(),
             error: j.error.clone(),
             stem_peaks: j.stem_peaks.clone(),
-            stem_levels: None,
+            stem_levels: j.stem_levels.clone(),
         })
     }
 
@@ -374,10 +376,10 @@ impl Manager {
         };
 
         // Measure the stems outside the lock; cancel and shutdown are checked between stems.
-        let mut stem_peaks = None;
-        if let (true, Ok(stems)) = (self.cfg.stem_peaks, &outcome) {
+        let mut measured = None;
+        if let (true, Ok(stems)) = (self.cfg.stem_levels, &outcome) {
             match self.measure_stems(id, &dir.join("out"), stems) {
-                Some(peaks) => stem_peaks = Some(peaks),
+                Some(m) => measured = Some(m),
                 None => {
                     // Interrupted: a cancelled job takes the cancelled path below; a stopping
                     // server just gives the job up.
@@ -397,7 +399,10 @@ impl Manager {
                     j.state = JobState::Done;
                     j.progress = Some(1.0);
                     j.stems = Some(stems);
-                    j.stem_peaks = stem_peaks;
+                    if let Some((levels, peaks)) = measured {
+                        j.stem_levels = Some(levels);
+                        j.stem_peaks = Some(peaks);
+                    }
                     j.finished = Some(Instant::now());
                     j.cancel = None;
                     log(format_args!("job id={id} state=done duration_s={secs:.1}"));
@@ -424,35 +429,45 @@ impl Manager {
         st.stop || st.jobs.get(id).is_none_or(|j| j.state == JobState::Cancelled)
     }
 
-    /// Full-scan peak of every stem, in order. A stem that cannot be decoded gets no entry.
-    /// `None` when cancelled or stopped part-way.
-    fn measure_stems(&self, id: &str, out: &std::path::Path, stems: &[String]) -> Option<Vec<StemPeak>> {
+    /// Full-scan audible time (and peak) of every stem, in order. A stem that cannot be decoded
+    /// gets no entry. `None` when cancelled or stopped part-way. The peaks fill the legacy
+    /// `stem_peaks` until the app stops reading it.
+    fn measure_stems(&self, id: &str, out: &std::path::Path, stems: &[String]) -> Option<(Vec<StemLevel>, Vec<StemPeak>)> {
         let t0 = Instant::now();
+        let mut levels = Vec::new();
         let mut peaks = Vec::new();
         for name in stems {
             if self.interrupted(id) {
                 return None;
             }
-            match flac_peak::scan(&out.join(format!("{name}.flac")), None) {
-                Ok(sc) => {
-                    let peak_dbfs = flac_peak::to_dbfs(sc.peak, sc.bits).map(|d| (d * 100.0).round() / 100.0);
+            match flac_level::scan(&out.join(format!("{name}.flac")), AUDIBLE_LEVEL_DBFS, None) {
+                Ok(a) => {
+                    let peak_dbfs = flac_level::to_dbfs(a.peak, a.bits).map(|d| (d * 100.0).round() / 100.0);
                     let shown = peak_dbfs.map_or("-inf".to_string(), |d| format!("{d:.1}"));
                     log(format_args!(
-                        "job id={id} stem={name} peak={} bits={} peak_dbfs={shown}",
-                        sc.peak, sc.bits
+                        "job id={id} stem={name} audible_ms={} windows={} level_dbfs={AUDIBLE_LEVEL_DBFS} peak_dbfs={shown}",
+                        a.audible_ms(),
+                        a.windows
                     ));
-                    peaks.push(StemPeak { name: name.clone(), peak: sc.peak, bits: sc.bits, peak_dbfs });
+                    levels.push(StemLevel {
+                        name: name.clone(),
+                        audible_ms: a.audible_ms(),
+                        level_dbfs: AUDIBLE_LEVEL_DBFS,
+                        window_ms: flac_level::WINDOW_MS,
+                        peak_dbfs,
+                    });
+                    peaks.push(StemPeak { name: name.clone(), peak: a.peak, bits: a.bits, peak_dbfs });
                 }
-                Err(e) => log(format_args!("job id={id} stem={name} peak=unknown error=\"{}\"", truncate(&e, 200))),
+                Err(e) => log(format_args!("job id={id} stem={name} audible=unknown error=\"{}\"", truncate(&e, 200))),
             }
         }
         log(format_args!(
             "job id={id} measured={}/{} ms={}",
-            peaks.len(),
+            levels.len(),
             stems.len(),
             t0.elapsed().as_millis()
         ));
-        Some(peaks)
+        Some((levels, peaks))
     }
 
     fn on_line(&self, id: &str, tail: &Mutex<String>, line: String) {
@@ -489,7 +504,7 @@ mod tests {
             separator_timeout: Duration::from_secs(60),
             retention,
             janitor_interval: Duration::from_secs(600),
-            stem_peaks: true,
+            stem_levels: true,
         })
     }
 
@@ -502,6 +517,7 @@ mod tests {
                 progress: None,
                 stems: None,
                 stem_peaks: None,
+                stem_levels: None,
                 error: None,
                 dir,
                 started: None,
