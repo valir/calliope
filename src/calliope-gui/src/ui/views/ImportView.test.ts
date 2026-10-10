@@ -17,6 +17,7 @@ let fileResult: JobSnapshot | null = null;
 let watchResult: JobSnapshot | null = null;
 let watchFailures = 0;
 let startError = '';
+let importError = '';
 
 const URL_OK = 'https://video.example/watch?v=1';
 const META: TrackEdits = {
@@ -47,6 +48,7 @@ beforeEach(() => {
   watchResult = null;
   watchFailures = 0;
   startError = '';
+  importError = '';
   resetImport();
   resetLibrary();
   ui.view = 'import';
@@ -61,7 +63,9 @@ beforeEach(() => {
         return snap();
       case 'pick_import_file':
         return fileResult ? { path: `/music/${fileResult.source.label}`, name: fileResult.source.label } : null;
-      case 'import_path': return fileResult;
+      case 'import_path':
+        if (importError) throw importError;
+        return fileResult;
       case 'watch_import':
         if (watchFailures > 0) { watchFailures -= 1; throw new Error('boom'); }
         return watchResult;
@@ -89,6 +93,17 @@ async function toUrlBox(): Promise<HTMLInputElement> {
   await toSource();
   await click('radio', 'URL');
   return screen.getByRole('textbox', { name: 'enter url' }) as HTMLInputElement;
+}
+async function toPathBox(label: string): Promise<HTMLInputElement> {
+  await toSource();
+  await click('radio', label);
+  return screen.getByRole('textbox', { name: 'file path' }) as HTMLInputElement;
+}
+async function browseThenExtract(): Promise<void> {
+  const box = screen.getByRole('textbox', { name: 'file path' }) as HTMLInputElement;
+  await click('button', 'Browse');
+  await waitFor(() => expect(box.value).not.toBe(''));
+  await click('button', 'Extract');
 }
 async function startDownload(): Promise<void> {
   const box = await toUrlBox();
@@ -218,25 +233,84 @@ describe('Import view: menu and source page', () => {
   });
 
   it.each([
+    ['Local Audio File', 'audio', '/path/to/song.mp3'],
+    ['Local Video File', 'video', '/path/to/video.mp4'],
+  ])('%s shows the path box, Browse and Extract, and no URL box', async (label, _kind, placeholder) => {
+    const box = await toPathBox(label);
+    expect(box.placeholder).toBe(placeholder);
+    expect(screen.getByRole('button', { name: 'Browse' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Extract' })).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: 'enter url' })).toBeNull();
+  });
+
+  it.each([
     ['Local Audio File', 'audio'],
     ['Local Video File', 'video'],
-  ])('%s shows Browse, which opens the file dialog for %s', async (label, kind) => {
-    await toSource();
-    await click('radio', label);
-    expect(screen.queryByRole('textbox', { name: 'enter url' })).toBeNull();
+  ])('Browse for %s only calls pick_import_file; a pick fills the box and focuses Extract', async (label, kind) => {
+    fileResult = snap({ source: { kind: 'audio-file', label: 'a.mp3' }, phase: 'ready', metadata: META, duration_s: 61 });
+    const box = await toPathBox(label);
+    await click('button', 'Browse');
+    await waitFor(() => expect(box.value).toBe('/music/a.mp3'));
+    expect(callsOf('pick_import_file')).toHaveLength(1);
+    expect(callsOf('pick_import_file')[0]).toMatchObject({ kind });
+    expect(names()).not.toContain('import_path');
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Extract' }));
+    expect(frontendLogs()).toContain(`import path-picked kind=${kind}`);
+  });
+
+  it('a cancelled pick leaves the box unchanged and starts nothing', async () => {
+    const box = await toPathBox('Local Audio File');
+    await fireEvent.input(box, { target: { value: '/typed/x.mp3' } });
     await click('button', 'Browse');
     await waitFor(() => expect(callsOf('pick_import_file')).toHaveLength(1));
-    expect(callsOf('pick_import_file')[0]).toMatchObject({ kind });
-    // dialog cancelled -> still on the source page, nothing else happens
-    expect(screen.getByRole('button', { name: 'Browse' })).toBeTruthy();
+    expect(box.value).toBe('/typed/x.mp3');
+    expect(names()).not.toContain('import_path');
     expect(alertText()).toBeNull();
   });
 
-  it('a file without an audio track shows the message under Browse', async () => {
-    fileResult = snap({ source: { kind: 'video-file', label: 'no-audio.mp4' }, phase: 'preparing' });
-    await toSource();
+  it.each(['click', 'enter'])('typing a path and pressing Extract (%s) calls import_path with the text as typed', async (how) => {
+    fileResult = snap({ source: { kind: 'video-file', label: 'v.mp4' }, phase: 'preparing' });
+    const box = await toPathBox('Local Video File');
+    await fireEvent.input(box, { target: { value: '  "~/My Videos/v.mp4" ' } });
+    if (how === 'click') await click('button', 'Extract');
+    else await fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(callsOf('import_path')).toHaveLength(1));
+    expect(callsOf('import_path')[0]).toMatchObject({ kind: 'video', path: '  "~/My Videos/v.mp4" ' });
+    expect(names()).not.toContain('pick_import_file');
+    expect(await screen.findByText('Preparing audio...')).toBeTruthy();
+  });
+
+  it('an empty box shows the message and makes no IPC call', async () => {
+    await toPathBox('Local Audio File');
+    await click('button', 'Extract');
+    expect(alertText()).toBe('Enter the path of a file or choose one with Browse');
+    expect(names()).not.toContain('import_path');
+    expect(names()).not.toContain('pick_import_file');
+  });
+
+  it('a rejected path shows the message, keeps the box text and leaves the controls enabled', async () => {
+    importError = 'No file found at /x/y.mp3';
+    const box = await toPathBox('Local Audio File');
+    await fireEvent.input(box, { target: { value: '/x/y.mp3' } });
+    await click('button', 'Extract');
+    await waitFor(() => expect(alertText()).toBe('No file found at /x/y.mp3'));
+    expect(box.value).toBe('/x/y.mp3');
+    expect(box.disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'Browse' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'Extract' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('switching audio to video clears the box', async () => {
+    const box = await toPathBox('Local Audio File');
+    await fireEvent.input(box, { target: { value: '/x/y.mp3' } });
     await click('radio', 'Local Video File');
-    await click('button', 'Browse');
+    expect((screen.getByRole('textbox', { name: 'file path' }) as HTMLInputElement).value).toBe('');
+  });
+
+  it('a file without an audio track shows the message under the box', async () => {
+    fileResult = snap({ source: { kind: 'video-file', label: 'no-audio.mp4' }, phase: 'preparing' });
+    await toPathBox('Local Video File');
+    await browseThenExtract();
     expect(await screen.findByText('Preparing audio...')).toBeTruthy();
     await emit({ phase: 'failed', stage: 'prepare', message: 'Selected file no-audio.mp4 has no audio track', http_status: null });
     expect(alertText()).toBe('Selected file no-audio.mp4 has no audio track');
@@ -245,18 +319,17 @@ describe('Import view: menu and source page', () => {
 
   it('a track over 15 minutes shows the limit message', async () => {
     fileResult = snap({ source: { kind: 'audio-file', label: 'long.flac' }, phase: 'preparing' });
-    await toSource();
-    await click('radio', 'Local Audio File');
-    await click('button', 'Browse');
+    const box = await toPathBox('Local Audio File');
+    await fireEvent.input(box, { target: { value: '/music/long.flac' } });
+    await click('button', 'Extract');
     await emit({ phase: 'failed', stage: 'prepare', message: 'Tracks longer than 15 minutes are not supported', http_status: null });
     expect(alertText()).toBe('Tracks longer than 15 minutes are not supported');
   });
 
   it('a file import that goes straight to ready shows the edit pane', async () => {
     fileResult = snap({ source: { kind: 'audio-file', label: 'a.mp3' }, phase: 'ready', metadata: META, duration_s: 61 });
-    await toSource();
-    await click('radio', 'Local Audio File');
-    await click('button', 'Browse');
+    await toPathBox('Local Audio File');
+    await browseThenExtract();
     expect((await screen.findByRole('textbox', { name: 'Title' }) as HTMLInputElement).value).toBe('Slow Burn');
     expect(screen.getByTestId('import-source').textContent).toBe('a.mp3');
   });

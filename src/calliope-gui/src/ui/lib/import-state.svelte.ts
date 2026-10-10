@@ -25,6 +25,8 @@ export const imp = $state({
   mode: 'menu' as 'menu' | 'stem',
   source: null as SourceChoice | null,
   url: '',
+  /** The path box of the local audio / video source. */
+  path: '',
   /** The accent-colour label under the URL box / Browse button. */
   error: '',
   /** The "Incomplete download file" prompt (a partial download of this URL exists). */
@@ -45,6 +47,7 @@ export function resetImport(): void {
   imp.mode = 'menu';
   imp.source = null;
   imp.url = '';
+  imp.path = '';
   imp.error = '';
   imp.prompt = null;
   imp.starting = false;
@@ -236,6 +239,7 @@ export function backToMenu(): void {
 
 export function chooseSource(s: SourceChoice): void {
   if (imp.starting || imp.job) return;
+  if (imp.source !== s) imp.path = '';
   imp.source = s;
   imp.error = '';
   imp.prompt = null;
@@ -288,17 +292,38 @@ export async function answerPrompt(resume: boolean): Promise<void> {
   }
 }
 
-export async function browse(kind: ImportKind): Promise<void> {
-  if (imp.starting || imp.job) return;
+/** Opens the file dialog and fills the path box; true when a file was picked. */
+export async function browse(kind: ImportKind): Promise<boolean> {
+  if (imp.starting || imp.job) return false;
   imp.error = '';
   imp.starting = true;
   try {
     const pick = await pickImportFile(kind);
-    if (pick) {
-      const before = eventSeq;
-      const snap = await importPath(kind, pick.path, applyEvent);
-      if (snap) adopt(snap, before);
-    }
+    if (!pick) return false;
+    imp.path = pick.path;
+    log(`path-picked kind=${kind}`);
+    return true;
+  } catch (err) {
+    showError(String(err));
+    return false;
+  } finally {
+    imp.starting = false;
+  }
+}
+
+/** Starts the import of the file named in the path box. */
+export async function extractPath(kind: ImportKind): Promise<void> {
+  if (imp.starting || imp.job) return;
+  imp.error = '';
+  if (imp.path.trim() === '') {
+    showError('Enter the path of a file or choose one with Browse');
+    return;
+  }
+  imp.starting = true;
+  try {
+    const before = eventSeq;
+    const snap = await importPath(kind, imp.path, applyEvent);
+    if (snap) adopt(snap, before);
   } catch (err) {
     showError(String(err));
   } finally {
@@ -365,6 +390,7 @@ export function importAnother(): void {
   imp.extractError = '';
   imp.error = '';
   imp.url = '';
+  imp.path = '';
   imp.source = null;
 }
 

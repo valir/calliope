@@ -88,7 +88,7 @@ describe('AC: tab, button, source page', () => {
     const b = screen.getByRole('button', { name: 'Stem Extraction' });
     expect(b.textContent?.trim()).toBe('Stem Extraction');
   });
-  it('clicking it switches to the select-source page; URL shows the text box; the others show Browse', async () => {
+  it('clicking it switches to the select-source page; URL shows the text box; the others show the path box and Browse', async () => {
     render(ImportView);
     await click('button', 'Stem Extraction');
     expect(screen.getByRole('radio', { name: 'URL' })).toBeTruthy();
@@ -200,6 +200,8 @@ describe('AC: edit pane and extraction', () => {
     await click('button', 'Stem Extraction');
     await click('radio', 'Local Video File');
     await click('button', 'Browse');
+    await waitFor(() => expect((screen.getByRole('textbox', { name: 'file path' }) as HTMLInputElement).value).not.toBe(''));
+    await click('button', 'Extract');
     await emit({ phase: 'failed', stage: 'prepare', message: 'Selected file clip.mkv has no audio track', http_status: null });
     expect(screen.getByRole('alert').textContent?.trim()).toBe('Selected file clip.mkv has no audio track');
   });
@@ -209,6 +211,8 @@ describe('AC: edit pane and extraction', () => {
     await click('button', 'Stem Extraction');
     await click('radio', 'Local Audio File');
     await click('button', 'Browse');
+    await waitFor(() => expect((screen.getByRole('textbox', { name: 'file path' }) as HTMLInputElement).value).not.toBe(''));
+    await click('button', 'Extract');
     expect(((await screen.findByLabelText('Title')) as HTMLInputElement).value).toBe('Slow Burn');
   });
 });

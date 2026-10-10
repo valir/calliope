@@ -9,11 +9,14 @@
     browse,
     cancelRunning,
     chooseSource,
+    extractPath,
     extractUrl,
     imp,
     type SourceChoice,
   } from '$lib/import-state.svelte';
   import { formatMb } from '$lib/format';
+
+  let extractBtn = $state<HTMLButtonElement | null>(null);
 
   const job = $derived(imp.job);
   const downloading = $derived(job?.phase === 'downloading');
@@ -41,6 +44,17 @@
     if (e.key === 'Enter') {
       e.preventDefault();
       void extractUrl();
+    }
+  }
+
+  async function onBrowse(kind: 'audio' | 'video'): Promise<void> {
+    if (await browse(kind)) extractBtn?.focus();
+  }
+
+  function onPathKey(e: KeyboardEvent, kind: 'audio' | 'video'): void {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void extractPath(kind);
     }
   }
 </script>
@@ -81,8 +95,24 @@
       </div>
     </div>
   {:else if imp.source === 'audio' || imp.source === 'video'}
-    <div>
-      <Button disabled={locked} onclick={() => void browse(imp.source === 'audio' ? 'audio' : 'video')}>Browse</Button>
+    {@const kind = imp.source}
+    <div class="flex flex-col gap-2">
+      <div class="flex gap-2">
+        <Input
+          id="import-path"
+          type="text"
+          aria-label="file path"
+          placeholder={kind === 'audio' ? '/path/to/song.mp3' : '/path/to/video.mp4'}
+          autocomplete="off"
+          spellcheck={false}
+          disabled={locked}
+          aria-describedby={imp.error ? 'import-error' : undefined}
+          bind:value={imp.path}
+          onkeydown={(e) => onPathKey(e, kind)}
+        />
+        <Button variant="outline" disabled={locked} onclick={() => void onBrowse(kind)}>Browse</Button>
+        <Button bind:ref={extractBtn} disabled={locked} onclick={() => void extractPath(kind)}>Extract</Button>
+      </div>
     </div>
   {/if}
 
