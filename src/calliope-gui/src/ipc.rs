@@ -381,25 +381,23 @@ pub fn do_start_url(
     import.start_url(&st.current_root(), url, resume, sink)
 }
 
-/// Opens the file dialog for `kind` (the path stays in Rust) and starts the import.
-/// `Ok(None)` when the dialog was cancelled.
-pub fn do_import_file(
+/// What the file dialog returned: the full path (UTF-8) and its file name.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PickedFile {
+    pub path: String,
+    pub name: String,
+}
+
+/// Opens the file dialog for `kind` and returns the chosen path. `Ok(None)` when cancelled.
+/// No validation here: `do_import_path` does it.
+pub fn do_pick_import_file(
     st: &RepoState,
-    import: &ImportState,
     kind: ImportKind,
     home: Option<PathBuf>,
-    sink: Sink,
-) -> Result<Option<JobSnapshot>, String> {
-    if import.is_active() {
-        return Err(crate::import_job::BUSY_MESSAGE.into());
-    }
-    let (dialog, file_kind, title, filter, exts, label) = match kind {
-        ImportKind::Audio => {
-            (DialogKind::ImportAudio, FileKind::Audio, "Choose an audio file", "Audio files", AUDIO_EXTENSIONS, "an audio")
-        }
-        ImportKind::Video => {
-            (DialogKind::ImportVideo, FileKind::Video, "Choose a video file", "Video files", VIDEO_EXTENSIONS, "a video")
-        }
+) -> Result<Option<PickedFile>, String> {
+    let (dialog, title, filter, exts) = match kind {
+        ImportKind::Audio => (DialogKind::ImportAudio, "Choose an audio file", "Audio files", AUDIO_EXTENSIONS),
+        ImportKind::Video => (DialogKind::ImportVideo, "Choose a video file", "Video files", VIDEO_EXTENSIONS),
     };
     let req = FileReq {
         kind: dialog,
@@ -411,19 +409,39 @@ pub fn do_import_file(
     let Some(path) = st.picker.pick_file(&req) else {
         return Ok(None);
     };
-    let name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or("the picked file has no usable name")?
-        .to_string();
-    let right = match kind {
-        ImportKind::Audio => crate::picker::is_audio_name(&name),
-        ImportKind::Video => crate::picker::is_video_name(&name),
-    };
-    if !right {
-        return Err(format!("\"{name}\" is not {label} file"));
+    const NOT_UTF8: &str =
+        "The chosen file's path has characters Calliope cannot show; rename the file or its folder";
+    let name = path.file_name().and_then(|n| n.to_str()).ok_or(NOT_UTF8)?.to_string();
+    let path = path.to_str().ok_or(NOT_UTF8)?.to_string();
+    Ok(Some(PickedFile { path, name }))
+}
+
+/// Starts the import of a typed or picked path. The only command that takes a path; it only
+/// ever reads it (see "Local import by typed path" in docs/architecture.md).
+pub fn do_import_path(
+    st: &RepoState,
+    import: &ImportState,
+    kind: ImportKind,
+    path: &str,
+    home: Option<PathBuf>,
+    sink: Sink,
+) -> Result<JobSnapshot, String> {
+    if import.is_active() {
+        return Err(crate::import_job::BUSY_MESSAGE.into());
     }
-    import.start_file(&st.current_root(), file_kind, &path, sink).map(Some)
+    let (local, file_kind, k) = match kind {
+        ImportKind::Audio => (crate::local_source::LocalKind::Audio, FileKind::Audio, "audio"),
+        ImportKind::Video => (crate::local_source::LocalKind::Video, FileKind::Video, "video"),
+    };
+    let abs = match crate::local_source::resolve(path, local, home.as_deref()) {
+        Ok(p) => p,
+        Err(p) => {
+            eprintln!("calliope: import path kind={k} result=rejected reason={}", p.reason);
+            return Err(p.message);
+        }
+    };
+    eprintln!("calliope: import path kind={k} result=accepted");
+    import.start_file(&st.current_root(), file_kind, &abs, sink)
 }
 
 pub fn do_start_extraction(
@@ -788,16 +806,26 @@ pub async fn start_url_import(
 }
 
 #[tauri::command]
-pub async fn import_file(
+pub async fn pick_import_file(
     app: tauri::AppHandle,
     kind: ImportKind,
+) -> Result<Option<PickedFile>, String> {
+    blocking(move || do_pick_import_file(&app.state::<RepoState>(), kind, home(&app))).await
+}
+
+#[tauri::command]
+pub async fn import_path(
+    app: tauri::AppHandle,
+    kind: ImportKind,
+    path: String,
     events: tauri::ipc::Channel<ImportEvent>,
-) -> Result<Option<JobSnapshot>, String> {
+) -> Result<JobSnapshot, String> {
     blocking(move || {
-        do_import_file(
+        do_import_path(
             &app.state::<RepoState>(),
             &app.state::<ImportState>(),
             kind,
+            &path,
             home(&app),
             channel_sink(events),
         )
@@ -1212,36 +1240,91 @@ mod tests {
     }
 
     #[test]
-    fn import_file_cancel_and_wrong_extension() {
+    fn pick_import_file_cancel_and_pick() {
         let e = env("");
-        let bad = e.base.join("notes.txt");
-        let video_as_audio = e.base.join("clip.mp4");
+        let f = e.base.join("My Song.mp3");
         std::fs::write(
             &e.answers,
-            format!(
-                "import-audio CANCEL\nimport-audio {}\nimport-video {}\n",
-                video_as_audio.display(),
-                bad.display()
-            ),
+            format!("import-audio CANCEL\nimport-audio {}\nimport-video {}\n", f.display(), f.display()),
         )
         .unwrap();
-        assert!(do_import_file(&e.st, &e.import, ImportKind::Audio, None, null_sink()).unwrap().is_none());
-        let err = do_import_file(&e.st, &e.import, ImportKind::Audio, None, null_sink()).unwrap_err();
-        assert!(err.contains("not an audio file"), "{err}");
-        let err = do_import_file(&e.st, &e.import, ImportKind::Video, None, null_sink()).unwrap_err();
-        assert!(err.contains("not a video file"), "{err}");
+        assert!(do_pick_import_file(&e.st, ImportKind::Audio, None).unwrap().is_none());
+        let p = do_pick_import_file(&e.st, ImportKind::Audio, None).unwrap().unwrap();
+        assert_eq!(p.path, f.to_str().unwrap());
+        assert_eq!(p.name, "My Song.mp3");
+        // no validation at pick time
+        assert!(do_pick_import_file(&e.st, ImportKind::Video, None).unwrap().is_some());
     }
 
     #[test]
-    fn import_file_without_tools_is_an_error_not_a_job() {
+    fn import_path_rejections_start_no_job() {
+        let e = env("");
+        let notes = e.base.join("notes.txt");
+        let clip = e.base.join("clip.mp4");
+        std::fs::write(&notes, b"x").unwrap();
+        std::fs::write(&clip, b"x").unwrap();
+        let go = |k, p: &str| do_import_path(&e.st, &e.import, k, p, None, null_sink()).unwrap_err();
+        let err = go(ImportKind::Audio, clip.to_str().unwrap());
+        assert!(err.contains("not an audio file"), "{err}");
+        let err = go(ImportKind::Video, notes.to_str().unwrap());
+        assert!(err.contains("not a video file"), "{err}");
+        let missing = e.base.join("nope.mp3");
+        let err = go(ImportKind::Audio, missing.to_str().unwrap());
+        assert_eq!(err, format!("No file found at {}", missing.display()));
+        let err = go(ImportKind::Audio, "");
+        assert_eq!(err, "Enter the path of a file or choose one with Browse");
+        assert!(e.import.snapshot().is_none());
+    }
+
+    #[test]
+    fn import_path_without_tools_is_an_error_not_a_job() {
         let e = env("");
         do_list_tracks(&e.st, &e.default).unwrap();
         let f = e.base.join("song.mp3");
         std::fs::write(&f, b"x").unwrap();
-        std::fs::write(&e.answers, format!("import-audio {}\n", f.display())).unwrap();
-        let err = do_import_file(&e.st, &e.import, ImportKind::Audio, None, null_sink()).unwrap_err();
+        let err = do_import_path(&e.st, &e.import, ImportKind::Audio, f.to_str().unwrap(), None, null_sink())
+            .unwrap_err();
         assert!(err.contains("ffmpeg"), "{err}");
         assert!(e.import.snapshot().is_none());
+    }
+
+    #[test]
+    fn import_path_while_a_job_runs_is_busy() {
+        use std::os::unix::fs::PermissionsExt;
+        let e = env("");
+        do_list_tracks(&e.st, &e.default).unwrap();
+        let bin = e.base.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for (n, body) in [("ffmpeg", "echo ffmpeg version 7.1"), ("ffprobe", "if [ \"$1\" = -version ]; then echo ffprobe version 7.1; else sleep 30; fi")] {
+            let f = bin.join(n);
+            std::fs::write(&f, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let tools = Tools::discover(bin.as_os_str());
+        let import = ImportState::new(tools, e.st.repo_lock(), Duration::from_millis(10));
+        let f = e.base.join("song.mp3");
+        std::fs::write(&f, b"x").unwrap();
+        let snap = do_import_path(&e.st, &import, ImportKind::Audio, f.to_str().unwrap(), None, null_sink()).unwrap();
+        let err = do_import_path(&e.st, &import, ImportKind::Audio, f.to_str().unwrap(), None, null_sink())
+            .unwrap_err();
+        assert_eq!(err, crate::import_job::BUSY_MESSAGE);
+        let _ = import.cancel(&snap.job);
+    }
+
+    #[test]
+    fn import_path_expands_home() {
+        let e = env("");
+        std::fs::write(e.base.join("song.mp3"), b"x").unwrap();
+        let err = do_import_path(
+            &e.st, &e.import, ImportKind::Audio, "~/song.mp3", Some(e.base.clone()), null_sink(),
+        )
+        .unwrap_err();
+        assert!(err.contains("ffmpeg"), "{err}");
+        let err = do_import_path(
+            &e.st, &e.import, ImportKind::Audio, "~/other.mp3", Some(e.base.clone()), null_sink(),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("No file found at "), "{err}");
     }
 
     #[test]

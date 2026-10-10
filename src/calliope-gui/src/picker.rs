@@ -63,7 +63,7 @@ pub fn is_tablature_name(name: &str) -> bool {
     }
 }
 
-pub use crate::local_source::{AUDIO_EXTENSIONS, VIDEO_EXTENSIONS, is_audio_name, is_video_name};
+pub use crate::local_source::{AUDIO_EXTENSIONS, VIDEO_EXTENSIONS};
 
 /// Logs the line the e2e tests wait on.
 pub fn log_dialog(kind: DialogKind, picked: bool) {
@@ -302,6 +302,7 @@ impl Picker for ScriptedPicker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::local_source::{is_audio_name, is_video_name};
 
     #[test]
     fn registry_rejects_other_kind_and_unknown() {
