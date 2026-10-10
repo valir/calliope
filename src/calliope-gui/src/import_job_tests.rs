@@ -197,6 +197,18 @@ impl Rig {
         }
     }
 
+    /// The final snapshot is published before the terminal event is emitted, so wait (bounded) for the event.
+    fn last_event_where(&self, what: &str, pred: impl Fn(&ImportEvent) -> bool) -> ImportEvent {
+        let end = Instant::now() + Duration::from_secs(15);
+        loop {
+            if let Some(e) = self.events.lock().unwrap().last().filter(|e| pred(e)) {
+                return e.clone();
+            }
+            assert!(Instant::now() < end, "timed out waiting for the {what} event; got {:?}", self.events.lock().unwrap().last());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     fn ready(&self) -> JobSnapshot {
         let s = self.wait_idle("the job to stop");
         assert_eq!(s.phase, Phase::Ready, "{:?}", s.error);
@@ -353,7 +365,7 @@ fn a_video_without_audio_fails_with_the_exact_text() {
     assert_eq!((e.stage, e.message.as_str()), (Stage::Prepare, "Selected file no-audio.mp4 has no audio track"));
     assert!(!rig.state.is_active());
     assert!(Rig::names_in(&rig.root.join("import-tmp")).is_empty());
-    assert!(matches!(rig.events.lock().unwrap().last(), Some(ImportEvent::Failed { stage: Stage::Prepare, .. })));
+    rig.last_event_where("terminal", |e| matches!(e, ImportEvent::Failed { stage: Stage::Prepare, .. }));
     // a new job can start at once
     rig.file("tagged.mp3").unwrap();
     rig.ready();
@@ -397,7 +409,7 @@ fn cancel_keeps_the_partial_and_resume_continues_while_start_over_restarts() {
     let s = rig.wait_idle("cancel");
     assert_eq!(s.phase, Phase::Cancelled);
     assert!(!rig.state.is_active());
-    assert!(matches!(rig.events.lock().unwrap().last(), Some(ImportEvent::Cancelled { back_to: BackTo::Source })));
+    rig.last_event_where("terminal", |e| matches!(e, ImportEvent::Cancelled { back_to: BackTo::Source }));
     let prep = rig.state.prepare_url(&rig.root, u);
     assert_eq!(prep.status, UrlPrepStatus::Partial);
     assert!(prep.partial_bytes >= chunk);
@@ -457,7 +469,7 @@ fn cancel_during_extraction_goes_back_to_the_edit_pane() {
     assert_eq!(s.phase, Phase::Ready);
     assert_eq!(s.metadata, ready.metadata);
     assert!(s.error.is_none());
-    assert!(matches!(rig.events.lock().unwrap().last(), Some(ImportEvent::Cancelled { back_to: BackTo::Edit })));
+    rig.last_event_where("terminal", |e| matches!(e, ImportEvent::Cancelled { back_to: BackTo::Edit }));
     assert!(server.wait_for("method=DELETE"), "{:?}", server.log.lock().unwrap());
     let end = Instant::now() + Duration::from_secs(10);
     while server.job_dirs() > 0 && Instant::now() < end {
@@ -490,7 +502,7 @@ fn a_failed_extraction_returns_to_edit_with_the_message_and_can_be_retried() {
     let e = s.error.clone().unwrap();
     assert_eq!(e.stage, Stage::Server);
     assert!(!e.message.is_empty());
-    assert!(matches!(rig.events.lock().unwrap().last(), Some(ImportEvent::Failed { stage: Stage::Server, .. })));
+    rig.last_event_where("terminal", |e| matches!(e, ImportEvent::Failed { stage: Stage::Server, .. }));
     assert!(rig.state.is_active(), "a failed extraction keeps the job");
     assert_eq!(s.metadata, ready.metadata);
     assert!(Rig::names_in(&rig.tracks_dir()).is_empty());
@@ -778,7 +790,7 @@ fn check_sparse(rig: &Rig, done: &JobSnapshot) -> TrackRecord {
     assert_eq!(done.dropped[0], DroppedStem { name: "piano".into(), audible_ms: 0 });
     // `other` has short loud bursts (peak -8 dBFS) but only 9.5 s audible
     assert_eq!(done.dropped[1], DroppedStem { name: "other".into(), audible_ms: 9500 });
-    let Some(ImportEvent::Saved { dropped, .. }) = rig.events.lock().unwrap().last().cloned() else { panic!("no saved event") };
+    let ImportEvent::Saved { dropped, .. } = rig.last_event_where("saved", |e| matches!(e, ImportEvent::Saved { .. })) else { unreachable!() };
     assert_eq!(dropped, done.dropped);
     assert!(!rig.state.is_active(), "a finished job is not active");
     assert!(Repository::new(&rig.root).scan().problems.is_empty());
@@ -922,7 +934,7 @@ fn a_normal_extraction_drops_nothing() {
     assert_eq!(done.phase, Phase::Saved);
     assert_eq!(done.track.unwrap().stems.len(), 6);
     assert!(done.dropped.is_empty());
-    let Some(ImportEvent::Saved { dropped, .. }) = rig.events.lock().unwrap().last().cloned() else { panic!() };
+    let ImportEvent::Saved { dropped, .. } = rig.last_event_where("saved", |e| matches!(e, ImportEvent::Saved { .. })) else { unreachable!() };
     assert!(dropped.is_empty());
     let v = serde_json::to_value(rig.events.lock().unwrap().last().unwrap()).unwrap();
     assert_eq!(v["dropped"], serde_json::json!([]));

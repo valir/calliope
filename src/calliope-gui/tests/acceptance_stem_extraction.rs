@@ -826,10 +826,16 @@ fn url_flow_end_to_end_with_edits_and_temp_removal() {
     // temp removed
     assert_eq!(rig.import_tmp(), Vec::<String>::new());
     assert!(rig.staging().is_empty());
-    // "Working..." was reported only via the Working phase
-    let phases: Vec<String> = rig.events.lock().unwrap().iter().map(|e| serde_json::to_value(e).unwrap()["phase"].as_str().unwrap().to_string()).collect();
+    // "Working..." is reported only via the Working phase; a poll can legitimately go queued -> done
+    // against the instant stub, so it is optional, but when present it sits between queued and receiving.
+    let phase_list = || -> Vec<String> { rig.events.lock().unwrap().iter().map(|e| serde_json::to_value(e).unwrap()["phase"].as_str().unwrap().to_string()).collect() };
+    until("saved event emitted", 10, || phase_list().iter().any(|x| x == "saved"));
+    let phases = phase_list();
     let pos = |p: &str| phases.iter().position(|x| x == p);
-    assert!(pos("working").is_some() && pos("queued") < pos("working") && pos("working") < pos("receiving") && pos("receiving") < pos("saved"), "{phases:?}");
+    assert!(pos("queued").is_some() && pos("queued") < pos("receiving") && pos("receiving") < pos("saved"), "{phases:?}");
+    if let Some(w) = pos("working") {
+        assert!(pos("queued") < Some(w) && Some(w) < pos("receiving"), "{phases:?}");
+    }
     // server job deleted
     until("server job gone", 10, || server.job_dirs().is_empty());
     rig.outside_ok();

@@ -519,7 +519,7 @@ unset. Each task leaves the headless suite green.
         `stem=other dropped audible_s=9.5 min_audible_s=15.0 level_dbfs=-40 source=server`.
       - Re-take the `import-done-dropped` screenshot and look at it: the finished page reads
         "Dropped empty stems: piano, other."
-      - Add `import_boundary_stems` (mode `boundary`): saved with 4 stems, `dropped=other,piano`,
+      - Add `import_boundary_stems` (mode `boundary`): saved with 4 stems, `dropped=piano,other` (server order),
         screenshot `import-done-boundary`, other/piano never fetched.
     - done when: `DISPLAY=:1 npm run test:gui` passes (all suites), and both screenshots show the new
       wording

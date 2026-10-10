@@ -364,10 +364,21 @@ fn aborted_uploads_release_their_queue_slot_and_folder() {
         c.write_all(&flac[..flac.len() / 2]).unwrap();
         drop(c);
     }
-    until("aborted uploads cleaned", 10, || s.job_dirs().is_empty());
-    // The queue (1 waiting + running) must still accept work: a real job completes.
-    let id = submit(s.addr);
+    // The handlers of the aborted uploads may still hold the slot for a moment, so a 503 is
+    // retried (15 s); a slot that never frees up is a real leak.
+    let end = Instant::now() + Duration::from_secs(15);
+    let id = loop {
+        let r = post(s.addr, "", &flac);
+        if r.status == 202 {
+            break r.json()["job"].as_str().unwrap().to_string();
+        }
+        assert_eq!(r.status, 503, "{:?}", String::from_utf8_lossy(&r.body));
+        assert!(Instant::now() < end, "the queue slot was never released: a real leak");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    // ... and the folders of the aborted uploads are gone by the time the real job is done.
     wait_state(s.addr, &id, "done");
+    until("aborted uploads cleaned", 10, || s.job_dirs().len() <= 1);
 }
 
 #[test]

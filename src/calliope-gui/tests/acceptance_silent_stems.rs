@@ -737,6 +737,7 @@ fn sparse_import_keeps_only_audible_stems_in_server_order() {
     // the snapshot a re-attaching UI gets carries the same list
     assert_eq!(rig.state.snapshot().unwrap().dropped, done.dropped);
     // the event too
+    until("the Saved event arrives", 10, || rig.events.lock().unwrap().iter().any(|e| matches!(e, ImportEvent::Saved { .. })));
     let ev = rig.events.lock().unwrap().iter().rev().find_map(|e| match e {
         ImportEvent::Saved { track, dropped } => Some((track.clone(), dropped.clone())),
         _ => None,
@@ -806,6 +807,7 @@ fn saved_event_and_snapshot_serialise_dropped_for_the_ui() {
     let j = serde_json::to_value(&done).unwrap();
     assert_eq!(j["dropped"][0], serde_json::json!({"name": "piano", "audible_ms": 0}));
     assert_eq!(j["dropped"][1], serde_json::json!({"name": "other", "audible_ms": 9500}));
+    until("the Saved event arrives", 10, || rig.events.lock().unwrap().iter().any(|e| matches!(e, ImportEvent::Saved { .. })));
     let ev = rig.events.lock().unwrap().iter().rev().find(|e| matches!(e, ImportEvent::Saved { .. })).cloned().unwrap();
     let ej = serde_json::to_value(&ev).unwrap();
     assert_eq!(ej["phase"], "saved");

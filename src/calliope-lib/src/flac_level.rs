@@ -270,6 +270,47 @@ mod tests {
         assert_eq!(act(&stereo(-83_887), 2, 24, 44_100, None).audible_windows, 4);
     }
 
+    /// Neither flacenc (encoder) nor claxon (decoder: frame-header size code 7 is "reserved", and
+    /// code 0 is "unsupported") handles 32-bit FLAC, so no 32-bit file can be scanned end to end.
+    /// This covers the arithmetic the scan relies on at 32 bits: squares of i32::MIN / i32::MAX
+    /// and a full window of them fit the u64 / u128 accumulators, and every such window is audible.
+    #[test]
+    fn full_scale_32_bit_arithmetic_does_not_overflow() {
+        let frames = window_frames(44_100);
+        let limit = sum_limit(32, frames, L);
+        assert_eq!(limit, u128::from(frames) * (1u128 << 62) / 10_000);
+        for v in [i32::MIN, i32::MAX, -1, 1] {
+            let a = i64::from(v).unsigned_abs();
+            let sq = a.checked_mul(a).expect("one square fits u64");
+            let window: u128 = (0..frames).map(|_| u128::from(sq)).sum();
+            assert_eq!(window, u128::from(frames) * u128::from(sq));
+            // exactly the scan's comparison: full scale is audible, 1 LSB is not
+            assert_eq!(window > limit, a > 1, "v={v}");
+        }
+        assert_eq!(sum_limit(32, frames, 0), u128::from(frames) << 62);
+        assert!(sum_limit(32, 48_000 * 60, 0) < u128::MAX / 1_000_000);
+        // the scan rejects nothing at the 32-bit boundary of its format check
+        assert_eq!(to_dbfs(1u64 << 31, 32), Some(0.0));
+    }
+
+    #[test]
+    fn full_scale_24_bit_does_not_overflow_and_8_bit_works() {
+        let n = 4410 * 2;
+        let s24: Vec<i32> = (0..n).flat_map(|_| [-(1 << 23), (1 << 23) - 1]).collect();
+        let a = act(&s24, 2, 24, 44_100, None);
+        assert_eq!((a.windows, a.audible_windows, a.peak), (2, 2, 1 << 23));
+        // 8-bit: audible iff v^2 > 2^14 / 10^4, i.e. any non-zero sample at -40 dBFS... check the limit exactly
+        assert_eq!(sum_limit(8, 800, -40), 800 * (1u128 << 14) / 10_000);
+        let loud: Vec<i32> = (0..800 * 4).map(|_| -128).collect();
+        let a = act(&loud, 1, 8, 8000, None);
+        assert_eq!((a.bits, a.windows, a.audible_windows, a.peak), (8, 4, 4, 128));
+        let quiet: Vec<i32> = (0..800 * 4).map(|_| 0).collect();
+        assert_eq!(act(&quiet, 1, 8, 8000, None).audible_windows, 0);
+        // 1 LSB: 800 * 1 = 800 < 1310 (limit), silent; 2 LSB: 3200 > 1310, audible
+        assert_eq!(act(&vec![1; 3200], 1, 8, 8000, None).audible_windows, 0);
+        assert_eq!(act(&vec![2; 3200], 1, 8, 8000, None).audible_windows, 4);
+    }
+
     #[test]
     fn errors_name_the_file() {
         let dir = tempfile::tempdir().unwrap();
