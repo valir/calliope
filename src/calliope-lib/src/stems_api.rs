@@ -249,7 +249,7 @@ mod tests {
         let l = info_of("long.flac").unwrap();
         assert!(l.duration_s > 900.0 && l.duration_s < 1000.0, "{l:?}");
         let s = info_of("stems/vocals.flac").unwrap();
-        assert!((s.duration_s - 1.0).abs() < 0.01);
+        assert!((s.duration_s - 16.0).abs() < 0.01);
         assert!(matches!(info_of("not-flac.flac"), Err(FlacError::NotFlac)));
         assert!(matches!(info_of("not-audio.mp3"), Err(FlacError::NotFlac)));
     }

@@ -58,11 +58,11 @@ cat > info.json <<'JSON'
 }
 JSON
 
-# six 1 s mono 8 kHz stems, different tones
+# six 16 s mono 8 kHz stems, different tones (16 s audible each: kept by the 15 s empty-stem rule)
 i=0
 for name in vocals drums bass guitar piano other; do
   f=$((220 + 110 * i)); i=$((i + 1))
-  ff -f lavfi -i "sine=frequency=$f:duration=1:sample_rate=8000" -ac 1 -c:a flac "stems/$name.flac"
+  ff -f lavfi -i "sine=frequency=$f:duration=16:sample_rate=8000" -ac 1 -c:a flac "stems/$name.flac"
 done
 
 # quiet stems for the empty-stem check: digital silence, about -60 dBFS, about -45 dBFS
@@ -70,6 +70,18 @@ mkdir -p stems-quiet
 ff -f lavfi -i "anullsrc=r=8000:cl=mono" -t 1 -sample_fmt s16 -c:a flac stems-quiet/silent.flac
 ff -f lavfi -i "aevalsrc=0.001*sin(2*PI*440*t):s=8000:d=1" -ac 1 -sample_fmt s16 -c:a flac stems-quiet/minus60.flac
 ff -f lavfi -i "aevalsrc=0.005623*sin(2*PI*440*t):s=8000:d=1" -ac 1 -sample_fmt s16 -c:a flac stems-quiet/minus45.flac
+
+# stems for the audible-time rule (100 ms windows above -40 dBFS, 15 s minimum); the tone
+# is gated on whole 100 ms windows so rounding by one sample cannot change a count
+mkdir -p stems-activity
+gen() { ff -f lavfi -i "aevalsrc='$1':s=8000:d=$2" -ac 1 -sample_fmt s16 -c:a flac "$3"; }
+# 9 s burst at -17 dBFS + five one-sample clicks at -8 dBFS: 9.5 s audible, empty
+gen "0.14*sin(2*PI*700*t)*between(floor(t*10),50,139)+0.4*(eq(floor(t*8000),160400)+eq(floor(t*8000),168400)+eq(floor(t*8000),176400)+eq(floor(t*8000),184400)+eq(floor(t*8000),192400))" 30 stems-activity/bursts.flac
+# eight 2 s phrases with 2 s pauses: 16.0 s audible in pieces, kept
+gen "0.1*sin(2*PI*500*t)*lt(mod(floor(t*10),40),20)" 32 stems-activity/phrases.flac
+# boundary: 5.0 + 5.0 + 4.9 s = 14.9 s (empty) and 5.0 + 5.0 + 5.0 s = 15.0 s (kept)
+gen "0.1*sin(2*PI*500*t)*(between(floor(t*10),10,59)+between(floor(t*10),70,119)+between(floor(t*10),130,178))" 20 stems-activity/audible-14900ms.flac
+gen "0.1*sin(2*PI*500*t)*(between(floor(t*10),10,59)+between(floor(t*10),70,119)+between(floor(t*10),130,179))" 20 stems-activity/audible-15000ms.flac
 
 # 16 min of silence, mono 8 kHz (FLAC compresses silence to a few KB)
 ff -f lavfi -i "anullsrc=r=8000:cl=mono" -t 960 -c:a flac long.flac

@@ -86,7 +86,25 @@ fn http(addr: SocketAddr, method: &str, path: &str, headers: &[(&str, String)], 
     let split = raw.windows(4).position(|w| w == b"\r\n\r\n").expect("response head");
     let head = String::from_utf8_lossy(&raw[..split]).to_string();
     let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
-    Resp { status, body: raw[split + 4..].to_vec() }
+    let mut body = raw[split + 4..].to_vec();
+    // tiny_http answers bodies of 32 KiB and more with Transfer-Encoding: chunked
+    if head.to_lowercase().contains("transfer-encoding: chunked") {
+        body = dechunk(&body);
+    }
+    Resp { status, body }
+}
+
+fn dechunk(mut rest: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    while let Some(eol) = rest.windows(2).position(|w| w == b"\r\n") {
+        let size = usize::from_str_radix(String::from_utf8_lossy(&rest[..eol]).trim(), 16).unwrap_or(0);
+        if size == 0 || rest.len() < eol + 2 + size {
+            break;
+        }
+        out.extend(&rest[eol + 2..eol + 2 + size]);
+        rest = rest.get(eol + 2 + size + 2..).unwrap_or(&[]);
+    }
+    out
 }
 
 fn post(addr: SocketAddr, query: &str, file: &str) -> Resp {
