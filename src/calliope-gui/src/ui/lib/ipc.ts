@@ -143,6 +143,14 @@ function channel(onEvent: (e: ImportEvent) => void): Channel<ImportEvent> {
   return ch;
 }
 
+export interface PickedFile { path: string; name: string }
+export const pickImportFile = (kind: ImportKind): Promise<PickedFile | null> =>
+  invoke<PickedFile | null>('pick_import_file', { kind });
+export const importPath = (
+  kind: ImportKind, path: string, onEvent: (e: ImportEvent) => void,
+): Promise<JobSnapshot> =>
+  invoke<JobSnapshot>('import_path', { kind, path, events: channel(onEvent) });
+
 export const setEdgeAiUrl = (url: string | null): Promise<Settings> =>
   invoke<Settings>('set_edge_ai_url', { url });
 export const setKeepOriginal = (keep: boolean): Promise<Settings> =>
@@ -156,12 +164,6 @@ export const startUrlImport = (
   resume: boolean,
   onEvent: (e: ImportEvent) => void,
 ): Promise<JobSnapshot> => invoke<JobSnapshot>('start_url_import', { url, resume, events: channel(onEvent) });
-/** Opens the file dialog in Rust; null when it was cancelled. */
-export const importFile = (
-  kind: ImportKind,
-  onEvent: (e: ImportEvent) => void,
-): Promise<JobSnapshot | null> =>
-  invoke<JobSnapshot | null>('import_file', { kind, events: channel(onEvent) });
 export const startStemExtraction = (job: string, edits: TrackEdits): Promise<JobSnapshot> =>
   invoke<JobSnapshot>('start_stem_extraction', { job, edits });
 export const cancelImport = (job: string): Promise<JobSnapshot> =>

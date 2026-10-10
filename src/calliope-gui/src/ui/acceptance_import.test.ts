@@ -46,7 +46,9 @@ beforeEach(() => {
     switch (cmd) {
       case 'prepare_url_import': return prep;
       case 'start_url_import': return snap();
-      case 'import_file': return fileResult;
+      case 'pick_import_file':
+        return fileResult ? { path: `/music/${fileResult.source.label}`, name: fileResult.source.label } : null;
+      case 'import_path': return fileResult;
       case 'watch_import': return null;
       case 'start_stem_extraction': return snap({ phase: 'uploading', metadata: a.edits as TrackEdits });
       case 'get_settings': return { theme: 'dark', repository_root: null, edge_ai_url: null, keep_original: false };

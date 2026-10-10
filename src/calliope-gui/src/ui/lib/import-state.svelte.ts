@@ -2,7 +2,8 @@ import {
   cancelImport,
   discardImport,
   frontendLog,
-  importFile,
+  importPath,
+  pickImportFile,
   prepareUrlImport,
   startStemExtraction,
   startUrlImport,
@@ -291,10 +292,13 @@ export async function browse(kind: ImportKind): Promise<void> {
   if (imp.starting || imp.job) return;
   imp.error = '';
   imp.starting = true;
-  const before = eventSeq;
   try {
-    const snap = await importFile(kind, applyEvent);
-    if (snap) adopt(snap, before);
+    const pick = await pickImportFile(kind);
+    if (pick) {
+      const before = eventSeq;
+      const snap = await importPath(kind, pick.path, applyEvent);
+      if (snap) adopt(snap, before);
+    }
   } catch (err) {
     showError(String(err));
   } finally {

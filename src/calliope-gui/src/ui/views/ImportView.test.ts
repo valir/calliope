@@ -59,7 +59,9 @@ beforeEach(() => {
       case 'start_url_import':
         if (startError) throw new Error(startError);
         return snap();
-      case 'import_file': return fileResult;
+      case 'pick_import_file':
+        return fileResult ? { path: `/music/${fileResult.source.label}`, name: fileResult.source.label } : null;
+      case 'import_path': return fileResult;
       case 'watch_import':
         if (watchFailures > 0) { watchFailures -= 1; throw new Error('boom'); }
         return watchResult;
@@ -223,8 +225,8 @@ describe('Import view: menu and source page', () => {
     await click('radio', label);
     expect(screen.queryByRole('textbox', { name: 'enter url' })).toBeNull();
     await click('button', 'Browse');
-    await waitFor(() => expect(callsOf('import_file')).toHaveLength(1));
-    expect(callsOf('import_file')[0]).toMatchObject({ kind });
+    await waitFor(() => expect(callsOf('pick_import_file')).toHaveLength(1));
+    expect(callsOf('pick_import_file')[0]).toMatchObject({ kind });
     // dialog cancelled -> still on the source page, nothing else happens
     expect(screen.getByRole('button', { name: 'Browse' })).toBeTruthy();
     expect(alertText()).toBeNull();
