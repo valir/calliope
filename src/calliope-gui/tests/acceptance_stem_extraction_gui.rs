@@ -190,8 +190,12 @@ impl Rig {
         settle();
         self.key("Return");
     }
-    fn browse(&self) {
-        self.key("Tab Return");
+    fn browse(&mut self) {
+        self.key("Tab Tab Return");
+        self.app_mut().wait_line(|l| l.contains("dialog kind=import-") && l.contains("result=picked"), LONG);
+        self.wait_ui("path-picked");
+        settle();
+        self.key("Return");
     }
     fn extract(&self) {
         self.top();
@@ -416,7 +420,6 @@ fn qa_sigkill_while_working_leaves_the_library_intact_and_the_next_run_cleans_up
     // a new import works and removes the stale file-* folder
     r.open_source(1);
     r.browse();
-    r.wait("dialog kind=import-audio");
     r.wait_ui("phase=ready");
     assert!(std::fs::read_dir(r.dirs.import_tmp()).unwrap().flatten().count() == 1, "the stale folder was not cleaned");
     r.extract();
@@ -441,8 +444,7 @@ fn qa_malicious_server_stem_names_are_refused_in_the_ui() {
         let mut r = Rig::new(&format!("qa_hostile_{mode}"), |_| hostile_server(mode), &["import-audio {media}/untagged.flac".into()]);
         r.open_source(1);
         r.browse();
-        r.wait("dialog kind=import-audio");
-        r.wait_ui("phase=ready");
+            r.wait_ui("phase=ready");
         r.extract();
         let l = r.wait_ui("error stage=");
         settle();

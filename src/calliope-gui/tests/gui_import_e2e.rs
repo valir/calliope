@@ -112,9 +112,34 @@ impl Rig {
         self.key("Return");
     }
 
-    /// Source page, audio/video radio chosen: Browse.
-    fn browse(&self) {
-        self.key("Tab Return");
+    /// Source page, audio/video radio chosen: Browse fills the box (box, Browse); Extract then has
+    /// the focus and Return imports.
+    fn browse(&mut self) {
+        self.key("Tab Tab Return");
+        self.wait("result=picked");
+        self.wait_ui("path-picked");
+        settle();
+        self.key("Return");
+    }
+
+    /// Source page, audio/video radio chosen: type the path into the box, then Enter.
+    fn type_path(&self, p: &str) {
+        self.key("Tab ctrl+a");
+        self.app.typ(&self.wid, p);
+        settle();
+        self.key("Return");
+    }
+
+    /// The path box already has the focus (after an error): replace its text and press Enter.
+    fn retype_path(&self, p: &str) {
+        self.key("ctrl+a");
+        self.app.typ(&self.wid, p);
+        settle();
+        self.key("Return");
+    }
+
+    fn media(&self) -> String {
+        self.dirs.base().join("media").display().to_string()
     }
 
     /// On the edit pane: the Album box.
@@ -416,7 +441,6 @@ fn import_local_audio() {
     r.open_source(1);
     shot("import-source-audio");
     r.browse();
-    r.wait("dialog kind=import-audio result=picked");
     r.wait_ui("phase=ready");
     settle();
     shot("import-edit-audio");
@@ -438,7 +462,6 @@ fn import_drops_empty_stems() {
     let mut r = Rig::new("import_drops_empty_stems", "sparse", false, &["import-audio {media}/tagged.ogg".into()]);
     r.open_source(1);
     r.browse();
-    r.wait("dialog kind=import-audio result=picked");
     r.wait_ui("phase=ready");
     r.extract();
     let (id, json, line) = r.saved_line("4");
@@ -488,7 +511,6 @@ fn import_boundary_stems() {
     let mut r = Rig::new("import_boundary_stems", "boundary", false, &["import-audio {media}/tagged.ogg".into()]);
     r.open_source(1);
     r.browse();
-    r.wait("dialog kind=import-audio result=picked");
     r.wait_ui("phase=ready");
     r.extract();
     let (id, json, line) = r.saved_line("4");
@@ -517,7 +539,6 @@ fn import_local_video() {
     r.open_source(2);
     shot("import-source-video");
     r.browse();
-    r.wait("dialog kind=import-video result=picked");
     r.wait_ui("phase=ready");
     settle();
     shot("import-edit-video");
@@ -525,6 +546,106 @@ fn import_local_video() {
     let (id, json) = r.saved();
     r.check_stem_track(&id, &json, false);
     assert_eq!(json["title"], "Clip Title");
+    r.check_disk(Some(&id));
+    r.assert_no_children();
+}
+
+#[test]
+#[ignore]
+fn import_typed_audio_path() {
+    if !ready() {
+        return;
+    }
+    let mut r = Rig::new("import_typed_audio_path", "ok", false, &[]);
+    r.open_source(1);
+    let p = format!("{}/tagged.mp3", r.media());
+    r.key("Tab ctrl+a");
+    r.app.typ(&r.wid, &p);
+    settle();
+    shot("import-path-audio");
+    r.key("Return");
+    r.wait_ui("phase=ready");
+    settle();
+    shot("import-path-audio-edit");
+    assert!(!r.app.all_lines().iter().any(|l| l.contains("dialog kind=import")), "no dialog may open");
+    r.extract();
+    let (id, json) = r.saved();
+    r.check_stem_track(&id, &json, false);
+    r.check_disk(Some(&id));
+    r.assert_no_children();
+}
+
+#[test]
+#[ignore]
+fn import_typed_video_path() {
+    if !ready() {
+        return;
+    }
+    let mut r = Rig::new("import_typed_video_path", "ok", false, &[]);
+    r.open_source(2);
+    let p = format!("{}/with-audio.mp4", r.media());
+    r.key("Tab ctrl+a");
+    r.app.typ(&r.wid, &p);
+    settle();
+    shot("import-path-video");
+    r.key("Return");
+    r.wait_ui("phase=ready");
+    r.extract();
+    let (id, json) = r.saved();
+    r.check_stem_track(&id, &json, false);
+    assert_eq!(json["title"], "Clip Title");
+    r.check_disk(Some(&id));
+    r.assert_no_children();
+}
+
+#[test]
+#[ignore]
+fn import_typed_path_errors() {
+    if !ready() {
+        return;
+    }
+    let mut r = Rig::new("import_typed_path_errors", "ok", false, &[]);
+    let media = r.media();
+    r.open_source(1);
+    r.type_path(&format!("{media}/nothing-here.mp3"));
+    let l = r.wait_ui("error stage=ui");
+    assert!(l.ends_with(&format!("message=No file found at {media}/nothing-here.mp3")), "{l}");
+    r.retype_path(&media);
+    let l = r.wait_ui("error stage=ui");
+    assert!(l.ends_with(&format!("message={media} is a folder, not a file")), "{l}");
+    // switch to Local Video File (the radio group is before the box) and type an audio file
+    r.key("shift+Tab Down space");
+    r.wait_ui("source=video");
+    r.type_path(&format!("{media}/tagged.mp3"));
+    let l = r.wait_ui("error stage=ui");
+    assert!(l.ends_with("message=\"tagged.mp3\" is not a video file"), "{l}");
+    settle();
+    shot("import-path-error");
+    assert!(!r.app.all_lines().iter().any(|l| l.contains("import job=")), "a job was started");
+    assert!(!r.app.all_lines().iter().any(|l| l.contains("phase=ready")), "a job became ready");
+    r.check_disk(None);
+    r.assert_no_children();
+}
+
+#[test]
+#[ignore]
+fn import_browse_fills_path() {
+    if !ready() {
+        return;
+    }
+    let mut r = Rig::new("import_browse_fills_path", "ok", false, &["import-audio {media}/tagged.ogg".into()]);
+    r.open_source(1);
+    r.key("Tab Tab Return");
+    r.wait("dialog kind=import-audio result=picked");
+    r.wait_ui("path-picked");
+    settle();
+    shot("import-path-browsed");
+    assert!(!r.app.all_lines().iter().any(|l| l.contains("phase=preparing")), "Browse must not start the import");
+    r.key("Return");
+    r.wait_ui("phase=ready");
+    r.extract();
+    let (id, json) = r.saved();
+    r.check_stem_track(&id, &json, false);
     r.check_disk(Some(&id));
     r.assert_no_children();
 }
