@@ -10,3 +10,4 @@ task 6 | GUI e2e: browse helper (Browse fills, Return imports), 4 typed-path tes
 task 7 | User docs (README import step 1) | implementer (local model pasted the instructions verbatim; reverted) + orchestrator wording fix | done
 reviewer | APPROVED (0 blockers, 0 majors; minors: control chars not re-checked after file:// percent-decoding, file:// query/fragment silently dropped, TOCTOU check-then-open undocumented, empty-box message duplicated in TS) | done
 tester | both ACs and req 1-3 PASS (6 headless + 22 vitest new); defects: README non-ASCII ellipsis from task 7 breaks no_non_ascii_in_readme; percent-encoded control chars in file:// not rejected as invalid | done
+fix round 1 | README ASCII; file:// control chars/length re-checked after decoding, query/fragment rejected; check-then-open window noted in architecture.md | implementer | done (both defect tests pass; headless suite green)

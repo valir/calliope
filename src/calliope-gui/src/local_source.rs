@@ -74,6 +74,9 @@ pub fn normalise(input: &str, home: Option<&Path>) -> Result<PathBuf, PathProble
     }
     let path = if s.starts_with("file:") {
         let url = url::Url::parse(s).map_err(|_| invalid())?;
+        if url.query().is_some() || url.fragment().is_some() {
+            return Err(invalid());
+        }
         url.to_file_path().map_err(|_| invalid())?
     } else if s == "~" || s.starts_with("~/") {
         let home = home.ok_or_else(relative)?;
@@ -83,6 +86,11 @@ pub fn normalise(input: &str, home: Option<&Path>) -> Result<PathBuf, PathProble
     };
     if !path.is_absolute() {
         return Err(relative());
+    }
+    // percent-decoding (file: links) can introduce control characters or length
+    let decoded = path.to_string_lossy();
+    if decoded.len() > MAX_PATH_BYTES || decoded.chars().any(char::is_control) {
+        return Err(invalid());
     }
     Ok(path)
 }
@@ -294,6 +302,16 @@ mod tests {
         assert!(normalise(&ok, None).is_ok());
         let long = format!("/{}", "a".repeat(MAX_PATH_BYTES));
         assert_eq!(long.len(), 4097);
+        assert_eq!(reason(normalise(&long, None)), "invalid");
+    }
+
+    #[test]
+    fn normalise_file_uri_decoded_control_query_fragment() {
+        assert_eq!(reason(normalise("file:///tmp/a%00b.mp3", None)), "invalid");
+        assert_eq!(reason(normalise("file:///tmp/a%0Ab.mp3", None)), "invalid");
+        assert_eq!(reason(normalise("file:///tmp/a.mp3?x=1", None)), "invalid");
+        assert_eq!(reason(normalise("file:///tmp/a.mp3#frag", None)), "invalid");
+        let long = format!("file:///{}", "%61".repeat(MAX_PATH_BYTES));
         assert_eq!(reason(normalise(&long, None)), "invalid");
     }
 

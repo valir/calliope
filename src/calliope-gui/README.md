@@ -92,7 +92,7 @@ FLAC stems (vocals, drums, bass, guitar, piano, other):
 
 1. Pick the source: a URL (anything `yt-dlp` supports), a local audio file or a local video file
    (its first audio track is used). Tracks longer than 15 minutes are refused. For a local file,
-   type or paste its full path (`/…`, `~/…`, a quoted path or a `file://` link) in the path box,
+   type or paste its full path (`/...`, `~/...`, a quoted path or a `file://` link) in the path box,
    or let Browse fill it in, then press Extract or Enter. A path that cannot be used is reported
    under the box and nothing is imported:
    * empty box: `Enter the path of a file or choose one with Browse`

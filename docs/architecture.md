@@ -884,6 +884,7 @@ pure `local_source` (absolute after `~/`/quotes/`file://`, regular file, readabl
 extension; no canonicalisation, the path reaches ffmpeg as `file:<abs>` like a dialog path).
 Risk accepted: a compromised webview could at most have a media file's audio uploaded to the
 owner's own edge-AI server, which Browse already allows. Every other command keeps tokens.
+Check-then-open window: a file swapped for a FIFO after the check could block ffprobe; cancel still works.
 `import_file` (dialog then immediate start) was removed rather than kept beside the new
 commands, so there is one way to start a local import. Alternatives: Browse keeps starting at once
 and the box is a second way in (rejected: two behaviours on one row, and the box would not show
