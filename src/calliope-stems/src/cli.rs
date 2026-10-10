@@ -14,6 +14,7 @@ pub const THIRD_PARTY_NOTICES: &str = include_str!("../THIRD-PARTY-NOTICES.txt")
 pub const HELP: &str = "calliope-stems: stem separation server for Calliope (API v1)
 
 Usage: calliope-stems --separator PATH [options]
+       calliope-stems --measure FILE...
 
 Options:
   --separator PATH            the separator executable (required, no default); it is run as
@@ -29,6 +30,8 @@ Options:
   --retention-hours N         finished jobs are deleted after this (default 24)
   --no-stem-levels            do not measure the stems' audible time (the job status then has no
                               stem_levels)
+  --measure FILE...           print each FLAC file's audible time
+                              (100 ms windows above -40 dBFS) and exit
   --help                      show this text
   --version                   show the version
   --licenses                  show the licences of the third-party code in this binary
@@ -40,6 +43,8 @@ pub enum Parsed {
     Help,
     Version,
     Licenses,
+    /// `--measure FILE...`: print each file's audible time and exit.
+    Measure(Vec<PathBuf>),
 }
 
 /// Environment the defaults depend on.
@@ -90,7 +95,15 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
     let mut janitor_interval = DEFAULT_JANITOR_INTERVAL;
     let mut stem_levels = true;
 
-    let mut it = args.into_iter();
+    let mut it = args.into_iter().peekable();
+    if it.peek().map(String::as_str) == Some("--measure") {
+        it.next();
+        let files: Vec<PathBuf> = it.map(PathBuf::from).collect();
+        if files.is_empty() {
+            return Err("--measure needs at least one file".into());
+        }
+        return Ok(Parsed::Measure(files));
+    }
     while let Some(arg) = it.next() {
         let (flag, inline) = match arg.split_once('=') {
             Some((f, v)) if f.starts_with("--") => (f.to_string(), Some(v.to_string())),
@@ -260,6 +273,18 @@ mod tests {
         ] {
             assert!(run(&bad).is_err(), "{bad:?} should fail");
         }
+    }
+
+    #[test]
+    fn measure_takes_files_and_needs_no_separator() {
+        let env = Env::default();
+        match parse(args(&["--measure", "a.flac", "b.flac"]), &env) {
+            Ok(Parsed::Measure(f)) => assert_eq!(f, vec![PathBuf::from("a.flac"), PathBuf::from("b.flac")]),
+            other => panic!("{other:?}"),
+        }
+        let e = parse(args(&["--measure"]), &env).unwrap_err();
+        assert!(e.contains("at least one file"), "{e}");
+        assert!(HELP.contains("--measure FILE..."));
     }
 
     #[test]

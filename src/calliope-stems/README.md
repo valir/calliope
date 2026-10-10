@@ -37,6 +37,11 @@ calliope-stems --separator PATH [options]
 | `--help`, `--version` | | |
 | `--licenses` | | prints the licences of the third-party code in the binary (`THIRD-PARTY-NOTICES.txt`; regenerate with `npm run notices:stems` in `src/calliope-gui` after changing dependencies) |
 
+`calliope-stems --measure FILE...` is a diagnostic: it starts no server and needs no `--separator`. For each
+FLAC file it prints `<file> audible_ms=<n> windows=<w> level_dbfs=-40 peak_dbfs=<x>` (100 ms windows above
+-40 dBFS, the exact measure the server and the app use), or `<file> error=<msg>`. It exits 0 when every file
+was measured, 1 otherwise.
+
 The service has no authentication and no TLS: it is meant for a trusted home network. Do not
 expose it to the internet. The GUI talks plain `http://` to it (Settings > Stem extraction).
 

@@ -33,6 +33,30 @@ fn install_signal_handlers() {
     }
 }
 
+/// `--measure`: prints each file's audible time; returns the exit code.
+fn measure(files: &[std::path::PathBuf]) -> i32 {
+    use calliope_lib::flac_level::{scan, to_dbfs, AUDIBLE_LEVEL_DBFS};
+    let mut failed = false;
+    for f in files {
+        match scan(f, AUDIBLE_LEVEL_DBFS, None) {
+            Ok(a) => {
+                let peak = to_dbfs(a.peak, a.bits).map_or("-inf".to_string(), |d| format!("{d:.1}"));
+                println!(
+                    "{} audible_ms={} windows={} level_dbfs={AUDIBLE_LEVEL_DBFS} peak_dbfs={peak}",
+                    f.display(),
+                    a.audible_ms(),
+                    a.windows
+                );
+            }
+            Err(e) => {
+                failed = true;
+                println!("{} error={e}", f.display());
+            }
+        }
+    }
+    i32::from(failed)
+}
+
 fn main() {
     let cfg = match cli::parse(std::env::args().skip(1), &cli::Env::from_process()) {
         Ok(Parsed::Help) => {
@@ -47,6 +71,7 @@ fn main() {
             print!("{}", cli::THIRD_PARTY_NOTICES);
             return;
         }
+        Ok(Parsed::Measure(files)) => std::process::exit(measure(&files)),
         Ok(Parsed::Run(cfg)) => Arc::new(*cfg),
         Err(msg) => {
             eprintln!("calliope-stems: {msg}");

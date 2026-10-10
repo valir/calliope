@@ -5,3 +5,4 @@ task 2 | Stub separator mode boundary | implementer | done
 task 3 | calliope_lib::flac_level | implementer | done
 task 4 | Protocol: StemLevel alongside stem_peaks; client validates levels/peaks only on done | implementer | done (flake once: acceptance_stem_extraction url_flow_end_to_end_with_edits_and_temp_removal missed the 'working' phase under load; 3/3 alone, suite green on rerun)
 task 5 | Server measures audible time; --no-stem-levels | implementer | done
+task 6 | calliope-stems --measure FILE... | implementer | done (matches the orchestrator's independent numbers on both real tracks exactly; flake once: import_job cancel_during_extraction_goes_back_to_the_edit_pane, 6/6 on rerun)
