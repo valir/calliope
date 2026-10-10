@@ -7,3 +7,4 @@ task 3 | Frontend IPC wrappers | local (code correct; it claimed passing tests w
 task 4 | The path row in the source page (Browse only fills the box; Extract/Enter imports) | implementer | done
 task 5 | Headless acceptance: typed-path audio/video, no-audio, two audio streams, rejected paths | implementer | done
 task 6 | GUI e2e: browse helper (Browse fills, Return imports), 4 typed-path tests, screenshots reviewed | implementer | done
+task 7 | User docs (README import step 1) | implementer (local model pasted the instructions verbatim; reverted) + orchestrator wording fix | done

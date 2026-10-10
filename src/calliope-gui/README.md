@@ -91,7 +91,17 @@ The Import view (Alt+2) > "Stem Extraction" turns a song into a new "stem" track
 FLAC stems (vocals, drums, bass, guitar, piano, other):
 
 1. Pick the source: a URL (anything `yt-dlp` supports), a local audio file or a local video file
-   (its audio track is used). Tracks longer than 15 minutes are refused.
+   (its first audio track is used). Tracks longer than 15 minutes are refused. For a local file,
+   type or paste its full path (`/…`, `~/…`, a quoted path or a `file://` link) in the path box,
+   or let Browse fill it in, then press Extract or Enter. A path that cannot be used is reported
+   under the box and nothing is imported:
+   * empty box: `Enter the path of a file or choose one with Browse`
+   * relative path: `Enter the full path, starting with / or ~/`
+   * `No file found at <path>`
+   * `<path> is a folder, not a file`
+   * `<path> is not a regular file`
+   * `Cannot read <path>` (for example `(permission denied)`)
+   * wrong kind of file: `"<name>" is not an audio file` (or `... not a video file`)
 2. Check the pre-filled band, album, title, composers, year, source link and copyright.
 3. Extract. The audio is converted to FLAC, uploaded to the edge-AI server (`calliope-stems`),
    separated there and downloaded; "Working..." shows the progress. Cancel stops it and nothing
