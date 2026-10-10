@@ -11,3 +11,4 @@ task 8 | Frontend wording: Dropped empty stems, DroppedStem {name, audible_ms} |
 task 9 | Remove stem_peaks and flac_peak (stems acceptance_server_peaks.rs -> acceptance_server_levels.rs) | implementer | done
 task 10 | GUI e2e: import_drops_empty_stems (server log line), import_boundary_stems | implementer | done (flake once: import_job empty_stems_are_dropped_from_the_saved_track 'no saved event'; GUI suites all green)
 reviewer | APPROVED (0 blockers, 0 majors; minors: no 32-bit full-scale lib test, no cancel inside one stem's scan, old 8/24-bit acceptance boundaries not ported, tracks < 15 s are all-empty by req 9) | done
+tester | 22 acceptance checks PASS (independent ffmpeg oracle), no production defects; 4 flakes traced to test-harness timing (fast stub skips Working; snapshot before terminal event; 503 before aborted uploads are read) | done
