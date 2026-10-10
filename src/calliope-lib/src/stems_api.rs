@@ -62,6 +62,51 @@ pub struct JobStatus {
     /// the server measured nothing (an old server, or `--no-stem-peaks`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stem_peaks: Option<Vec<StemPeak>>,
+    /// Audible time of every stem the server measured; only on a `done` job, and the key is
+    /// omitted when the server measured nothing (an old server, or `--no-stem-levels`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stem_levels: Option<Vec<StemLevel>>,
+}
+
+/// One measured stem: `audible_ms` (a multiple of `window_ms`) at `level_dbfs` is the data.
+/// `peak_dbfs` is for humans (`null` for digital silence) and is ignored by the client.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StemLevel {
+    pub name: String,
+    pub audible_ms: u64,
+    pub level_dbfs: i32,
+    pub window_ms: u32,
+    #[serde(default)]
+    pub peak_dbfs: Option<f64>,
+}
+
+/// Checks a server's level list against its stem list: every name is in `stems` with no
+/// duplicates, `window_ms` in 1..=1000, `level_dbfs` in -150..=0, `audible_ms <= 86_400_000` and a
+/// multiple of `window_ms`, and at most `MAX_STEMS` entries. A stem without an entry is "not measured".
+pub fn check_stem_levels(stems: &[String], levels: &[StemLevel]) -> Result<(), String> {
+    if levels.len() > MAX_STEMS {
+        return Err("too many stem levels".into());
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for l in levels {
+        if !stems.contains(&l.name) {
+            return Err(format!("level for unknown stem {:?}", l.name));
+        }
+        if seen.contains(&l.name.as_str()) {
+            return Err(format!("duplicate level for {:?}", l.name));
+        }
+        seen.push(&l.name);
+        if !(1..=1000).contains(&l.window_ms) {
+            return Err(format!("window_ms {} out of range", l.window_ms));
+        }
+        if !(-150..=0).contains(&l.level_dbfs) {
+            return Err(format!("level_dbfs {} out of range", l.level_dbfs));
+        }
+        if l.audible_ms > 86_400_000 || l.audible_ms % u64::from(l.window_ms) != 0 {
+            return Err(format!("audible_ms {} invalid", l.audible_ms));
+        }
+    }
+    Ok(())
 }
 
 /// One measured stem. `peak` (max |sample| over all channels) and `bits` are the data: the app
@@ -341,6 +386,7 @@ mod tests {
             stems: Some(vec!["vocals".into()]),
             error: None,
             stem_peaks: None,
+            stem_levels: None,
         };
         let text = serde_json::to_string(&st).unwrap();
         assert!(text.contains("\"error\":null"));
@@ -387,6 +433,55 @@ mod tests {
         }
         let old: OldJobStatus = serde_json::from_str(&full).unwrap();
         assert_eq!(old.stems.unwrap().len(), 2);
+    }
+
+    fn sl(name: &str, audible_ms: u64, level_dbfs: i32, window_ms: u32) -> StemLevel {
+        StemLevel { name: name.into(), audible_ms, level_dbfs, window_ms, peak_dbfs: None }
+    }
+
+    #[test]
+    fn stem_levels_serde_and_compat() {
+        let base = r#"{"job":"ab","state":"done","progress":1.0,"stems":["vocals","piano"],"error":null"#;
+        let absent: JobStatus = serde_json::from_str(&format!("{base}}}")).unwrap();
+        assert_eq!(absent.stem_levels, None);
+        let null: JobStatus = serde_json::from_str(&format!(r#"{base},"stem_levels":null}}"#)).unwrap();
+        assert_eq!(null.stem_levels, None);
+        assert!(!serde_json::to_string(&absent).unwrap().contains("stem_levels"));
+        let st: JobStatus = serde_json::from_str(&format!(
+            r#"{base},"stem_levels":[{{"name":"vocals","audible_ms":200600,"level_dbfs":-40,"window_ms":100,"peak_dbfs":-1.23}},{{"name":"piano","audible_ms":0,"level_dbfs":-40,"window_ms":100}}]}}"#
+        ))
+        .unwrap();
+        let levels = st.stem_levels.clone().unwrap();
+        assert_eq!(levels[0].peak_dbfs, Some(-1.23));
+        assert_eq!(levels[1], sl("piano", 0, -40, 100));
+        let text = serde_json::to_string(&st).unwrap();
+        assert!(text.contains("\"stem_levels\""));
+        assert_eq!(serde_json::from_str::<JobStatus>(&text).unwrap(), st);
+        // A server-peaks-era status.
+        let old: JobStatus = serde_json::from_str(&format!(
+            r#"{base},"stem_peaks":[{{"name":"piano","peak":0,"bits":16,"peak_dbfs":null}}]}}"#
+        ))
+        .unwrap();
+        assert!(old.stem_peaks.is_some());
+        assert_eq!(old.stem_levels, None);
+    }
+
+    #[test]
+    fn check_stem_levels_rules() {
+        let stems = vec!["vocals".to_string(), "piano".to_string()];
+        assert!(check_stem_levels(&stems, &[]).is_ok());
+        assert!(check_stem_levels(&stems, &[sl("piano", 0, -40, 100)]).is_ok());
+        assert!(check_stem_levels(&stems, &[sl("vocals", 86_400_000, 0, 1000), sl("piano", 200, -150, 100)]).is_ok());
+        assert!(check_stem_levels(&stems, &[sl("drums", 0, -40, 100)]).is_err());
+        assert!(check_stem_levels(&stems, &[sl("piano", 0, -40, 100), sl("piano", 0, -40, 100)]).is_err());
+        assert!(check_stem_levels(&stems, &[sl("piano", 0, -40, 0)]).is_err());
+        assert!(check_stem_levels(&stems, &[sl("piano", 0, -40, 1001)]).is_err());
+        assert!(check_stem_levels(&stems, &[sl("piano", 0, 1, 100)]).is_err());
+        assert!(check_stem_levels(&stems, &[sl("piano", 0, -151, 100)]).is_err());
+        assert!(check_stem_levels(&stems, &[sl("piano", 150, -40, 100)]).is_err());
+        assert!(check_stem_levels(&stems, &[sl("piano", 86_400_100, -40, 100)]).is_err());
+        let many: Vec<StemLevel> = (0..17).map(|_| sl("piano", 0, -40, 100)).collect();
+        assert!(check_stem_levels(&stems, &many).is_err());
     }
 
     #[test]

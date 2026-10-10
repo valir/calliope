@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::stems_api::{
-    check_stem_peaks, is_valid_job_id, is_valid_stem_name, ErrorBody, Health, JobCreated, JobState, JobStatus, API_VERSION,
+    check_stem_levels, check_stem_peaks, is_valid_job_id, is_valid_stem_name, ErrorBody, Health, JobCreated, JobState, JobStatus, API_VERSION,
     MAX_STEMS, SERVICE_NAME,
 };
 
@@ -242,11 +242,23 @@ impl StemsClient {
                 return Err(ClientError::Invalid("bad stem list".into()));
             }
         }
-        if let Some(peaks) = &st.stem_peaks {
-            let stems = st.stems.as_deref().unwrap_or(&[]);
-            if peaks.len() > MAX_STEMS || check_stem_peaks(stems, peaks).is_err() {
-                return Err(ClientError::Invalid("bad stem peak list".into()));
+        let mut st = st;
+        if st.state == JobState::Done {
+            let stems = st.stems.clone().unwrap_or_default();
+            if let Some(peaks) = &st.stem_peaks {
+                if peaks.len() > MAX_STEMS || check_stem_peaks(&stems, peaks).is_err() {
+                    return Err(ClientError::Invalid("bad stem peak list".into()));
+                }
             }
+            if let Some(levels) = &st.stem_levels {
+                if check_stem_levels(&stems, levels).is_err() {
+                    return Err(ClientError::Invalid("bad stem level list".into()));
+                }
+            }
+        } else {
+            // Measurements only count on a done job; garbage elsewhere must not hide the job's error.
+            st.stem_peaks = None;
+            st.stem_levels = None;
         }
         Ok(st)
     }

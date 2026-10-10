@@ -248,7 +248,7 @@ fn status_validates_stem_peak_list() {
         ("peak string", with(serde_json::json!([{"name":"piano","peak":"0","bits":16,"peak_dbfs":null}])), false),
         ("not a list", with(serde_json::json!("lots")), false),
         ("17 entries", with(serde_json::json!((0..17).map(|_| pk("piano", 1, 16)).collect::<Vec<_>>())), false),
-        ("peaks without stems", serde_json::json!({"job":job,"state":"running","progress":0.5,"stems":null,"error":null,"stem_peaks":[pk("piano", 1, 16)]}), false),
+        ("peaks without stems", serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":null,"error":null,"stem_peaks":[pk("piano", 1, 16)]}), false),
     ];
     for (name, body, ok) in cases {
         let fake = serve(move |_, s| json(s, "200 OK", body.clone()));
@@ -266,6 +266,24 @@ fn status_validates_stem_peak_list() {
     let body = serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["vocals"],"error":null});
     let fake = serve(move |_, s| json(s, "200 OK", body.clone()));
     assert_eq!(fake.client().status(job).unwrap().stem_peaks, None);
+}
+
+#[test]
+fn status_validates_stem_level_list_only_when_done() {
+    let job = "0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b";
+    let bad = serde_json::json!([{"name":"drums","audible_ms":0,"level_dbfs":-40,"window_ms":100}]);
+    let body = serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["vocals"],"error":null,"stem_levels":bad});
+    let fake = serve(move |_, s| json(s, "200 OK", body.clone()));
+    match fake.client().status(job) {
+        Err(ClientError::Invalid(m)) => assert_eq!(m, "bad stem level list"),
+        other => panic!("{other:?}"),
+    }
+    let body = serde_json::json!({"job":job,"state":"failed","progress":null,"stems":null,"error":"boom",
+        "stem_levels":bad,"stem_peaks":[{"name":"x","peak":1,"bits":3,"peak_dbfs":null}]});
+    let fake = serve(move |_, s| json(s, "200 OK", body.clone()));
+    let st = fake.client().status(job).unwrap();
+    assert_eq!(st.error.as_deref(), Some("boom"));
+    assert_eq!((st.stem_levels, st.stem_peaks), (None, None));
 }
 
 #[test]
