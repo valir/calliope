@@ -34,6 +34,7 @@ directory (or two levels up), else `ok`:
 | `hang` | sleeps until killed |
 | `bad-output` | writes `README.txt` instead of stems |
 | `not-flac` | `vocals.flac` without the `fLaC` magic |
+| `boundary` | vocals/drums/bass as `ok`; guitar 15.0 s audible, other 14.9 s, piano short loud bursts (9.5 s) |
 
 `$STUB_SEPARATOR_LOG` gets one tab-separated argv line per run.
 

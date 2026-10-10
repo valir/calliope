@@ -18,6 +18,7 @@
 #               -45 dBFS (from ../fixtures/import/stems-quiet/): piano and other get dropped
 #   silent      all six stems are digital silence
 #   undecodable the sparse stems, but piano is "fLaC" + junk (passes the server's check, cannot be decoded)
+#   boundary    vocals/drums/bass as ok; guitar 15.0 s audible, other 14.9 s, piano short loud bursts (9.5 s)
 # $STUB_SEPARATOR_LOG, if set, gets the argv (one line, tab separated) appended.
 set -euo pipefail
 
@@ -30,6 +31,7 @@ in=$1 out=$2 model=$3
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STEMS="$HERE/../fixtures/import/stems"
 QUIET="$HERE/../fixtures/import/stems-quiet"
+ACT="$HERE/../fixtures/import/stems-activity"
 
 if [[ -n "${STUB_SEPARATOR_LOG:-}" ]]; then
   printf '%s\t%s\t%s\n' "$in" "$out" "$model" >>"$STUB_SEPARATOR_LOG"
@@ -51,7 +53,7 @@ mkdir -p -- "$out"
 
 step_sleep=0
 case $mode in
-  ok | bad-output | not-flac | sparse | silent | undecodable) ;;
+  ok | bad-output | not-flac | sparse | silent | undecodable | boundary) ;;
   fail)
     echo "stub-separator: simulated failure" >&2
     exit 3
@@ -95,6 +97,12 @@ case $mode in
     cp -- "$STEMS"/*.flac "$out/"
     cp -- "$QUIET/minus60.flac" "$out/other.flac"
     printf 'fLaC this is not a decodable stream\n' >"$out/piano.flac"
+    ;;
+  boundary)
+    cp -- "$STEMS"/*.flac "$out/"
+    cp -- "$ACT/audible-15000ms.flac" "$out/guitar.flac"
+    cp -- "$ACT/audible-14900ms.flac" "$out/other.flac"
+    cp -- "$ACT/bursts.flac" "$out/piano.flac"
     ;;
   *)
     cp -- "$STEMS"/*.flac "$out/"
