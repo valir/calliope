@@ -33,7 +33,7 @@ calliope-stems --separator PATH [options]
 | `--queue N` | 2 | jobs allowed to wait behind the running one |
 | `--separator-timeout-min N` | 30 | a separator running longer is killed |
 | `--retention-hours N` | 24 | finished jobs are deleted after this |
-| `--no-stem-levels` | off | do not measure the stems' audible time; the job status then has no `stem_levels` (nor `stem_peaks`: the pre-measuring JSON) |
+| `--no-stem-levels` | off | do not measure the stems' audible time; the job status then has no `stem_levels` |
 | `--help`, `--version` | | |
 | `--licenses` | | prints the licences of the third-party code in the binary (`THIRD-PARTY-NOTICES.txt`; regenerate with `npm run notices:stems` in `src/calliope-gui` after changing dependencies) |
 
@@ -79,8 +79,6 @@ per song; the job stays `running` meanwhile) and reports how long it is audible:
   `--no-stem-levels`.
 * The log has one line per stem (`job id=… stem=… audible_ms=… windows=… level_dbfs=-40
   peak_dbfs=…`) and a summary `job id=… measured=<n>/<total> ms=<ms>`.
-* The legacy `stem_peaks` key is still sent alongside, for apps that predate `stem_levels`; it
-  will be removed.
 
 `src/calliope-stems/tests/conformance.rs` is the executable specification of every endpoint,
 status code and limit.

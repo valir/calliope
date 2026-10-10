@@ -1,5 +1,5 @@
 //! QA acceptance tests for requirement 9 (server side) of specs/gui-stem-extraction.md:
-//! "the server reports each stem's peak when a job is done". The REAL `calliope-stems` binary on
+//! "the server reports each stem's audible time (`stem_levels`) when a job is done". The REAL `calliope-stems` binary on
 //! 127.0.0.1 with the stub separator or a QA separator script that copies pre-built long stems
 //! (made with ffmpeg here). Never the real model, never a device.
 
@@ -118,11 +118,11 @@ fn key_is_absent_while_queued_and_running_never_null() {
     loop {
         let (text, v) = status_raw(s.addr, &job);
         if v["state"] == "done" {
-            assert!(v["stem_peaks"].is_array(), "{text}");
+            assert!(v["stem_levels"].is_array(), "{text}");
             break;
         }
         seen_running |= v["state"] == "running";
-        assert!(!text.contains("stem_peaks"), "key present before done: {text}");
+        assert!(!text.contains("stem_levels"), "key present before done: {text}");
         std::thread::sleep(Duration::from_millis(100));
     }
     assert!(seen_running, "never observed a running state");
@@ -136,7 +136,7 @@ fn key_is_absent_for_failed_and_cancelled_jobs() {
     loop {
         let (text, v) = status_raw(s.addr, &job);
         if v["state"] == "failed" {
-            assert!(!text.contains("stem_peaks"), "{text}");
+            assert!(!text.contains("stem_levels"), "{text}");
             break;
         }
         assert!(Instant::now() < end);
@@ -148,18 +148,18 @@ fn key_is_absent_for_failed_and_cancelled_jobs() {
     assert_eq!(http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), b"").0, 204);
     let (st, b) = http(s.addr, "GET", &format!("/v1/jobs/{job}"), b"");
     if st == 200 {
-        assert!(!String::from_utf8_lossy(&b).contains("stem_peaks"));
+        assert!(!String::from_utf8_lossy(&b).contains("stem_levels"));
     }
 }
 
 #[test]
-fn no_stem_peaks_flag_omits_the_key_in_every_state() {
+fn no_stem_levels_flag_omits_the_key_in_every_state() {
     let s = start("slow", &["--no-stem-levels"]);
     let job = submit(&s);
     let end = Instant::now() + Duration::from_secs(60);
     loop {
         let (text, v) = status_raw(s.addr, &job);
-        assert!(!text.contains("stem_peaks"), "{text}");
+        assert!(!text.contains("stem_levels"), "{text}");
         if v["state"] == "done" {
             break;
         }
@@ -170,42 +170,35 @@ fn no_stem_peaks_flag_omits_the_key_in_every_state() {
 }
 
 #[test]
-fn entries_have_exact_shape_and_digital_silence_is_peak_zero_null_dbfs() {
+fn entries_have_exact_shape_and_boundary_stems_measure_as_designed() {
     let s = start("boundary", &[]);
     let job = submit(&s);
     let (_, v) = wait_done(&s, &job);
-    let arr = v["stem_peaks"].as_array().unwrap();
+    let arr = v["stem_levels"].as_array().unwrap();
     assert_eq!(arr.len(), 6);
     for (e, name) in arr.iter().zip(SIX) {
         let o = e.as_object().unwrap();
         let mut keys: Vec<&str> = o.keys().map(|k| k.as_str()).collect();
         keys.sort();
-        assert_eq!(keys, ["bits", "name", "peak", "peak_dbfs"], "{e}");
+        assert_eq!(keys, ["audible_ms", "level_dbfs", "name", "peak_dbfs", "window_ms"], "{e}");
         assert_eq!(e["name"], name);
-        assert!(e["peak"].is_u64() && e["bits"].is_u64());
-        // peak_dbfs agrees with peak within rounding (human field)
-        if let Some(db) = e["peak_dbfs"].as_f64() {
-            let want = 20.0 * (e["peak"].as_f64().unwrap() / 2f64.powi(e["bits"].as_i64().unwrap() as i32 - 1)).log10();
-            assert!((db - want).abs() < 0.01, "{e}");
-        } else {
-            assert_eq!(e["peak"], 0, "null dbfs only for digital silence: {e}");
-        }
+        assert!(e["audible_ms"].is_u64() && e["level_dbfs"] == -40 && e["window_ms"] == 100, "{e}");
+        assert_eq!(e["audible_ms"].as_u64().unwrap() % 100, 0, "{e}");
     }
-    // boundary: guitar/other peak about 3277 (-20 dBFS), piano about 13107 (-8 dBFS)
-    for i in [3, 5] {
-        assert!((3200..=3350).contains(&arr[i]["peak"].as_u64().unwrap()), "{}", arr[i]);
-    }
-    assert!((13000..=13200).contains(&arr[4]["peak"].as_u64().unwrap()), "{}", arr[4]);
+    // boundary: guitar 15.0 s audible, other 14.9 s, piano short loud bursts (9.5 s)
+    assert_eq!(arr[3]["audible_ms"], 15_000, "{}", arr[3]);
+    assert_eq!(arr[5]["audible_ms"], 14_900, "{}", arr[5]);
+    assert_eq!(arr[4]["audible_ms"], 9_500, "{}", arr[4]);
 }
 
 #[test]
-fn all_silent_job_reports_six_zero_peaks_and_is_still_done() {
+fn all_silent_job_reports_six_zero_entries_and_is_still_done() {
     let s = start("silent", &[]);
     let job = submit(&s);
     let (_, v) = wait_done(&s, &job);
-    let arr = v["stem_peaks"].as_array().unwrap();
+    let arr = v["stem_levels"].as_array().unwrap();
     assert_eq!(arr.len(), 6);
-    assert!(arr.iter().all(|e| e["peak"] == 0 && e["peak_dbfs"].is_null()));
+    assert!(arr.iter().all(|e| e["audible_ms"] == 0 && e["peak_dbfs"].is_null()), "{v}");
 }
 
 #[test]
@@ -213,7 +206,7 @@ fn unmeasurable_stem_has_no_entry_and_empty_list_is_an_array_not_missing() {
     let s = start("undecodable", &[]);
     let job = submit(&s);
     let (_, v) = wait_done(&s, &job);
-    let names: Vec<&str> = v["stem_peaks"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = v["stem_levels"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
     assert!(!names.contains(&"piano"));
     assert_eq!(names.len(), 5);
     assert!(s.log().contains("audible=unknown"));
@@ -267,14 +260,14 @@ fn long_separator(secs: u32, bits32: bool) -> (PathBuf, tempfile::TempDir) {
 }
 
 #[test]
-fn bits_reflect_the_stem_depth_24_bit() {
+fn twenty_four_bit_stems_measure_correctly() {
     let (sep, _d) = long_separator(2, true);
     let s = start_with(&sep, "ok", &[]);
     let job = submit(&s);
     let (_, v) = wait_done(&s, &job);
-    for e in v["stem_peaks"].as_array().unwrap() {
-        assert_eq!(e["bits"], 24, "{e}");
-        assert_eq!(e["peak"], 0);
+    for e in v["stem_levels"].as_array().unwrap() {
+        assert_eq!(e["audible_ms"], 0, "{e}");
+        assert_eq!(e["level_dbfs"], -40, "{e}");
     }
 }
 
@@ -310,14 +303,14 @@ fn state_stays_running_while_measuring_and_cancel_during_measuring_gives_cancell
     if st == 200 {
         let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
         assert_ne!(v["state"], "done", "{v}");
-        assert!(v.get("stem_peaks").is_none());
+        assert!(v.get("stem_levels").is_none());
     } else {
         assert_eq!(st, 404);
     }
     // server healthy and the worker not wedged: a new job completes
     let job2 = submit(&s);
     let (_, v2) = wait_done(&s, &job2);
-    assert!(v2["stem_peaks"].is_array());
+    assert!(v2["stem_levels"].is_array());
 }
 
 #[test]
@@ -356,7 +349,7 @@ fn measuring_time_is_logged_and_bounded_for_a_long_song() {
     let job = submit(&s);
     let t = Instant::now();
     let (_, v) = wait_done(&s, &job);
-    assert_eq!(v["stem_peaks"].as_array().unwrap().len(), 6);
+    assert_eq!(v["stem_levels"].as_array().unwrap().len(), 6);
     let log = s.log();
     let ms: u64 = log.split("measured=6/6 ms=").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
     eprintln!("QA: measuring 6 x 10 min silence took {ms} ms (total {:?})", t.elapsed());

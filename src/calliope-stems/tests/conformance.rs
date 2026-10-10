@@ -568,7 +568,7 @@ fn boundary_stems_report_their_audible_time() {
         if v["state"] == "done" {
             break;
         }
-        assert!(v.get("stem_levels").is_none() && v.get("stem_peaks").is_none(), "{v}");
+        assert!(v.get("stem_levels").is_none(), "{v}");
         std::thread::sleep(Duration::from_millis(5));
     }
     let done = raw_status(s.addr, &job);
@@ -635,7 +635,7 @@ fn no_stem_levels_flag_gives_the_old_json() {
     sorted.sort();
     assert_eq!(sorted, ["error", "job", "progress", "state", "stems"], "{done}");
     let st = s.client().status(&job).unwrap();
-    assert!(st.stem_levels.is_none() && st.stem_peaks.is_none());
+    assert!(st.stem_levels.is_none());
     assert!(!s.log().contains("measured="));
     for n in SIX {
         assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/{n}"), &[], b"").status, 200);

@@ -229,43 +229,45 @@ fn status_validates_stems_and_job_binding() {
 }
 
 #[test]
-fn status_validates_stem_peak_list() {
+fn status_validates_stem_level_list() {
     let job = "0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b";
-    let pk = |n: &str, peak: u64, bits: u32| serde_json::json!({"name":n,"peak":peak,"bits":bits,"peak_dbfs":null});
-    let with = |peaks: serde_json::Value| {
-        serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["vocals","piano"],"error":null,"stem_peaks":peaks})
+    let lv = |n: &str, ms: u64, db: i32, w: u32| serde_json::json!({"name":n,"audible_ms":ms,"level_dbfs":db,"window_ms":w});
+    let with = |levels: serde_json::Value| {
+        serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["vocals","piano"],"error":null,"stem_levels":levels})
     };
     let cases: Vec<(&str, serde_json::Value, bool)> = vec![
-        ("ok", with(serde_json::json!([pk("vocals", 100, 16), pk("piano", 0, 16)])), true),
+        ("ok", with(serde_json::json!([lv("vocals", 200600, -40, 100), lv("piano", 0, -40, 100)])), true),
         ("empty", with(serde_json::json!([])), true),
-        ("unknown name", with(serde_json::json!([pk("drums", 1, 16)])), false),
-        ("duplicate", with(serde_json::json!([pk("piano", 1, 16), pk("piano", 1, 16)])), false),
-        ("bits 3", with(serde_json::json!([pk("piano", 1, 3)])), false),
-        ("bits 33", with(serde_json::json!([pk("piano", 1, 33)])), false),
-        ("bits 0", with(serde_json::json!([pk("piano", 0, 0)])), false),
-        ("peak too big", with(serde_json::json!([pk("piano", 32769, 16)])), false),
-        ("negative peak", with(serde_json::json!([{"name":"piano","peak":-1,"bits":16,"peak_dbfs":null}])), false),
-        ("peak string", with(serde_json::json!([{"name":"piano","peak":"0","bits":16,"peak_dbfs":null}])), false),
+        ("unknown name", with(serde_json::json!([lv("drums", 0, -40, 100)])), false),
+        ("duplicate", with(serde_json::json!([lv("piano", 0, -40, 100), lv("piano", 0, -40, 100)])), false),
+        ("window 0", with(serde_json::json!([lv("piano", 0, -40, 0)])), false),
+        ("window 1001", with(serde_json::json!([lv("piano", 0, -40, 1001)])), false),
+        ("level above 0", with(serde_json::json!([lv("piano", 0, 1, 100)])), false),
+        ("level below -150", with(serde_json::json!([lv("piano", 0, -151, 100)])), false),
+        ("not a window multiple", with(serde_json::json!([lv("piano", 150, -40, 100)])), false),
+        ("longer than a day", with(serde_json::json!([lv("piano", 86_400_100, -40, 100)])), false),
+        ("negative audible_ms", with(serde_json::json!([{"name":"piano","audible_ms":-1,"level_dbfs":-40,"window_ms":100}])), false),
+        ("audible_ms string", with(serde_json::json!([{"name":"piano","audible_ms":"0","level_dbfs":-40,"window_ms":100}])), false),
         ("not a list", with(serde_json::json!("lots")), false),
-        ("17 entries", with(serde_json::json!((0..17).map(|_| pk("piano", 1, 16)).collect::<Vec<_>>())), false),
-        ("peaks without stems", serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":null,"error":null,"stem_peaks":[pk("piano", 1, 16)]}), false),
+        ("17 entries", with(serde_json::json!((0..17).map(|_| lv("piano", 0, -40, 100)).collect::<Vec<_>>())), false),
+        ("levels without stems", serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":null,"error":null,"stem_levels":[lv("piano", 0, -40, 100)]}), false),
     ];
     for (name, body, ok) in cases {
         let fake = serve(move |_, s| json(s, "200 OK", body.clone()));
         let r = fake.client().status(job);
         assert_eq!(r.is_ok(), ok, "{name}: {r:?}");
         // Type errors are an unusable answer; rule breaks are Invalid.
-        let wrong_type = ["negative peak", "peak string", "not a list"].contains(&name);
+        let wrong_type = ["negative audible_ms", "audible_ms string", "not a list"].contains(&name);
         match r {
             Err(ClientError::Incompatible(_)) => assert!(wrong_type, "{name}"),
-            Err(ClientError::Invalid(m)) => assert!(!wrong_type && m == "bad stem peak list", "{name}: {m}"),
+            Err(ClientError::Invalid(m)) => assert!(!wrong_type && m == "bad stem level list", "{name}: {m}"),
             _ => {}
         }
     }
     // No key: fine, and nothing measured.
     let body = serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["vocals"],"error":null});
     let fake = serve(move |_, s| json(s, "200 OK", body.clone()));
-    assert_eq!(fake.client().status(job).unwrap().stem_peaks, None);
+    assert_eq!(fake.client().status(job).unwrap().stem_levels, None);
 }
 
 #[test]
@@ -279,11 +281,11 @@ fn status_validates_stem_level_list_only_when_done() {
         other => panic!("{other:?}"),
     }
     let body = serde_json::json!({"job":job,"state":"failed","progress":null,"stems":null,"error":"boom",
-        "stem_levels":bad,"stem_peaks":[{"name":"x","peak":1,"bits":3,"peak_dbfs":null}]});
+        "stem_levels":bad});
     let fake = serve(move |_, s| json(s, "200 OK", body.clone()));
     let st = fake.client().status(job).unwrap();
     assert_eq!(st.error.as_deref(), Some("boom"));
-    assert_eq!((st.stem_levels, st.stem_peaks), (None, None));
+    assert_eq!(st.stem_levels, None);
 }
 
 #[test]

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use calliope_lib::process::{self, CancelHandle};
 use calliope_lib::flac_level::{self, AUDIBLE_LEVEL_DBFS};
-use calliope_lib::stems_api::{JobState, JobStatus, StemLevel, StemPeak};
+use calliope_lib::stems_api::{JobState, JobStatus, StemLevel};
 
 use crate::config::Config;
 use crate::separator::{parse_progress, truncate, validate_output};
@@ -18,7 +18,6 @@ struct Job {
     state: JobState,
     progress: Option<f64>,
     stems: Option<Vec<String>>,
-    stem_peaks: Option<Vec<StemPeak>>,
     stem_levels: Option<Vec<StemLevel>>,
     error: Option<String>,
     dir: PathBuf,
@@ -108,7 +107,6 @@ impl Manager {
                 state: JobState::Queued,
                 progress: None,
                 stems: None,
-                stem_peaks: None,
                 stem_levels: None,
                 error: None,
                 dir,
@@ -136,7 +134,6 @@ impl Manager {
             progress: if j.state == JobState::Done { Some(1.0) } else { j.progress },
             stems: j.stems.clone(),
             error: j.error.clone(),
-            stem_peaks: j.stem_peaks.clone(),
             stem_levels: j.stem_levels.clone(),
         })
     }
@@ -399,9 +396,8 @@ impl Manager {
                     j.state = JobState::Done;
                     j.progress = Some(1.0);
                     j.stems = Some(stems);
-                    if let Some((levels, peaks)) = measured {
+                    if let Some(levels) = measured {
                         j.stem_levels = Some(levels);
-                        j.stem_peaks = Some(peaks);
                     }
                     j.finished = Some(Instant::now());
                     j.cancel = None;
@@ -430,12 +426,10 @@ impl Manager {
     }
 
     /// Full-scan audible time (and peak) of every stem, in order. A stem that cannot be decoded
-    /// gets no entry. `None` when cancelled or stopped part-way. The peaks fill the legacy
-    /// `stem_peaks` until the app stops reading it.
-    fn measure_stems(&self, id: &str, out: &std::path::Path, stems: &[String]) -> Option<(Vec<StemLevel>, Vec<StemPeak>)> {
+    /// gets no entry. `None` when cancelled or stopped part-way.
+    fn measure_stems(&self, id: &str, out: &std::path::Path, stems: &[String]) -> Option<Vec<StemLevel>> {
         let t0 = Instant::now();
         let mut levels = Vec::new();
-        let mut peaks = Vec::new();
         for name in stems {
             if self.interrupted(id) {
                 return None;
@@ -456,7 +450,6 @@ impl Manager {
                         window_ms: flac_level::WINDOW_MS,
                         peak_dbfs,
                     });
-                    peaks.push(StemPeak { name: name.clone(), peak: a.peak, bits: a.bits, peak_dbfs });
                 }
                 Err(e) => log(format_args!("job id={id} stem={name} audible=unknown error=\"{}\"", truncate(&e, 200))),
             }
@@ -467,7 +460,7 @@ impl Manager {
             stems.len(),
             t0.elapsed().as_millis()
         ));
-        Some((levels, peaks))
+        Some(levels)
     }
 
     fn on_line(&self, id: &str, tail: &Mutex<String>, line: String) {
@@ -516,7 +509,6 @@ mod tests {
                 state,
                 progress: None,
                 stems: None,
-                stem_peaks: None,
                 stem_levels: None,
                 error: None,
                 dir,

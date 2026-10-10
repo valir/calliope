@@ -5,7 +5,6 @@
 //! checks the dependency graph with `cargo metadata`).
 
 pub mod flac_level;
-pub mod flac_peak;
 pub mod process;
 pub mod stems_api;
 #[cfg(feature = "client")]
