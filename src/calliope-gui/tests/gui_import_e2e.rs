@@ -431,11 +431,11 @@ fn import_local_audio() {
 
 #[test]
 #[ignore]
-fn import_drops_silent_stems() {
+fn import_drops_empty_stems() {
     if !ready() {
         return;
     }
-    let mut r = Rig::new("import_drops_silent_stems", "sparse", false, &["import-audio {media}/tagged.ogg".into()]);
+    let mut r = Rig::new("import_drops_empty_stems", "sparse", false, &["import-audio {media}/tagged.ogg".into()]);
     r.open_source(1);
     r.browse();
     r.wait("dialog kind=import-audio result=picked");
@@ -445,6 +445,8 @@ fn import_drops_silent_stems() {
     assert!(line.contains("dropped=piano,other"), "{line}");
     settle();
     shot("import-done-dropped");
+    let want = "stem=other dropped audible_s=9.5 min_audible_s=15.0 level_dbfs=-40 source=server";
+    assert!(r.app.all_lines().iter().any(|l| l.contains(want)), "no `{want}` in the app's stderr");
     assert_eq!(json["type"], "stem");
     let mut names: Vec<&str> = json["stems"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
     names.sort();
@@ -460,7 +462,7 @@ fn import_drops_silent_stems() {
     for n in ["piano", "other"] {
         assert!(!on_disk.iter().any(|f| f.contains(n)), "{on_disk:?}");
     }
-    // The server's request log proves the silent stems were never downloaded.
+    // The server's request log proves the empty stems were never downloaded.
     let log = r.dirs.stems_log();
     let fetches = |name: &str| {
         log.lines()
@@ -472,6 +474,34 @@ fn import_drops_silent_stems() {
     }
     for n in ["vocals", "drums", "bass", "guitar"] {
         assert_eq!(fetches(n), 1, "{n} fetch count:\n{log}");
+    }
+    r.check_disk(Some(&id));
+    r.assert_no_children();
+}
+
+#[test]
+#[ignore]
+fn import_boundary_stems() {
+    if !ready() {
+        return;
+    }
+    let mut r = Rig::new("import_boundary_stems", "boundary", false, &["import-audio {media}/tagged.ogg".into()]);
+    r.open_source(1);
+    r.browse();
+    r.wait("dialog kind=import-audio result=picked");
+    r.wait_ui("phase=ready");
+    r.extract();
+    let (id, json, line) = r.saved_line("4");
+    assert!(line.contains("dropped=piano,other"), "{line}");
+    settle();
+    shot("import-done-boundary");
+    let mut names: Vec<&str> = json["stems"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
+    names.sort();
+    assert_eq!(names, ["bass", "drums", "guitar", "vocals"]);
+    let log = r.dirs.stems_log();
+    for n in ["other", "piano"] {
+        let fetched = log.lines().any(|l| l.contains("request method=GET") && l.split_whitespace().any(|w| w.strip_prefix("path=").is_some_and(|p| p.ends_with(&format!("/stems/{n}")))));
+        assert!(!fetched, "{n} was fetched:\n{log}");
     }
     r.check_disk(Some(&id));
     r.assert_no_children();

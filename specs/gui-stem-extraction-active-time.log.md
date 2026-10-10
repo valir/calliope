@@ -9,3 +9,4 @@ task 6 | calliope-stems --measure FILE... | implementer | done (matches the orch
 task 7 | The app judges by audible time (stem_levels, check_stem/check_reported; sparse stub = silent/bursts/phrases; peak-rule tests ported or deleted; acceptance_server_peaks.rs -> acceptance_server_levels.rs) | implementer | done
 task 8 | Frontend wording: Dropped empty stems, DroppedStem {name, audible_ms} | implementer (local model wrote a summary instead of edits) | done (flake once under parallel load: calliope-stems aborted_uploads_release_their_queue_slot_and_folder, passed on rerun)
 task 9 | Remove stem_peaks and flac_peak (stems acceptance_server_peaks.rs -> acceptance_server_levels.rs) | implementer | done
+task 10 | GUI e2e: import_drops_empty_stems (server log line), import_boundary_stems | implementer | done (flake once: import_job empty_stems_are_dropped_from_the_saved_track 'no saved event'; GUI suites all green)
