@@ -1,6 +1,7 @@
-//! QA acceptance tests for requirement 9 of specs/gui-stem-extraction.md (server-reported stem
-//! peaks; the app doesn't download stems reported below -50 dBFS). Harness copied from
-//! acceptance_silent_stems.rs; adds a scripted server that serves crafted `stem_peaks`.
+//! QA acceptance tests for requirement 9 of specs/gui-stem-extraction.md (server-reported audible
+//! time; the app doesn't download stems reported audible for less than 15 s at -40 dBFS / 100 ms).
+//! Harness copied from acceptance_silent_stems.rs; adds a scripted server that serves crafted
+//! `stem_levels` (and, for the server-peaks-era case, `stem_peaks`).
 //!
 //! Same structure as `acceptance_stem_extraction.rs`: the pure modules are compiled in with
 //! `#[path]`; imports run against the REAL `calliope-stems` binary with the stub separator
@@ -57,7 +58,7 @@ use flacenc::component::BitRepr;
 use flacenc::error::Verify;
 use import_job::*;
 use repository::Repository;
-use stem_audio::{silent_peak, Level, SILENT_STEM_DBFS};
+use stem_audio::{check_stem, StemCheck, EMPTY_STEM_MIN_AUDIBLE_MS};
 use tools::Tools;
 use track_meta::{TrackEdits, TrackType};
 
@@ -251,7 +252,9 @@ struct AiConfig {
     final_state: &'static str,
     error: Option<String>,
     progress: serde_json::Value,
-    /// raw `stem_peaks` value put in the done status (None = key omitted, like an old server)
+    /// raw `stem_levels` value put in the done status (None = key omitted, like an old server)
+    levels: Option<serde_json::Value>,
+    /// raw `stem_peaks` value (the server-peaks-era key, which the app ignores)
     peaks: Option<serde_json::Value>,
 }
 
@@ -266,6 +269,7 @@ impl AiConfig {
             final_state: "done",
             error: None,
             progress: serde_json::json!(1.0),
+            levels: None,
             peaks: None,
         }
     }
@@ -366,6 +370,9 @@ fn fake_ai(cfg: AiConfig) -> FakeAi {
                     let mut v = serde_json::json!({"job": cfg.job_id, "state": cfg.final_state, "progress": cfg.progress,
                         "stems": if cfg.final_state == "done" { serde_json::json!(cfg.stems) } else { serde_json::Value::Null },
                         "error": cfg.error});
+                    if let Some(l) = &cfg.levels {
+                        v["stem_levels"] = l.clone();
+                    }
                     if let Some(p) = &cfg.peaks {
                         v["stem_peaks"] = p.clone();
                     }
@@ -588,8 +595,16 @@ impl RealServer {
     }
 }
 
-/// Scripted server: stems = (name, body, reported peak (peak, bits) or None).
-fn scripted(items: Vec<(&str, Vec<u8>, Option<(u64, u32)>)>, report: bool) -> FakeAi {
+/// Reported measure: (audible_ms, level_dbfs, window_ms).
+type Report = (u64, i32, u32);
+const AT: (i32, u32) = (-40, 100);
+
+fn rep(ms: u64) -> Option<Report> {
+    Some((ms, AT.0, AT.1))
+}
+
+/// Scripted server: stems = (name, body, reported measure or None).
+fn scripted(items: Vec<(&str, Vec<u8>, Option<Report>)>, report: bool) -> FakeAi {
     let mut cfg = AiConfig::good();
     cfg.stems = items.iter().map(|i| i.0.to_string()).collect();
     let bodies: BTreeMap<String, Vec<u8>> = items.iter().map(|i| (i.0.to_string(), i.1.clone())).collect();
@@ -598,21 +613,18 @@ fn scripted(items: Vec<(&str, Vec<u8>, Option<(u64, u32)>)>, report: bool) -> Fa
         let list: Vec<serde_json::Value> = items
             .iter()
             .filter_map(|(n, _, r)| {
-                r.map(|(p, b)| {
-                    let db = if p == 0 { serde_json::Value::Null } else { serde_json::json!(20.0 * (p as f64 / 2f64.powi(b as i32 - 1)).log10()) };
-                    serde_json::json!({"name": n, "peak": p, "bits": b, "peak_dbfs": db})
-                })
+                r.map(|(ms, level, window)| serde_json::json!({"name": n, "audible_ms": ms, "level_dbfs": level, "window_ms": window, "peak_dbfs": null}))
             })
             .collect();
-        cfg.peaks = Some(serde_json::json!(list));
+        cfg.levels = Some(serde_json::json!(list));
     }
     fake_ai(cfg)
 }
 
-fn outcome(done: &JobSnapshot) -> (Vec<String>, Vec<(String, Option<f64>)>) {
+fn outcome(done: &JobSnapshot) -> (Vec<String>, Vec<(String, u64)>) {
     (
         done.track.as_ref().map(kept_names).unwrap_or_default(),
-        done.dropped.iter().map(|d| (d.name.clone(), d.peak_dbfs)).collect(),
+        done.dropped.iter().map(|d| (d.name.clone(), d.audible_ms)).collect(),
     )
 }
 fn kept_names(t: &repository::TrackRecord) -> Vec<String> {
@@ -630,68 +642,78 @@ fn assert_nothing_left(rig: &Rig) {
     rig.outside_ok();
 }
 
+/// A one-second stem of digital silence (0 ms audible).
+fn zeros() -> Vec<u8> {
+    spike(0, 16, 8000, 0)
+}
+
+fn activity(name: &str) -> Vec<u8> {
+    fs::read(fixture(&format!("stems-activity/{name}"))).unwrap()
+}
+
 // ====================================================================== same decision, whoever measures
 
 #[test]
-fn decision_is_identical_for_server_and_local_peaks_at_the_boundaries() {
-    // (bits, peak, silent?)
-    let cases: [(usize, i32, bool); 8] = [
-        (16, 103, true),
-        (16, -103, true),
-        (16, 104, false),
-        (16, -104, false),
-        (24, 26527, true),
-        (24, -26527, true),
-        (24, 26528, false),
-        (24, -26528, false),
-    ];
-    for (bits, v, silent) in cases {
-        let items = || {
-            vec![
-                ("vocals", real_vocals(), Some((20000u64, 16u32))),
-                ("drums", spike(v, bits, 8000, 100), Some((v.unsigned_abs() as u64, bits as u32))),
-            ]
-        };
+fn decision_is_identical_for_server_and_local_at_the_boundary() {
+    // (fixture, audible ms, empty?)
+    for (file, ms, empty) in [("audible-14900ms.flac", 14_900u64, true), ("audible-15000ms.flac", 15_000, false)] {
+        let items = || vec![("vocals", real_vocals(), rep(16_000)), ("drums", activity(file), rep(ms))];
         let with = scripted(items(), true);
         let without = scripted(items(), false);
         let (rig_a, rig_b) = (Rig::new(false), Rig::new(false));
         let a = import_with(&rig_a, &with.url());
         let b = import_with(&rig_b, &without.url());
-        assert_eq!(a.phase, Phase::Saved, "{bits}/{v}: {:?}", a.error);
-        assert_eq!(b.phase, Phase::Saved, "{bits}/{v}: {:?}", b.error);
-        assert_eq!(outcome(&a), outcome(&b), "server vs local differ at {bits}-bit {v}");
-        assert_eq!(a.dropped.is_empty(), !silent, "{bits}/{v}");
-        // downloads
+        assert_eq!(a.phase, Phase::Saved, "{file}: {:?}", a.error);
+        assert_eq!(b.phase, Phase::Saved, "{file}: {:?}", b.error);
+        assert_eq!(outcome(&a), outcome(&b), "server vs local differ at {file}");
+        assert_eq!(a.dropped.is_empty(), !empty, "{file}");
         assert_eq!(without.fetched(), ["vocals", "drums"], "old server: everything fetched");
-        let want: Vec<&str> = if silent { vec!["vocals"] } else { vec!["vocals", "drums"] };
-        assert_eq!(with.fetched(), want, "{bits}/{v}: silent stems must not be fetched");
+        let want: Vec<&str> = if empty { vec!["vocals"] } else { vec!["vocals", "drums"] };
+        assert_eq!(with.fetched(), want, "{file}: empty stems must not be fetched");
         assert!(rig_a.staging().is_empty() && rig_b.staging().is_empty());
-        if silent {
-            // no .part ever left; the kept track has exactly vocals
+        if empty {
             assert_eq!(outcome(&a).0, ["vocals"]);
+            assert_eq!(outcome(&a).1, [("drums".to_string(), ms)]);
         }
+    }
+}
+
+#[test]
+fn short_loud_bursts_are_dropped_and_a_part_in_pieces_is_kept() {
+    for report in [true, false] {
+        let items = vec![
+            ("vocals", real_vocals(), rep(16_000)),
+            ("drums", activity("bursts.flac"), rep(9_500)),
+            ("bass", activity("phrases.flac"), rep(16_000)),
+        ];
+        let ai = scripted(items, report);
+        let rig = Rig::new(false);
+        let done = import_with(&rig, &ai.url());
+        assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
+        assert_eq!(outcome(&done), (vec!["vocals".into(), "bass".into()], vec![("drums".into(), 9_500)]), "report={report}");
+        assert_eq!(ai.fetched().len(), if report { 2 } else { 3 });
     }
 }
 
 #[test]
 fn stem_order_and_dropped_order_follow_the_server_list() {
     let items = vec![
-        ("vocals", real_vocals(), Some((20000, 16))),
-        ("drums", spike(5, 16, 8000, 3), Some((5, 16))),
-        ("bass", real_vocals(), Some((20000, 16))),
-        ("guitar", spike(0, 16, 8000, 0), Some((0, 16))),
-        ("piano", real_vocals(), Some((20000, 16))),
-        ("other", spike(50, 16, 8000, 1), Some((50, 16))),
+        ("vocals", real_vocals(), rep(200_000)),
+        ("drums", zeros(), rep(5_000)),
+        ("bass", real_vocals(), rep(16_000)),
+        ("guitar", zeros(), rep(0)),
+        ("piano", real_vocals(), rep(15_000)),
+        ("other", zeros(), rep(14_900)),
     ];
     let ai = scripted(items, true);
     let rig = Rig::new(false);
     let done = import_with(&rig, &ai.url());
     assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
     assert_eq!(outcome(&done).0, ["vocals", "bass", "piano"]);
-    assert_eq!(done.dropped.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["drums", "guitar", "other"]);
-    assert_eq!(done.dropped[1].peak_dbfs, None);
-    let db = done.dropped[0].peak_dbfs.unwrap();
-    assert!((db - 20.0 * (5f64 / 32768.0).log10()).abs() < 1e-9, "{db}");
+    assert_eq!(
+        outcome(&done).1,
+        [("drums".to_string(), 5_000), ("guitar".to_string(), 0), ("other".to_string(), 14_900)]
+    );
     assert_eq!(ai.fetched(), ["vocals", "bass", "piano"]);
     assert_eq!(done.stems_done, 6, "progress counts skipped stems");
 }
@@ -699,9 +721,9 @@ fn stem_order_and_dropped_order_follow_the_server_list() {
 #[test]
 fn partial_report_fetches_the_unreported_stems_and_checks_them_locally() {
     let items = vec![
-        ("vocals", real_vocals(), None),                                  // not reported, loud: kept
-        ("drums", spike(0, 16, 8000, 0), None),                           // not reported, silent: fetched then dropped locally
-        ("bass", spike(0, 16, 8000, 0), Some((0, 16))),                   // reported silent: not fetched
+        ("vocals", real_vocals(), None),                 // not reported, audible: kept
+        ("drums", zeros(), None),                        // not reported, empty: fetched then dropped locally
+        ("bass", zeros(), rep(0)),                       // reported empty: not fetched
     ];
     let ai = scripted(items, true);
     let rig = Rig::new(false);
@@ -710,6 +732,24 @@ fn partial_report_fetches_the_unreported_stems_and_checks_them_locally() {
     assert_eq!(outcome(&done).0, ["vocals"]);
     assert_eq!(done.dropped.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["drums", "bass"]);
     assert_eq!(ai.fetched(), ["vocals", "drums"]);
+}
+
+#[test]
+fn a_report_at_another_level_or_window_is_not_used() {
+    // the server calls both stems empty, but at a level/window the app doesn't use: every stem is
+    // fetched and checked locally
+    for (level, window) in [(-50, 100u32), (-40, 50), (-30, 200)] {
+        let items = vec![
+            ("vocals", real_vocals(), Some((0, level, window))),
+            ("drums", zeros(), Some((0, level, window))),
+        ];
+        let ai = scripted(items, true);
+        let rig = Rig::new(false);
+        let done = import_with(&rig, &ai.url());
+        assert_eq!(done.phase, Phase::Saved, "{level}/{window}: {:?}", done.error);
+        assert_eq!(ai.fetched(), ["vocals", "drums"], "{level}/{window}");
+        assert_eq!(outcome(&done), (vec!["vocals".into()], vec![("drums".into(), 0)]), "{level}/{window}");
+    }
 }
 
 // ====================================================================== old server / compat
@@ -733,18 +773,37 @@ fn old_server_without_the_key_downloads_and_checks_everything() {
 }
 
 #[test]
-fn null_or_empty_stem_peaks_behave_like_an_old_server() {
-    for peaks in [serde_json::Value::Null, serde_json::json!([])] {
+fn a_server_peaks_era_server_is_treated_as_an_old_server() {
+    // `stem_peaks` (the previous increment's key) is ignored: every stem is fetched and measured
+    let mut cfg = AiConfig::good();
+    cfg.stems = vec!["vocals".into(), "drums".into()];
+    let (v, d) = (real_vocals(), zeros());
+    cfg.body = Arc::new(move |n| if n == "vocals" { v.clone() } else { d.clone() });
+    cfg.peaks = Some(serde_json::json!([
+        {"name":"vocals","peak":20000,"bits":16,"peak_dbfs":-4.3},
+        {"name":"drums","peak":0,"bits":16,"peak_dbfs":null}
+    ]));
+    let ai = fake_ai(cfg);
+    let rig = Rig::new(false);
+    let done = import_with(&rig, &ai.url());
+    assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
+    assert_eq!(ai.fetched(), ["vocals", "drums"]);
+    assert_eq!(outcome(&done), (vec!["vocals".into()], vec![("drums".into(), 0)]));
+}
+
+#[test]
+fn null_or_empty_stem_levels_behave_like_an_old_server() {
+    for levels in [serde_json::Value::Null, serde_json::json!([])] {
         let mut cfg = AiConfig::good();
         cfg.stems = vec!["vocals".into(), "drums".into()];
-        let (v, d) = (real_vocals(), spike(0, 16, 8000, 0));
+        let (v, d) = (real_vocals(), zeros());
         cfg.body = Arc::new(move |n| if n == "vocals" { v.clone() } else { d.clone() });
-        cfg.peaks = Some(peaks.clone());
+        cfg.levels = Some(levels.clone());
         let ai = fake_ai(cfg);
         let rig = Rig::new(false);
         let done = import_with(&rig, &ai.url());
-        assert_eq!(done.phase, Phase::Saved, "{peaks}: {:?}", done.error);
-        assert_eq!(ai.fetched(), ["vocals", "drums"], "{peaks}");
+        assert_eq!(done.phase, Phase::Saved, "{levels}: {:?}", done.error);
+        assert_eq!(ai.fetched(), ["vocals", "drums"], "{levels}");
         assert_eq!(outcome(&done).0, ["vocals"]);
         assert_eq!(done.dropped.len(), 1);
     }
@@ -754,29 +813,29 @@ fn null_or_empty_stem_peaks_behave_like_an_old_server() {
 fn entries_with_extra_fields_or_no_peak_dbfs_are_accepted_and_peak_dbfs_is_ignored() {
     let mut cfg = AiConfig::good();
     cfg.stems = vec!["vocals".into(), "drums".into()];
-    let (v, d) = (real_vocals(), spike(0, 16, 8000, 0));
+    let (v, d) = (real_vocals(), zeros());
     cfg.body = Arc::new(move |n| if n == "vocals" { v.clone() } else { d.clone() });
-    // drums: peak says silent while the human field lies (-3 dB): the integer decides
-    cfg.peaks = Some(serde_json::json!([
-        {"name":"vocals","peak":20000,"bits":16,"future":"x"},
-        {"name":"drums","peak":0,"bits":16,"peak_dbfs":-3.0}
+    // drums: 0 ms audible while the human field lies (-3 dB): the integer decides
+    cfg.levels = Some(serde_json::json!([
+        {"name":"vocals","audible_ms":200600,"level_dbfs":-40,"window_ms":100,"future":"x"},
+        {"name":"drums","audible_ms":0,"level_dbfs":-40,"window_ms":100,"peak_dbfs":-3.0}
     ]));
     let ai = fake_ai(cfg);
     let rig = Rig::new(false);
     let done = import_with(&rig, &ai.url());
     assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
     assert_eq!(ai.fetched(), ["vocals"]);
-    assert_eq!(done.dropped[0].peak_dbfs, None, "dropped dB comes from the integer peak, not the wire dB");
+    assert_eq!(outcome(&done).1, [("drums".to_string(), 0)]);
 }
 
 // ====================================================================== lying / hostile server
 
 #[test]
-fn a_server_that_calls_a_loud_stem_silent_gets_it_dropped_unseen_by_design() {
-    // Plan 2.4 "Data safety": the app drops on the configured server's word. Documented behaviour.
+fn a_server_that_calls_a_loud_stem_empty_gets_it_dropped_unseen_by_design() {
+    // The app drops on the configured server's word. Documented behaviour.
     let items = vec![
-        ("vocals", real_vocals(), Some((0, 16))),
-        ("drums", real_vocals(), Some((20000, 16))),
+        ("vocals", real_vocals(), rep(0)),
+        ("drums", real_vocals(), rep(200_000)),
     ];
     let ai = scripted(items, true);
     let rig = Rig::new(false);
@@ -788,10 +847,10 @@ fn a_server_that_calls_a_loud_stem_silent_gets_it_dropped_unseen_by_design() {
 }
 
 #[test]
-fn a_server_that_calls_a_silent_stem_audible_is_overruled_by_the_local_check() {
+fn a_server_that_calls_an_empty_stem_audible_is_overruled_by_the_local_check() {
     let items = vec![
-        ("vocals", real_vocals(), Some((20000, 16))),
-        ("drums", spike(0, 16, 8000, 0), Some((30000, 16))),
+        ("vocals", real_vocals(), rep(200_000)),
+        ("drums", zeros(), rep(300_000)),
     ];
     let ai = scripted(items, true);
     let rig = Rig::new(false);
@@ -803,44 +862,56 @@ fn a_server_that_calls_a_silent_stem_audible_is_overruled_by_the_local_check() {
 }
 
 #[test]
-fn everything_reported_silent_fails_with_zero_downloads_and_no_residue() {
-    let items: Vec<_> = ["vocals", "drums", "bass", "guitar", "piano", "other"].iter().map(|n| (*n, real_vocals(), Some((0u64, 16u32)))).collect();
+fn everything_reported_empty_fails_with_zero_downloads_and_no_residue() {
+    let items: Vec<_> = ["vocals", "drums", "bass", "guitar", "piano", "other"].iter().map(|n| (*n, real_vocals(), rep(0))).collect();
     let ai = scripted(items, true);
     let rig = Rig::new(false);
     let done = import_with(&rig, &ai.url());
     assert_eq!(done.phase, Phase::Failed);
     let e = done.error.unwrap();
     assert_eq!(e.stage, Stage::Server);
-    assert_eq!(e.message, "Every stem is silent (below -50 dBFS), so no track was saved");
+    assert_eq!(e.message, "Every stem is empty (less than 15 s above -40 dBFS), so no track was saved");
     assert!(ai.fetched().is_empty(), "{:?}", ai.fetched());
     assert_nothing_left(&rig);
     assert!(ai.saw("DELETE"), "server job still deleted");
 }
 
 #[test]
-fn malformed_peak_lists_are_rejected_before_any_download() {
+fn malformed_level_lists_are_rejected_before_any_download() {
+    let e = |name: &str, ms: serde_json::Value, level: serde_json::Value, window: serde_json::Value| {
+        serde_json::json!({"name": name, "audible_ms": ms, "level_dbfs": level, "window_ms": window})
+    };
+    macro_rules! j {
+        ($($t:tt)*) => {
+            serde_json::json!($($t)*)
+        };
+    }
+    let good = |name: &str| e(name, j!(0), j!(-40), j!(100));
     let bad: Vec<(&str, serde_json::Value)> = vec![
-        ("unknown name", serde_json::json!([{"name":"kazoo","peak":0,"bits":16,"peak_dbfs":null}])),
-        ("duplicate", serde_json::json!([{"name":"vocals","peak":0,"bits":16},{"name":"vocals","peak":5,"bits":16}])),
-        ("bits 3", serde_json::json!([{"name":"vocals","peak":0,"bits":3}])),
-        ("bits 33", serde_json::json!([{"name":"vocals","peak":0,"bits":33}])),
-        ("bits 0", serde_json::json!([{"name":"vocals","peak":0,"bits":0}])),
-        ("peak too big", serde_json::json!([{"name":"vocals","peak":32769,"bits":16}])),
-        ("negative peak", serde_json::json!([{"name":"vocals","peak":-1,"bits":16}])),
-        ("string peak", serde_json::json!([{"name":"vocals","peak":"0","bits":16}])),
-        ("float peak", serde_json::json!([{"name":"vocals","peak":0.5,"bits":16}])),
-        ("huge peak", serde_json::json!([{"name":"vocals","peak":18446744073709551615u64,"bits":16}])),
-        ("missing bits", serde_json::json!([{"name":"vocals","peak":0}])),
-        ("object instead of list", serde_json::json!({"vocals":0})),
-        ("string name list", serde_json::json!(["vocals"])),
-        ("path-like name", serde_json::json!([{"name":"../x","peak":0,"bits":16}])),
-        ("too many", serde_json::Value::Array((0..50).map(|_| serde_json::json!({"name":"vocals","peak":0,"bits":16})).collect())),
+        ("unknown name", j!([good("kazoo")])),
+        ("duplicate", j!([good("vocals"), e("vocals", j!(100), j!(-40), j!(100))])),
+        ("window 0", j!([e("vocals", j!(0), j!(-40), j!(0))])),
+        ("window 1001", j!([e("vocals", j!(0), j!(-40), j!(1001))])),
+        ("level 1", j!([e("vocals", j!(0), j!(1), j!(100))])),
+        ("level -151", j!([e("vocals", j!(0), j!(-151), j!(100))])),
+        ("not a multiple of the window", j!([e("vocals", j!(150), j!(-40), j!(100))])),
+        ("more than a day", j!([e("vocals", j!(86_400_100u64), j!(-40), j!(100))])),
+        ("negative audible_ms", j!([e("vocals", j!(-100), j!(-40), j!(100))])),
+        ("string audible_ms", j!([e("vocals", j!("0"), j!(-40), j!(100))])),
+        ("float audible_ms", j!([e("vocals", j!(0.5), j!(-40), j!(100))])),
+        ("huge audible_ms", j!([e("vocals", j!(18446744073709551615u64), j!(-40), j!(100))])),
+        ("float level", j!([e("vocals", j!(0), j!(-40.5), j!(100))])),
+        ("missing window_ms", j!([{"name":"vocals","audible_ms":0,"level_dbfs":-40}])),
+        ("object instead of list", j!({"vocals":0})),
+        ("string name list", j!(["vocals"])),
+        ("path-like name", j!([good("../x")])),
+        ("too many", serde_json::Value::Array((0..50).map(|_| good("vocals")).collect())),
     ];
-    for (what, peaks) in bad {
+    for (what, levels) in bad {
         let mut cfg = AiConfig::good();
         cfg.stems = vec!["vocals".into(), "drums".into()];
         cfg.body = Arc::new(|_| real_vocals());
-        cfg.peaks = Some(peaks);
+        cfg.levels = Some(levels);
         let ai = fake_ai(cfg);
         let rig = Rig::new(false);
         let done = import_with(&rig, &ai.url());
@@ -852,26 +923,26 @@ fn malformed_peak_lists_are_rejected_before_any_download() {
 }
 
 #[test]
-fn bad_peak_list_on_a_failed_or_running_status_is_not_validated_as_done() {
-    // a failed job that carries stem_peaks of garbage still reports the job's own error
+fn bad_level_list_on_a_failed_status_does_not_hide_the_jobs_own_error() {
     let mut cfg = AiConfig::good();
     cfg.final_state = "failed";
     cfg.error = Some("separator exploded".into());
-    cfg.peaks = Some(serde_json::json!([{"name":"x","peak":1,"bits":99}]));
+    cfg.levels = Some(serde_json::json!([{"name":"x","audible_ms":1,"level_dbfs":-40,"window_ms":0}]));
     let ai = fake_ai(cfg);
     let rig = Rig::new(false);
     let done = import_with(&rig, &ai.url());
     assert_eq!(done.phase, Phase::Failed);
-    eprintln!("QA: failed job + garbage peaks -> {:?}", done.error.as_ref().map(|e| e.message.clone()));
+    let m = done.error.as_ref().map(|e| e.message.clone()).unwrap_or_default();
+    assert!(m.contains("separator exploded"), "{m}");
     assert_nothing_left(&rig);
 }
 
 #[test]
-fn reported_peak_for_a_stem_missing_from_the_list_is_rejected_even_when_silent() {
+fn reported_level_for_a_stem_missing_from_the_list_is_rejected_even_when_empty() {
     let mut cfg = AiConfig::good();
     cfg.stems = vec!["vocals".into(), "drums".into()];
     cfg.body = Arc::new(|_| real_vocals());
-    cfg.peaks = Some(serde_json::json!([{"name":"piano","peak":0,"bits":16}]));
+    cfg.levels = Some(serde_json::json!([{"name":"piano","audible_ms":0,"level_dbfs":-40,"window_ms":100}]));
     let ai = fake_ai(cfg);
     let rig = Rig::new(false);
     assert_eq!(import_with(&rig, &ai.url()).phase, Phase::Failed);
@@ -886,7 +957,7 @@ fn real_server_all_silent_has_zero_stem_downloads() {
     let rig = Rig::new(true);
     let done = import_with(&rig, &server.url);
     assert_eq!(done.phase, Phase::Failed);
-    assert_eq!(done.error.unwrap().message, "Every stem is silent (below -50 dBFS), so no track was saved");
+    assert_eq!(done.error.unwrap().message, "Every stem is empty (less than 15 s above -40 dBFS), so no track was saved");
     assert!(server.stem_gets().is_empty(), "{:?}", server.stem_gets());
     let tmp = rig.import_tmp();
     assert_eq!(tmp.len(), 1, "audio.flac kept: {tmp:?}");
@@ -902,8 +973,19 @@ fn real_server_sparse_never_serves_piano_or_other() {
     let done = import_with(&rig, &server.url);
     assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
     assert_eq!(server.stem_gets(), ["vocals", "drums", "bass", "guitar"]);
-    assert_eq!(done.dropped.len(), 2);
+    assert_eq!(outcome(&done).1, [("piano".to_string(), 0), ("other".to_string(), 9_500)]);
     assert!(rig.staging().is_empty() && rig.import_tmp().is_empty());
+}
+
+#[test]
+fn real_server_boundary_drops_14_9_and_9_5_seconds_unseen_and_keeps_15_0() {
+    let server = start_real("boundary", &[]);
+    let rig = Rig::new(false);
+    let done = import_with(&rig, &server.url);
+    assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
+    assert_eq!(outcome(&done).0, ["vocals", "drums", "bass", "guitar"]);
+    assert_eq!(outcome(&done).1, [("piano".to_string(), 9_500), ("other".to_string(), 14_900)]);
+    assert_eq!(server.stem_gets(), ["vocals", "drums", "bass", "guitar"]);
 }
 
 #[test]
@@ -947,7 +1029,7 @@ fn cancel_while_the_server_is_measuring_leaves_nothing() {
     rig.file("untagged.flac").unwrap();
     let ready = rig.ready();
     rig.extract(&ready, &server.url, true).unwrap();
-    until("server measuring", 60, || server.saw("stem=vocals peak=") || !rig.state.is_running());
+    until("server measuring", 60, || server.saw("stem=vocals audible_ms=") || !rig.state.is_running());
     if server.saw("measured=6/6") {
         eprintln!("QA: measuring finished before cancel could be issued; weak run");
     }
@@ -977,7 +1059,7 @@ fn server_killed_while_measuring_fails_the_import_cleanly() {
     rig.file("untagged.flac").unwrap();
     let ready = rig.ready();
     rig.extract(&ready, &server.url, false).unwrap();
-    until("server measuring", 60, || server.saw("stem=vocals peak=") || !rig.state.is_running());
+    until("server measuring", 60, || server.saw("stem=vocals audible_ms=") || !rig.state.is_running());
     let t = Instant::now();
     let _ = Command::new("kill").args(["-TERM", &server.child.id().to_string()]).status();
     let s = rig.wait("failed", |s| matches!(s.phase, Phase::Saved | Phase::Failed) && !rig.state.is_running());

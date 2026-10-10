@@ -30,7 +30,8 @@ use serde::Serialize;
 use crate::download::{self, DownloadError};
 use crate::import_tmp::{self, ImportTmp};
 use crate::media::{self, Cancel, MediaError, Probe};
-use crate::stem_audio::{self, Level, SILENT_STEM_DBFS};
+use crate::stem_audio::{self, StemCheck, EMPTY_STEM_MIN_AUDIBLE_MS};
+use calliope_lib::flac_level::AUDIBLE_LEVEL_DBFS;
 use crate::repository::{self, RepoStatus, Repository, Staging, TrackRecord, ORIGINAL_NAME};
 use crate::tools::{ToolName, Tools};
 use crate::track_meta::{self, StemEntry, TrackEdits, TrackMeta, TrackType};
@@ -107,12 +108,12 @@ pub struct JobError {
     pub http_status: Option<u16>,
 }
 
-/// A stem left out of the saved track because it is silent. `peak_dbfs` is `None` for digital
-/// silence (-inf).
+/// A stem left out of the saved track because it is empty (audible for less than
+/// `EMPTY_STEM_MIN_AUDIBLE_MS`). `audible_ms` is its audible time.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DroppedStem {
     pub name: String,
-    pub peak_dbfs: Option<f64>,
+    pub audible_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -913,7 +914,7 @@ fn run_extract(
         _ => return fail(Stage::Server, "The job was cancelled on the edge-AI server"),
     }
     let stems = st.stems.unwrap_or_default();
-    let stem_peaks = st.stem_peaks.unwrap_or_default();
+    let stem_levels = st.stem_levels.unwrap_or_default();
     if stems.is_empty() {
         return fail(Stage::Server, "The edge-AI server returned no stems");
     }
@@ -936,32 +937,38 @@ fn run_extract(
     let mut server_measured = 0usize;
     for (i, name) in stems.iter().enumerate() {
         ctx.check_cancel()?;
-        // the server's measurement decides here too; a silent stem is never fetched
-        if let Some(sp) = stem_peaks.iter().find(|p| &p.name == name) {
-            server_measured += 1;
-            if let Level::Silent { peak_dbfs } = stem_audio::level_of_peak(sp.peak, sp.bits) {
-                let shown = peak_dbfs.map_or("-inf".to_string(), |p| format!("{p:.1}"));
-                eprintln!("calliope: import job={} stem={name} dropped source=server peak_dbfs={shown} threshold_dbfs={SILENT_STEM_DBFS}", ctx.id);
-                dropped.push(DroppedStem { name: name.clone(), peak_dbfs });
-                let done = i as u32 + 1;
-                ctx.update(|j| j.snap.stems_done = done);
-                ctx.progress(ImportEvent::Receiving { done, total });
-                continue;
+        // the server's measurement decides here too; an empty stem is never fetched
+        if let Some(sl) = stem_levels.iter().find(|p| &p.name == name) {
+            match stem_audio::check_reported(sl) {
+                Some(check) => {
+                    server_measured += 1;
+                    if let StemCheck::Empty { audible_ms, .. } = check {
+                        eprintln!("calliope: import job={} stem={name} dropped audible_s={:.1} min_audible_s={:.1} level_dbfs={AUDIBLE_LEVEL_DBFS} source=server", ctx.id, audible_ms as f64 / 1000.0, EMPTY_STEM_MIN_AUDIBLE_MS as f64 / 1000.0);
+                        dropped.push(DroppedStem { name: name.clone(), audible_ms });
+                        let done = i as u32 + 1;
+                        ctx.update(|j| j.snap.stems_done = done);
+                        ctx.progress(ImportEvent::Receiving { done, total });
+                        continue;
+                    }
+                }
+                None => eprintln!("calliope: import job={} stem={name} server report not used level_dbfs={} window_ms={}", ctx.id, sl.level_dbfs, sl.window_ms),
             }
         }
         let part = staging.as_ref().expect("staging").stem_part_path(name).map_err(save_err)?;
         client.fetch_stem(&id, name, &part, ctx.cancel.flag()).map_err(client_stop)?;
-        // a stem is dropped only after it is proven silent; an unreadable one is kept
-        match stem_audio::silent_peak(&part) {
-            Ok(Level::Silent { peak_dbfs }) => {
+        // a stem is dropped only after it is proven empty; an unreadable one is kept
+        match stem_audio::check_stem(&part) {
+            Ok(StemCheck::Empty { audible_ms, peak_dbfs }) => {
                 staging.as_ref().expect("staging").discard_stem_part(name).map_err(save_err)?;
                 let shown = peak_dbfs.map_or("-inf".to_string(), |p| format!("{p:.1}"));
-                eprintln!("calliope: import job={} stem={name} dropped source=local peak_dbfs={shown} threshold_dbfs={SILENT_STEM_DBFS}", ctx.id);
-                dropped.push(DroppedStem { name: name.clone(), peak_dbfs });
+                eprintln!("calliope: import job={} stem={name} dropped audible_s={:.1} min_audible_s={:.1} level_dbfs={AUDIBLE_LEVEL_DBFS} peak_dbfs={shown} source=local", ctx.id, audible_ms as f64 / 1000.0, EMPTY_STEM_MIN_AUDIBLE_MS as f64 / 1000.0);
+                dropped.push(DroppedStem { name: name.clone(), audible_ms });
             }
-            Ok(Level::Audible) => {
+            Ok(StemCheck::Audible { audible_ms }) => {
                 staging.as_ref().expect("staging").finish_stem(name).map_err(save_err)?;
                 kept.push(name.clone());
+                // the scan stops once the minimum is proven, so the time is a lower bound
+                eprintln!("calliope: import job={} stem={name} kept audible_s>={:.1} source=local", ctx.id, audible_ms as f64 / 1000.0);
             }
             Err(e) => {
                 eprintln!("calliope: import job={} stem={name} kept level=unknown ({e})", ctx.id);
@@ -974,9 +981,9 @@ fn run_extract(
         ctx.progress(ImportEvent::Receiving { done, total });
     }
     let dropped_names = if dropped.is_empty() { "none".to_string() } else { dropped.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(",") };
-    eprintln!("calliope: import job={} stems kept={} dropped={dropped_names} server_peaks={server_measured}/{total}", ctx.id, kept.join(","));
+    eprintln!("calliope: import job={} stems kept={} dropped={dropped_names} server_levels={server_measured}/{total}", ctx.id, kept.join(","));
     if kept.is_empty() {
-        return fail(Stage::Server, format!("Every stem is silent (below {SILENT_STEM_DBFS:.0} dBFS), so no track was saved"));
+        return fail(Stage::Server, format!("Every stem is empty (less than {} s above {AUDIBLE_LEVEL_DBFS} dBFS), so no track was saved", EMPTY_STEM_MIN_AUDIBLE_MS / 1000));
     }
     ctx.check_cancel()?;
     ctx.phase(Phase::Saving, ImportEvent::Saving);

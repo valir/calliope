@@ -14,10 +14,11 @@
 #   hang        sleep until killed
 #   bad-output  write README.txt instead of stems
 #   not-flac    one stem without the "fLaC" magic
-#   sparse      the stems, but piano is digital silence, other about -60 dBFS and guitar about
-#               -45 dBFS (from ../fixtures/import/stems-quiet/): piano and other get dropped
+#   sparse      the stems, but piano is digital silence (stems-quiet/), other is short loud bursts
+#               (9.5 s audible, peak -8 dBFS) and guitar is eight 2 s phrases (16 s audible):
+#               piano and other are empty, guitar is kept (from ../fixtures/import/stems-activity/)
 #   silent      all six stems are digital silence
-#   undecodable the sparse stems, but piano is "fLaC" + junk (passes the server's check, cannot be decoded)
+#   undecodable ok stems, but other is stems-quiet/minus60 (empty) and piano is "fLaC" + junk (passes the server's check, cannot be decoded)
 #   boundary    vocals/drums/bass as ok; guitar 15.0 s audible, other 14.9 s, piano short loud bursts (9.5 s)
 # $STUB_SEPARATOR_LOG, if set, gets the argv (one line, tab separated) appended.
 set -euo pipefail
@@ -85,8 +86,8 @@ case $mode in
   sparse)
     cp -- "$STEMS"/*.flac "$out/"
     cp -- "$QUIET/silent.flac" "$out/piano.flac"
-    cp -- "$QUIET/minus60.flac" "$out/other.flac"
-    cp -- "$QUIET/minus45.flac" "$out/guitar.flac"
+    cp -- "$ACT/bursts.flac" "$out/other.flac"
+    cp -- "$ACT/phrases.flac" "$out/guitar.flac"
     ;;
   silent)
     for f in "$STEMS"/*.flac; do

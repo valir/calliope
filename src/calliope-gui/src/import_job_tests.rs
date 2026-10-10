@@ -775,10 +775,9 @@ fn check_sparse(rig: &Rig, done: &JobSnapshot) -> TrackRecord {
     let tdir = rig.tracks_dir().join(&track.id);
     assert_eq!(Rig::names_in(&tdir.join("stems")), ["bass.flac", "drums.flac", "guitar.flac", "vocals.flac"]);
     assert_eq!(done.dropped.len(), 2);
-    assert_eq!(done.dropped[0], DroppedStem { name: "piano".into(), peak_dbfs: None });
-    assert_eq!(done.dropped[1].name, "other");
-    let p = done.dropped[1].peak_dbfs.unwrap();
-    assert!(p > -61.0 && p < -59.0, "{p}");
+    assert_eq!(done.dropped[0], DroppedStem { name: "piano".into(), audible_ms: 0 });
+    // `other` has short loud bursts (peak -8 dBFS) but only 9.5 s audible
+    assert_eq!(done.dropped[1], DroppedStem { name: "other".into(), audible_ms: 9500 });
     let Some(ImportEvent::Saved { dropped, .. }) = rig.events.lock().unwrap().last().cloned() else { panic!("no saved event") };
     assert_eq!(dropped, done.dropped);
     assert!(!rig.state.is_active(), "a finished job is not active");
@@ -789,7 +788,7 @@ fn check_sparse(rig: &Rig, done: &JobSnapshot) -> TrackRecord {
 }
 
 #[test]
-fn silent_stems_are_dropped_from_the_saved_track() {
+fn empty_stems_are_dropped_from_the_saved_track() {
     let server = TestServer::start("sparse");
     let rig = Rig::new();
     let done = extract_to_end(&rig, &server, false);
@@ -799,7 +798,7 @@ fn silent_stems_are_dropped_from_the_saved_track() {
 }
 
 #[test]
-fn silent_stems_are_dropped_with_keep_original_too() {
+fn empty_stems_are_dropped_with_keep_original_too() {
     let server = TestServer::start("sparse");
     let rig = Rig::new();
     let done = extract_to_end(&rig, &server, true);
@@ -809,14 +808,14 @@ fn silent_stems_are_dropped_with_keep_original_too() {
 }
 
 #[test]
-fn a_track_of_only_silent_stems_fails_and_keeps_the_prepared_audio() {
+fn a_track_of_only_empty_stems_fails_and_keeps_the_prepared_audio() {
     let server = TestServer::start("silent");
     let rig = Rig::new();
     let done = extract_to_end(&rig, &server, true);
     assert_eq!(done.phase, Phase::Failed);
     let e = done.error.clone().unwrap();
     assert_eq!(e.stage, Stage::Server);
-    assert_eq!(e.message, "Every stem is silent (below -50 dBFS), so no track was saved");
+    assert_eq!(e.message, "Every stem is empty (less than 15 s above -40 dBFS), so no track was saved");
     assert!(done.dropped.is_empty());
     assert!(Rig::names_in(&rig.tracks_dir()).is_empty());
     let tmp = rig.root.join("import-tmp");
@@ -830,7 +829,7 @@ fn a_track_of_only_silent_stems_fails_and_keeps_the_prepared_audio() {
 }
 
 #[test]
-fn server_silent_stems_are_never_fetched() {
+fn server_empty_stems_are_never_fetched() {
     let server = TestServer::start("sparse");
     let rig = Rig::new();
     let done = extract_to_end(&rig, &server, false);
@@ -843,7 +842,7 @@ fn server_silent_stems_are_never_fetched() {
 }
 
 #[test]
-fn an_old_server_without_peaks_gives_the_same_result_with_all_stems_fetched() {
+fn an_old_server_without_levels_gives_the_same_result_with_all_stems_fetched() {
     let server = TestServer::start_with("sparse", &["--no-stem-levels"]);
     let rig = Rig::new();
     let done = extract_to_end(&rig, &server, false);
@@ -854,12 +853,12 @@ fn an_old_server_without_peaks_gives_the_same_result_with_all_stems_fetched() {
 }
 
 #[test]
-fn all_silent_by_the_server_fetches_nothing() {
+fn all_empty_by_the_server_fetches_nothing() {
     let server = TestServer::start("silent");
     let rig = Rig::new();
     let done = extract_to_end(&rig, &server, true);
     assert_eq!(done.phase, Phase::Failed);
-    assert!(done.error.clone().unwrap().message.starts_with("Every stem is silent"));
+    assert!(done.error.clone().unwrap().message.starts_with("Every stem is empty"));
     assert_eq!(server.all_stem_gets(), 0);
     assert!(Rig::names_in(&rig.tracks_dir()).is_empty());
     let tmp = rig.root.join("import-tmp");
@@ -870,7 +869,7 @@ fn all_silent_by_the_server_fetches_nothing() {
 }
 
 #[test]
-fn an_undecodable_stem_is_fetched_and_kept_while_the_server_silent_one_is_not() {
+fn an_undecodable_stem_is_fetched_and_kept_while_the_server_empty_one_is_not() {
     let server = TestServer::start("undecodable");
     let rig = Rig::new();
     let done = extract_to_end(&rig, &server, false);
@@ -881,6 +880,38 @@ fn an_undecodable_stem_is_fetched_and_kept_while_the_server_silent_one_is_not() 
     assert_eq!(done.dropped[0].name, "other");
     assert_eq!(server.stem_gets("piano"), 1);
     assert_eq!(server.stem_gets("other"), 0);
+}
+
+fn check_boundary(done: &JobSnapshot) {
+    assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
+    let names: Vec<&str> = done.track.as_ref().unwrap().stems.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["vocals", "drums", "bass", "guitar"]);
+    // dropped in server order (vocals, drums, bass, guitar, piano, other)
+    assert_eq!(
+        done.dropped,
+        [DroppedStem { name: "piano".into(), audible_ms: 9500 }, DroppedStem { name: "other".into(), audible_ms: 14_900 }]
+    );
+}
+
+#[test]
+fn the_15_second_boundary_is_decided_by_the_server_report() {
+    let server = TestServer::start("boundary");
+    let rig = Rig::new();
+    let done = extract_to_end(&rig, &server, false);
+    check_boundary(&done);
+    assert_eq!(server.stem_gets("guitar"), 1);
+    assert_eq!(server.stem_gets("other"), 0);
+    assert_eq!(server.stem_gets("piano"), 0);
+    assert_eq!(server.all_stem_gets(), 4);
+}
+
+#[test]
+fn the_15_second_boundary_is_the_same_when_the_app_measures() {
+    let server = TestServer::start_with("boundary", &["--no-stem-levels"]);
+    let rig = Rig::new();
+    let done = extract_to_end(&rig, &server, false);
+    check_boundary(&done);
+    assert_eq!(server.all_stem_gets(), 6);
 }
 
 #[test]

@@ -1,6 +1,7 @@
-//! QA acceptance tests for the "drop silent stems at import" increment of
-//! specs/gui-stem-extraction.md (requirement 8, last acceptance criterion). Owner decision:
-//! "empty" means sample peak below -50 dBFS.
+//! QA acceptance tests for the "drop empty stems at import" increments of
+//! specs/gui-stem-extraction.md (requirements 8 and 9). A stem is empty when it is audible
+//! (100 ms windows above -40 dBFS) for less than 15 s; this file also serves as the pre-peaks
+//! "old server" fake (no `stem_levels`).
 //!
 //! Same structure as `acceptance_stem_extraction.rs`: the pure modules are compiled in with
 //! `#[path]`; imports run against the REAL `calliope-stems` binary with the stub separator
@@ -57,7 +58,7 @@ use flacenc::component::BitRepr;
 use flacenc::error::Verify;
 use import_job::*;
 use repository::Repository;
-use stem_audio::{silent_peak, Level, SILENT_STEM_DBFS};
+use stem_audio::{check_stem, StemCheck, EMPTY_STEM_MIN_AUDIBLE_MS};
 use tools::Tools;
 use track_meta::{TrackEdits, TrackType};
 
@@ -536,111 +537,63 @@ fn noise(n: usize, amp: i32) -> Vec<i32> {
         .collect()
 }
 
-fn level(path: &Path) -> Level {
-    silent_peak(path).unwrap()
+fn check(path: &Path) -> StemCheck {
+    check_stem(path).unwrap()
 }
 
-// ====================================================================== the measure (threshold)
-
-#[test]
-fn the_threshold_is_minus_50_dbfs() {
-    assert_eq!(SILENT_STEM_DBFS, -50.0);
+fn is_audible(c: StemCheck) -> bool {
+    matches!(c, StemCheck::Audible { .. })
 }
 
-#[test]
-fn boundary_16_bit_just_below_and_just_above_minus_50() {
-    let d = tempfile::tempdir().unwrap();
-    // 32768 * 10^(-50/20) = 103.62: 103 is -50.05 dBFS (silent), 104 is -49.97 (audible)
-    for (v, audible) in [(0, false), (1, false), (103, false), (-103, false), (104, true), (-104, true), (32767, true), (-32768, true)] {
-        let p = d.path().join("s.flac");
-        fs::write(&p, spike16(v, 4000, 1234)).unwrap();
-        assert_eq!(level(&p) == Level::Audible, audible, "peak {v}");
-    }
-}
+// ====================================================================== the measure
 
 #[test]
-fn boundary_24_bit_at_and_around_the_exact_threshold() {
-    let d = tempfile::tempdir().unwrap();
-    // 2^23 * 10^-2.5 = 26527.1: 26527 is just below -50 (silent), 26528 is just above (audible)
-    for (v, audible) in [(26526, false), (26527, false), (26528, true), (-26528, true)] {
-        let mut s = vec![0; 4000];
-        s[17] = v;
-        let p = write_flac(d.path(), "s24.flac", &s, 1, 24, 44100);
-        assert_eq!(level(&p) == Level::Audible, audible, "24-bit peak {v}");
-    }
-}
-
-#[test]
-fn boundary_8_bit_and_32_bit_depth() {
-    let d = tempfile::tempdir().unwrap();
-    // 8-bit: limit = ceil(128 * 0.00316) = 1, so a single LSB is already -42 dBFS: audible
-    let p = write_flac(d.path(), "s8.flac", &vec![0; 4000], 1, 8, 8000);
-    assert!(matches!(level(&p), Level::Silent { peak_dbfs: None }));
-    let mut s = vec![0; 4000];
-    s[3] = 1;
-    let p = write_flac(d.path(), "s8b.flac", &s, 1, 8, 8000);
-    assert_eq!(level(&p), Level::Audible);
+fn the_minimum_is_15_seconds() {
+    assert_eq!(EMPTY_STEM_MIN_AUDIBLE_MS, 15_000);
 }
 
 #[test]
 fn multichannel_any_channel_counts() {
     let d = tempfile::tempdir().unwrap();
-    // 6 channels: the only loud sample is in the last channel, last frame
-    let frames = 5000;
+    // 6 channels, 16 s at 8 kHz: only the last channel is loud (amplitude 3000 = -20 dBFS)
+    let frames = 16 * 8000;
     let mut s = vec![0; frames * 6];
     let p = write_flac(d.path(), "six.flac", &s, 6, 16, 8000);
-    assert!(matches!(level(&p), Level::Silent { peak_dbfs: None }));
-    *s.last_mut().unwrap() = 2000;
+    assert_eq!(check(&p), StemCheck::Empty { audible_ms: 0, peak_dbfs: None });
+    for f in 0..frames {
+        s[f * 6 + 5] = if f % 2 == 0 { 3000 } else { -3000 };
+    }
     let p = write_flac(d.path(), "six.flac", &s, 6, 16, 8000);
-    assert_eq!(level(&p), Level::Audible);
-    // stereo, loud only on the left / only on the right, negative
+    assert!(is_audible(check(&p)));
+    // stereo, loud only on the left / only on the right
     for idx in [0usize, 1] {
-        let mut s = vec![0; 2 * 9000];
-        s[2 * 8999 + idx] = -300;
-        let p = write_flac(d.path(), "st.flac", &s, 2, 16, 44100);
-        assert_eq!(level(&p), Level::Audible, "channel {idx}");
+        let mut s = vec![0; 2 * 16 * 8000];
+        for f in 0..16 * 8000 {
+            s[2 * f + idx] = if f % 2 == 0 { 3000 } else { -3000 };
+        }
+        let p = write_flac(d.path(), "st.flac", &s, 2, 16, 8000);
+        assert!(is_audible(check(&p)), "channel {idx}");
     }
-    // stereo, both channels just below the threshold everywhere
-    let mut s = vec![103; 2 * 9000];
-    for (i, v) in s.iter_mut().enumerate() {
-        *v = if i % 3 == 0 { -103 } else { 103 };
-    }
-    let p = write_flac(d.path(), "st2.flac", &s, 2, 16, 44100);
-    assert!(matches!(level(&p), Level::Silent { peak_dbfs: Some(_) }));
 }
 
 #[test]
-fn a_short_loud_passage_in_a_long_quiet_stem_is_kept() {
+fn a_short_loud_passage_in_a_long_quiet_stem_is_now_dropped() {
     let d = tempfile::tempdir().unwrap();
-    // 60 s at 8 kHz of -60 dBFS noise with a 50 ms piano note (-20 dBFS) in the middle
+    // 10 minutes at 8 kHz of -60 dBFS noise with a 2 s loud passage (-20 dBFS) in the middle:
+    // 2 s audible, far below 15 s, so the stem is empty although its peak is loud
     let rate = 8000;
-    let mut s = noise(60 * rate, 33); // 33/32768 = -59.9 dBFS
-    for i in 0..(rate / 20) {
-        s[30 * rate + i] = ((i as f64 * 0.3).sin() * 3276.0) as i32;
+    let mut s = noise(600 * rate, 33);
+    for i in 0..(2 * rate) {
+        s[300 * rate + i] = ((i as f64 * 0.3).sin() * 3276.0) as i32;
     }
     let p = write_flac(d.path(), "long.flac", &s, 1, 16, rate);
-    assert_eq!(level(&p), Level::Audible);
-    // the same stem without the note is silent, and the logged peak is about -60
-    let quiet = noise(60 * rate, 33);
-    let p = write_flac(d.path(), "quiet.flac", &quiet, 1, 16, rate);
-    match level(&p) {
-        Level::Silent { peak_dbfs: Some(db) } => assert!(db < -50.0 && db > -62.0, "{db}"),
+    match check(&p) {
+        StemCheck::Empty { audible_ms, peak_dbfs: Some(db) } => {
+            assert!(audible_ms > 0 && audible_ms <= 2000, "{audible_ms}");
+            assert!(db > -21.0, "{db}");
+        }
         other => panic!("{other:?}"),
     }
-}
-
-#[test]
-fn demucs_style_leakage_at_minus_51_is_dropped_and_at_minus_49_kept() {
-    let d = tempfile::tempdir().unwrap();
-    // amp 93 = -50.9 dBFS ; amp 105 = -49.9 dBFS ; force the extreme value to occur
-    let mut a = noise(2 * 20000, 93);
-    a[777] = 93;
-    let p = write_flac(d.path(), "m51.flac", &a, 2, 16, 44100);
-    assert!(matches!(level(&p), Level::Silent { peak_dbfs: Some(_) }));
-    let mut b = noise(2 * 20000, 93);
-    b[19999 * 2] = -105;
-    let p = write_flac(d.path(), "m49.flac", &b, 2, 16, 44100);
-    assert_eq!(level(&p), Level::Audible);
 }
 
 #[test]
@@ -655,14 +608,14 @@ fn undecodable_input_is_an_error_not_silence() {
     for (n, b) in cases {
         let p = d.path().join(n);
         fs::write(&p, b).unwrap();
-        assert!(silent_peak(&p).is_err(), "{n} should be an error");
+        assert!(check_stem(&p).is_err(), "{n} should be an error");
     }
     // truncated real FLAC whose audible content is cut off
     let full = flac_bytes(&vec![0; 40000], 1, 16, 8000);
     let p = d.path().join("trunc.flac");
     fs::write(&p, &full[..full.len() / 2]).unwrap();
-    assert!(silent_peak(&p).is_err(), "truncated stem must be Err (kept), never Silent");
-    assert!(silent_peak(&d.path().join("missing.flac")).is_err());
+    assert!(check_stem(&p).is_err(), "truncated stem must be Err (kept), never Empty");
+    assert!(check_stem(&d.path().join("missing.flac")).is_err());
 }
 
 #[test]
@@ -677,9 +630,9 @@ fn a_long_silent_stem_is_checked_in_reasonable_time() {
         .unwrap();
     assert!(st.success());
     let t = Instant::now();
-    assert!(matches!(level(&p), Level::Silent { peak_dbfs: None }));
+    assert_eq!(check(&p), StemCheck::Empty { audible_ms: 0, peak_dbfs: None });
     let el = t.elapsed();
-    eprintln!("QA: silent_peak of 15 min stereo 44.1k silence took {el:?}");
+    eprintln!("QA: check_stem of 15 min stereo 44.1k silence took {el:?}");
     assert!(el < Duration::from_secs(10), "{el:?}");
 }
 
@@ -779,9 +732,8 @@ fn sparse_import_keeps_only_audible_stems_in_server_order() {
         done.dropped.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
         ["piano", "other"]
     );
-    assert_eq!(done.dropped[0].peak_dbfs, None, "digital silence is -inf / None");
-    let p = done.dropped[1].peak_dbfs.expect("other has a finite peak");
-    assert!(p > -61.0 && p < -59.0, "{p}");
+    assert_eq!(done.dropped[0].audible_ms, 0, "digital silence");
+    assert_eq!(done.dropped[1].audible_ms, 9500, "short loud bursts, 9.5 s audible");
     // the snapshot a re-attaching UI gets carries the same list
     assert_eq!(rig.state.snapshot().unwrap().dropped, done.dropped);
     // the event too
@@ -803,10 +755,10 @@ fn sparse_import_keeps_only_audible_stems_in_server_order() {
     assert_eq!(j["type"], "stem");
     assert!(j["original"].is_null() || j.get("original").is_none());
     assert!(!rig.root.join("tracks").join(&t.id).join("original.flac").exists());
-    // the quiet-but-above-threshold guitar (-45 dBFS) is byte-identical to the served stem
+    // the guitar (eight 2 s phrases, 16 s audible) is byte-identical to the served stem
     assert_eq!(
         fs::read(rig.root.join("tracks").join(&t.id).join("stems/guitar.flac")).unwrap(),
-        fs::read(fixture("stems-quiet/minus45.flac")).unwrap()
+        fs::read(fixture("stems-activity/phrases.flac")).unwrap()
     );
     assert_clean_after_save(&rig);
     // the library lists the track and no problems
@@ -852,9 +804,8 @@ fn saved_event_and_snapshot_serialise_dropped_for_the_ui() {
     let rig = Rig::new(false);
     let done = import_with(&rig, &server.url, false);
     let j = serde_json::to_value(&done).unwrap();
-    assert_eq!(j["dropped"][0], serde_json::json!({"name": "piano", "peak_dbfs": null}));
-    assert_eq!(j["dropped"][1]["name"], "other");
-    assert!(j["dropped"][1]["peak_dbfs"].as_f64().unwrap() < -50.0);
+    assert_eq!(j["dropped"][0], serde_json::json!({"name": "piano", "audible_ms": 0}));
+    assert_eq!(j["dropped"][1], serde_json::json!({"name": "other", "audible_ms": 9500}));
     let ev = rig.events.lock().unwrap().iter().rev().find(|e| matches!(e, ImportEvent::Saved { .. })).cloned().unwrap();
     let ej = serde_json::to_value(&ev).unwrap();
     assert_eq!(ej["phase"], "saved");
@@ -874,7 +825,7 @@ fn all_silent_import_fails_cleanly_with_the_exact_message() {
         let s = rig.wait("failed", |s| s.phase == Phase::Failed && !rig.state.is_running());
         let e = s.error.clone().expect("an error");
         assert_eq!(e.stage, Stage::Server);
-        assert_eq!(e.message, "Every stem is silent (below -50 dBFS), so no track was saved");
+        assert_eq!(e.message, "Every stem is empty (less than 15 s above -40 dBFS), so no track was saved");
         assert_eq!(e.http_status, None);
         assert!(s.track.is_none());
         assert!(s.dropped.is_empty() || s.dropped.len() == 6, "{:?}", s.dropped);
@@ -919,18 +870,15 @@ fn after_an_all_silent_failure_the_user_can_extract_again_and_succeed() {
 fn boundary_and_undecodable_stems_through_a_whole_import() {
     let mut cfg = AiConfig::good();
     cfg.stems = ["vocals", "drums", "bass", "guitar", "piano", "other"].iter().map(|s| s.to_string()).collect();
-    // 10 s with a single 50 ms note somewhere in the middle (guitar)
-    let mut long = vec![0i32; 80_000];
-    for i in 0..400 {
-        long[41_000 + i] = ((i as f64 * 0.4).sin() * 3000.0) as i32;
-    }
-    let guitar = flac_bytes(&long, 1, 16, 8000);
     let vocals = fs::read(fixture("stems/vocals.flac")).unwrap();
+    let d14900 = fs::read(fixture("stems-activity/audible-14900ms.flac")).unwrap();
+    let d15000 = fs::read(fixture("stems-activity/audible-15000ms.flac")).unwrap();
+    let phrases = fs::read(fixture("stems-activity/phrases.flac")).unwrap();
     cfg.body = Arc::new(move |n| match n {
         "vocals" => vocals.clone(),
-        "drums" => spike16(103, 8000, 100),  // -50.05: dropped
-        "bass" => spike16(-104, 8000, 100),  // -49.97: kept
-        "guitar" => guitar.clone(),
+        "drums" => d14900.clone(),           // 14.9 s: dropped
+        "bass" => d15000.clone(),            // 15.0 s: kept
+        "guitar" => phrases.clone(),         // 16 s in pieces: kept
         "piano" => spike16(0, 8000, 0),      // zeros: dropped
         _ => b"fLaC-generic-body".to_vec(),   // undecodable: kept
     });
@@ -941,8 +889,8 @@ fn boundary_and_undecodable_stems_through_a_whole_import() {
     let t = done.track.unwrap();
     assert_eq!(kept_names(&t), ["vocals", "bass", "guitar", "other"]);
     assert_eq!(done.dropped.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["drums", "piano"]);
-    let db = done.dropped[0].peak_dbfs.unwrap();
-    assert!((db + 50.05).abs() < 0.02, "{db}");
+    assert_eq!(done.dropped[0].audible_ms, 14_900);
+    assert_eq!(done.dropped[1].audible_ms, 0);
     assert_eq!(stem_files(&rig, &t.id), ["bass.flac", "guitar.flac", "other.flac", "vocals.flac"]);
     // the undecodable body was stored untouched
     assert_eq!(fs::read(rig.root.join("tracks").join(&t.id).join("stems/other.flac")).unwrap(), b"fLaC-generic-body");

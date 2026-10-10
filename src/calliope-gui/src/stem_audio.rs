@@ -9,7 +9,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use claxon::FlacReader;
-use calliope_lib::flac_peak;
+use calliope_lib::flac_level;
+use calliope_lib::stems_api::StemLevel;
 
 /// Cap on decoded audio per track: sum(frames x channels x 2 bytes).
 pub const MAX_DECODED_BYTES: u64 = 3 * 512 * 1024 * 1024; // 1.5 GiB
@@ -163,38 +164,48 @@ pub fn decode_i16(
     Ok(StemPcm { channels, frames: done, samples })
 }
 
-/// A stem whose peak is below this level (dBFS) counts as silent and is dropped at import.
-/// This is the only place the number appears.
-pub const SILENT_STEM_DBFS: f64 = -50.0;
+/// A stem audible (100 ms windows above `flac_level::AUDIBLE_LEVEL_DBFS`) for less than this is
+/// empty and is dropped at import. The only place the number appears.
+pub const EMPTY_STEM_MIN_AUDIBLE_MS: u64 = 15_000;
 
-/// Result of [`silent_peak`].
+/// The verdict on one stem.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Level {
-    /// Some sample reaches `SILENT_STEM_DBFS` or more.
-    Audible,
-    /// Every sample of every channel is below `SILENT_STEM_DBFS`. `peak_dbfs` is the sample
-    /// peak, `None` for digital silence (-inf). For logging only.
-    Silent { peak_dbfs: Option<f64> },
+pub enum StemCheck {
+    /// audible_ms >= the minimum; `audible_ms` is a lower bound when the scan stopped early.
+    Audible { audible_ms: u64 },
+    /// audible_ms < the minimum (exact). `peak_dbfs` is for logs only (None = digital silence;
+    /// always None for a server report).
+    Empty { audible_ms: u64, peak_dbfs: Option<f64> },
 }
 
-/// Measures the sample peak over all channels of a stem (any channel count, 4..=32 bits) and
-/// stops at the first sample at or above `SILENT_STEM_DBFS`. The decision uses integers; the
-/// scan is shared with the server (`calliope_lib::flac_peak`).
-pub fn silent_peak(path: &Path) -> Result<Level, String> {
-    let scan = flac_peak::scan(path, Some(SILENT_STEM_DBFS))?;
-    if !scan.complete {
-        return Ok(Level::Audible);
-    }
-    Ok(level_of_peak(scan.peak, scan.bits))
+/// True when `audible_ms` is below the minimum.
+pub fn is_empty(audible_ms: u64) -> bool {
+    audible_ms < EMPTY_STEM_MIN_AUDIBLE_MS
 }
 
-/// The same decision for a peak reported by the server (integer sample peak, bits per sample).
-pub fn level_of_peak(peak: u64, bits: u32) -> Level {
-    if flac_peak::is_below(peak, bits, SILENT_STEM_DBFS) {
-        Level::Silent { peak_dbfs: flac_peak::to_dbfs(peak, bits) }
+/// Measures a stem with the scan shared with the server, stopping as soon as it has proven the
+/// stem audible for the minimum.
+pub fn check_stem(path: &Path) -> Result<StemCheck, String> {
+    let a = flac_level::scan(path, flac_level::AUDIBLE_LEVEL_DBFS, Some(EMPTY_STEM_MIN_AUDIBLE_MS))?;
+    let audible_ms = a.audible_ms();
+    if is_empty(audible_ms) {
+        Ok(StemCheck::Empty { audible_ms, peak_dbfs: flac_level::to_dbfs(a.peak, a.bits) })
     } else {
-        Level::Audible
+        Ok(StemCheck::Audible { audible_ms })
     }
+}
+
+/// The decision for a server report; `None` when it was measured at another level or window
+/// (unusable).
+pub fn check_reported(level: &StemLevel) -> Option<StemCheck> {
+    if level.level_dbfs != flac_level::AUDIBLE_LEVEL_DBFS || level.window_ms != flac_level::WINDOW_MS {
+        return None;
+    }
+    Some(if is_empty(level.audible_ms) {
+        StemCheck::Empty { audible_ms: level.audible_ms, peak_dbfs: None }
+    } else {
+        StemCheck::Audible { audible_ms: level.audible_ms }
+    })
 }
 
 /// Streaming full-precision reader for the render: f32 stereo, mono duplicated, silence
@@ -490,94 +501,63 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/import").join(name)
     }
 
-    fn level_of(samples: &[i32], channels: usize, bits: usize) -> Level {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("l.flac");
-        write_flac(&p, samples, channels, bits, 8000);
-        silent_peak(&p).unwrap()
-    }
-
-    /// 40 mono frames of zeros with `v` at frame `at`.
-    fn spike(v: i32, at: usize) -> Vec<i32> {
-        let mut s = vec![0; 40];
-        s[at] = v;
-        s
+    fn lvl(audible_ms: u64, level_dbfs: i32, window_ms: u32) -> StemLevel {
+        StemLevel { name: "x".into(), audible_ms, level_dbfs, window_ms, peak_dbfs: None }
     }
 
     #[test]
-    fn level_of_peak_boundaries() {
-        match level_of_peak(103, 16) {
-            Level::Silent { peak_dbfs: Some(d) } => assert!((d + 50.05).abs() < 0.01, "{d}"),
+    fn check_stem_activity_fixtures() {
+        match check_stem(&fixture("stems-activity/bursts.flac")).unwrap() {
+            StemCheck::Empty { audible_ms: 9500, peak_dbfs: Some(p) } => assert!(p > -9.0, "{p}"),
             other => panic!("{other:?}"),
         }
-        assert_eq!(level_of_peak(104, 16), Level::Audible);
-        assert_eq!(level_of_peak(0, 24), Level::Silent { peak_dbfs: None });
+        assert!(matches!(
+            check_stem(&fixture("stems-activity/phrases.flac")).unwrap(),
+            StemCheck::Audible { .. }
+        ));
+        assert!(matches!(
+            check_stem(&fixture("stems-activity/audible-14900ms.flac")).unwrap(),
+            StemCheck::Empty { audible_ms: 14_900, .. }
+        ));
+        assert!(matches!(
+            check_stem(&fixture("stems-activity/audible-15000ms.flac")).unwrap(),
+            StemCheck::Audible { audible_ms: 15_000 }
+        ));
+        assert_eq!(
+            check_stem(&fixture("stems-quiet/silent.flac")).unwrap(),
+            StemCheck::Empty { audible_ms: 0, peak_dbfs: None }
+        );
     }
 
     #[test]
-    fn silent_peak_all_zero_is_digital_silence() {
-        assert_eq!(level_of(&vec![0; 2 * 40], 2, 16), Level::Silent { peak_dbfs: None });
-    }
-
-    #[test]
-    fn silent_peak_16_bit_boundary() {
-        match level_of(&spike(103, 5), 1, 16) {
-            Level::Silent { peak_dbfs: Some(db) } => assert!((db + 50.05).abs() < 0.01, "{db}"),
-            other => panic!("{other:?}"),
+    fn check_stem_committed_stems_are_kept_and_quiet_ones_empty() {
+        for name in ["bass", "drums", "guitar", "other", "piano", "vocals"] {
+            let c = check_stem(&fixture(&format!("stems/{name}.flac"))).unwrap();
+            assert!(matches!(c, StemCheck::Audible { .. }), "{name}: {c:?}");
         }
-        assert_eq!(level_of(&spike(104, 5), 1, 16), Level::Audible);
-        assert_eq!(level_of(&spike(-104, 5), 1, 16), Level::Audible);
-        assert!(matches!(level_of(&spike(-103, 5), 1, 16), Level::Silent { .. }));
-        assert_eq!(level_of(&spike(-32768, 5), 1, 16), Level::Audible);
+        for name in ["silent", "minus60", "minus45"] {
+            let c = check_stem(&fixture(&format!("stems-quiet/{name}.flac"))).unwrap();
+            assert!(matches!(c, StemCheck::Empty { audible_ms: 0, .. }), "{name}: {c:?}");
+        }
     }
 
     #[test]
-    fn silent_peak_24_bit_boundary() {
-        // 10^(-2.5) * 2^23 = 26527.1, so 26527 is -50.00003 dBFS (silent) and 26528 is audible.
-        assert!(matches!(level_of(&spike(26527, 3), 1, 24), Level::Silent { .. }));
-        assert_eq!(level_of(&spike(26528, 3), 1, 24), Level::Audible);
+    fn check_reported_decides_and_ignores_other_measures() {
+        assert_eq!(
+            check_reported(&lvl(14_900, -40, 100)),
+            Some(StemCheck::Empty { audible_ms: 14_900, peak_dbfs: None })
+        );
+        assert_eq!(check_reported(&lvl(15_000, -40, 100)), Some(StemCheck::Audible { audible_ms: 15_000 }));
+        assert_eq!(check_reported(&lvl(0, -50, 100)), None);
+        assert_eq!(check_reported(&lvl(0, -40, 50)), None);
     }
 
     #[test]
-    fn silent_peak_loud_sample_only_in_right_channel_of_last_block() {
-        // 10000 frames > one block; the only loud sample is the last right-channel sample.
-        let mut s = vec![0; 2 * 10000];
-        assert!(matches!(level_of(&s, 2, 16), Level::Silent { peak_dbfs: None }));
-        *s.last_mut().unwrap() = 5000;
-        assert_eq!(level_of(&s, 2, 16), Level::Audible);
-    }
-
-    #[test]
-    fn silent_peak_single_spike_in_long_silence() {
-        // 1 sample at -49.9 dBFS (32768 * 10^(-49.9/20) = 104.8 -> 105) in 10 s at 8 kHz.
-        let mut s = vec![0; 80_000];
-        s[41_234] = 105;
-        assert_eq!(level_of(&s, 1, 16), Level::Audible);
-    }
-
-    #[test]
-    fn silent_peak_rejects_non_flac() {
+    fn check_stem_rejects_non_flac() {
         let dir = tempfile::tempdir().unwrap();
         let bad = dir.path().join("bad.flac");
         std::fs::write(&bad, b"this is not a flac file at all").unwrap();
-        assert!(silent_peak(&bad).unwrap_err().contains("bad.flac"));
-        assert!(silent_peak(&dir.path().join("gone.flac")).is_err());
-    }
-
-    #[test]
-    fn silent_peak_committed_fixtures() {
-        assert_eq!(
-            silent_peak(&fixture("stems-quiet/silent.flac")).unwrap(),
-            Level::Silent { peak_dbfs: None }
-        );
-        match silent_peak(&fixture("stems-quiet/minus60.flac")).unwrap() {
-            Level::Silent { peak_dbfs: Some(db) } => assert!(db > -61.0 && db < -59.0, "{db}"),
-            other => panic!("{other:?}"),
-        }
-        assert_eq!(silent_peak(&fixture("stems-quiet/minus45.flac")).unwrap(), Level::Audible);
-        for name in ["bass", "drums", "guitar", "other", "piano", "vocals"] {
-            let p = fixture(&format!("stems/{name}.flac"));
-            assert_eq!(silent_peak(&p).unwrap(), Level::Audible, "{name}");
-        }
+        assert!(check_stem(&bad).unwrap_err().contains("bad.flac"));
+        assert!(check_stem(&dir.path().join("gone.flac")).is_err());
     }
 }
