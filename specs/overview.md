@@ -146,6 +146,7 @@ tester for the features.
 - [ ] `gui-tablatures.md`: associate tablature to backing track
 - [ ] `gui-manipulate-backing-track.md`: associate tempo and MIDI commands into the backing track
 - [ ] `gui-play-backing-track.md`: start playing a backing track
+- [ ] `stems-empty-detection.md`: better detection of the empty resulting stems
 
 ## Glossary
 <!-- Domain words and names, so all agents use them consistently. -->
