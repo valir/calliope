@@ -13,3 +13,5 @@ task 10 | GUI e2e: import_drops_empty_stems (server log line), import_boundary_s
 reviewer | APPROVED (0 blockers, 0 majors; minors: no 32-bit full-scale lib test, no cancel inside one stem's scan, old 8/24-bit acceptance boundaries not ported, tracks < 15 s are all-empty by req 9) | done
 tester | 22 acceptance checks PASS (independent ffmpeg oracle), no production defects; 4 flakes traced to test-harness timing (fast stub skips Working; snapshot before terminal event; 503 before aborted uploads are read) | done
 fix round 1 | Test-harness races (fast stub skips Working; wait for terminal event; retry 503 after aborted uploads); 8/24-bit full-scale test, 32-bit arithmetic test; plan text dropped=piano,other | implementer | done (20/20 under load each; headless 2476 passed)
+reviewer (fix round) | APPROVED (1 minor: muddled 8-bit test comment) | done
+report | specs/gui-stem-extraction-active-time.report.md | done
