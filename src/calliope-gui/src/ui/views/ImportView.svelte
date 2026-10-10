@@ -47,7 +47,7 @@
       <section class="flex max-w-xl flex-col gap-4" aria-label="Import finished">
         <p role="status" class="text-lg">Saved {track.title} with {track.stems.length} stems.</p>
         {#if dropped.length > 0}
-          <p class="text-lg">Dropped silent stems: {dropped.map((s) => s.name).join(', ')}.</p>
+          <p class="text-lg">Dropped empty stems: {dropped.map((s) => s.name).join(', ')}.</p>
         {/if}
         <div class="flex gap-2">
           <Button onclick={showInLibrary}>Show in Library</Button>

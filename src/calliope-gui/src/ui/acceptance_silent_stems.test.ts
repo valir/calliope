@@ -1,5 +1,5 @@
-// QA acceptance tests for the "drop silent stems" increment of specs/gui-stem-extraction.md
-// (frontend side): the user is told what was dropped; an all-silent import is a clean failure.
+// QA acceptance tests for the "drop empty stems" increment of specs/gui-stem-extraction.md
+// (frontend side): the user is told what was dropped; an all-empty import is a clean failure.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
@@ -66,12 +66,12 @@ async function toExtract(): Promise<void> {
   await fireEvent.click(screen.getByRole('button', { name: 'Extract' }));
 }
 
-describe('silent stems: what the user sees', () => {
+describe('empty stems: what the user sees', () => {
   it('a 4-stem track with one dropped stem says 4 stems and names the dropped one', async () => {
     await toExtract();
-    await emit({ phase: 'saved', track: trackWith(['vocals', 'drums', 'bass', 'guitar', 'other']), dropped: [{ name: 'piano', peak_dbfs: null }] });
+    await emit({ phase: 'saved', track: trackWith(['vocals', 'drums', 'bass', 'guitar', 'other']), dropped: [{ name: 'piano', audible_ms: 9500 }] });
     expect(screen.getByText('Saved Slow Burn with 5 stems.')).toBeTruthy();
-    expect(screen.getByText('Dropped silent stems: piano.')).toBeTruthy();
+    expect(screen.getByText('Dropped empty stems: piano.')).toBeTruthy();
     expect(logs().some((m) => m.includes('stems=5') && m.endsWith('dropped=piano'))).toBe(true);
   });
 
@@ -79,18 +79,18 @@ describe('silent stems: what the user sees', () => {
     await toExtract();
     await emit({
       phase: 'saved', track: trackWith(['vocals', 'drums', 'bass', 'guitar']),
-      dropped: [{ name: 'piano', peak_dbfs: -60 }, { name: 'other', peak_dbfs: -70.2 }],
+      dropped: [{ name: 'piano', audible_ms: 9500 }, { name: 'other', audible_ms: 9500 }],
     });
-    expect(screen.getByText('Dropped silent stems: piano, other.')).toBeTruthy();
+    expect(screen.getByText('Dropped empty stems: piano, other.')).toBeTruthy();
   });
 
-  it('an all-silent import fails with the message, returns to the edit pane and shows no Saved page', async () => {
+  it('an all-empty import fails with the message, returns to the edit pane and shows no Saved page', async () => {
     await toExtract();
-    const msg = 'Every stem is silent (below -50 dBFS), so no track was saved';
+    const msg = 'Every stem is empty (less than 15 s above -40 dBFS), so no track was saved';
     await emit({ phase: 'failed', stage: 'server', message: msg, http_status: null });
     expect(screen.getByRole('alert').textContent).toContain(msg);
     expect(screen.queryByText(/Saved Slow Burn/)).toBeNull();
-    expect(screen.queryByText(/Dropped silent stems/)).toBeNull();
+    expect(screen.queryByText(/Dropped empty stems/)).toBeNull();
     expect(screen.getByRole('textbox', { name: 'Title' })).toBeTruthy();
   });
 });

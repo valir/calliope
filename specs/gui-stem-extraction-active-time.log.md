@@ -7,3 +7,4 @@ task 4 | Protocol: StemLevel alongside stem_peaks; client validates levels/peaks
 task 5 | Server measures audible time; --no-stem-levels | implementer | done
 task 6 | calliope-stems --measure FILE... | implementer | done (matches the orchestrator's independent numbers on both real tracks exactly; flake once: import_job cancel_during_extraction_goes_back_to_the_edit_pane, 6/6 on rerun)
 task 7 | The app judges by audible time (stem_levels, check_stem/check_reported; sparse stub = silent/bursts/phrases; peak-rule tests ported or deleted; acceptance_server_peaks.rs -> acceptance_server_levels.rs) | implementer | done
+task 8 | Frontend wording: Dropped empty stems, DroppedStem {name, audible_ms} | implementer (local model wrote a summary instead of edits) | done (flake once under parallel load: calliope-stems aborted_uploads_release_their_queue_slot_and_folder, passed on rerun)

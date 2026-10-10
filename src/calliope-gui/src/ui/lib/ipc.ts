@@ -105,8 +105,8 @@ export type JobPhase =
 export type JobStage = 'download' | 'prepare' | 'server' | 'save';
 export interface JobSource { kind: 'url' | 'audio-file' | 'video-file'; label: string }
 export interface JobError { stage: JobStage; message: string; http_status: number | null }
-/** A stem the server returned but the import dropped as silent; `peak_dbfs` null = digital silence. */
-export interface DroppedStem { name: string; peak_dbfs: number | null }
+/** A stem the server returned but the import dropped as empty (audible < 15 s); `audible_ms` is its audible time. */
+export interface DroppedStem { name: string; audible_ms: number }
 export interface JobSnapshot {
   job: string;
   source: JobSource;
