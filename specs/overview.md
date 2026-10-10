@@ -145,10 +145,10 @@ tester for the features.
 - [x] `gui-stem-extraction-clear-empty`: drop empty stems at import (increment, requirement 8 of `gui-stem-extraction.md`)
 - [x] `gui-stem-extraction-server-peaks`: the stems server reports stem levels so empty stems aren't downloaded (increment, requirement 9)
 - [x] `gui-stem-extraction-active-time`: empty stems are judged by audible time, not peak (increment, rewritten requirement 9)
+- [ ] `gui-play-backing-track.md`: start playing a backing track
 - [ ] `gui-existing-track-import.md`: import an existing backing track from various sources
 - [ ] `gui-tablatures.md`: associate tablature to backing track
 - [ ] `gui-manipulate-backing-track.md`: associate tempo and MIDI commands into the backing track
-- [ ] `gui-play-backing-track.md`: start playing a backing track
 - [ ] `stems-empty-detection.md`: better detection of the empty resulting stems
 
 ## Glossary
