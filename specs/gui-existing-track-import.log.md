@@ -8,3 +8,4 @@ task 4 | The path row in the source page (Browse only fills the box; Extract/Ent
 task 5 | Headless acceptance: typed-path audio/video, no-audio, two audio streams, rejected paths | implementer | done
 task 6 | GUI e2e: browse helper (Browse fills, Return imports), 4 typed-path tests, screenshots reviewed | implementer | done
 task 7 | User docs (README import step 1) | implementer (local model pasted the instructions verbatim; reverted) + orchestrator wording fix | done
+reviewer | APPROVED (0 blockers, 0 majors; minors: control chars not re-checked after file:// percent-decoding, file:// query/fragment silently dropped, TOCTOU check-then-open undocumented, empty-box message duplicated in TS) | done
