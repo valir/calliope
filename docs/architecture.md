@@ -25,6 +25,7 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (track metadata) | Laptop | `track.json` schema (version 2: track type, stems), validation, v1→v2 migration in memory, ids (UUIDv7), RFC 3339 timestamps | Rust + serde, `uuid` | `src/track_meta.rs` |
 | calliope-gui (track repository) | Laptop | Repository layout, scan, save transaction, delete-to-trash, export, staged (atomic) creation of new tracks | Rust, pure (no Tauri) | `src/repository.rs` (+ `src/repository_tests.rs`) |
 | calliope-gui (file dialogs) | Laptop | Native open/folder/save dialogs opened from Rust (tablatures, repository root, exports, import audio/video); pick tokens; scripted picker for e2e (`e2e-hooks` feature) | Rust + `tauri-plugin-dialog` | `src/picker.rs` |
+| calliope-gui (local source paths) | Laptop | Typed/pasted local-file paths for the import (trim, quotes, `~/`, `file://`), the file checks with exact messages, and the audio/video extension lists | Rust, pure (std + `url`) | `src/local_source.rs` |
 | calliope-gui (import temp space) | Laptop | `<root>/import-tmp/` job folders, resume lookup, safe cleanup | Rust, pure | `src/import_tmp.rs` |
 | calliope-gui (external tools) | Laptop | Finds `yt-dlp`/`ffmpeg`/`ffprobe` on `PATH`, version checks; runs them with `calliope_lib::process` | Rust | `src/tools.rs` |
 | calliope-gui (media) | Laptop | ffprobe JSON → audio check/duration/tags → `TrackEdits`; ffmpeg → FLAC 44.1 kHz stereo | Rust, pure | `src/media.rs` |
@@ -87,7 +88,8 @@ the GUI crate, `src/calliope-gui/`.
     `export_track(id) -> Option<String>`, `export_tablature(id, name) -> Option<String>`;
     edge-AI and import (gui-stem-extraction plan §2.10): `set_edge_ai_url(url)`, `set_keep_original(keep)`,
     `check_edge_ai()`, `check_tools()`, `prepare_url_import(url)`,
-    `start_url_import(url, resume, events)`, `import_file(kind, events)`,
+    `start_url_import(url, resume, events)`, `pick_import_file(kind) -> Option<PickedFile{path, name}>`,
+    `import_path(kind, path, events)` (gui-existing-track-import plan §2.4),
     `start_stem_extraction(job, edits)`, `cancel_import(job)`, `discard_import(job)`,
     `get_import_job()`, `watch_import(events)`; editor (gui-backing-track-editor plan §2.7):
     `open_editor(id, events)`, `close_editor()`, `get_editor()`, `watch_editor(events)`, `editor_play(id)`,
@@ -108,7 +110,12 @@ the GUI crate, `src/calliope-gui/`.
     `RunEvent::Exit` cancels it (2 s cap).
   - **The frontend never sends file-system paths.** Files and folders the user chooses come
     from native dialogs opened by Rust, which returns an opaque token (plus the bare file name).
-    Commands that consume a choice take the token. Track ids and file names sent by the
+    Commands that consume a choice take the token. **One exception**: the import's local-file
+    source is a path box (typed, pasted or filled by Browse via `pick_import_file`, which returns
+    the full path for display), and `import_path(kind, path, events)` takes that text. It only
+    reads: `local_source::resolve` requires an absolute path to a regular, readable file with an
+    audio/video extension, and the file then goes through ffprobe/ffmpeg exactly as before. No
+    other command accepts a path. Track ids and file names sent by the
     frontend are validated and resolved strictly inside `<root>/tracks/<id>/`.
   - The frontend never keeps time. Audio/MIDI/sync logic stays in Rust; the frontend displays
     state and sends commands. Audio is played by Rust (`cpal`), never by the webview (no Web
@@ -120,7 +127,7 @@ the GUI crate, `src/calliope-gui/`.
   `library root=<p> status=<s> tracks=<n> problems=<m>`, `select id=<id>`, `mode=edit|view id=<id>`,
   `saved id=<id> tablatures=<n> warnings=<w>`, `deleted id=<id>`, `exported id=<id>`,
   `tab-staged <add|update|remove> name=<n>`, `repository root=<p> default=<bool>`.
-  Import: `import mode=stem-extraction`, `import source=url|audio|video`,
+  Import: `import mode=stem-extraction`, `import source=url|audio|video`, `import path-picked kind=<audio|video>`,
   `import phase=<phase> job=<job>`, `import error stage=<s> message=<m>`,
   `import saved id=<id> stems=<n> original=<b> dropped=<a,b|none>`.
   Editor: `editor active id=<id> stems=<n>`, `editor inactive id=<id|none>`,
@@ -128,7 +135,8 @@ the GUI crate, `src/calliope-gui/`.
   `editor seek position=<ms>`, `editor nudge delta=<ms>`,
   `editor stem name=<n> gain=<db|off> unmuted=<b>`, `editor saved id=<id> file=<f> clipped=<n>`.
   Rust lines (prefix `calliope: `): `dialog kind=<add-tablature|update-tablature|repository-root|export-track|export-tablature|import-audio|import-video> result=<picked|cancelled>`,
-  `import job=<job> phase=<phase>`, `tool <name> found=<bool> version=<v>`,
+  `import job=<job> phase=<phase>`, `import path kind=<audio|video> result=<accepted|rejected>[ reason=<empty|invalid|relative|missing|folder|not-file|unreadable|extension>]`,
+  `tool <name> found=<bool> version=<v>`,
   `audio backend=<cpal|null|capture> rate=<hz>`, `editor open id=<id> stems=<n> duration_ms=<ms>`,
   `editor transport playing=<b> audible=<b> position_ms=<ms> solo=<n|none> clipping=<b>` (changes only),
   `editor saved id=<id> file=<f> bits=<b> clipped=<n>`.
@@ -268,12 +276,13 @@ src/                      ALL source (owner requirement), one folder per crate
     icons/                app icons
     README.md             build, run, test and usage of the GUI
     src/*.rs              Rust modules (main, cli, version, gui, ipc, settings, fsutil,
-                          track_meta, repository (+ repository_tests), picker, import_tmp,
+                          track_meta, repository (+ repository_tests), picker, local_source, import_tmp,
                           tools, media, download, import_job, stem_audio, mixer, transport,
                           audio_out, editor (+ editor_tests), backing_render, ...)
     src/ui/               frontend: index.html, main.ts, app.css, App.svelte,
                           components/ (library/ = tree, pane, tablature panel;
-                          import/ = source page, edit pane, extraction progress;
+                          import/ = source page (URL box, or local path box + Browse +
+                          Extract), edit pane, extraction progress;
                           editor/ = EditorPane, StemLane, MixLane, TimeField;
                           library/TrackBrowser.svelte = tree column shared by Library and Editor;
                           TrackFields.svelte shared by Library and Import),
@@ -419,6 +428,10 @@ the server out of the GUI.
   `.part` files; logs its argv to `$FAKE_YTDLP_LOG`). Rust tests pass its path explicitly;
   GUI tests put `tests/support/bin` first on `PATH`.
 - ffmpeg/ffprobe are the real local tools (no network) on self-generated fixtures.
+- **Typed local paths**: `local_source` is tested on temp files (FIFO, dangling symlink,
+  `chmod 000`, folders, wrong extensions) with an injected home (no test reads the real `~`);
+  `tests/acceptance_existing_track_import.rs` drives typed paths (plain, quoted, `file://`) through
+  the real import with the stub server; GUI tests type absolute paths under `target/` only.
 - **No test reaches the internet or the LAN.** Import GUI tests run the app under
   `unshare -rn` with only loopback up, and `calliope-stems` (stub separator) inside the same
   namespace on 127.0.0.1:8765; tests use `127.0.0.1` and `.example` URLs only. Agents never
@@ -859,3 +872,21 @@ histogram in the report (rejected as premature; the roadmap item `stems-empty-de
 measure itself), using a server-peaks build's `stem_peaks` as a shortcut (peak < -40 dBFS implies empty;
 rejected: extra code path for a never-released server), keeping a trailing partial window (rejected:
 needs its own limit and changes at most 99 ms).
+
+### 2026-10-10: Local-file import takes a typed path; Browse fills the box   (feature: gui-existing-track-import)
+The spec asks for a text box for the path next to Browse for local audio and video files. The
+import itself is unchanged: local files go through stem extraction exactly like URLs (owner
+clarification); there is no as-is import. Choice: Browse (`pick_import_file`) only fills the box
+with the full path, and Extract/Enter starts `import_path(kind, path)`. The box always shows what
+will be imported and can be corrected, the usual "path field + Browse" pattern. This is a narrow
+exception to "the frontend never sends paths" (2026-10-05): one read-only command, validated in
+pure `local_source` (absolute after `~/`/quotes/`file://`, regular file, readable, audio/video
+extension; no canonicalisation, the path reaches ffmpeg as `file:<abs>` like a dialog path).
+Risk accepted: a compromised webview could at most have a media file's audio uploaded to the
+owner's own edge-AI server, which Browse already allows. Every other command keeps tokens.
+`import_file` (dialog then immediate start) was removed rather than kept beside the new
+commands, so there is one way to start a local import. Alternatives: Browse keeps starting at once
+and the box is a second way in (rejected: two behaviours on one row, and the box would not show
+the browsed file), and a token for browsed files plus a path for typed ones (rejected: two code
+paths for the same thing, with no security gain once typed paths are accepted). A video's first
+audio stream is used (`-map 0:a:0`, unchanged).
