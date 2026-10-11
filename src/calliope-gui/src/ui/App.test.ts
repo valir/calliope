@@ -57,7 +57,9 @@ describe('App shell', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Playlists' }));
     expect(screen.getByTestId('placeholder').textContent).toContain('no feature spec');
     await fireEvent.click(screen.getByRole('button', { name: 'Editor' }));
-    expect(screen.getAllByTestId('placeholder')[0].textContent).toContain('gui-manipulate-backing-track');
+    const placeholders = screen.getAllByTestId('placeholder').map((p) => p.textContent).join(' ');
+    expect(placeholders).toContain('gui-tablatures');
+    expect(placeholders).toContain('gui-manipulate-backing-track');
   });
 
   it('Alt+digit switches the view and focuses the heading', async () => {
