@@ -2,7 +2,8 @@
   import { onMount, tick } from 'svelte';
   import TrackBrowser from '../components/library/TrackBrowser.svelte';
   import PlayerPane from '../components/player/PlayerPane.svelte';
-  import { load, lib } from '$lib/library-state.svelte';
+  import { load, lib, selectedTrack } from '$lib/library-state.svelte';
+  import { attachPlayer, syncSelection } from '$lib/player-state.svelte';
   import { frontendLog } from '$lib/ipc';
 
   let searchRef = $state<HTMLInputElement | null>(null);
@@ -11,6 +12,15 @@
   onMount(() => {
     // An unfinished Library edit keeps its data; otherwise rescan.
     if (lib.mode !== 'edit') void load();
+    // After a webview reload the backend may still hold a session.
+    if (!lib.selectedId) void attachPlayer();
+  });
+
+  // The player follows the selected track (shared with the Library).
+  $effect(() => {
+    const track = selectedTrack();
+    if (lib.selectedId && !track) return;
+    syncSelection(track);
   });
 
   async function setCollapsed(value: boolean): Promise<void> {

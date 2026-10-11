@@ -11,6 +11,7 @@
   import { ui } from '$lib/app-state.svelte';
   import { appVersion, frontendLog } from '$lib/ipc';
   import { leaveEditor } from '$lib/editor-state.svelte';
+  import { leavePlayer } from '$lib/player-state.svelte';
   import { isNavToggleKey, viewForKey } from '$lib/views';
 
   let lastView = ui.view;
@@ -18,6 +19,7 @@
     const v = ui.view;
     if (v !== lastView) {
       if (lastView === 'editor') leaveEditor();
+      if (lastView === 'player') leavePlayer();
       lastView = v;
       void frontendLog(`view=${v}`);
     }
