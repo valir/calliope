@@ -35,6 +35,20 @@
     "allow-editor-nudge",
     "allow-editor-set-stem",
     "allow-save-backing",
-    "allow-cancel-backing-save"
+    "allow-cancel-backing-save",
+    "allow-open-player",
+    "allow-close-player",
+    "allow-get-player",
+    "allow-watch-player",
+    "allow-player-select-source",
+    "allow-player-play",
+    "allow-player-pause",
+    "allow-player-seek",
+    "allow-player-nudge",
+    "allow-player-skip",
+    "allow-player-leave",
+    "allow-player-tempo",
+    "allow-player-metronome",
+    "allow-player-loop"
   ]
 }

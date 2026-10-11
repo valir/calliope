@@ -42,11 +42,11 @@ impl RepoState {
     }
 
     /// The current root (the lock is not held afterwards).
-    fn current_root(&self) -> PathBuf {
+    pub(crate) fn current_root(&self) -> PathBuf {
         self.lock().clone()
     }
 
-    fn lock(&self) -> MutexGuard<'_, PathBuf> {
+    pub(crate) fn lock(&self) -> MutexGuard<'_, PathBuf> {
         self.root.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
@@ -478,10 +478,12 @@ pub struct EditorState {
     slot: Arc<Mutex<Option<EventSink>>>,
     /// The running save's flag, reachable without the manager lock.
     live_save: Arc<Mutex<Option<Arc<crate::backing_render::SaveShared>>>>,
+    /// Called before the Editor starts to sound (the app pauses the Player there).
+    before_play: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl EditorState {
-    pub fn new(backend: Box<dyn crate::audio_out::OutputBackend>) -> Self {
+    pub fn new(backend: Arc<dyn crate::audio_out::OutputBackend>) -> Self {
         let slot: Arc<Mutex<Option<EventSink>>> = Arc::new(Mutex::new(None));
         let forward = slot.clone();
         let sink: EventSink = Arc::new(move |ev| {
@@ -494,7 +496,7 @@ impl EditorState {
         // Closing a real device can block: handles are dropped after the lock is released.
         mgr.defer_drops();
         let live_save = mgr.live_save();
-        Self { mgr: Mutex::new(mgr), slot, live_save }
+        Self { mgr: Mutex::new(mgr), slot, live_save, before_play: Mutex::new(None) }
     }
 
     /// Runs `f` on the manager. Output handles it retired are dropped after the lock is
@@ -512,6 +514,18 @@ impl EditorState {
     #[cfg(test)]
     fn mgr(&self) -> MutexGuard<'_, EditorManager> {
         self.mgr.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Installs the hook that runs before the Editor starts to sound.
+    pub fn set_before_play(&self, hook: Arc<dyn Fn() + Send + Sync>) {
+        *self.before_play.lock().unwrap_or_else(|e| e.into_inner()) = Some(hook);
+    }
+
+    fn run_before_play(&self) {
+        let hook = self.before_play.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(h) = hook {
+            h();
+        }
     }
 
     fn set_sink(&self, sink: EventSink) {
@@ -617,6 +631,7 @@ pub fn do_watch_editor(st: &EditorState, sink: EventSink) -> Option<EditorSnapsh
 
 pub fn do_editor_play(st: &EditorState, id: &str) -> Result<TransportState, String> {
     let req = st.with(|m| m.play_request(id))?;
+    st.run_before_play();
     // The device is opened without the manager lock.
     let opened = req.map(editor::OutputRequest::open).transpose()?;
     st.with(|m| m.play_with(id, opened))
@@ -624,6 +639,7 @@ pub fn do_editor_play(st: &EditorState, id: &str) -> Result<TransportState, Stri
 
 pub fn do_editor_lane_play(st: &EditorState, id: &str, name: &str) -> Result<TransportState, String> {
     let req = st.with(|m| m.lane_play_request(id, name))?;
+    st.run_before_play();
     let opened = req.map(editor::OutputRequest::open).transpose()?;
     st.with(|m| m.lane_play_with(id, name, opened))
 }
@@ -1364,7 +1380,7 @@ mod tests {
     // ---- editor command bodies (null audio backend; never a device) ----
 
     fn editor_state() -> EditorState {
-        EditorState::new(Box::new(crate::audio_out::NullBackend::new(None)))
+        EditorState::new(Arc::new(crate::audio_out::NullBackend::new(None)))
     }
 
     fn null_editor_sink() -> EventSink {

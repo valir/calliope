@@ -114,7 +114,7 @@ fn env() -> Env {
     copy_tree(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-editor"), &root);
     let repo = Arc::new(RepoState::new(root, Box::new(ScriptedPicker::new(dir.path().join("answers")))));
     let backend = FakeBackend::new();
-    let st = Arc::new(EditorState::new(Box::new(backend.clone())));
+    let st = Arc::new(EditorState::new(Arc::new(backend.clone())));
     st.set_sink(Arc::new(|_| {}));
     Env { _dir: dir, repo, st, backend }
 }

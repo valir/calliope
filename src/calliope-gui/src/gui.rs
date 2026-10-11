@@ -4,6 +4,7 @@ use crate::{
     import_job::ImportState,
     ipc::{self, RepoState},
     picker::{Picker, TauriPicker},
+    player_ipc::{self, PlayerHost},
     settings::{self, SettingsStore},
     tools::Tools,
 };
@@ -41,11 +42,18 @@ pub fn run() {
             app.manage(ImportState::new(discover(), repo.repo_lock(), ipc::IMPORT_POLL).with_rediscovery(discover));
             app.manage(repo);
             let backend = crate::audio_out::select_backend();
-            app.manage(ipc::EditorState::new(backend));
+            // One backend for both engines: only one of them sounds at a time.
+            let editor = ipc::EditorState::new(backend.clone());
+            let h = app.handle().clone();
+            editor.set_before_play(std::sync::Arc::new(move || h.state::<PlayerHost>().pause_current()));
+            app.manage(editor);
+            app.manage(PlayerHost::new(backend, discover().ffmpeg));
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(ipc::EDITOR_TICK);
-                handle.state::<ipc::EditorState>().tick(std::time::Instant::now());
+                let now = std::time::Instant::now();
+                handle.state::<ipc::EditorState>().tick(now);
+                handle.state::<PlayerHost>().tick(now);
             });
             // Start-up health check of the edge-AI server (only when one is configured).
             if url.is_some() {
@@ -94,12 +102,29 @@ pub fn run() {
             ipc::editor_nudge,
             ipc::editor_set_stem,
             ipc::save_backing,
-            ipc::cancel_backing_save
+            ipc::cancel_backing_save,
+            player_ipc::open_player,
+            player_ipc::close_player,
+            player_ipc::get_player,
+            player_ipc::watch_player,
+            player_ipc::player_select_source,
+            player_ipc::player_play,
+            player_ipc::player_pause,
+            player_ipc::player_seek,
+            player_ipc::player_nudge,
+            player_ipc::player_skip,
+            player_ipc::player_leave,
+            player_ipc::player_tempo,
+            player_ipc::player_metronome,
+            player_ipc::player_loop
         ])
         .build(tauri::generate_context!())
         .expect("error while building calliope-gui")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                if let Some(player) = app.try_state::<PlayerHost>() {
+                    player.shutdown(ipc::SHUTDOWN_WAIT);
+                }
                 if let Some(editor) = app.try_state::<ipc::EditorState>() {
                     editor.shutdown(ipc::SHUTDOWN_WAIT);
                 }

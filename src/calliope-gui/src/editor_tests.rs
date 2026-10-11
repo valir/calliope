@@ -53,7 +53,7 @@ fn manager() -> (EditorManager, ManualBackend, Events) {
     let events: Events = Arc::new(Mutex::new(Vec::new()));
     let ev = events.clone();
     let sink: EventSink = Arc::new(move |e| ev.lock().unwrap().push(e));
-    (EditorManager::new(Box::new(backend.clone()), sink), backend, events)
+    (EditorManager::new(Arc::new(backend.clone()), sink), backend, events)
 }
 
 fn transports(events: &Events) -> Vec<TransportState> {
@@ -684,7 +684,7 @@ fn a_panic_in_the_save_thread_fails_the_save_and_frees_the_slot() {
         }
         ev.lock().unwrap().push(e);
     });
-    let mut m = EditorManager::new(Box::new(ManualBackend::new()), sink);
+    let mut m = EditorManager::new(Arc::new(ManualBackend::new()), sink);
     m.open(&spec).unwrap();
     m.set_stem(FOUR, "bass", Some(0.0), true).unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();

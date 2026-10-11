@@ -7,3 +7,4 @@ task 5 | Sources, decoding and peaks | implementer | done (plan fixes: raw-stdou
 task 6 | Metronome click and scheduling | implementer | done
 task 7 | Player engine core | implementer | done
 task 8 | Engine: metronome, count-in and loops | implementer | done
+task 9 | IPC commands, shared backend, ticker, exit | implementer | done

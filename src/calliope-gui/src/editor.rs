@@ -379,9 +379,9 @@ struct SaveRun {
 }
 
 impl EditorManager {
-    pub fn new(backend: Box<dyn OutputBackend>, sink: EventSink) -> Self {
+    pub fn new(backend: Arc<dyn OutputBackend>, sink: EventSink) -> Self {
         Self {
-            backend: Arc::from(backend),
+            backend,
             sink,
             session: None,
             remembered: HashMap::new(),

@@ -982,7 +982,7 @@ fn the_reduced_track_opens_in_the_editor_with_four_lanes() {
         variant: rec.backings.into_iter().next(),
     };
     let backend = ManualBackend::new();
-    let mut m = editor::EditorManager::new(Box::new(backend), Arc::new(|_| {}));
+    let mut m = editor::EditorManager::new(Arc::new(backend), Arc::new(|_| {}));
     let snap = m.open(&spec).expect("the 4-stem track opens");
     let lanes: Vec<&str> = snap.stems.iter().map(|l| l.name.as_str()).collect();
     assert_eq!(lanes, ["vocals", "drums", "bass", "guitar"]);

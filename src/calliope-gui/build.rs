@@ -50,6 +50,20 @@ const COMMANDS: &[&str] = &[
     "editor_set_stem",
     "save_backing",
     "cancel_backing_save",
+    "open_player",
+    "close_player",
+    "get_player",
+    "watch_player",
+    "player_select_source",
+    "player_play",
+    "player_pause",
+    "player_seek",
+    "player_nudge",
+    "player_skip",
+    "player_leave",
+    "player_tempo",
+    "player_metronome",
+    "player_loop",
 ];
 
 fn git(args: &[&str]) -> Option<String> {

@@ -68,6 +68,7 @@ pub(crate) fn count_in_plan(bpm: f64, rate: u32) -> CountIn {
 /// Beats (source frame, accent) that fall inside the output block starting at source frame
 /// `block_start` and `block_len` output frames long, as (output offset, accent). At `speed`
 /// the block covers `block_len * speed` source frames. `beats` must be sorted.
+#[allow(dead_code)] // the engine places clicks itself; kept for the tests
 pub(crate) fn place(
     beats: &[(u64, bool)],
     block_start: u64,

@@ -56,12 +56,12 @@ pub fn backend_kind(e2e_hooks: bool, env: Option<&str>) -> BackendKind {
     }
 }
 
-pub fn select_backend() -> Box<dyn OutputBackend> {
+pub fn select_backend() -> Arc<dyn OutputBackend> {
     let env = std::env::var("CALLIOPE_E2E_AUDIO").ok();
     match backend_kind(cfg!(feature = "e2e-hooks"), env.as_deref()) {
-        BackendKind::Cpal => Box::new(CpalBackend),
-        BackendKind::Null => Box::new(NullBackend::new(None)),
-        BackendKind::Capture(p) => Box::new(NullBackend::new(Some(p))),
+        BackendKind::Cpal => Arc::new(CpalBackend),
+        BackendKind::Null => Arc::new(NullBackend::new(None)),
+        BackendKind::Capture(p) => Arc::new(NullBackend::new(Some(p))),
     }
 }
 

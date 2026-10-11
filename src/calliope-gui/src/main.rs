@@ -10,20 +10,16 @@ mod gui;
 mod ipc;
 mod local_source;
 mod media;
-#[allow(dead_code)] // until the player session uses it
 mod metronome;
 mod mixer;
 mod picker;
-#[allow(dead_code)] // until the IPC layer uses it
 mod player;
-#[allow(dead_code)] // until the player session uses it
+mod player_ipc;
 mod player_source;
-#[allow(dead_code)] // until the player session uses it
 mod player_state;
 mod repository;
 mod settings;
 mod stem_audio;
-#[allow(dead_code)] // until the player session uses it
 mod tempo_map;
 mod tools;
 mod transport;

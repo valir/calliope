@@ -108,7 +108,7 @@ fn manager() -> (EditorManager, ManualBackend, Events) {
     let events: Events = Arc::new(Mutex::new(Vec::new()));
     let ev = events.clone();
     let sink: EventSink = Arc::new(move |e| ev.lock().unwrap().push(e));
-    (EditorManager::new(Box::new(backend.clone()), sink), backend, events)
+    (EditorManager::new(Arc::new(backend.clone()), sink), backend, events)
 }
 
 fn no_lock() -> Arc<dyn RepoLock> {
@@ -234,7 +234,7 @@ fn ac2_track_with_stems_opens_with_one_lane_per_stem_and_original_is_hidden() {
     fs::copy(dir.join("stems/vocals.flac"), dir.join("original.flac")).unwrap();
     fs::write(dir.join("track.json"), serde_json::to_vec_pretty(&v).unwrap()).unwrap();
 
-    let st = ipc::EditorState::new(Box::new(ManualBackend::new()));
+    let st = ipc::EditorState::new(Arc::new(ManualBackend::new()));
     let repo_state = ipc::RepoState::new(repo.root.clone(), Box::new(picker::ScriptedPicker::new(repo.root.join("none"))));
     let snap = ipc::do_open_editor(&st, &repo_state, FOUR, Arc::new(|_| {})).unwrap();
     let names: Vec<_> = snap.stems.iter().map(|l| l.name.as_str()).collect();
@@ -820,7 +820,7 @@ fn nodevice_null_backend_capture_plays_into_a_file_not_a_device() {
     let wav = tmp.path().join("capture.wav");
     let backend = audio_out::NullBackend::new(Some(wav.clone()));
     let sink: EventSink = Arc::new(|_| {});
-    let mut m = EditorManager::new(Box::new(backend), sink);
+    let mut m = EditorManager::new(Arc::new(backend), sink);
     m.open(&spec(&repo, FOUR)).unwrap();
     m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
     m.play(FOUR).unwrap();
@@ -840,7 +840,7 @@ fn nodevice_play_on_a_failing_backend_is_a_message_not_a_panic() {
         }
     }
     let (_t, repo) = fixture_repo();
-    let mut m = EditorManager::new(Box::new(Broken), Arc::new(|_| {}));
+    let mut m = EditorManager::new(Arc::new(Broken), Arc::new(|_| {}));
     m.open(&spec(&repo, FOUR)).unwrap();
     m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
     let e = m.play(FOUR).unwrap_err();
@@ -874,7 +874,7 @@ fn fix_play_after_a_failed_device_open_leaves_lanes_and_transport_unchanged() {
     let fail = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let inner = ManualBackend::new();
     let sink: EventSink = Arc::new(|_| {});
-    let mut m = EditorManager::new(Box::new(FlakyBackend { inner: inner.clone(), fail: fail.clone() }), sink);
+    let mut m = EditorManager::new(Arc::new(FlakyBackend { inner: inner.clone(), fail: fail.clone() }), sink);
     m.open(&sp).unwrap();
     m.set_stem(FOUR, "vocals", Some(-3.0), true).unwrap();
     let before = m.snapshot(FOUR).unwrap();

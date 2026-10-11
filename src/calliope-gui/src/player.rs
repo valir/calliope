@@ -934,6 +934,7 @@ impl PlayerManager {
     }
 
     /// Whole open in one call; the IPC layer splits it to keep the manager unlocked.
+    #[allow(dead_code)] // whole-call form, used by the tests
     pub fn open(&mut self, spec: &OpenSpec) -> Result<PlayerSnapshot, String> {
         let ticket = self.begin_open();
         let sink = self.sink.clone();
@@ -962,6 +963,7 @@ impl PlayerManager {
         }
     }
 
+    #[allow(dead_code)] // whole-call form, used by the tests
     pub fn is_open(&self, id: &str) -> bool {
         self.session.as_ref().is_some_and(|s| s.id == id)
     }
@@ -1050,6 +1052,7 @@ impl PlayerManager {
         Ok(publish(&sink, s, now))
     }
 
+    #[allow(dead_code)] // whole-call form, used by the tests
     pub fn play(&mut self, id: &str, now: Instant) -> Result<PlayerTransport, String> {
         let opened = self.play_request(id)?.map(OutputRequest::open).transpose()?;
         self.play_with(id, opened, now)
@@ -1313,6 +1316,7 @@ impl PlayerManager {
     }
 
     /// Whole source change in one call; the IPC layer splits it to keep the manager unlocked.
+    #[allow(dead_code)] // whole-call form, used by the tests
     pub fn select_source(&mut self, id: &str, key: &str, now: Instant) -> Result<PlayerSnapshot, String> {
         let Some(job) = self.begin_select(id, key, now)? else { return self.snapshot(id) };
         let sink = self.sink.clone();

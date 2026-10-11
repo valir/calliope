@@ -176,3 +176,30 @@ export const EDITOR_FIXTURE_TRACKS: TrackRecord[] = [
     missing: ["stems/drums.flac"],
   },
 ];
+
+/** Player fixtures: mirror `tests/fixtures/library-player` (a stem track with a backing, stems only, an mp3). */
+export const PLAYER_FIXTURE_TRACKS: TrackRecord[] = [
+  {
+    ...FIXTURE_TRACKS[FIXTURE_TRACKS.length - 1],
+    id: "0199c0a0-0000-7000-8000-000000000301",
+    title: "Practice Song",
+    backings: [{ ...EDITOR_FIXTURE_VARIANT, sample_rate: 22050 }],
+    missing: [],
+  },
+  {
+    ...FIXTURE_TRACKS[FIXTURE_TRACKS.length - 1],
+    id: "0199c0a0-0000-7000-8000-000000000302",
+    title: "Stems Only",
+    backings: [],
+    missing: [],
+  },
+  {
+    ...FIXTURE_TRACKS[0],
+    id: "0199c0a0-0000-7000-8000-000000000303",
+    title: "MP3 Backing",
+    audio: "backing.mp3",
+    stems: [],
+    backings: [],
+    missing: [],
+  },
+];

@@ -247,3 +247,99 @@ export const saveBacking = (id: string): Promise<EditorSnapshot> =>
   invoke<EditorSnapshot>('save_backing', { id });
 export const cancelBackingSave = (id: string): Promise<void> =>
   invoke<void>('cancel_backing_save', { id });
+
+// Player: mirrors src/player.rs and src/player_ipc.rs.
+export type Boundary = { tick: number } | { ms: number };
+export interface PlayerLoop {
+  id: string;
+  start: Boundary;
+  end: Boundary | null;
+  start_ms: number;
+  end_ms: number | null;
+  repeat: boolean;
+  count_in: boolean;
+}
+export interface PlayerTransport {
+  /** playing, counting in or resume pending */
+  playing: boolean;
+  counting_in: boolean;
+  resume_pending: boolean;
+  position_ms: number;
+  loop_playing: boolean;
+  /** shown: bpm_at(position) * speed, 0 = none */
+  bpm: number;
+  tempo_index: number | null;
+}
+export interface PlayerSnapshot {
+  id: string;
+  title: string;
+  sources: { key: string; label: string }[];
+  source: string;
+  duration_ms: number;
+  sample_rate: number;
+  /** 2048 values 0..1 */
+  peaks: number[];
+  mode: 'bpm' | 'time';
+  tempo: { beats_per_bar: number; segments: { start_ms: number; bpm: number }[]; multi: boolean };
+  speed: number;
+  metronome: { on: boolean; count_in: boolean };
+  loops: PlayerLoop[];
+  /** index */
+  current_loop: number | null;
+  loop_message: string | null;
+  transport: PlayerTransport;
+  can_change_speed: boolean;
+  /** settings file note */
+  note: string | null;
+}
+export type PlayerEvent =
+  | { kind: 'loading'; id: string; progress: number }
+  | ({ kind: 'transport'; id: string } & PlayerTransport)
+  | { kind: 'audio-error'; id: string; message: string }
+  | { kind: 'state-error'; id: string; message: string };
+export type TempoAction =
+  | { kind: 'set-bpm'; bpm: number }
+  | { kind: 'speed-step'; steps: number }
+  | { kind: 'speed-reset' };
+export type LoopAction =
+  | { kind: 'add' }
+  | { kind: 'remove' }
+  | { kind: 'select'; delta: -1 | 1 }
+  | { kind: 'mark'; edge: 'start' | 'end' }
+  | { kind: 'set'; edge: 'start' | 'end'; value: Boundary }
+  | { kind: 'flags'; repeat: boolean; count_in: boolean }
+  | { kind: 'play' }
+  | { kind: 'stop' };
+
+function playerChannel(onEvent: (e: PlayerEvent) => void): Channel<PlayerEvent> {
+  const ch = new Channel<PlayerEvent>();
+  ch.onmessage = onEvent;
+  return ch;
+}
+
+export const openPlayer = (id: string, onEvent: (e: PlayerEvent) => void): Promise<PlayerSnapshot> =>
+  invoke<PlayerSnapshot>('open_player', { id, events: playerChannel(onEvent) });
+export const closePlayer = (): Promise<void> => invoke<void>('close_player');
+export const getPlayer = (): Promise<PlayerSnapshot | null> => invoke<PlayerSnapshot | null>('get_player');
+export const watchPlayer = (onEvent: (e: PlayerEvent) => void): Promise<PlayerSnapshot | null> =>
+  invoke<PlayerSnapshot | null>('watch_player', { events: playerChannel(onEvent) });
+export const playerSelectSource = (id: string, source: string): Promise<PlayerSnapshot> =>
+  invoke<PlayerSnapshot>('player_select_source', { id, source });
+export const playerPlay = (id: string): Promise<PlayerTransport> =>
+  invoke<PlayerTransport>('player_play', { id });
+export const playerPause = (id: string): Promise<PlayerTransport> =>
+  invoke<PlayerTransport>('player_pause', { id });
+export const playerSeek = (id: string, position: number): Promise<PlayerTransport> =>
+  invoke<PlayerTransport>('player_seek', { id, position });
+export const playerNudge = (id: string, delta: number): Promise<PlayerTransport> =>
+  invoke<PlayerTransport>('player_nudge', { id, delta });
+export const playerSkip = (id: string, delta: number): Promise<PlayerTransport> =>
+  invoke<PlayerTransport>('player_skip', { id, delta });
+export const playerLeave = (id: string): Promise<PlayerTransport> =>
+  invoke<PlayerTransport>('player_leave', { id });
+export const playerTempo = (id: string, action: TempoAction): Promise<PlayerSnapshot> =>
+  invoke<PlayerSnapshot>('player_tempo', { id, action });
+export const playerMetronome = (id: string, on: boolean, countIn: boolean): Promise<PlayerSnapshot> =>
+  invoke<PlayerSnapshot>('player_metronome', { id, on, countIn });
+export const playerLoop = (id: string, action: LoopAction): Promise<PlayerSnapshot> =>
+  invoke<PlayerSnapshot>('player_loop', { id, action });
