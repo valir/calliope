@@ -10,6 +10,8 @@ mod gui;
 mod ipc;
 mod local_source;
 mod media;
+#[allow(dead_code)] // until the player session uses it
+mod metronome;
 mod mixer;
 mod picker;
 #[allow(dead_code)] // until the player session uses it
