@@ -28,9 +28,18 @@
   {#if pl.audioError}
     <p class="text-lg text-destructive" role="alert">{pl.audioError}</p>
   {/if}
-  <p class="min-h-9 flex-1 truncate rounded-lg border border-dashed border-border px-2 py-1 text-lg" data-testid="placeholder">
-    The tablature will be shown here (gui-tablatures).
-  </p>
+  <!-- The settings-file messages take the place of the placeholder so the layout does not shift. -->
+  <div class="flex min-h-9 flex-1 flex-col justify-center overflow-hidden rounded-lg border border-dashed border-border px-2 py-1" data-testid="placeholder">
+    {#if pl.stateError}
+      <p class="truncate text-base text-destructive" role="alert" title={pl.stateError} data-testid="player-state-error">{pl.stateError}</p>
+    {/if}
+    {#if pl.snap?.note}
+      <p class="truncate text-base" role="status" title={pl.snap.note} data-testid="player-note">{pl.snap.note}</p>
+    {/if}
+    {#if !pl.stateError && !pl.snap?.note}
+      <p class="truncate text-lg">The tablature will be shown here (gui-tablatures).</p>
+    {/if}
+  </div>
   <WaveformView />
   <div class="flex shrink-0 flex-wrap gap-2" data-testid="player-controls">
     <BpmSection />

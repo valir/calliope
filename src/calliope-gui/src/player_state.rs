@@ -107,6 +107,9 @@ fn parse_loop(v: &Value) -> Option<LoopRec> {
     Some(LoopRec { id, start, end, repeat: flag("repeat", true), count_in: flag("count_in", false), extra })
 }
 
+/// Largest accepted tempo-segment start (about 11 days); anything beyond is a damaged file.
+const MAX_SEGMENT_MS: f64 = 1.0e9;
+
 fn parse_tempo(v: Option<&Value>) -> TempoMap {
     let mut map = TempoMap::default();
     let Some(o) = v.and_then(Value::as_object) else { return map };
@@ -115,7 +118,7 @@ fn parse_tempo(v: Option<&Value>) -> TempoMap {
     }
     if let Some(a) = o.get("segments").and_then(Value::as_array) {
         for s in a {
-            let start_ms = s.get("start_ms").and_then(Value::as_f64).filter(|m| m.is_finite());
+            let start_ms = s.get("start_ms").and_then(Value::as_f64).filter(|m| m.abs() <= MAX_SEGMENT_MS);
             let bpm = s.get("bpm").and_then(Value::as_f64).filter(|b| (MIN_BPM..=MAX_BPM).contains(b));
             if let (Some(start_ms), Some(bpm)) = (start_ms, bpm) {
                 map.segments.push(Segment { start_ms, bpm });
@@ -166,6 +169,10 @@ fn from_value(v: &Value) -> PlayerState {
         st.extra.remove(k);
     }
     st.sort_loops();
+    // Loops without a (valid) current one: the first loop becomes current.
+    if st.current_loop.is_none() {
+        st.current_loop = st.loops.first().map(|l| l.id.clone());
+    }
     st
 }
 
@@ -478,7 +485,7 @@ mod tests {
         let ids: Vec<_> = st.loops.iter().map(|l| l.id.as_str()).collect();
         assert_eq!(ids, ["c", "a"]);
         assert_eq!(st.loops[1].end, None);
-        assert_eq!(st.current_loop, None);
+        assert_eq!(st.current_loop.as_deref(), Some("c")); // stale id: the first loop
     }
 
     #[test]

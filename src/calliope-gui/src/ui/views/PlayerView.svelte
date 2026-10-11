@@ -39,6 +39,11 @@
   function plainKey(e: KeyboardEvent): void {
     const t = e.target;
     if (t instanceof Element && t.closest(OWN_KEYS)) return;
+    // Auto-repeat of a held key must not toggle or mark again.
+    if (e.repeat && (e.code === 'Space' || ['b', 'e', 'l', 'L'].includes(e.key))) {
+      if (e.code === 'Space') e.preventDefault();
+      return;
+    }
     const snap = pl.snap;
     const cur = snap && snap.current_loop !== null ? snap.loops[snap.current_loop] : null;
     if (e.code === 'Space' && !e.shiftKey) {

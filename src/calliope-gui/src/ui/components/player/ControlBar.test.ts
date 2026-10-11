@@ -191,3 +191,22 @@ describe('playback', () => {
     expect(of('player_seek').length).toBeGreaterThan(0);
   });
 });
+
+describe('player.json problems', () => {
+  it('shows the note, the save error, and clears the save error after a later snapshot', async () => {
+    await open({ ...withTempo(), note: 'player.json is newer; read-only' });
+    expect(screen.getByTestId('player-note').textContent).toContain('read-only');
+    expect(screen.queryByTestId('player-state-error')).toBeNull();
+    channel.onmessage({ kind: 'state-error', id: practice.id, message: 'Could not save' } as PlayerEvent);
+    await flush();
+    expect(screen.getByTestId('player-state-error').textContent).toContain('Could not save');
+    await type(input('BPM'), '90');
+    expect(screen.queryByTestId('player-state-error')).toBeNull();
+  });
+
+  it('shows Loop On unpressed while it is disabled on a loop without an end', async () => {
+    await open({ ...withTempo(), current_loop: 0, loops: [{ ...loop3, repeat: true }] });
+    const b = screen.getByRole('button', { name: 'Loop On' });
+    expect(b.getAttribute('aria-pressed')).toBe('false');
+  });
+});

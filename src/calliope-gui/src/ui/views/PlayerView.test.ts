@@ -166,6 +166,17 @@ describe('Player keyboard shortcuts', () => {
     expect(of('player_pause')).toHaveLength(0);
   });
 
+  it('auto-repeat of Space, b, e and l does nothing', async () => {
+    await open([complete]);
+    await key({ code: 'Space', key: ' ', repeat: true });
+    await key({ key: 'b', code: 'KeyB', repeat: true });
+    await key({ key: 'e', code: 'KeyE', repeat: true });
+    await key({ key: 'l', code: 'KeyL', repeat: true });
+    await key({ key: 'L', code: 'KeyL', shiftKey: true, repeat: true });
+    expect(of('player_play')).toHaveLength(0);
+    expect(of('player_loop')).toHaveLength(0);
+  });
+
   it('b and e mark start and end', async () => {
     await open([complete]);
     await key({ key: 'b', code: 'KeyB' });

@@ -66,10 +66,8 @@ impl PlayerHost {
     /// Pauses the open session when it is sounding (the Editor is about to play).
     pub fn pause_current(&self) {
         self.with(|m| {
-            if let Some(s) = m.current() {
-                if s.transport.playing {
-                    let _ = m.pause(&s.id, Instant::now());
-                }
+            if let Some((id, true)) = m.current_id_playing() {
+                let _ = m.pause(&id, Instant::now());
             }
         });
     }
@@ -95,8 +93,8 @@ impl PlayerHost {
             eprintln!("calliope: player busy at exit; its state was not flushed");
             return;
         };
-        if let Some(s) = m.current() {
-            let _ = m.pause(&s.id, Instant::now());
+        if let Some((id, _)) = m.current_id_playing() {
+            let _ = m.pause(&id, Instant::now());
         }
         m.close();
         let trash = m.take_trash();

@@ -75,11 +75,11 @@
 <div class="flex w-full flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Loops">
   <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
     <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Loop list">
-      <Button variant="outline" class={btn} disabled={!active || !cur} onclick={() => void loop({ kind: 'select', delta: -1 })}>Prev</Button>
+      <Button variant="outline" class={btn} disabled={!active || !(snap && snap.loops.length > 0)} onclick={() => void loop({ kind: 'select', delta: -1 })}>Prev</Button>
       <Button variant="outline" class="{btn} w-14" disabled={!active} aria-label="Add loop" onclick={() => void loop({ kind: 'add' })}>+</Button>
       <input type="text" readonly tabindex="-1" class="w-20 rounded-md border border-input bg-background px-2 py-1 text-center text-xl tabular-nums" aria-label="Loop" data-testid="loop-box" value={boxText} />
       <Button variant="outline" class="{btn} w-14" disabled={!active || !cur} aria-label="Remove loop" onclick={() => void loop({ kind: 'remove' })}>-</Button>
-      <Button variant="outline" class={btn} disabled={!active || !cur} onclick={() => void loop({ kind: 'select', delta: 1 })}>Next</Button>
+      <Button variant="outline" class={btn} disabled={!active || !(snap && snap.loops.length > 0)} onclick={() => void loop({ kind: 'select', delta: 1 })}>Next</Button>
     </div>
     <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Loop range">
       <Button variant="outline" class="{btn} w-14" disabled={!active || !cur} aria-label="Mark start" onclick={() => void loop({ kind: 'mark', edge: 'start' })}>&gt;</Button>
@@ -117,7 +117,7 @@
       <Button class="{btn} w-24" disabled={!active || !complete} onclick={() => void loop({ kind: pl.transport.loop_playing ? 'stop' : 'play' })}>
         {pl.transport.loop_playing ? 'Stop' : 'Play'}
       </Button>
-      <Button variant="outline" class="{btn} {cur?.repeat ? pressed : ''}" aria-pressed={cur?.repeat ?? false} disabled={!active || !complete}
+      <Button variant="outline" class="{btn} {cur?.repeat && complete ? pressed : ''}" aria-pressed={(cur?.repeat && complete) ?? false} disabled={!active || !complete}
         onclick={() => cur && flags(!cur.repeat, cur.count_in)}>Loop On</Button>
       <Button variant="outline" class="{btn} {cur?.count_in ? pressed : ''}" aria-pressed={cur?.count_in ?? false} disabled={!active || !complete}
         onclick={() => cur && flags(cur.repeat, !cur.count_in)}>Count-In</Button>

@@ -256,6 +256,9 @@ impl Engine {
         out.fill(0.0);
         let frames = out.len() / 2;
         let ch = self.pcm.channels.max(1) as usize;
+        if self.pcm.frames == 0 || self.pcm.samples.len() < ch {
+            return; // nothing to play
+        }
         let mut i = 0;
         while i < frames && self.playing {
             if let Some(c) = self.count.as_mut() {
@@ -605,13 +608,15 @@ impl Session {
     }
 
     fn frames_of(&self, ms: u64) -> u64 {
-        (ms * u64::from(self.pcm.rate) / 1000).min(self.pcm.frames)
+        (ms.saturating_mul(u64::from(self.pcm.rate)) / 1000).min(self.pcm.frames)
     }
 
     fn send(&self, cmd: Cmd) {
         if let Some(o) = &self.output {
             while o.trash.try_recv().is_ok() {}
-            let _ = o.tx.try_send(cmd);
+            if o.tx.try_send(cmd).is_err() {
+                eprintln!("calliope: player command dropped (queue full)");
+            }
         }
     }
 
@@ -986,6 +991,11 @@ impl PlayerManager {
         self.session.as_ref().map(Session::snapshot)
     }
 
+    /// The open session's id and whether it is sounding (no snapshot built).
+    pub fn current_id_playing(&self) -> Option<(String, bool)> {
+        self.session.as_ref().map(|s| (s.id.clone(), s.transport.shows_playing()))
+    }
+
     // ------------------------------------------------------------ transport
 
     /// Step 1 of Play (under the lock): says whether the device must be opened by the caller
@@ -1084,7 +1094,7 @@ impl PlayerManager {
     pub fn nudge(&mut self, id: &str, delta_ms: i64, now: Instant) -> Result<PlayerTransport, String> {
         let s = self.session(id)?;
         let cur = s.ms_of(s.pos()) as i64;
-        self.seek(id, (cur + delta_ms).max(0) as u64, now)
+        self.seek(id, cur.saturating_add(delta_ms).max(0) as u64, now)
     }
 
     /// Rew/FF: an instant jump (no scrub silence), clamped.
@@ -1092,7 +1102,7 @@ impl PlayerManager {
         let sink = self.sink.clone();
         let s = self.session(id)?;
         let cur = s.ms_of(s.pos()) as i64;
-        let f = s.frames_of((cur + delta_ms).max(0) as u64);
+        let f = s.frames_of(cur.saturating_add(delta_ms).max(0) as u64);
         s.set_pos(f);
         s.send(Cmd::Jump(f));
         s.mark_dirty(now);
@@ -1213,7 +1223,11 @@ impl PlayerManager {
             LoopAction::Remove => s.state.remove()?,
             LoopAction::Select(delta) => {
                 let n = s.state.loops.len() as i64;
-                let cur = s.loop_index().ok_or("There is no loop selected")? as i64;
+                if n == 0 {
+                    return Err("There is no loop selected".into());
+                }
+                // With none current, Next picks the first loop and Prev the last.
+                let cur = s.loop_index().map_or(if delta >= 0 { -1 } else { n }, |i| i as i64);
                 let to = (cur + i64::from(delta)).clamp(0, n - 1) as usize;
                 let id = s.state.loops[to].id.clone();
                 s.state.select(&id)?;
@@ -1227,7 +1241,15 @@ impl PlayerManager {
                 Err(m) if m == player_state::END_BEFORE_START => s.loop_message = Some(m),
                 Err(m) => return Err(m),
             },
-            LoopAction::Set(edge, value) => s.state.set(edge, value)?,
+            LoopAction::Set(edge, value) => {
+                let ms = s.boundary_ms(value);
+                let dur = s.ms_of(s.pcm.frames) as f64;
+                let tick_ok = !matches!(value, Boundary::Tick { tick } if tick < 0);
+                if !tick_ok || !ms.is_finite() || ms < 0.0 || ms > dur {
+                    return Err("The loop boundary must be within the track".into());
+                }
+                s.state.set(edge, value)?
+            }
             LoopAction::Flags { repeat, count_in } => s.state.flags(Some(repeat), Some(count_in))?,
             LoopAction::Stop => {
                 let l = s.state.current().ok_or("There is no loop selected")?;

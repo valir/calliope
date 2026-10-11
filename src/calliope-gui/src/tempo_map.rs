@@ -119,7 +119,7 @@ impl TempoMap {
         }
         let tpb = TICKS_PER_BEAT;
         let bar = tpb * self.beats_per_bar.max(1) as i64;
-        let mut tick = (self.tick_near(a) - tpb).div_euclid(tpb) * tpb;
+        let mut tick = (self.tick_near(a).saturating_sub(tpb)).div_euclid(tpb).saturating_mul(tpb);
         loop {
             let ms = self.ms_at(tick);
             if ms >= b {
@@ -128,7 +128,7 @@ impl TempoMap {
             if ms >= a {
                 out.push((ms, tick.rem_euclid(bar) == 0));
             }
-            tick += tpb;
+            tick = tick.saturating_add(tpb);
         }
         out
     }

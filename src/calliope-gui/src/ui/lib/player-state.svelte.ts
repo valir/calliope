@@ -268,6 +268,7 @@ async function snapshotCall(
     if (gen !== generation) return false;
     applySnapshot(s);
     pl.actionError = '';
+    pl.stateError = '';
     log(logLine(s));
     return true;
   } catch (err) {

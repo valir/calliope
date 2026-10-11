@@ -1118,7 +1118,7 @@ Increment B adds the build prerequisite of the approved stretch library:
 4. **Count-in:** turn Count In on, pause and press Play. You hear three ticks, then the music starts on the fourth
    beat, in time.
 5. **Loops:**
-   - Press `+` (or `b`) at the start of a chorus: only a start mark appears and the loop's Play is disabled.
+   - Press `+` at the start of a chorus: only a start mark appears and the loop's Play is disabled.
    - Let it play and press `<` (or `e`) at the end: the amber bar appears.
    - Turn Loop On and press the loop's Play: it repeats without a click or a gap at the joint.
    - Turn the loop's Count-In on: a count-in plays before each pass.

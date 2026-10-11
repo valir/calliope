@@ -86,6 +86,9 @@ pub fn decode(
             return Err(format!("{} is too long to play", file_label(file)));
         }
         let pcm = stem_audio::decode_i16(file, cancel, progress)?;
+        if pcm.frames == 0 || pcm.samples.is_empty() {
+            return Err(format!("Cannot decode {}: no audio found", file_label(file)));
+        }
         return Ok(Pcm { rate: info.sample_rate, channels: pcm.channels, frames: pcm.frames, samples: pcm.samples });
     }
     let label = file_label(file);
