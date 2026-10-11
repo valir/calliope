@@ -5,3 +5,4 @@ task 3 | Tempo map | implementer | done
 task 4 | Player state and player.json, export | implementer | done
 task 5 | Sources, decoding and peaks | implementer | done (plan fixes: raw-stdout spawn in calliope-lib; fixture envelope amplitude)
 task 6 | Metronome click and scheduling | implementer | done
+task 7 | Player engine core | implementer | done

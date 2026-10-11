@@ -14,6 +14,8 @@ mod media;
 mod metronome;
 mod mixer;
 mod picker;
+#[allow(dead_code)] // until the IPC layer uses it
+mod player;
 #[allow(dead_code)] // until the player session uses it
 mod player_source;
 #[allow(dead_code)] // until the player session uses it
