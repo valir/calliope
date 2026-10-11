@@ -204,6 +204,15 @@ describe('player.json problems', () => {
     expect(screen.queryByTestId('player-state-error')).toBeNull();
   });
 
+  it('shows the note and the save error together, each in full', async () => {
+    await open({ ...withTempo(), note: 'player.json is newer; read-only' });
+    channel.onmessage({ kind: 'state-error', id: practice.id, message: 'Could not save' } as PlayerEvent);
+    await flush();
+    expect(screen.getByTestId('player-note').textContent).toContain('read-only');
+    expect(screen.getByTestId('player-state-error').textContent).toContain('Could not save');
+    expect(screen.getByTestId('placeholder').className).toContain('min-h-fit');
+  });
+
   it('shows Loop On unpressed while it is disabled on a loop without an end', async () => {
     await open({ ...withTempo(), current_loop: 0, loops: [{ ...loop3, repeat: true }] });
     const b = screen.getByRole('button', { name: 'Loop On' });

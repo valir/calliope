@@ -29,7 +29,7 @@
     <p class="text-lg text-destructive" role="alert">{pl.audioError}</p>
   {/if}
   <!-- The settings-file messages take the place of the placeholder so the layout does not shift. -->
-  <div class="flex min-h-9 flex-1 flex-col justify-center overflow-hidden rounded-lg border border-dashed border-border px-2 py-1" data-testid="placeholder">
+  <div class="flex flex-1 flex-col justify-center overflow-hidden rounded-lg {pl.stateError || pl.snap?.note ? 'min-h-fit' : 'min-h-9'} border border-dashed border-border px-2 py-1" data-testid="placeholder">
     {#if pl.stateError}
       <p class="truncate text-base text-destructive" role="alert" title={pl.stateError} data-testid="player-state-error">{pl.stateError}</p>
     {/if}

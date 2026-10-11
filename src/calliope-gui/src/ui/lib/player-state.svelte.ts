@@ -246,6 +246,7 @@ async function transportCall(
     pl.transport = t;
     pl.audioError = '';
     pl.actionError = '';
+    pl.stateError = '';
     if (logLine) log(logLine(t));
   } catch (err) {
     if (gen !== generation) return;

@@ -22,3 +22,4 @@ tester | 28 criteria PASS; 4 defects (player.json problems not shown; loops unre
 fix round 1 | player.json problems shown; loops reachable without current_loop; overflow/0-frame guards; key repeat; loop bounds; Loop On look; GUI script | implementer | done
 reviewer (fix round 1) | APPROVED; 2 optional minors | reviewer | done
 tester (fix round 1) | all 4 defects fixed; new cosmetic: note and state-error overlap in the one-line placeholder box | tester | done
+fix round 2 | note and save error each on their own row; transportCall clears stateError | implementer | done (orchestrator checked diff, screenshot and headless suite)
