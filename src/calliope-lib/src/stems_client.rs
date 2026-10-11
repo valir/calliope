@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::stems_api::{
-    check_stem_levels, is_valid_job_id, is_valid_stem_name, ErrorBody, Health, JobCreated, JobState, JobStatus, API_VERSION,
-    MAX_STEMS, SERVICE_NAME,
+    check_beats, check_stem_levels, is_valid_job_id, is_valid_stem_name, Beats, ErrorBody, Health, JobCreated, JobState, JobStatus, API_VERSION,
+    MAX_BEATS_JSON_BYTES, MAX_STEMS, SERVICE_NAME,
 };
 
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -182,6 +182,11 @@ impl StemsClient {
         Ok(h)
     }
 
+    /// True when the server lists the `beats` task.
+    pub fn supports_beats(health: &Health) -> bool {
+        health.tasks.iter().any(|t| t == "beats")
+    }
+
     /// Uploads `file` (FLAC) for the server's default model and returns the job id.
     /// `on_sent(sent, total)` is called as bytes go out. When `cancel` becomes true the upload
     /// stops with `Cancelled`; if the server had already accepted the job it is deleted.
@@ -190,6 +195,27 @@ impl StemsClient {
         file: &Path,
         cancel: &AtomicBool,
         on_sent: impl FnMut(u64, u64),
+    ) -> Result<String, ClientError> {
+        self.upload(file, cancel, on_sent, "/v1/jobs", true)
+    }
+
+    /// Like `submit`, for `POST /v1/beats` (no model). The caller checks `supports_beats` first.
+    pub fn submit_beats(
+        &self,
+        file: &Path,
+        cancel: &AtomicBool,
+        on_sent: impl FnMut(u64, u64),
+    ) -> Result<String, ClientError> {
+        self.upload(file, cancel, on_sent, "/v1/beats", false)
+    }
+
+    fn upload(
+        &self,
+        file: &Path,
+        cancel: &AtomicBool,
+        on_sent: impl FnMut(u64, u64),
+        path: &str,
+        with_model: bool,
     ) -> Result<String, ClientError> {
         let health = self.health()?;
         let f = File::open(file).map_err(|e| ClientError::Io(format!("{}: {e}", file.display())))?;
@@ -201,7 +227,11 @@ impl StemsClient {
             )));
         }
         let mut reader = CountingReader { inner: f, sent: 0, total, cancel, on_sent };
-        let url = format!("{}?model={}", self.url("/v1/jobs"), health.default_model);
+        let url = if with_model {
+            format!("{}?model={}", self.url(path), health.default_model)
+        } else {
+            self.url(path)
+        };
         let result = self
             .upload_agent
             .post(&url)
@@ -222,6 +252,31 @@ impl StemsClient {
             return Err(ClientError::Cancelled);
         }
         Ok(created.job)
+    }
+
+    /// `GET /v1/jobs/<id>/beats` of a done beats job, checked against the audio length.
+    /// Unknown job (404) is `Restarted`; a job not done (409) is `Invalid("not done")`.
+    pub fn fetch_beats(&self, job: &str, duration_s: f64) -> Result<Beats, ClientError> {
+        if !is_valid_job_id(job) {
+            return Err(ClientError::Invalid("bad job id".into()));
+        }
+        let resp = self.agent.get(&self.url(&format!("/v1/jobs/{job}/beats"))).call().map_err(net_error)?;
+        match resp.status().as_u16() {
+            404 => return Err(ClientError::Restarted),
+            409 => return Err(ClientError::Invalid("not done".into())),
+            _ => {}
+        }
+        let mut resp = Self::check(resp)?;
+        let bytes = resp
+            .body_mut()
+            .with_config()
+            .limit(MAX_BEATS_JSON_BYTES)
+            .read_to_vec()
+            .map_err(|e| ClientError::Incompatible(format!("unreadable answer: {e}")))?;
+        let beats: Beats = serde_json::from_slice(&bytes)
+            .map_err(|e| ClientError::Incompatible(format!("unexpected answer: {e}")))?;
+        check_beats(&beats, duration_s).map_err(ClientError::Invalid)?;
+        Ok(beats)
     }
 
     /// `GET /v1/jobs/<id>`; an unknown job is `Restarted`.

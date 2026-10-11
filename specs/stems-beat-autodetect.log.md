@@ -1,1 +1,2 @@
 base: f03dcfd
+task 1 | Beats types, validation and client | implementer | done (client calls to be covered by task 4 conformance tests)

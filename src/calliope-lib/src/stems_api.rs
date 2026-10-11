@@ -12,6 +12,10 @@ pub const API_VERSION: u32 = 1;
 pub const MAX_DURATION_S: u64 = 900;
 /// Most stems a job may produce.
 pub const MAX_STEMS: usize = 16;
+/// Most beats a beats document may hold.
+pub const MAX_BEATS: usize = 20_000;
+/// Largest beats document (JSON bytes) the client reads or the server writes.
+pub const MAX_BEATS_JSON_BYTES: u64 = 1 << 20;
 
 /// `GET /v1/health`
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -24,6 +28,9 @@ pub struct Health {
     pub busy: bool,
     pub max_duration_s: u64,
     pub max_upload_bytes: u64,
+    /// What the server can do: `["stems"]` or `["stems","beats"]`; absent (an old server) = stems only.
+    #[serde(default)]
+    pub tasks: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +69,53 @@ pub struct JobStatus {
     /// omitted when the server measured nothing (an old server, or `--no-stem-levels`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stem_levels: Option<Vec<StemLevel>>,
+    /// `Some("beats")` for a beats job; the key is omitted for stem jobs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
+/// `GET /v1/jobs/<id>/beats`: times in seconds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Beats {
+    pub beats: Vec<f64>,
+    pub downbeats: Vec<f64>,
+    #[serde(default)]
+    pub tracker: String,
+}
+
+/// Checks a beats document against the audio length: finite times in `0..=duration_s + 1`,
+/// strictly increasing, at most `MAX_BEATS` beats, every downbeat equal (within 1e-6 s) to a
+/// beat, `tracker` at most 100 characters.
+pub fn check_beats(b: &Beats, duration_s: f64) -> Result<(), String> {
+    if b.beats.len() > MAX_BEATS {
+        return Err("too many beats".into());
+    }
+    if b.downbeats.len() > MAX_BEATS {
+        return Err("too many downbeats".into());
+    }
+    if b.tracker.chars().count() > 100 {
+        return Err("tracker name too long".into());
+    }
+    let limit = duration_s + 1.0;
+    for (what, v) in [("beat", &b.beats), ("downbeat", &b.downbeats)] {
+        let mut prev: Option<f64> = None;
+        for &t in v.iter() {
+            if !t.is_finite() || t < 0.0 || t > limit {
+                return Err(format!("{what} time {t} out of range"));
+            }
+            if prev.is_some_and(|p| t <= p) {
+                return Err(format!("{what} times are not strictly increasing"));
+            }
+            prev = Some(t);
+        }
+    }
+    for &d in &b.downbeats {
+        let i = b.beats.partition_point(|&t| t < d - 1e-6);
+        if !b.beats.get(i).is_some_and(|&t| (t - d).abs() <= 1e-6) {
+            return Err(format!("downbeat {d} is not a beat"));
+        }
+    }
+    Ok(())
 }
 
 /// One measured stem: `audible_ms` (a multiple of `window_ms`) at `level_dbfs` is the data.
@@ -321,11 +375,14 @@ mod tests {
             busy: false,
             max_duration_s: MAX_DURATION_S,
             max_upload_bytes: 314_572_800,
+            tasks: vec!["stems".into(), "beats".into()],
         };
         let text = serde_json::to_string(&h).unwrap();
         assert_eq!(serde_json::from_str::<Health>(&text).unwrap(), h);
         let doc = r#"{"service":"calliope-stems","api":1,"version":"x","models":["m"],"default_model":"m","busy":true,"max_duration_s":900,"max_upload_bytes":1}"#;
-        assert!(serde_json::from_str::<Health>(doc).unwrap().busy);
+        let old = serde_json::from_str::<Health>(doc).unwrap();
+        assert!(old.busy);
+        assert!(old.tasks.is_empty());
 
         assert_eq!(serde_json::to_string(&JobCreated { job: "ab".into(), state: JobState::Queued }).unwrap(),
             r#"{"job":"ab","state":"queued"}"#);
@@ -349,9 +406,13 @@ mod tests {
             stems: Some(vec!["vocals".into()]),
             error: None,
             stem_levels: None,
+            kind: None,
         };
         let text = serde_json::to_string(&st).unwrap();
         assert!(text.contains("\"error\":null"));
+        assert!(!text.contains("kind"));
+        let b: JobStatus = serde_json::from_str(r#"{"job":"ab","state":"queued","progress":null,"stems":null,"error":null,"kind":"beats"}"#).unwrap();
+        assert_eq!(b.kind.as_deref(), Some("beats"));
         assert_eq!(serde_json::from_str::<JobStatus>(&text).unwrap(), st);
         let queued: JobStatus =
             serde_json::from_str(r#"{"job":"ab","state":"queued","progress":null,"stems":null,"error":null}"#).unwrap();
@@ -406,5 +467,42 @@ mod tests {
         assert!(check_stem_levels(&stems, &[sl("piano", 86_400_100, -40, 100)]).is_err());
         let many: Vec<StemLevel> = (0..17).map(|_| sl("piano", 0, -40, 100)).collect();
         assert!(check_stem_levels(&stems, &many).is_err());
+    }
+
+    fn bt(beats: &[f64], downbeats: &[f64]) -> Beats {
+        Beats { beats: beats.to_vec(), downbeats: downbeats.to_vec(), tracker: "t".into() }
+    }
+
+    #[test]
+    fn check_beats_rules() {
+        assert!(check_beats(&bt(&[], &[]), 10.0).is_ok());
+        assert!(check_beats(&bt(&[0.0, 0.5, 11.0], &[0.0, 11.0]), 10.0).is_ok());
+        assert!(check_beats(&bt(&[0.0, 11.0001], &[]), 10.0).is_err());
+        assert!(check_beats(&bt(&[-0.0001], &[]), 10.0).is_err());
+        assert!(check_beats(&bt(&[f64::NAN], &[]), 10.0).is_err());
+        assert!(check_beats(&bt(&[f64::INFINITY], &[]), 10.0).is_err());
+        assert!(check_beats(&bt(&[1.0, 1.0], &[]), 10.0).is_err());
+        assert!(check_beats(&bt(&[2.0, 1.0], &[]), 10.0).is_err());
+        // downbeats: within 1e-6 of a beat, but not 2e-6
+        assert!(check_beats(&bt(&[1.0, 2.0], &[2.0 + 5e-7]), 10.0).is_ok());
+        assert!(check_beats(&bt(&[1.0, 2.0], &[2.0 - 5e-7]), 10.0).is_ok());
+        assert!(check_beats(&bt(&[1.0, 2.0], &[2.0 + 2e-6]), 10.0).is_err());
+        assert!(check_beats(&bt(&[1.0, 2.0], &[1.5]), 10.0).is_err());
+        assert!(check_beats(&bt(&[1.0, 2.0], &[2.0, 1.0]), 10.0).is_err());
+        assert!(check_beats(&bt(&[1.0, 2.0], &[11.5]), 10.0).is_err());
+        // counts
+        let at: Vec<f64> = (0..MAX_BEATS).map(|i| i as f64 * 0.001).collect();
+        assert!(check_beats(&bt(&at, &[]), 100.0).is_ok());
+        let over: Vec<f64> = (0..=MAX_BEATS).map(|i| i as f64 * 0.001).collect();
+        assert!(check_beats(&bt(&over, &[]), 100.0).is_err());
+        // tracker length
+        let mut b = bt(&[], &[]);
+        b.tracker = "x".repeat(100);
+        assert!(check_beats(&b, 1.0).is_ok());
+        b.tracker = "x".repeat(101);
+        assert!(check_beats(&b, 1.0).is_err());
+        // a missing tracker defaults to empty
+        let d: Beats = serde_json::from_str(r#"{"beats":[1.0],"downbeats":[]}"#).unwrap();
+        assert_eq!(d.tracker, "");
     }
 }

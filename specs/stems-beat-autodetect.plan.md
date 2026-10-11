@@ -1032,7 +1032,8 @@ The new app reads and writes `player.json` schema 2, so older app builds open su
 3. **Method:** Beat This! on archserver; the training-data note is accepted (2.5).
 4. **Step:** 1/64 of a beat (4 beats = 256 steps). Changes are stored in ms with a detected position; detected
    changes start their section on a beat, with a stretched last beat; the loop grid is unchanged; `player.json`
-   becomes schema 2 (2.3).
+   becomes schema 2 (2.3). The owner confirmed both Player-side effects: schema 2, and the stretched last beat
+   that the metronome follows.
 5. **Limit:** ±4 beats from the detected position, in total. The detected positions are stored, with the rules for
    typed BPMs and re-detection in 2.3.
 6. **Shortest section:** 1 bar; optimal segmentation with the 4 % rule (2.6).

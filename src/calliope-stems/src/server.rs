@@ -118,6 +118,7 @@ pub fn handle(mgr: &Arc<Manager>, cfg: &Config, mut req: Request) {
                 busy: mgr.busy(),
                 max_duration_s: cfg.max_duration_s,
                 max_upload_bytes: cfg.max_upload_bytes,
+                tasks: vec!["stems".into()],
             },
         ),
         Route::CreateJob => create_job(mgr, cfg, &mut req, query),

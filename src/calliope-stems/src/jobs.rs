@@ -135,6 +135,7 @@ impl Manager {
             stems: j.stems.clone(),
             error: j.error.clone(),
             stem_levels: j.stem_levels.clone(),
+            kind: None,
         })
     }
 
