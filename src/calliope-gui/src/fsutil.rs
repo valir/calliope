@@ -161,6 +161,9 @@ pub fn validate_file_name(name: &str) -> Result<(), String> {
     if name == "track.json" {
         return Err("\"track.json\" is reserved".into());
     }
+    if name == "player.json" {
+        return Err("\"player.json\" is reserved".into());
+    }
     if let Some(c) = name
         .chars()
         .find(|c| c.is_control() || matches!(c, '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*'))
@@ -429,13 +432,14 @@ mod tests {
 
     #[test]
     fn file_names() {
-        for bad in ["..", ".", "a/b", ".x", "track.json", "a\\b", "x?", "", "a\nb", "a:b"] {
+        for bad in ["..", ".", "a/b", ".x", "track.json", "player.json", "a\\b", "x?", "", "a\nb", "a:b"] {
             assert!(validate_file_name(bad).is_err(), "{bad:?} should be rejected");
         }
         assert!(validate_file_name(&"a".repeat(256)).is_err());
         assert!(validate_file_name(&"a".repeat(255)).is_ok());
         assert!(validate_file_name("Slow Burn (live).gp5").is_ok());
         assert!(validate_file_name("track.json.bak").is_ok());
+        assert!(validate_file_name("player.json.bak").is_ok());
     }
 
     #[test]
