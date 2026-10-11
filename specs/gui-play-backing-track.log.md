@@ -23,3 +23,4 @@ fix round 1 | player.json problems shown; loops reachable without current_loop; 
 reviewer (fix round 1) | APPROVED; 2 optional minors | reviewer | done
 tester (fix round 1) | all 4 defects fixed; new cosmetic: note and state-error overlap in the one-line placeholder box | tester | done
 fix round 2 | note and save error each on their own row; transportCall clears stateError | implementer | done (orchestrator checked diff, screenshot and headless suite)
+report | written | orchestrator | done
