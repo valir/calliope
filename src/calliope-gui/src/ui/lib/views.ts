@@ -20,7 +20,6 @@ export const VIEWS: readonly ViewInfo[] = [
 export interface TrackTab { id: string; label: string; feature: string }
 export const TRACK_TABS: readonly TrackTab[] = [
   { id: 'stems', label: 'Stems', feature: 'gui-backing-track-editor' },
-  { id: 'tempo', label: 'BPM & sections', feature: 'gui-manipulate-backing-track' },
   { id: 'tablature', label: 'Tablature', feature: 'gui-tablatures' },
   { id: 'cues', label: 'MIDI cues', feature: 'gui-manipulate-backing-track' },
 ];

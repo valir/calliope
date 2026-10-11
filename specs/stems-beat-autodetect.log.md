@@ -13,3 +13,4 @@ task 11 | Tempo store and Player release | implementer | done (wiring of PlayerT
 task 12 | Detection job and editor integration | implementer | done (incl. fix: a final 1-bar section at the end of the track is now detected)
 task 13 | IPC commands, TS wrappers, store/exit wiring | implementer | done
 task 14 | Remove the Player Detect button | local (missed one test title; fixed by the orchestrator) | done
+task 15 | Remove the Editor BPM & sections tab | local | done

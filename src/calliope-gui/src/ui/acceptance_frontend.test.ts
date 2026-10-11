@@ -90,11 +90,11 @@ describe('acceptance: navigation (req 4, AC2, AC3)', () => {
     expect(main().querySelector('h1')!.textContent).toBe('Library');
   });
 
-  it('Editor view has tabs for stems, assembly, BPM/sections, tablature, MIDI cues', async () => {
+  it('Editor view has tabs for stems, tablature, MIDI cues', async () => {
     render(App);
     await fireEvent.click(entry('Editor'));
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent!.trim());
-    expect(tabs).toEqual(['Stems', 'BPM & sections', 'Tablature', 'MIDI cues']);
+    expect(tabs).toEqual(['Stems', 'Tablature', 'MIDI cues']);
   });
 });
 
