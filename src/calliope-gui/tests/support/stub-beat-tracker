@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Stub beat tracker for Calliope's tests: the beat-tracker contract of the calliope-stems
+server without any model.
+
+    stub-beat-tracker <input.flac> <out_dir>
+
+Reads the duration D from the FLAC STREAMINFO and writes <out_dir>/beats.json. Mode:
+$STUB_TRACKER_MODE, else the first line of `stub-tracker-mode` in the current directory or two
+levels up, else "ok":
+  ok          120 BPM from 0.5 s for the most whole 4-beat bars ending at or before D/2, then 90 BPM
+              from the next 120-BPM beat time to D
+  steady      120 BPM from 0.5 s to D
+  bar-end     120 BPM from 0.5 s, the last full bar before D at 60 BPM (a half-time ending)
+  few         3 beats
+  fail        message on stderr, exit 3
+  slow        1 s before each progress line, then as ok
+  hang        sleep until killed
+  bad-output  writes "not json"
+Downbeats are every 4th beat from the first. Prints `progress 0.5` and `progress 1`.
+$STUB_TRACKER_LOG, if set, gets the argv (one line, tab separated) appended.
+"""
+import json
+import os
+import struct
+import sys
+import time
+
+MODES = ("ok", "steady", "bar-end", "few", "fail", "slow", "hang", "bad-output")
+
+
+def duration_s(path):
+    with open(path, "rb") as f:
+        head = f.read(8 + 34)
+    if len(head) < 42 or head[:4] != b"fLaC":
+        raise ValueError("not a FLAC file")
+    packed = struct.unpack(">Q", head[18:26])[0]  # rate:20 channels:3 bits:5 samples:36
+    rate = packed >> 44
+    total = packed & ((1 << 36) - 1)
+    if rate == 0:
+        raise ValueError("bad sample rate")
+    return total / rate
+
+
+def read_mode():
+    mode = os.environ.get("STUB_TRACKER_MODE", "")
+    if mode:
+        return mode
+    cwd = os.getcwd()
+    for d in (cwd, os.path.dirname(os.path.dirname(cwd))):
+        p = os.path.join(d, "stub-tracker-mode")
+        if os.path.isfile(p):
+            with open(p) as f:
+                return f.readline().strip() or "ok"
+    return "ok"
+
+
+def run(d, start, step):
+    """Times start + i*step below d."""
+    out, i = [], 0
+    while start + i * step < d:
+        out.append(start + i * step)
+        i += 1
+    return out
+
+
+def make_beats(mode, d):
+    if mode == "ok":
+        bars = max(0, int((d / 2 - 0.5) // 2))  # whole 2 s bars with 0.5 + 2n <= D/2
+        first = [0.5 + 0.5 * i for i in range(4 * bars)]
+        return first + run(d, 0.5 + 2.0 * bars, 60.0 / 90)
+    if mode == "steady":
+        return run(d, 0.5, 0.5)
+    if mode == "bar-end":
+        bars = max(1, int((d - 0.5) // 2))
+        first = [0.5 + 0.5 * i for i in range(4 * (bars - 1))]
+        return first + run(d, 0.5 + 2.0 * (bars - 1), 1.0)
+    return [0.5, 1.0, 1.5]  # few
+
+
+def main():
+    if len(sys.argv) != 3:
+        print("usage: stub-beat-tracker <input.flac> <out_dir>", file=sys.stderr)
+        return 64
+    inp, out = sys.argv[1], sys.argv[2]
+    log = os.environ.get("STUB_TRACKER_LOG")
+    if log:
+        with open(log, "a") as f:
+            f.write("\t".join(sys.argv[1:]) + "\n")
+    mode = read_mode()
+    if mode not in MODES:
+        print(f"stub-beat-tracker: unknown mode '{mode}'", file=sys.stderr)
+        return 64
+    if mode == "fail":
+        print("stub-beat-tracker: simulated failure", file=sys.stderr)
+        return 3
+    if mode == "hang":
+        print("stub-beat-tracker: hanging", flush=True)
+        while True:
+            time.sleep(1)
+    if not os.path.isfile(inp):
+        print("stub-beat-tracker: input not found", file=sys.stderr)
+        return 2
+    os.makedirs(out, exist_ok=True)
+    for p in ("0.5", "1"):
+        if mode == "slow":
+            time.sleep(1)
+        print(f"progress {p}", flush=True)
+    path = os.path.join(out, "beats.json")
+    if mode == "bad-output":
+        with open(path, "w") as f:
+            f.write("not json")
+        return 0
+    beats = [round(t, 6) for t in make_beats("ok" if mode == "slow" else mode, duration_s(inp))]
+    doc = {"beats": beats, "downbeats": beats[::4], "tracker": "stub-beat-tracker"}
+    with open(path, "w") as f:
+        json.dump(doc, f)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

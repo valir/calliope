@@ -41,3 +41,23 @@ directory (or two levels up), else `ok`:
 
 The real adapter `src/calliope-stems/separators/audio-separator.sh` is only syntax-checked
 (`bash -n`); no test or agent ever runs it.
+
+## `stub-beat-tracker` (Python 3, stdlib only)
+
+The calliope-stems beat-tracker contract: `stub-beat-tracker <input.flac> <out_dir>`. Reads the
+duration D from the FLAC header, writes `<out_dir>/beats.json` (`beats`, `downbeats` = every 4th beat,
+`tracker`) and prints `progress 0.5`, `progress 1`. Mode from `$STUB_TRACKER_MODE`, else the first
+line of a `stub-tracker-mode` file in the current directory (or two levels up), else `ok`:
+
+| mode | behaviour |
+|---|---|
+| `ok` | 120 BPM from 0.5 s for the most whole 4-beat bars ending at or before D/2, then 90 BPM to D (16 s stems: 12 + 15 beats, 7 downbeats) |
+| `steady` | 120 BPM from 0.5 s to D |
+| `bar-end` | 120 BPM, the last full bar before D at 60 BPM |
+| `few` | 3 beats |
+| `fail` | message on stderr, exit 3 |
+| `slow` | 1 s before each progress line, then as `ok` |
+| `hang` | sleeps until killed |
+| `bad-output` | writes `not json` |
+
+`$STUB_TRACKER_LOG` gets one tab-separated argv line per run.
