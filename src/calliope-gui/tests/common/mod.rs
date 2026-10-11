@@ -452,24 +452,59 @@ impl Dirs {
     }
 }
 
-/// Starts the e2e app and the real `calliope-stems` binary (with `tests/support/stub-separator`)
-/// inside `unshare -rn` with only the loopback interface up, so neither can reach the internet
-/// or the LAN. Temp XDG dirs and HOME, the fake yt-dlp first on PATH, a pre-written
-/// `settings.json` (repository root, server on 127.0.0.1:8765, `keep_original`). Waits for the
-/// Library to load, floats the window at 1280x800.
+/// Starts the e2e app and the real `calliope-stems` binary (with `tests/support/stub-separator`
+/// and `tests/support/stub-beat-tracker`, tracker mode `ok`) inside `unshare -rn` with only the
+/// loopback interface up, so neither can reach the internet or the LAN. Temp XDG dirs and HOME,
+/// the fake yt-dlp first on PATH, a pre-written `settings.json` (repository root, server on
+/// 127.0.0.1:8765, `keep_original`). Waits for the Library to load, floats the window at 1280x800.
 pub fn start_import_app(dirs: &Dirs, stub_mode: &str, keep_original: bool, answers: &[String]) -> (App, String) {
+    start_stems_app(dirs, stub_mode, "ok", keep_original, answers, None)
+}
+
+/// Sets the stub beat tracker's mode for the runs that start from now on.
+pub fn set_tracker_mode(dirs: &Dirs, mode: &str) {
+    std::fs::write(dirs.base().join("stems-work/stub-tracker-mode"), format!("{mode}\n")).unwrap();
+}
+
+/// The Editor on the `library-editor` copy (`editor_dirs`) with the capturing fake audio backend
+/// and a calliope-stems server (stub beat tracker in `tracker_mode`, timeout 3 s) in the same
+/// private network namespace as the app; opens the Editor (Alt+3).
+pub fn start_detect_app(dirs: &Dirs, tracker_mode: &str) -> (App, String) {
+    if !cfg!(feature = "e2e-hooks") {
+        panic!("Editor GUI tests need --features e2e-hooks; without it the app would open the real sound device");
+    }
+    std::fs::create_dir_all(dirs.base().join("stems-work")).unwrap();
+    std::fs::create_dir_all(dirs.base().join("home")).unwrap();
+    let (mut app, wid) = start_stems_app(dirs, "ok", tracker_mode, false, &[], Some(dirs.capture()));
+    app.key(&wid, "alt+3");
+    app.wait_view("editor");
+    (app, wid)
+}
+
+fn start_stems_app(
+    dirs: &Dirs,
+    stub_mode: &str,
+    tracker_mode: &str,
+    keep_original: bool,
+    answers: &[String],
+    capture: Option<PathBuf>,
+) -> (App, String) {
     assert!(dirs.base().starts_with(repo().join("target")), "temp dir is not under target/");
     let stems = repo().join("target/debug/calliope-stems");
     assert!(stems.exists(), "build calliope-stems first (cargo build -p calliope-stems)");
+    std::fs::create_dir_all(dirs.base().join("stems-work")).unwrap();
     std::fs::write(dirs.base().join("stems-work/stub-mode"), format!("{stub_mode}\n")).unwrap();
+    set_tracker_mode(dirs, tracker_mode);
     let cfg = dirs.app_config();
     std::fs::create_dir_all(&cfg).unwrap();
-    let settings = serde_json::json!({
-        "repository_root": dirs.repo(),
-        "edge_ai_url": format!("http://127.0.0.1:{STEMS_PORT}"),
-        "keep_original": keep_original,
-    });
-    std::fs::write(cfg.join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap()).unwrap();
+    // Keeps what the test wrote before (e.g. the theme).
+    let file = cfg.join("settings.json");
+    let mut settings: serde_json::Value =
+        std::fs::read(&file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_else(|| serde_json::json!({}));
+    settings["repository_root"] = serde_json::json!(dirs.repo());
+    settings["edge_ai_url"] = serde_json::json!(format!("http://127.0.0.1:{STEMS_PORT}"));
+    settings["keep_original"] = serde_json::json!(keep_original);
+    std::fs::write(file, serde_json::to_vec_pretty(&settings).unwrap()).unwrap();
     let ans = dirs.base().join("answers");
     std::fs::write(&ans, answers.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
 
@@ -478,10 +513,11 @@ pub fn start_import_app(dirs: &Dirs, stub_mode: &str, keep_original: bool, answe
     kill_tagged(&tag);
     let script = format!(
         "ip link set lo up || exit 1; {stems} --listen 127.0.0.1:{STEMS_PORT} --work-dir {work} \
-         --separator {sep} 2> {log} & exec {bin}",
+         --separator {sep} --beat-tracker {beats} --beat-timeout-ms 3000 2> {log} & exec {bin}",
         stems = sh_quote(&stems),
         work = sh_quote(&dirs.base().join("stems-work")),
         sep = sh_quote(&root().join("tests/support/stub-separator")),
+        beats = sh_quote(&root().join("tests/support/stub-beat-tracker")),
         log = sh_quote(&dirs.base().join("stems.log")),
         bin = sh_quote(Path::new(BIN)),
     );
@@ -497,6 +533,9 @@ pub fn start_import_app(dirs: &Dirs, stub_mode: &str, keep_original: bool, answe
         .env("FAKE_YTDLP_LOG", dirs.base().join("ytdlp.log"))
         .env("CALLIOPE_E2E_DIALOG_ANSWERS", &ans)
         .env("CALLIOPE_E2E_TAG", &tag);
+    if let Some(cap) = capture {
+        cmd.env("CALLIOPE_E2E_AUDIO", format!("capture:{}", cap.display()));
+    }
     let mut app = App::spawn(cmd, Some(tag));
     app.wait_ready();
     let end = Instant::now() + Duration::from_secs(15);
@@ -619,6 +658,23 @@ impl App {
             .status()
             .unwrap();
         assert!(s.success(), "xdotool click");
+    }
+
+    /// Drags with the left button from (x0, y) to (x1, y), in steps, relative to the window.
+    pub fn drag(&self, wid: &str, x0: i32, x1: i32, y: i32, before_release: impl FnOnce()) {
+        let run = |args: &[&str]| {
+            let s = Command::new("xdotool").args(args).status().unwrap();
+            assert!(s.success(), "xdotool {args:?}");
+        };
+        run(&["windowactivate", "--sync", wid, "mousemove", "--window", wid, &x0.to_string(), &y.to_string(), "mousedown", "1"]);
+        let n = 8;
+        for i in 1..=n {
+            let x = x0 + (x1 - x0) * i / n;
+            run(&["mousemove", "--window", wid, &x.to_string(), &y.to_string()]);
+            sleep(Duration::from_millis(40));
+        }
+        before_release();
+        run(&["mouseup", "1"]);
     }
 
     /// Mouse wheel (`up` = button 4) `n` times at (x, y) relative to the window.

@@ -55,6 +55,9 @@ Starts the Vite dev server with hot reload plus the debug app. It uses a dev-onl
 * Player (Alt+5): Space play/pause, b / e mark the loop start / end, Left / Right previous / next loop,
   l or Shift+L loop on/off, Ctrl+L collapse the track tree, Ctrl+F search. The letter keys do nothing
   while a field, button or the source dropdown has the focus.
+* Mix waveform (Editor) with detected tempo changes: click it or Tab to it, then Left / Right move the
+  selected change by 1/64 beat, Shift+Left / Shift+Right by one beat (limit 4 beats from where it was
+  detected), Up / Down select another change, Escape cancels a mouse drag.
 
 ## Track repository
 
@@ -80,6 +83,14 @@ The Editor view (Alt+3) mixes the stems of the track selected in the tree into a
 * The pinned Mix lane has Play/Pause, Stop, the position slider, the time field (type a time, or
   use the mouse wheel to nudge by 100 ms), the CLIP badge, and Save. Save renders the mix of the
   unmuted stems to `backings/backing.flac` (the old file goes to the trash).
+* Above the Mix lane the waveform shows the mix of the unmuted stems (it follows the checkboxes and
+  volume sliders a moment after the last change) with the playhead.
+* "Autodetect BPM" (needs the edge-AI server in Settings; the server needs a beat tracker, see
+  `src/calliope-stems/README.md`) uploads the unmuted mix, finds the beats and stores the tempo
+  sections in `player.json`. The sections show as amber bars with their BPM; drag a bar or use the
+  keys (see Keyboard) to fine-tune it. Cancel stops a running detection. The Player uses the same
+  tempo afterwards; a track open in the Player is closed while the Editor writes it and reopens
+  (with its loops) when you go back to it.
 * Keys: Space play/pause, Ctrl+S save, Ctrl+F search; Tab reaches every control.
 * Audio output needs `alsa-lib` (the `cpal` backend, default device) and, on PipeWire,
   `pipewire-alsa`. Tests never open a sound
@@ -96,7 +107,8 @@ Ctrl+L folds it to a narrow rail).
 * "Play:" chooses the audio: the backings, the plain audio, the original mix or one stem. Changing it
   stops playback and keeps the position.
 * The waveform shows the whole source, the playhead and the loops (the current loop in amber, a loop
-  without an end as a start mark only).
+  without an end as a start mark only). Tempo sections (from Autodetect BPM in the Editor or a typed
+  tempo) show as bars labelled with their BPM; only the Editor moves them.
 * BPM: type a tempo (20 to 300; 0 clears it) to place it at the playback position. Metronome: On/Off
   clicks on the beat, Count In plays three clicks before the audio starts. The bar fields of the loops
   need a BPM; without one they show times.

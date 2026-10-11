@@ -27,7 +27,7 @@
   }: Props = $props();
 
   const GRAB_PX = 8;
-  const FONT = '12px sans-serif';
+  const FONT = '600 15px sans-serif';
 
   let canvas: HTMLCanvasElement | undefined = $state();
   let width = $state(0);

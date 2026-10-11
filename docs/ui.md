@@ -98,7 +98,7 @@
 - Settings: "Appearance" (theme: Dark / Light) comes first, then MIDI interface, Audio output
   and Edge-AI server.
 - Placeholder views show the title, a one-line summary and "This view will be filled by:
-  <feature>". Editor shows tabs (Stems, Assembly, BPM & sections, Tablature, MIDI cues).
+  <feature>". Editor shows tabs (Stems, Tablature, MIDI cues).
 - Window: 1280x800 centred on first start; afterwards the last size and position.
 - Components: shadcn-svelte button, input, label, dialog, tabs, radio-group, separator, card.
   No toast library (sonner), which also fits "no pop-ups interrupting playback".
@@ -135,6 +135,24 @@
   slider. Control sizes: buttons 3.25 rem high, Play 4.5 rem wide.
 - Known limit: at 1024x640 only about 1.5 stem lanes are visible above the Mix lane, so six
   stems need scrolling. Collapsing the navigation (Ctrl+B) gives the lanes more width.
+- (stems-beat-autodetect, task 20) Editor Mix lane. The Mix lane starts with the shared waveform
+  (3.5 rem high, same component as the Player), then Mix cell, Play/Pause, Stop and "Autodetect BPM"
+  (becomes Cancel while detecting; disabled with its reason in the message slot when there is no
+  edge-AI server, the server has no beat tracker or nothing is unmuted); position slider and time;
+  Save and its target; the two-line slot (phase text such as "Detecting beats", the result
+  or the error). The lane was made tighter (padding, gaps, 3.5 rem waveform) so that four stem lanes
+  and the whole Mix lane fit at 1280x800. When the window is too small (1024x640), the Mix lane wraps
+  (Autodetect below Play) and the whole Editor pane scrolls; the lane list keeps at least 14 rem.
+- Tempo sections in a waveform (Editor and Player): an amber 2 px bar at each section start and a label
+  "<bpm> BPM" (bold 15 px, readable at 1-2 m) right of it, or just the number when the next bar is close.
+  Changes typed in the Player are dimmed (read-only); detected ones can be moved: drag the bar (8 px
+  grab zone, the pointer shows a resize cursor, a readout at the top left gives "+N/64 beat (time) · limit 4 beats") or focus the waveform and use Left/Right (1/64 beat), Shift+Left/Right (1 beat),
+  Up/Down (select the change; the selected one is a 4 px bar). The waveform is locked during a
+  detection. In the Player the waveform is read-only (sections only); a detected change sits beside the
+  loop marks without colliding (loops have a cap on the bar, sections do not).
+- The Player has no Detect button any more. At 1280x800 with the tree folded to the rail, BPM, Metronome
+  and Playback share one row and the Loops group fills the row below; with the tree shown, Playback
+  wraps to its own row (the pane scrolls). The groups are as tall as the tallest in their row.
 - (gui-play-backing-track, task 17) Player layout. Left the shared track tree (20 rem, Ctrl+L folds it to
   a rail), right the pane: source row ("Play:" dropdown 15 rem wide, then the title), the dashed
   tablature placeholder (one line, it gives way first), the waveform (5 rem), then the control bar:

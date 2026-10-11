@@ -51,7 +51,7 @@
 
 <svelte:window onpointerup={endDrag} onpointercancel={endDrag} />
 
-<div class="flex flex-col gap-2 rounded-lg border-2 border-border bg-card p-3" data-testid="mix-lane" role="group" aria-label="Mix">
+<div class="flex shrink-0 flex-col gap-1.5 rounded-lg border-2 border-border bg-card p-2" data-testid="mix-lane" role="group" aria-label="Mix">
   <WaveformView
     testid="mix-waveform"
     label="Mix waveform"
@@ -61,10 +61,10 @@
     segments={ed.tempo.segments}
     onmove={moveChange}
     locked={ed.detect !== null}
-    class="h-16"
+    class="h-14"
   />
 
-  <div class="flex items-center gap-3">
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
     <!-- Fixed-size cell: the solo name and the CLIP badge appear here without moving anything. -->
     <div class="flex h-[3.25rem] w-28 shrink-0 flex-col justify-between">
       <div class="flex items-center gap-2">

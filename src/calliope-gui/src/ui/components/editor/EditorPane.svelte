@@ -5,10 +5,10 @@
   import StemLane from './StemLane.svelte';
 </script>
 
-<div class="flex h-full min-h-0 flex-col gap-4" data-testid="editor-pane">
-  <div class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" data-testid="lanes">
+<div class="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overflow-x-hidden" data-testid="editor-pane">
+  <div class="min-h-[14rem] flex-1 overflow-y-auto overflow-x-hidden" data-testid="lanes">
     {#if ed.status === 'active'}
-      <div class="flex flex-col gap-3">
+      <div class="flex flex-col gap-2">
         {#each ed.stems as lane (lane.name)}
           <StemLane {lane} />
         {/each}
