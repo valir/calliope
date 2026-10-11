@@ -1,7 +1,7 @@
 //! The Player (plan 2.7): the real-time `Engine` owned by the audio callback and the
 //! `PlayerManager` that opens a track, drives the engine through a bounded command channel,
 //! and persists `player.json` (debounced, plus a periodic position save while playing).
-//! Metronome, count-in and loops come in the next task.
+//! The engine also mixes the metronome and count-in clicks and repeats loops (plans 2.4, 2.6).
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -12,9 +12,10 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::audio_out::{OutputBackend, OutputHandle};
+use crate::metronome::{count_in_plan, Click, CountIn};
 use crate::player_source::{self, Pcm, Source, PEAK_BUCKETS};
-use crate::player_state::{self, LoopRec, PlayerState};
-use crate::tempo_map::{Boundary, Segment};
+use crate::player_state::{self, LoopRec, Mark, PlayerState};
+use crate::tempo_map::{Boundary, Segment, TempoMap};
 use crate::transport::Transport;
 
 pub(crate) const SUPERSEDED: &str = "superseded";
@@ -27,14 +28,35 @@ pub(crate) const POSITION_SAVE: Duration = Duration::from_secs(10);
 pub(crate) const EVENT_INTERVAL: Duration = Duration::from_millis(100);
 const FADE_MS: u32 = 3;
 const COMMANDS: usize = 64;
+const TRASH: usize = 8;
+pub(crate) const NO_TEMPO: &str = "Enter a BPM first";
+pub(crate) const NO_SPEED: &str = "Speed change is not available yet";
+pub(crate) const LOOP_INCOMPLETE: &str = "Set the loop end first";
 
 // ---------------------------------------------------------------------- engine
 
-/// Commands from the manager to the callback.
+/// A beat of the grid: (source frame, accent).
+pub(crate) type Beat = (u64, bool);
+
+/// The current complete loop, in source frames.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LoopSpec {
+    pub start: u64,
+    pub end: u64,
+    /// Loop On: playback reaching the end jumps back to the start.
+    pub repeat: bool,
+    /// Count-in before every repeat (the loop's own Count-In).
+    pub count_in: Option<CountIn>,
+}
+
+/// Commands from the manager to the callback.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Cmd {
-    /// Start sound at the engine position (restarts from 0 at the end of the track).
-    Play,
+    /// Start sound at the engine position (restarts from 0 at the end of the track), after
+    /// the count-in when given.
+    Play { count_in: Option<CountIn> },
+    /// Jump to the loop start and play it; with Loop On it repeats, otherwise it stops at the end.
+    PlayLoop { count_in: Option<CountIn> },
     Pause,
     /// Move; while playing the sound stays off until `Resume` (the scrub rule).
     Seek(u64),
@@ -42,6 +64,10 @@ pub(crate) enum Cmd {
     Jump(u64),
     /// End of the scrub silence.
     Resume,
+    /// The current complete loop (none for no loop or an incomplete one).
+    SetLoop(Option<LoopSpec>),
+    SetGrid(Arc<Vec<Beat>>),
+    SetMetronome(bool),
 }
 
 /// Status written by the callback, read by the manager (atomics only).
@@ -51,6 +77,26 @@ pub(crate) struct Shared {
     pub position: AtomicU64,
     /// The source played to its end.
     pub ended: AtomicBool,
+    /// A count-in is playing. The manager sets it when it sends a count-in; the callback keeps it true.
+    pub counting_in: AtomicBool,
+    /// A loop is being played with the loop Play (same ownership rule).
+    pub loop_playing: AtomicBool,
+    /// A loop played once reached its end and stopped at its start.
+    pub loop_stopped: AtomicBool,
+    /// Loop repeats so far.
+    pub wraps: AtomicU64,
+}
+
+struct CountState {
+    plan: CountIn,
+    at: u64,
+}
+
+/// A click being mixed in.
+#[derive(Clone, Copy)]
+struct Voice {
+    accent: bool,
+    at: usize,
 }
 
 /// Pure render state; never allocates or locks.
@@ -62,41 +108,105 @@ pub(crate) struct Engine {
     fade_len: u32,
     fade_left: u32,
     shared: Arc<Shared>,
+    click: Click,
+    grid: Arc<Vec<Beat>>,
+    beat_idx: usize,
+    beat_dirty: bool,
+    metronome: bool,
+    voice: Option<Voice>,
+    count: Option<CountState>,
+    lp: Option<LoopSpec>,
+    loop_play: bool,
+    trash: Option<SyncSender<Arc<Vec<Beat>>>>,
 }
 
 impl Engine {
     pub fn new(pcm: Arc<Pcm>, pos: u64, shared: Arc<Shared>) -> Self {
         let fade_len = (pcm.rate * FADE_MS / 1000).max(1);
         let pos = pos.min(pcm.frames);
-        Engine { pcm, pos, playing: false, audible: false, fade_len, fade_left: 0, shared }
+        let click = Click::new(pcm.rate);
+        Engine {
+            pcm,
+            pos,
+            playing: false,
+            audible: false,
+            fade_len,
+            fade_left: 0,
+            shared,
+            click,
+            grid: Arc::new(Vec::new()),
+            beat_idx: 0,
+            beat_dirty: true,
+            metronome: false,
+            voice: None,
+            count: None,
+            lp: None,
+            loop_play: false,
+            trash: None,
+        }
+    }
+
+    /// Replaced grids go back through this channel, so they are freed outside the callback.
+    pub fn with_trash(mut self, trash: SyncSender<Arc<Vec<Beat>>>) -> Self {
+        self.trash = Some(trash);
+        self
     }
 
     fn start_fade(&mut self) {
         self.fade_left = self.fade_len;
     }
 
+    fn move_to(&mut self, f: u64) {
+        self.pos = f.min(self.pcm.frames);
+        self.beat_dirty = true;
+        self.voice = None;
+    }
+
+    fn begin(&mut self, count_in: Option<CountIn>) {
+        self.playing = true;
+        self.audible = true;
+        self.voice = None;
+        self.beat_dirty = true;
+        self.count = count_in.map(|plan| CountState { plan, at: 0 });
+        if self.count.is_none() {
+            self.start_fade();
+        }
+    }
+
     pub fn apply(&mut self, cmd: Cmd) {
         match cmd {
-            Cmd::Play => {
+            Cmd::Play { count_in } => {
                 if self.pos >= self.pcm.frames {
                     self.pos = 0;
                 }
-                self.playing = true;
-                self.audible = true;
-                self.start_fade();
+                self.begin(count_in);
+            }
+            Cmd::PlayLoop { count_in } => {
+                if let Some(l) = self.lp {
+                    self.pos = l.start.min(self.pcm.frames);
+                    self.loop_play = true;
+                } else if self.pos >= self.pcm.frames {
+                    self.pos = 0;
+                }
+                self.begin(count_in);
             }
             Cmd::Pause => {
                 self.playing = false;
                 self.audible = false;
+                self.count = None;
+                self.loop_play = false;
+                self.voice = None;
             }
             Cmd::Seek(f) => {
-                self.pos = f.min(self.pcm.frames);
+                self.move_to(f);
+                self.count = None;
                 if self.playing {
                     self.audible = false;
                 }
             }
             Cmd::Jump(f) => {
-                self.pos = f.min(self.pcm.frames);
+                self.move_to(f);
+                self.count = None;
                 if self.playing && self.audible {
                     self.start_fade();
                 }
@@ -107,37 +217,134 @@ impl Engine {
                     self.start_fade();
                 }
             }
+            Cmd::SetLoop(l) => {
+                self.lp = l;
+                if l.is_none() {
+                    self.loop_play = false;
+                }
+            }
+            Cmd::SetGrid(g) => {
+                let old = std::mem::replace(&mut self.grid, g);
+                self.beat_dirty = true;
+                if let Some(t) = &self.trash {
+                    let _ = t.try_send(old); // when full, freed here (rare)
+                }
+            }
+            Cmd::SetMetronome(on) => {
+                self.metronome = on;
+                self.beat_dirty = true;
+            }
+        }
+    }
+
+    /// Adds the running click voice to frame `i` of `out`.
+    fn mix_voice(&mut self, out: &mut [f32], i: usize) {
+        if let Some(v) = self.voice {
+            let s = self.click.samples(v.accent);
+            if let Some(&x) = s.get(v.at) {
+                out[2 * i] += x;
+                out[2 * i + 1] += x;
+                self.voice = Some(Voice { at: v.at + 1, ..v });
+            } else {
+                self.voice = None;
+            }
         }
     }
 
     /// Fills an interleaved stereo block.
     pub fn render(&mut self, out: &mut [f32]) {
         out.fill(0.0);
-        if self.playing && self.audible {
-            let frames = out.len() / 2;
-            let n = self.pcm.frames.saturating_sub(self.pos).min(frames as u64) as usize;
-            let ch = self.pcm.channels.max(1) as usize;
-            for i in 0..n {
-                let base = (self.pos as usize + i) * ch;
-                let l = f32::from(self.pcm.samples[base]) / 32768.0;
-                let r = if ch >= 2 { f32::from(self.pcm.samples[base + 1]) / 32768.0 } else { l };
-                let g = if self.fade_left > 0 {
-                    let g = (self.fade_len - self.fade_left) as f32 / self.fade_len as f32;
-                    self.fade_left -= 1;
-                    g
-                } else {
-                    1.0
-                };
-                out[2 * i] = l * g;
-                out[2 * i + 1] = r * g;
+        let frames = out.len() / 2;
+        let ch = self.pcm.channels.max(1) as usize;
+        let mut i = 0;
+        while i < frames && self.playing {
+            if let Some(c) = self.count.as_mut() {
+                if c.at >= c.plan.start {
+                    self.count = None;
+                    self.start_fade();
+                    self.voice = None;
+                    continue;
+                }
+                if let Some(k) = c.plan.clicks.iter().position(|&f| f == c.at) {
+                    self.voice = Some(Voice { accent: k == 0, at: 0 });
+                }
+                c.at += 1;
+                self.mix_voice(out, i);
+                i += 1;
+                continue;
             }
-            self.pos += n as u64;
+            if !self.audible {
+                break;
+            }
+            if self.metronome {
+                if self.beat_dirty {
+                    self.beat_idx = self.grid.partition_point(|b| b.0 < self.pos);
+                    self.beat_dirty = false;
+                }
+                while let Some(&(f, accent)) = self.grid.get(self.beat_idx) {
+                    if f > self.pos {
+                        break;
+                    }
+                    if f == self.pos {
+                        self.voice = Some(Voice { accent, at: 0 });
+                    }
+                    self.beat_idx += 1;
+                }
+            }
+            let base = self.pos as usize * ch;
+            let l = f32::from(self.pcm.samples[base]) / 32768.0;
+            let r = if ch >= 2 { f32::from(self.pcm.samples[base + 1]) / 32768.0 } else { l };
+            let mut g = if self.fade_left > 0 {
+                let g = (self.fade_len - self.fade_left) as f32 / self.fade_len as f32;
+                self.fade_left -= 1;
+                g
+            } else {
+                1.0
+            };
+            let wraps = self.lp.filter(|l| l.repeat || self.loop_play);
+            if let Some(l) = wraps {
+                if self.pos < l.end && self.pos >= l.start && l.end - self.pos <= u64::from(self.fade_len) {
+                    g *= (l.end - self.pos) as f32 / self.fade_len as f32;
+                }
+            }
+            out[2 * i] = l * g;
+            out[2 * i + 1] = r * g;
+            self.mix_voice(out, i);
+            out[2 * i] = out[2 * i].clamp(-1.0, 1.0);
+            out[2 * i + 1] = out[2 * i + 1].clamp(-1.0, 1.0);
+            i += 1;
+            self.pos += 1;
+            if let Some(l) = wraps.filter(|l| self.pos == l.end) {
+                if l.repeat {
+                    self.pos = l.start;
+                    self.beat_dirty = true;
+                    self.shared.wraps.fetch_add(1, Ordering::AcqRel);
+                    self.count = l.count_in.map(|plan| CountState { plan, at: 0 });
+                    if self.count.is_none() {
+                        self.start_fade();
+                    }
+                } else {
+                    self.pos = l.start; // played once: back to the loop start
+                    self.playing = false;
+                    self.audible = false;
+                    self.loop_play = false;
+                    self.voice = None;
+                    self.shared.loop_stopped.store(true, Ordering::Release);
+                }
+                continue;
+            }
             if self.pos >= self.pcm.frames {
                 self.playing = false;
                 self.audible = false;
+                self.loop_play = false;
                 self.shared.ended.store(true, Ordering::Release);
             }
         }
+        if !self.playing {
+            self.count = None;
+        }
+        self.shared.counting_in.store(self.count.is_some(), Ordering::Release);
+        self.shared.loop_playing.store(self.playing && self.loop_play, Ordering::Release);
         self.shared.position.store(self.pos, Ordering::Release);
     }
 }
@@ -314,6 +521,8 @@ pub(crate) fn load(spec: &OpenSpec, ticket: &OpenTicket, sink: &EventSink) -> Re
 struct Output {
     handle: Box<dyn OutputHandle>,
     tx: SyncSender<Cmd>,
+    /// Grids the callback has replaced; dropped here, on the ticker thread.
+    trash: Receiver<Arc<Vec<Beat>>>,
 }
 
 /// What it takes to open the device; `open` blocks and must run without the manager lock.
@@ -332,7 +541,8 @@ pub(crate) struct OpenedOutput {
 impl OutputRequest {
     pub fn open(self) -> Result<OpenedOutput, String> {
         let (tx, rx): (SyncSender<Cmd>, Receiver<Cmd>) = sync_channel(COMMANDS);
-        let mut engine = Engine::new(self.pcm.clone(), self.start, self.shared.clone());
+        let (trash_tx, trash) = sync_channel(TRASH);
+        let mut engine = Engine::new(self.pcm.clone(), self.start, self.shared.clone()).with_trash(trash_tx);
         let handle = self.backend.open(
             self.pcm.rate,
             Box::new(move |out| {
@@ -342,7 +552,7 @@ impl OutputRequest {
                 engine.render(out);
             }),
         )?;
-        Ok(OpenedOutput { shared: self.shared, output: Output { handle, tx } })
+        Ok(OpenedOutput { shared: self.shared, output: Output { handle, tx, trash } })
     }
 }
 
@@ -351,6 +561,7 @@ struct EventKey {
     playing: bool,
     resume_pending: bool,
     counting_in: bool,
+    loop_playing: bool,
 }
 
 struct Session {
@@ -375,6 +586,9 @@ struct Session {
     last_key: EventKey,
     last_position: u64,
     last_emit: Option<Instant>,
+    /// Refusal of the last `<`/`>`, shown by the Loops section.
+    loop_message: Option<String>,
+    last_wraps: u64,
 }
 
 impl Session {
@@ -396,8 +610,76 @@ impl Session {
 
     fn send(&self, cmd: Cmd) {
         if let Some(o) = &self.output {
+            while o.trash.try_recv().is_ok() {}
             let _ = o.tx.try_send(cmd);
         }
+    }
+
+    fn pos_ms_f(&self) -> f64 {
+        self.pos() as f64 * 1000.0 / f64::from(self.pcm.rate.max(1))
+    }
+
+    fn frame_of_ms_f(&self, ms: f64) -> u64 {
+        ((ms * f64::from(self.pcm.rate) / 1000.0).round().max(0.0) as u64).min(self.pcm.frames)
+    }
+
+    fn boundary_ms(&self, b: Boundary) -> f64 {
+        match b {
+            Boundary::Ms { ms } => ms,
+            Boundary::Tick { tick } => self.state.tempo.ms_at(tick),
+        }
+    }
+
+    /// The count-in for a start at `ms`; none without a tempo.
+    fn plan_at(&self, ms: f64) -> Option<CountIn> {
+        let bpm = self.state.tempo.bpm_at(ms) * self.state.speed;
+        (!self.state.tempo.is_empty() && bpm > 0.0).then(|| count_in_plan(bpm, self.pcm.rate))
+    }
+
+    fn log_count_in(&self, plan: &Option<CountIn>) {
+        if let Some(p) = plan {
+            eprintln!("calliope: player count-in clicks=3 beat_ms={}", self.ms_of(p.clicks[1]));
+        }
+    }
+
+    fn grid(&self) -> Arc<Vec<Beat>> {
+        let rate = f64::from(self.pcm.rate);
+        let dur_ms = self.pcm.frames as f64 * 1000.0 / rate;
+        let beats = self.state.tempo.beats_in(0.0, dur_ms);
+        Arc::new(beats.into_iter().map(|(ms, a)| ((ms * rate / 1000.0).round() as u64, a)).collect())
+    }
+
+    /// The current loop as the engine plays it; none when absent or incomplete.
+    fn loop_spec(&self) -> Option<LoopSpec> {
+        let l = self.state.current()?;
+        let end = self.frame_of_ms_f(self.boundary_ms(l.end?));
+        let start = self.frame_of_ms_f(self.boundary_ms(l.start));
+        if end <= start {
+            return None;
+        }
+        let count_in = if l.count_in { self.plan_at(self.boundary_ms(l.start)) } else { None };
+        Some(LoopSpec { start, end, repeat: l.repeat, count_in })
+    }
+
+    fn sync_loop(&self) {
+        self.send(Cmd::SetLoop(self.loop_spec()));
+    }
+
+    fn sync_grid(&self) {
+        self.send(Cmd::SetGrid(self.grid()));
+        self.send(Cmd::SetMetronome(self.state.metronome.on && !self.state.tempo.is_empty()));
+    }
+
+    /// Pauses the engine and clears the count-in and loop-play marks at once.
+    fn halt(&self) {
+        self.send(Cmd::Pause);
+        self.shared.counting_in.store(false, Ordering::Release);
+        self.shared.loop_playing.store(false, Ordering::Release);
+    }
+
+    fn loop_index(&self) -> Option<usize> {
+        let id = self.state.current_loop.as_ref()?;
+        self.state.loops.iter().position(|l| &l.id == id)
     }
 
     fn mark_dirty(&mut self, now: Instant) {
@@ -410,7 +692,8 @@ impl Session {
         EventKey {
             playing: self.transport.shows_playing(),
             resume_pending: self.transport.resume_pending(),
-            counting_in: false,
+            counting_in: self.shared.counting_in.load(Ordering::Acquire),
+            loop_playing: self.shared.loop_playing.load(Ordering::Acquire),
         }
     }
 
@@ -418,10 +701,10 @@ impl Session {
         let ms = self.ms_of(self.pos());
         PlayerTransport {
             playing: self.transport.shows_playing(),
-            counting_in: false,
+            counting_in: self.shared.counting_in.load(Ordering::Acquire),
             resume_pending: self.transport.resume_pending(),
             position_ms: ms,
-            loop_playing: false,
+            loop_playing: self.shared.loop_playing.load(Ordering::Acquire),
             bpm: self.state.tempo.bpm_at(ms as f64) * self.state.speed,
             tempo_index: self.state.tempo.segment_at(ms as f64),
         }
@@ -462,7 +745,7 @@ impl Session {
             metronome: SnapMetronome { on: st.metronome.on, count_in: st.metronome.count_in },
             loops,
             current_loop,
-            loop_message: None,
+            loop_message: self.loop_message.clone(),
             transport: self.transport_state(),
             can_change_speed: false,
             note: self.note.clone(),
@@ -506,8 +789,11 @@ fn publish(sink: &EventSink, s: &mut Session, now: Instant) -> PlayerTransport {
     if key_changed || (key.playing && due) || (!key.playing && moved) {
         if key_changed {
             eprintln!(
-                "calliope: player transport playing={} counting_in={} loop=none position_ms={}",
-                state.playing, state.counting_in, state.position_ms
+                "calliope: player transport playing={} counting_in={} loop={} position_ms={}",
+                state.playing,
+                state.counting_in,
+                if state.loop_playing { s.loop_index().map_or("none".to_string(), |n| n.to_string()) } else { "none".into() },
+                state.position_ms
             );
         }
         s.last_key = key;
@@ -516,6 +802,25 @@ fn publish(sink: &EventSink, s: &mut Session, now: Instant) -> PlayerTransport {
         sink(PlayerEvent::Transport { id: s.id.clone(), state: state.clone() });
     }
     state
+}
+
+/// What the Loops section asks for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum LoopAction {
+    Add,
+    Remove,
+    /// Previous (-1) or next (+1); jumps to the start of the loop at once.
+    Select(i32),
+    /// `>` (Start) and `<` (End): the loop edge at the position.
+    Mark(Mark),
+    /// Typed bar1/bar2 value.
+    Set(Mark, Boundary),
+    Flags {
+        repeat: bool,
+        count_in: bool,
+    },
+    Play,
+    Stop,
 }
 
 pub(crate) struct PlayerManager {
@@ -611,9 +916,11 @@ impl PlayerManager {
             switching: None,
             select_gen: 0,
             select_cancel: None,
-            last_key: EventKey { playing: false, resume_pending: false, counting_in: false },
+            last_key: EventKey { playing: false, resume_pending: false, counting_in: false, loop_playing: false },
             last_position: 0,
             last_emit: None,
+            loop_message: None,
+            last_wraps: 0,
         };
         session.state.position_ms = session.ms_of(frames); // what is on disk or equal to it
         let snap = session.snapshot();
@@ -649,7 +956,7 @@ impl PlayerManager {
             if let Some(c) = &s.select_cancel {
                 c.store(true, Ordering::Relaxed);
             }
-            s.send(Cmd::Pause);
+            s.halt();
             flush_session(&self.sink, &mut s);
             self.retire(s.output.take().map(|o| o.handle));
         }
@@ -709,6 +1016,8 @@ impl PlayerManager {
             Some(s) if s.output.is_none() && Arc::ptr_eq(&s.shared, &o.shared) => {
                 s.output = Some(o.output);
                 s.send(Cmd::Seek(s.pos())); // the position may have moved since the request
+                s.sync_grid();
+                s.sync_loop();
             }
             _ => self.retire(Some(o.output.handle)),
         }
@@ -727,8 +1036,16 @@ impl PlayerManager {
             s.set_pos(0);
             s.send(Cmd::Seek(0));
         }
+        // A count-in precedes a start from paused or stopped, not a play that is already running.
+        let plan = if s.transport.shows_playing() || !s.state.metronome.count_in {
+            None
+        } else {
+            s.plan_at(s.pos_ms_f())
+        };
+        s.log_count_in(&plan);
+        s.shared.counting_in.store(plan.is_some(), Ordering::Release);
         s.transport.play();
-        s.send(Cmd::Play);
+        s.send(Cmd::Play { count_in: plan });
         s.next_pos_save = Some(now + POSITION_SAVE);
         Ok(publish(&sink, s, now))
     }
@@ -742,7 +1059,7 @@ impl PlayerManager {
         let sink = self.sink.clone();
         let s = self.session(id)?;
         s.transport.pause();
-        s.send(Cmd::Pause);
+        s.halt();
         s.next_pos_save = None;
         s.mark_dirty(now);
         Ok(publish(&sink, s, now))
@@ -784,7 +1101,7 @@ impl PlayerManager {
         let sink = self.sink.clone();
         let s = self.session(id)?;
         s.transport.pause();
-        s.send(Cmd::Pause);
+        s.halt();
         s.next_pos_save = None;
         s.mark_dirty(now);
         flush_session(&sink, s);
@@ -792,6 +1109,138 @@ impl PlayerManager {
         let st = publish(&sink, s, now);
         self.retire(out);
         Ok(st)
+    }
+
+    // ------------------------------------------------------ tempo, metronome
+
+    /// Types a BPM at the current position (0 clears the segment there); resets the speed to
+    /// 1.0, re-snaps the loops and uploads the new grid.
+    pub fn set_bpm(&mut self, id: &str, bpm: f64, now: Instant) -> Result<PlayerSnapshot, String> {
+        let s = self.session(id)?;
+        let mut map: TempoMap = s.state.tempo.clone();
+        map.set_bpm_at(s.pos_ms_f(), bpm)?;
+        s.state.speed = 1.0;
+        s.state.apply_tempo_change(map);
+        s.loop_message = None;
+        s.sync_grid();
+        s.sync_loop();
+        s.mark_dirty(now);
+        eprintln!("calliope: player bpm value={bpm} position_ms={}", s.ms_of(s.pos()));
+        Ok(s.snapshot())
+    }
+
+    /// The speed buttons: not in this increment.
+    pub fn speed_action(&mut self, id: &str) -> Result<PlayerSnapshot, String> {
+        let s = self.session(id)?;
+        Err(if s.state.tempo.is_empty() { NO_TEMPO } else { NO_SPEED }.into())
+    }
+
+    /// Metronome On and Count In; refused on a track without a tempo.
+    pub fn set_metronome(&mut self, id: &str, on: bool, count_in: bool, now: Instant) -> Result<PlayerSnapshot, String> {
+        let s = self.session(id)?;
+        if s.state.tempo.is_empty() {
+            return Err(NO_TEMPO.into());
+        }
+        s.state.metronome.on = on;
+        s.state.metronome.count_in = count_in;
+        s.send(Cmd::SetMetronome(on));
+        s.mark_dirty(now);
+        Ok(s.snapshot())
+    }
+
+    // ---------------------------------------------------------------- loops
+
+    fn playable_loop(&self, id: &str) -> Result<(), String> {
+        match self.session.as_ref() {
+            Some(s) if s.id == id => match s.state.current() {
+                None => Err("There is no loop selected".into()),
+                Some(l) if !l.is_complete() => Err(LOOP_INCOMPLETE.into()),
+                Some(_) => Ok(()),
+            },
+            _ => Err(format!("no player session for {id}")),
+        }
+    }
+
+    /// Step 1 of loop Play: refuses an incomplete loop, then as `play_request`.
+    pub fn loop_play_request(&self, id: &str) -> Result<Option<OutputRequest>, String> {
+        self.playable_loop(id)?;
+        self.play_request(id)
+    }
+
+    /// Step 2 of loop Play: jumps to the loop start and plays (count-in per 2.6).
+    pub fn loop_play_with(&mut self, id: &str, opened: Option<OpenedOutput>, now: Instant) -> Result<PlayerSnapshot, String> {
+        self.playable_loop(id)?;
+        self.session(id)?;
+        self.install(opened);
+        let sink = self.sink.clone();
+        let s = self.session(id)?;
+        if s.output.is_none() {
+            return Err(OUTPUT_LOST.into());
+        }
+        let l = s.state.current().expect("checked");
+        let (start_ms, loop_count_in) = (s.boundary_ms(l.start), l.count_in);
+        let start = s.frame_of_ms_f(start_ms);
+        let plan = if s.state.metronome.count_in || loop_count_in { s.plan_at(start_ms) } else { None };
+        s.loop_message = None;
+        s.set_pos(start);
+        s.log_count_in(&plan);
+        s.shared.counting_in.store(plan.is_some(), Ordering::Release);
+        s.shared.loop_playing.store(true, Ordering::Release);
+        s.transport.play();
+        s.send(Cmd::PlayLoop { count_in: plan });
+        s.next_pos_save = Some(now + POSITION_SAVE);
+        publish(&sink, s, now);
+        Ok(s.snapshot())
+    }
+
+    /// One Loops-section action (all but loop Play, which needs the device: `loop_play_with`).
+    pub fn loop_action(&mut self, id: &str, action: LoopAction, now: Instant) -> Result<PlayerSnapshot, String> {
+        if action == LoopAction::Play {
+            let opened = self.loop_play_request(id)?.map(OutputRequest::open).transpose()?;
+            return self.loop_play_with(id, opened, now);
+        }
+        let sink = self.sink.clone();
+        let s = self.session(id)?;
+        s.loop_message = None;
+        let pos_ms = s.pos_ms_f();
+        match action {
+            LoopAction::Add => {
+                s.state.add(pos_ms)?;
+            }
+            LoopAction::Remove => s.state.remove()?,
+            LoopAction::Select(delta) => {
+                let n = s.state.loops.len() as i64;
+                let cur = s.loop_index().ok_or("There is no loop selected")? as i64;
+                let to = (cur + i64::from(delta)).clamp(0, n - 1) as usize;
+                let id = s.state.loops[to].id.clone();
+                s.state.select(&id)?;
+                let l = &s.state.loops[to];
+                let f = s.frame_of_ms_f(s.boundary_ms(l.start));
+                s.set_pos(f);
+                s.send(Cmd::Jump(f)); // at once, no scrub silence
+            }
+            LoopAction::Mark(edge) => match s.state.mark(edge, pos_ms) {
+                Ok(()) => {}
+                Err(m) if m == player_state::END_BEFORE_START => s.loop_message = Some(m),
+                Err(m) => return Err(m),
+            },
+            LoopAction::Set(edge, value) => s.state.set(edge, value)?,
+            LoopAction::Flags { repeat, count_in } => s.state.flags(Some(repeat), Some(count_in))?,
+            LoopAction::Stop => {
+                let l = s.state.current().ok_or("There is no loop selected")?;
+                let f = s.frame_of_ms_f(s.boundary_ms(l.start));
+                s.transport.stop();
+                s.halt();
+                s.set_pos(f);
+                s.send(Cmd::Seek(f));
+                s.next_pos_save = None;
+            }
+            LoopAction::Play => unreachable!("handled above"),
+        }
+        s.sync_loop();
+        s.mark_dirty(now);
+        publish(&sink, s, now);
+        Ok(s.snapshot())
     }
 
     // -------------------------------------------------------- source change
@@ -809,7 +1258,7 @@ impl PlayerManager {
             c.store(true, Ordering::Relaxed);
         }
         s.transport.stop();
-        s.send(Cmd::Pause);
+        s.halt();
         s.next_pos_save = None;
         let out = s.output.take().map(|o| o.handle);
         s.select_gen += 1;
@@ -885,10 +1334,27 @@ impl PlayerManager {
         if let Some(s) = self.session.as_mut() {
             let failed = s.output.as_ref().and_then(|o| o.handle.error());
             let ended = s.shared.ended.swap(false, Ordering::AcqRel);
-            if failed.is_some() || ended {
+            let loop_stopped = s.shared.loop_stopped.swap(false, Ordering::AcqRel);
+            let wraps = s.shared.wraps.load(Ordering::Acquire);
+            if wraps != s.last_wraps {
+                s.last_wraps = wraps;
+                eprintln!(
+                    "calliope: player wrap loop={} count_in={}",
+                    s.loop_index().map_or("none".to_string(), |n| n.to_string()),
+                    s.state.current().is_some_and(|l| l.count_in)
+                );
+            }
+            if let Some(o) = &s.output {
+                while o.trash.try_recv().is_ok() {}
+            }
+            if loop_stopped && failed.is_none() && !ended {
+                s.transport.stop(); // the engine is already back at the loop start
+                s.next_pos_save = None;
+                s.mark_dirty(now);
+            } else if failed.is_some() || ended {
                 s.transport.ended();
                 s.next_pos_save = None;
-                s.send(Cmd::Pause);
+                s.halt();
                 if ended {
                     s.set_pos(0);
                     s.send(Cmd::Seek(0));
