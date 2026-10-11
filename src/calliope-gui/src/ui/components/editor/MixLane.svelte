@@ -4,7 +4,7 @@
   import TimeField from './TimeField.svelte';
   import { Slider } from '$lib/components/ui/slider/index.js';
   import {
-    canPlay, cancelSave, ed, positionText, save, saveEnabled, seek, stop, stopEnabled, togglePlay,
+    canPlay, cancelSave, ed, nudge, positionText, save, saveEnabled, seek, stop, stopEnabled, togglePlay,
   } from '$lib/editor-state.svelte';
 
   const active = $derived(ed.status === 'active');
@@ -68,7 +68,13 @@
         aria-valuetext={positionText()}
       />
     </div>
-    <TimeField />
+    <TimeField
+      positionMs={ed.transport.position_ms}
+      durationMs={ed.durationMs}
+      {active}
+      onseek={seek}
+      onnudge={(d) => void nudge(d)}
+    />
   </div>
 
   <div class="flex items-center gap-3">

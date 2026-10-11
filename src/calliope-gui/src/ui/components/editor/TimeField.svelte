@@ -1,23 +1,35 @@
 <script lang="ts">
-  import { ed, nudge, positionText, seek } from '$lib/editor-state.svelte';
   import { formatPosition, parsePosition } from '$lib/time-format';
+
+  let {
+    positionMs,
+    durationMs,
+    active,
+    onseek,
+    onnudge,
+  }: {
+    positionMs: number;
+    durationMs: number;
+    active: boolean;
+    onseek: (ms: number) => void;
+    onnudge: (delta: number) => void;
+  } = $props();
 
   // Unsaved text while the user edits; null means the field follows the transport position.
   let text = $state<string | null>(null);
   let invalid = $state<string | null>(null);
-  const shown = $derived(text ?? positionText());
-  const active = $derived(ed.status === 'active');
+  const shown = $derived(text ?? formatPosition(positionMs));
 
   function commit(): void {
     if (text === null) return;
     const ms = parsePosition(text);
-    if (ms === null || ms > ed.durationMs) {
-      invalid = `Enter a time between 0:00.0 and ${formatPosition(ed.durationMs)}`;
+    if (ms === null || ms > durationMs) {
+      invalid = `Enter a time between 0:00.0 and ${formatPosition(durationMs)}`;
       return;
     }
     text = null;
     invalid = null;
-    seek(ms);
+    onseek(ms);
   }
   function revert(): void {
     text = null;
@@ -41,7 +53,7 @@
     e.preventDefault();
     if (!active || e.deltaY === 0) return;
     revert();
-    void nudge(e.deltaY < 0 ? -100 : 100);
+    onnudge(e.deltaY < 0 ? -100 : 100);
   }
 </script>
 

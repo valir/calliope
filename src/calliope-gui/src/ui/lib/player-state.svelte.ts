@@ -227,7 +227,7 @@ function onEvent(gen: number, e: PlayerEvent): void {
 
 // ---- derived ----
 
-export const playLabel = (): 'Play' | 'Pause' => (pl.transport.playing ? 'Pause' : 'Play');
+export const playLabel = (): 'Play' | 'Pause' => (pl.transport.playing || pl.transport.counting_in ? 'Pause' : 'Play');
 export const canPlay = (): boolean => pl.status === 'active';
 
 // ---- actions ----
@@ -279,7 +279,7 @@ async function snapshotCall(
 }
 
 export async function togglePlay(): Promise<void> {
-  if (pl.transport.playing) {
+  if (pl.transport.playing || pl.transport.counting_in) {
     await transportCall('player_pause', playerPause, (t) => `player pause position=${t.position_ms}`);
   } else {
     await transportCall('player_play', playerPlay, (t) => `player play position=${t.position_ms}`);

@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/sv
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import type { Channel } from '@tauri-apps/api/core';
 import TimeField from './TimeField.svelte';
-import { ed, resetEditor, syncSelection } from '$lib/editor-state.svelte';
+import { ed, nudge, resetEditor, seek, syncSelection } from '$lib/editor-state.svelte';
 import { resetLibrary } from '$lib/library-state.svelte';
 import { FIXTURE_TRACKS } from '$lib/fixture-tracks';
 import type { EditorEvent, EditorSnapshot, TransportState } from '$lib/ipc';
@@ -35,7 +35,9 @@ beforeEach(async () => {
   });
   resetEditor();
   resetLibrary();
-  render(TimeField);
+  render(TimeField, {
+    positionMs: 0, durationMs: 187400, active: true, onseek: seek, onnudge: (d: number) => void nudge(d),
+  });
   syncSelection(stemTrack);
   await waitFor(() => expect(ed.status).toBe('active'));
   await flush();

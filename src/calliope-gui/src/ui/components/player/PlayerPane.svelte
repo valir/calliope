@@ -1,6 +1,10 @@
 <script lang="ts">
   import { selectedTrack } from '$lib/library-state.svelte';
   import { pl, selectSource } from '$lib/player-state.svelte';
+  import BpmSection from './BpmSection.svelte';
+  import LoopsSection from './LoopsSection.svelte';
+  import MetronomeSection from './MetronomeSection.svelte';
+  import PlaybackSection from './PlaybackSection.svelte';
   import SourceSelect from './SourceSelect.svelte';
 
   const track = $derived(selectedTrack());
@@ -27,5 +31,10 @@
     The tablature will be shown here (gui-tablatures).
   </p>
   <div class="h-24 shrink-0 rounded-lg border border-border" data-testid="player-waveform"></div>
-  <div class="flex shrink-0 flex-wrap gap-3" data-testid="player-controls"></div>
+  <div class="flex shrink-0 flex-wrap gap-3" data-testid="player-controls">
+    <BpmSection />
+    <MetronomeSection />
+    <PlaybackSection />
+    <LoopsSection />
+  </div>
 </section>
