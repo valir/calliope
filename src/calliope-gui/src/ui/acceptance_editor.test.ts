@@ -25,6 +25,7 @@ const stemB: TrackRecord = { ...stemA, id: 'stem-b', title: 'Other stems' };
 const idle: TransportState = { playing: false, position_ms: 0, resume_pending: false, solo: null, clipping: false };
 const snap = (id: string): EditorSnapshot => ({
   id, title: 'T', duration_ms: 187400, sample_rate: 44100, transport: { ...idle }, saving: null,
+  peaks: [], tempo: { beats_per_bar: 4, segments: [], multi: false }, detect: null,
   variant: { id: 'backing', name: 'Backing', file: 'backings/backing.flac', exists: false },
   stems: [
     { name: 'guitar', gain_db: 0, unmuted: false },

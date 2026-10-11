@@ -113,12 +113,10 @@ impl PlayerHost {
 /// The app's tempo store (plan 2.2): `player.json`, with the Player's session for the track
 /// flushed (`load`) or released (`replace`) first, both under one lock of the manager, so
 /// neither side loses the other's writes.
-#[allow(dead_code)] // wired by the detection commands
 pub(crate) struct PlayerTempoStore {
     host: Arc<PlayerHost>,
 }
 
-#[allow(dead_code)]
 impl PlayerTempoStore {
     pub(crate) fn new(host: Arc<PlayerHost>) -> Self {
         Self { host }
@@ -312,13 +310,13 @@ pub(crate) async fn open_player(
     id: String,
     events: tauri::ipc::Channel<PlayerEvent>,
 ) -> Result<PlayerSnapshot, String> {
-    blocking(move || do_open_player(&app.state::<PlayerHost>(), &app.state::<RepoState>(), &id, event_sink(events))).await
+    blocking(move || do_open_player(&app.state::<Arc<PlayerHost>>(), &app.state::<RepoState>(), &id, event_sink(events))).await
 }
 
 #[tauri::command]
 pub(crate) async fn close_player(app: tauri::AppHandle) -> Result<(), String> {
     blocking(move || {
-        do_close_player(&app.state::<PlayerHost>());
+        do_close_player(&app.state::<Arc<PlayerHost>>());
         Ok(())
     })
     .await
@@ -326,7 +324,7 @@ pub(crate) async fn close_player(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub(crate) async fn get_player(app: tauri::AppHandle) -> Result<Option<PlayerSnapshot>, String> {
-    blocking(move || Ok(app.state::<PlayerHost>().with(|m| m.current()))).await
+    blocking(move || Ok(app.state::<Arc<PlayerHost>>().with(|m| m.current()))).await
 }
 
 #[tauri::command]
@@ -334,57 +332,57 @@ pub(crate) async fn watch_player(
     app: tauri::AppHandle,
     events: tauri::ipc::Channel<PlayerEvent>,
 ) -> Result<Option<PlayerSnapshot>, String> {
-    blocking(move || Ok(do_watch_player(&app.state::<PlayerHost>(), event_sink(events)))).await
+    blocking(move || Ok(do_watch_player(&app.state::<Arc<PlayerHost>>(), event_sink(events)))).await
 }
 
 #[tauri::command]
 pub(crate) async fn player_select_source(app: tauri::AppHandle, id: String, source: String) -> Result<PlayerSnapshot, String> {
-    blocking(move || do_player_select_source(&app.state::<PlayerHost>(), &id, &source)).await
+    blocking(move || do_player_select_source(&app.state::<Arc<PlayerHost>>(), &id, &source)).await
 }
 
 #[tauri::command]
 pub(crate) async fn player_play(app: tauri::AppHandle, id: String) -> Result<PlayerTransport, String> {
-    blocking(move || do_player_play(&app.state::<PlayerHost>(), &app.state::<EditorState>(), &id)).await
+    blocking(move || do_player_play(&app.state::<Arc<PlayerHost>>(), &app.state::<EditorState>(), &id)).await
 }
 
 #[tauri::command]
 pub(crate) async fn player_pause(app: tauri::AppHandle, id: String) -> Result<PlayerTransport, String> {
-    blocking(move || app.state::<PlayerHost>().with(|m| m.pause(&id, Instant::now()))).await
+    blocking(move || app.state::<Arc<PlayerHost>>().with(|m| m.pause(&id, Instant::now()))).await
 }
 
 #[tauri::command]
 pub(crate) async fn player_seek(app: tauri::AppHandle, id: String, position: u64) -> Result<PlayerTransport, String> {
-    blocking(move || app.state::<PlayerHost>().with(|m| m.seek(&id, position, Instant::now()))).await
+    blocking(move || app.state::<Arc<PlayerHost>>().with(|m| m.seek(&id, position, Instant::now()))).await
 }
 
 #[tauri::command]
 pub(crate) async fn player_nudge(app: tauri::AppHandle, id: String, delta: i64) -> Result<PlayerTransport, String> {
-    blocking(move || app.state::<PlayerHost>().with(|m| m.nudge(&id, delta, Instant::now()))).await
+    blocking(move || app.state::<Arc<PlayerHost>>().with(|m| m.nudge(&id, delta, Instant::now()))).await
 }
 
 #[tauri::command]
 pub(crate) async fn player_skip(app: tauri::AppHandle, id: String, delta: i64) -> Result<PlayerTransport, String> {
-    blocking(move || app.state::<PlayerHost>().with(|m| m.skip(&id, delta, Instant::now()))).await
+    blocking(move || app.state::<Arc<PlayerHost>>().with(|m| m.skip(&id, delta, Instant::now()))).await
 }
 
 #[tauri::command]
 pub(crate) async fn player_leave(app: tauri::AppHandle, id: String) -> Result<PlayerTransport, String> {
-    blocking(move || app.state::<PlayerHost>().with(|m| m.leave(&id, Instant::now()))).await
+    blocking(move || app.state::<Arc<PlayerHost>>().with(|m| m.leave(&id, Instant::now()))).await
 }
 
 #[tauri::command]
 pub(crate) async fn player_tempo(app: tauri::AppHandle, id: String, action: TempoAction) -> Result<PlayerSnapshot, String> {
-    blocking(move || do_player_tempo(&app.state::<PlayerHost>(), &id, action)).await
+    blocking(move || do_player_tempo(&app.state::<Arc<PlayerHost>>(), &id, action)).await
 }
 
 #[tauri::command]
 pub(crate) async fn player_metronome(app: tauri::AppHandle, id: String, on: bool, count_in: bool) -> Result<PlayerSnapshot, String> {
-    blocking(move || app.state::<PlayerHost>().with(|m| m.set_metronome(&id, on, count_in, Instant::now()))).await
+    blocking(move || app.state::<Arc<PlayerHost>>().with(|m| m.set_metronome(&id, on, count_in, Instant::now()))).await
 }
 
 #[tauri::command]
 pub(crate) async fn player_loop(app: tauri::AppHandle, id: String, action: LoopCmd) -> Result<PlayerSnapshot, String> {
-    blocking(move || do_player_loop(&app.state::<PlayerHost>(), &app.state::<EditorState>(), &id, action)).await
+    blocking(move || do_player_loop(&app.state::<Arc<PlayerHost>>(), &app.state::<EditorState>(), &id, action)).await
 }
 
 #[cfg(test)]

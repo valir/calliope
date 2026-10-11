@@ -4,6 +4,7 @@ import {
   closePlayer, getPlayer, openPlayer, playerLeave, playerLoop, playerMetronome, playerNudge, playerPause,
   playerPlay, playerSeek, playerSelectSource, playerSkip, playerTempo, watchPlayer,
 } from './ipc';
+import type { PlayerEvent } from './ipc';
 import { PLAYER_FIXTURE_TRACKS } from './fixture-tracks';
 
 afterEach(() => clearMocks());
@@ -47,6 +48,15 @@ describe('player ipc wrappers', () => {
     expect(calls[11][1]).toEqual({ id: 't1', action: { kind: 'set-bpm', bpm: 92.5 } });
     expect(calls[12][1]).toEqual({ id: 't1', on: true, countIn: false });
     expect(calls[13][1]).toEqual({ id: 't1', action: { kind: 'set', edge: 'start', value: { tick: 32 } } });
+  });
+
+  it('types the closed event of a released session', async () => {
+    const got: PlayerEvent[] = [];
+    let ch: { onmessage: (e: PlayerEvent) => void } | undefined;
+    mockIPC((_c, args) => { ch = (args as { events: typeof ch }).events; return null; });
+    await watchPlayer((e) => got.push(e));
+    ch!.onmessage({ kind: 'closed', id: 't1' });
+    expect(got).toEqual([{ kind: 'closed', id: 't1' }]);
   });
 
   it('never sends a path', async () => {

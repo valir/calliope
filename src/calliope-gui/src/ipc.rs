@@ -21,6 +21,9 @@ use crate::track_meta::TrackEdits;
 use calliope_lib::stems_client::{ClientError, StemsClient};
 use crate::repository::{self, Library, RepoStatus, Repository, SaveResult, SaveTrackRequest};
 use crate::settings::{self, Settings, SettingsStore, Theme};
+use crate::tempo_store::TempoStore;
+#[cfg(test)]
+use crate::tempo_store::FileTempoStore;
 
 /// Managed app state: the current repository root (the lock serialises every repository
 /// operation), the pick-token registry and the dialog implementation.
@@ -585,7 +588,13 @@ impl EditorState {
 /// How often the editor ticker runs.
 pub const EDITOR_TICK: Duration = Duration::from_millis(20);
 
-pub fn do_open_editor(st: &EditorState, repo: &RepoState, id: &str, sink: EventSink) -> Result<EditorSnapshot, String> {
+pub fn do_open_editor(
+    st: &EditorState,
+    repo: &RepoState,
+    tempo: &dyn crate::tempo_store::TempoStore,
+    id: &str,
+    sink: EventSink,
+) -> Result<EditorSnapshot, String> {
     // The open is registered before anything slow, so overlapping opens are ordered by
     // their arrival here and the newest one owns the event sink.
     let (ticket, events) = st.with(|m| {
@@ -599,8 +608,8 @@ pub fn do_open_editor(st: &EditorState, repo: &RepoState, id: &str, sink: EventS
             let rec = r.load_record(id)?;
             let dir = r.tracks_dir().join(&rec.id);
             OpenSpec {
-                tempo: crate::tempo_store::TempoStore::load(&crate::tempo_store::FileTempoStore, &rec.id, &dir)
-                    .unwrap_or_default(),
+                // Through the shared store: the Player's pending state is flushed first.
+                tempo: tempo.load(&rec.id, &dir).unwrap_or_default(),
                 dir,
                 id: rec.id,
                 title: rec.title,
@@ -632,6 +641,15 @@ pub fn do_watch_editor(st: &EditorState, sink: EventSink) -> Option<EditorSnapsh
     })
 }
 
+/// What `editor_tempo` does (plan 2.11).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum TempoEdit {
+    /// Absolute offset in steps from the detected position of change `index`.
+    Move { index: usize, steps: i64 },
+    Reload,
+}
+
 pub fn do_editor_play(st: &EditorState, id: &str) -> Result<TransportState, String> {
     let req = st.with(|m| m.play_request(id))?;
     st.run_before_play();
@@ -653,6 +671,30 @@ pub fn do_editor_seek(st: &EditorState, id: &str, position: u64) -> Result<Trans
 
 pub fn do_editor_nudge(st: &EditorState, id: &str, delta: i64) -> Result<TransportState, String> {
     st.with(|m| m.nudge(id, delta, std::time::Instant::now()))
+}
+
+/// Starts the beat detection of the checked stems (plan 2.11). `url` is the edge-AI server
+/// from the settings (empty = not set).
+pub fn do_editor_detect(st: &EditorState, store: Arc<dyn TempoStore>, url: String, id: &str) -> Result<EditorSnapshot, String> {
+    let params = crate::beat_detect::DetectParams {
+        url,
+        store,
+        poll: IMPORT_POLL,
+        stall: calliope_lib::stems_client::STALL_TIMEOUT,
+    };
+    st.with(|m| m.start_detect(id, params))
+}
+
+/// Edits the tempo map of the open track through the store and returns the new snapshot.
+pub fn do_editor_tempo(st: &EditorState, store: &dyn TempoStore, id: &str, action: TempoEdit) -> Result<EditorSnapshot, String> {
+    let dir = st.with(|m| m.dir_of(id))?;
+    let tempo = match action {
+        TempoEdit::Move { index, steps } => {
+            store.replace(id, &dir, &|old| old.set_change_offset(index, steps).map(|(map, _applied)| map))?
+        }
+        TempoEdit::Reload => store.load(id, &dir)?,
+    };
+    st.with(|m| m.set_tempo(id, tempo))
 }
 
 pub fn do_save_backing(st: &EditorState, repo: &RepoState, id: &str) -> Result<EditorSnapshot, String> {
@@ -896,7 +938,11 @@ pub async fn open_editor(
     events: tauri::ipc::Channel<EditorEvent>,
 ) -> Result<EditorSnapshot, String> {
     blocking(move || {
-        do_open_editor(&app.state::<EditorState>(), &app.state::<RepoState>(), &id, event_sink(events))
+        do_open_editor(
+            &app.state::<EditorState>(),
+            &app.state::<RepoState>(),
+            &**app.state::<Arc<dyn TempoStore>>(),
+            &id, event_sink(events))
     })
     .await
 }
@@ -967,6 +1013,25 @@ pub async fn editor_set_stem(
     unmuted: bool,
 ) -> Result<LaneState, String> {
     blocking(move || app.state::<EditorState>().with(|m| m.set_stem(&id, &name, gain, unmuted, std::time::Instant::now()))).await
+}
+
+#[tauri::command]
+pub async fn editor_detect(app: tauri::AppHandle, id: String) -> Result<EditorSnapshot, String> {
+    blocking(move || {
+        let url = app.state::<SettingsStore>().get().edge_ai_url.unwrap_or_default();
+        do_editor_detect(&app.state::<EditorState>(), app.state::<Arc<dyn TempoStore>>().inner().clone(), url, &id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn editor_cancel_detect(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    blocking(move || app.state::<EditorState>().with(|m| m.cancel_detect(&id))).await
+}
+
+#[tauri::command]
+pub async fn editor_tempo(app: tauri::AppHandle, id: String, action: TempoEdit) -> Result<EditorSnapshot, String> {
+    blocking(move || do_editor_tempo(&app.state::<EditorState>(), &**app.state::<Arc<dyn TempoStore>>(), &id, action)).await
 }
 
 #[tauri::command]
@@ -1407,7 +1472,7 @@ mod tests {
     fn open_editor_of_unknown_track_fails_and_save_needs_a_session() {
         let e = env("");
         let st = editor_state();
-        assert!(do_open_editor(&st, &e.st, "0199b0a0-0000-7000-8000-00000000dead", null_editor_sink()).is_err());
+        assert!(do_open_editor(&st, &e.st, &FileTempoStore, "0199b0a0-0000-7000-8000-00000000dead", null_editor_sink()).is_err());
         assert!(do_save_backing(&st, &e.st, "x").unwrap_err().contains("no editor session"));
     }
 

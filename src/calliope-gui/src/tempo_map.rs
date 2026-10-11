@@ -220,7 +220,6 @@ impl TempoMap {
     /// Move detected change `index` to `detected_ms + steps * fine_ms(left bpm)`, clamped to one
     /// beat from its neighbours. Later changes keep their `start_ms`. Returns the new map and the
     /// applied steps.
-    #[allow(dead_code)] // used by the IPC layer (later tasks) and the tests
     pub fn set_change_offset(&self, index: usize, steps: i64) -> Result<(TempoMap, i64), String> {
         if index == 0 || index >= self.segments.len() {
             return Err("The first tempo section can't be moved".to_string());

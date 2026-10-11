@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import {
-  cancelBackingSave, closeEditor, editorEndSolo, editorLanePlay, editorNudge, editorPause, editorPlay,
+  cancelBackingSave, closeEditor, editorCancelDetect, editorDetect, editorTempo, editorEndSolo, editorLanePlay, editorNudge, editorPause, editorPlay,
   editorSeek, editorSetStem, editorStop, getEditor, openEditor, saveBacking, watchEditor,
 } from './ipc';
 import { EDITOR_FIXTURE_TRACKS } from './fixture-tracks';
@@ -27,6 +27,10 @@ describe('editor ipc wrappers', () => {
     await editorSetStem('t1', 'bass', null, false);
     await saveBacking('t1');
     await cancelBackingSave('t1');
+    await editorDetect('t1');
+    await editorCancelDetect('t1');
+    await editorTempo('t1', { kind: 'move', index: 1, steps: -3 });
+    await editorTempo('t1', { kind: 'reload' });
     const plain = (i: number) => {
       const { events: _e, ...rest } = calls[i][1];
       return rest;
@@ -34,7 +38,8 @@ describe('editor ipc wrappers', () => {
     expect(calls.map((c) => c[0])).toEqual([
       'open_editor', 'close_editor', 'get_editor', 'watch_editor', 'editor_play', 'editor_lane_play',
       'editor_end_solo', 'editor_pause', 'editor_stop', 'editor_seek', 'editor_nudge', 'editor_set_stem',
-      'editor_set_stem', 'save_backing', 'cancel_backing_save',
+      'editor_set_stem', 'save_backing', 'cancel_backing_save', 'editor_detect', 'editor_cancel_detect',
+      'editor_tempo', 'editor_tempo',
     ]);
     expect(plain(0)).toEqual({ id: 't1' });
     expect(calls[0][1].events).toBeDefined();
@@ -52,6 +57,10 @@ describe('editor ipc wrappers', () => {
     expect(calls[12][1]).toEqual({ id: 't1', name: 'bass', gain: null, unmuted: false });
     expect(calls[13][1]).toEqual({ id: 't1' });
     expect(calls[14][1]).toEqual({ id: 't1' });
+    expect(calls[15][1]).toEqual({ id: 't1' });
+    expect(calls[16][1]).toEqual({ id: 't1' });
+    expect(calls[17][1]).toEqual({ id: 't1', action: { kind: 'move', index: 1, steps: -3 } });
+    expect(calls[18][1]).toEqual({ id: 't1', action: { kind: 'reload' } });
   });
 
   it('never sends a path', async () => {

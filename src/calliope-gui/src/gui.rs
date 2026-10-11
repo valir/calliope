@@ -4,10 +4,12 @@ use crate::{
     import_job::ImportState,
     ipc::{self, RepoState},
     picker::{Picker, TauriPicker},
-    player_ipc::{self, PlayerHost},
+    player_ipc::{self, PlayerHost, PlayerTempoStore},
     settings::{self, SettingsStore},
+    tempo_store::TempoStore,
     tools::Tools,
 };
+use std::sync::Arc;
 use tauri::Manager;
 
 /// `ScriptedPicker` only when built with `e2e-hooks` and the answers env var is set.
@@ -45,15 +47,19 @@ pub fn run() {
             // One backend for both engines: only one of them sounds at a time.
             let editor = ipc::EditorState::new(backend.clone());
             let h = app.handle().clone();
-            editor.set_before_play(std::sync::Arc::new(move || h.state::<PlayerHost>().pause_current()));
+            editor.set_before_play(std::sync::Arc::new(move || h.state::<Arc<PlayerHost>>().pause_current()));
             app.manage(editor);
-            app.manage(PlayerHost::new(backend, discover().ffmpeg));
+            let host = Arc::new(PlayerHost::new(backend, discover().ffmpeg));
+            // Editor tempo writes go through the Player: flush on read, release on write.
+            let store: Arc<dyn TempoStore> = Arc::new(PlayerTempoStore::new(host.clone()));
+            app.manage(store);
+            app.manage(host);
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(ipc::EDITOR_TICK);
                 let now = std::time::Instant::now();
                 handle.state::<ipc::EditorState>().tick(now);
-                handle.state::<PlayerHost>().tick(now);
+                handle.state::<Arc<PlayerHost>>().tick(now);
             });
             // Start-up health check of the edge-AI server (only when one is configured).
             if url.is_some() {
@@ -101,6 +107,9 @@ pub fn run() {
             ipc::editor_seek,
             ipc::editor_nudge,
             ipc::editor_set_stem,
+            ipc::editor_detect,
+            ipc::editor_cancel_detect,
+            ipc::editor_tempo,
             ipc::save_backing,
             ipc::cancel_backing_save,
             player_ipc::open_player,
@@ -122,11 +131,12 @@ pub fn run() {
         .expect("error while building calliope-gui")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
-                if let Some(player) = app.try_state::<PlayerHost>() {
+                if let Some(player) = app.try_state::<Arc<PlayerHost>>() {
                     player.shutdown(ipc::SHUTDOWN_WAIT);
                 }
                 if let Some(editor) = app.try_state::<ipc::EditorState>() {
                     editor.shutdown(ipc::SHUTDOWN_WAIT);
+                    editor.with(|m| m.shutdown_detect(ipc::SHUTDOWN_WAIT));
                 }
                 // Stop a running import (child processes, edge-AI job) before the process ends.
                 if let Some(import) = app.try_state::<ImportState>() {

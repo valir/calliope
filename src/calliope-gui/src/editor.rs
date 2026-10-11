@@ -640,6 +640,11 @@ impl EditorManager {
         self.snapshot(id)
     }
 
+    /// The track folder of the open session.
+    pub fn dir_of(&mut self, id: &str) -> Result<PathBuf, String> {
+        Ok(self.session(id)?.dir.clone())
+    }
+
     pub fn is_open(&self, id: &str) -> bool {
         self.session.as_ref().is_some_and(|s| s.id == id)
     }

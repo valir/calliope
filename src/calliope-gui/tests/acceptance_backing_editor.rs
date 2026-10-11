@@ -218,7 +218,7 @@ fn ac2_track_with_stems_opens_with_one_lane_per_stem_and_original_is_hidden() {
 
     let st = ipc::EditorState::new(Arc::new(ManualBackend::new()));
     let repo_state = ipc::RepoState::new(repo.root.clone(), Box::new(picker::ScriptedPicker::new(repo.root.join("none"))));
-    let snap = ipc::do_open_editor(&st, &repo_state, FOUR, Arc::new(|_| {})).unwrap();
+    let snap = ipc::do_open_editor(&st, &repo_state, &calliope_gui::tempo_store::FileTempoStore, FOUR, Arc::new(|_| {})).unwrap();
     let names: Vec<_> = snap.stems.iter().map(|l| l.name.as_str()).collect();
     assert_eq!(names, ["vocals", "drums", "bass", "guitar"], "original must not be a lane");
     assert_eq!(snap.duration_ms, 12000);

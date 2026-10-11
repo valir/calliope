@@ -153,7 +153,7 @@ fn player_play_stops_the_editor_and_editor_play_pauses_the_player() {
     let h = host.clone();
     e.editor.set_before_play(Arc::new(move || h.pause_current()));
     // Editor first.
-    let ed = crate::ipc::do_open_editor(&e.editor, &e.repo, PRACTICE, Arc::new(|_| {})).unwrap();
+    let ed = crate::ipc::do_open_editor(&e.editor, &e.repo, &crate::tempo_store::FileTempoStore, PRACTICE, Arc::new(|_| {})).unwrap();
     assert_eq!(ed.id, PRACTICE);
     do_open_player(&host, &e.repo, PRACTICE, Arc::new(|_| {})).unwrap();
     crate::ipc::do_editor_play(&e.editor, PRACTICE).unwrap();

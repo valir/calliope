@@ -19,6 +19,7 @@ const stemTrack = FIXTURE_TRACKS[FIXTURE_TRACKS.length - 1];
 const idle: TransportState = { playing: false, position_ms: 0, resume_pending: false, solo: null, clipping: false };
 const snapshot = (id: string): EditorSnapshot => ({
   id, title: 'T', duration_ms: 187400, sample_rate: 44100, transport: { ...idle }, saving: null,
+  peaks: [], tempo: { beats_per_bar: 4, segments: [], multi: false }, detect: null,
   variant: { id: 'backing', name: 'Backing', file: 'backings/backing.flac', exists: false },
   stems: [
     { name: 'guitar', gain_db: 0, unmuted: false },

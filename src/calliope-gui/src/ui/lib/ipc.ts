@@ -195,7 +195,29 @@ export interface EditorSnapshot {
   variant: { id: string; name: string; file: string; exists: boolean };
   /** 0..1 while a save runs */
   saving: number | null;
+  /** peaks of the checked-stem mix; empty until computed */
+  peaks: number[];
+  tempo: TempoSnap;
+  /** the running beat detection, if any */
+  detect: DetectState | null;
 }
+export interface TempoSegment {
+  start_ms: number;
+  bpm: number;
+  /** set on changes found by beat detection */
+  detected_ms?: number | null;
+}
+export interface TempoSnap {
+  beats_per_bar: number;
+  segments: TempoSegment[];
+  multi: boolean;
+}
+export interface DetectState {
+  phase: 'checking' | 'mixing' | 'uploading' | 'waiting' | 'detecting' | 'applying';
+  progress: number | null;
+}
+/** `steps` is the absolute offset from `detected_ms`, -256..256. */
+export type TempoEdit = { kind: 'move'; index: number; steps: number } | { kind: 'reload' };
 export type EditorEvent =
   | { kind: 'loading'; id: string; done: number; total: number }
   | ({ kind: 'transport'; id: string } & TransportState)
@@ -203,7 +225,12 @@ export type EditorEvent =
   | { kind: 'saved'; id: string; file: string; clipped_samples: number; track: TrackRecord; warnings: string[] }
   | { kind: 'save-failed'; id: string; message: string }
   | { kind: 'save-cancelled'; id: string }
-  | { kind: 'audio-error'; id: string; message: string };
+  | { kind: 'audio-error'; id: string; message: string }
+  | { kind: 'peaks'; id: string; peaks: number[] }
+  | ({ kind: 'detect'; id: string } & DetectState)
+  | { kind: 'detected'; id: string; tempo: TempoSnap; beats: number; replaced: boolean }
+  | { kind: 'detect-failed'; id: string; message: string }
+  | { kind: 'detect-cancelled'; id: string };
 
 function editorChannel(onEvent: (e: EditorEvent) => void): Channel<EditorEvent> {
   const ch = new Channel<EditorEvent>();
@@ -243,6 +270,11 @@ export const editorSetStem = (
   gain: number | null,
   unmuted: boolean,
 ): Promise<LaneState> => invoke<LaneState>('editor_set_stem', { id, name, gain, unmuted });
+export const editorDetect = (id: string): Promise<EditorSnapshot> =>
+  invoke<EditorSnapshot>('editor_detect', { id });
+export const editorCancelDetect = (id: string): Promise<void> => invoke<void>('editor_cancel_detect', { id });
+export const editorTempo = (id: string, action: TempoEdit): Promise<EditorSnapshot> =>
+  invoke<EditorSnapshot>('editor_tempo', { id, action });
 export const saveBacking = (id: string): Promise<EditorSnapshot> =>
   invoke<EditorSnapshot>('save_backing', { id });
 export const cancelBackingSave = (id: string): Promise<void> =>
@@ -280,7 +312,7 @@ export interface PlayerSnapshot {
   /** 2048 values 0..1 */
   peaks: number[];
   mode: 'bpm' | 'time';
-  tempo: { beats_per_bar: number; segments: { start_ms: number; bpm: number }[]; multi: boolean };
+  tempo: TempoSnap;
   speed: number;
   metronome: { on: boolean; count_in: boolean };
   loops: PlayerLoop[];
@@ -296,7 +328,8 @@ export type PlayerEvent =
   | { kind: 'loading'; id: string; progress: number }
   | ({ kind: 'transport'; id: string } & PlayerTransport)
   | { kind: 'audio-error'; id: string; message: string }
-  | { kind: 'state-error'; id: string; message: string };
+  | { kind: 'state-error'; id: string; message: string }
+  | { kind: 'closed'; id: string };
 export type TempoAction =
   | { kind: 'set-bpm'; bpm: number }
   | { kind: 'speed-step'; steps: number }
