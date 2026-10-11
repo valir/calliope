@@ -18,6 +18,7 @@ use crate::audio_out::{OutputBackend, OutputHandle};
 use crate::backing_render::{self, RenderInput, RenderStem, SaveParams, SaveShared};
 use crate::import_job::RepoLock;
 use crate::repository::{Repository, TrackRecord};
+use crate::mix_waveform::{self, Debounce};
 use crate::mixer;
 use crate::stem_audio::{self, Common, StemPcm};
 use crate::track_meta::{BackingVariant, StemEntry};
@@ -72,6 +73,9 @@ pub struct EditorSnapshot {
     pub variant: VariantTarget,
     /// Save progress 0..1 while a save runs (task 9).
     pub saving: Option<f32>,
+    /// Peaks of the checked-stem mix (`mix_waveform::BUCKETS` values); empty until the first
+    /// computation is installed. The UI keeps the old ones while new ones are computed.
+    pub peaks: Vec<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -93,9 +97,13 @@ pub enum EditorEvent {
         track: TrackRecord,
         warnings: Vec<String>,
     },
+    Peaks { id: String, gen: u64, peaks: Vec<f32> },
     SaveFailed { id: String, message: String },
     SaveCancelled { id: String },
 }
+
+/// The computation behind the waveform; tests replace it (`EditorManager::set_peaks_fn`).
+pub type PeaksFn = Arc<dyn Fn(&[StemPcm], &[f32], u64, usize, &AtomicBool) -> Option<Vec<f32>> + Send + Sync>;
 
 pub type EventSink = Arc<dyn Fn(EditorEvent) + Send + Sync>;
 
@@ -269,6 +277,7 @@ struct Session {
     last_key: EventKey,
     last_position: u64,
     last_emit: Option<Instant>,
+    wave: Wave,
 }
 
 impl Session {
@@ -317,7 +326,42 @@ impl Session {
             transport: self.state(),
             variant: self.variant.clone(),
             saving: None,
+            peaks: self.wave.peaks.clone(),
         }
+    }
+}
+
+/// `(gen, peaks, ms)` written by the worker.
+type WaveSlot = Arc<Mutex<Option<(u64, Option<Vec<f32>>, u64)>>>;
+
+/// The mix waveform of a session (plan 2.7): debounce, generation and the worker's slot.
+struct Wave {
+    debounce: Debounce,
+    /// The first computation is due at once.
+    first: bool,
+    gen: u64,
+    cancel: Arc<AtomicBool>,
+    /// `(gen, peaks, ms)` written by the worker, read by `tick`.
+    slot: WaveSlot,
+    peaks: Vec<f32>,
+}
+
+impl Wave {
+    fn new() -> Self {
+        Self {
+            debounce: Debounce::new(),
+            first: true,
+            gen: 0,
+            cancel: Arc::new(AtomicBool::new(false)),
+            slot: Arc::new(Mutex::new(None)),
+            peaks: Vec::new(),
+        }
+    }
+}
+
+impl Drop for Wave {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
     }
 }
 
@@ -346,6 +390,7 @@ pub struct EditorManager {
     defer_drops: bool,
     /// The running save's shared state, readable without the manager lock (app exit).
     live_save: Arc<Mutex<Option<Arc<SaveShared>>>>,
+    peaks_fn: PeaksFn,
 }
 
 /// What it takes to open the device for a session; `open` blocks and must run without the
@@ -391,7 +436,16 @@ impl EditorManager {
             trash: Vec::new(),
             defer_drops: false,
             live_save: Arc::new(Mutex::new(None)),
+            peaks_fn: Arc::new(|stems, gains, frames, buckets, cancel| {
+                mix_waveform::mix_peaks(stems, gains, frames, buckets, cancel)
+            }),
         }
+    }
+
+    /// Test hook: replaces the waveform computation.
+    #[doc(hidden)]
+    pub fn set_peaks_fn(&mut self, f: PeaksFn) {
+        self.peaks_fn = f;
     }
 
     /// Keep closed output handles until `take_trash` (see `trash`).
@@ -430,6 +484,11 @@ impl EditorManager {
         let ticket = OpenTicket { gen: self.generation, cancel: Arc::new(AtomicBool::new(false)) };
         self.pending = Some(ticket.clone());
         ticket
+    }
+
+    #[cfg(test)]
+    pub fn peaks_gen_for_test(&self) -> u64 {
+        self.session.as_ref().map_or(0, |s| s.wave.gen)
     }
 
     #[cfg(test)]
@@ -506,6 +565,7 @@ impl EditorManager {
             last_key: EventKey { playing: false, resume_pending: false, solo: None, clipping: false },
             last_position: 0,
             last_emit: None,
+            wave: Wave::new(),
         };
         session.sync_shared();
         let snap = session.snapshot();
@@ -843,7 +903,7 @@ impl EditorManager {
     }
 
     /// Sets a lane. `gain_db` is snapped to the 0.5 dB grid (below -59.75 it is Off).
-    pub fn set_stem(&mut self, id: &str, name: &str, gain_db: Option<f32>, unmuted: bool) -> Result<LaneState, String> {
+    pub fn set_stem(&mut self, id: &str, name: &str, gain_db: Option<f32>, unmuted: bool, now: Instant) -> Result<LaneState, String> {
         let sink = self.sink.clone();
         let s = self.session(id)?;
         let idx = s.lanes.iter().position(|l| l.name == name).ok_or_else(|| format!("no stem {name}"))?;
@@ -852,8 +912,47 @@ impl EditorManager {
         if !unmuted && s.solo == Some(idx) {
             s.solo = None;
         }
+        s.wave.debounce.touch(now);
         Self::publish(&sink, s, Instant::now());
         Ok(s.lanes[idx].clone())
+    }
+
+    /// Installs a finished computation if still current, then starts a new one when the
+    /// debounce is due. Never waits for the worker and never runs it under the lock.
+    fn tick_wave(sink: &EventSink, s: &mut Session, peaks_fn: &PeaksFn, now: Instant) {
+        let done = s.wave.slot.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some((gen, result, ms)) = done {
+            if let (true, Some(peaks)) = (gen == s.wave.gen, result) {
+                eprintln!("calliope: editor peaks id={} gen={gen} ms={ms}", s.id);
+                s.wave.peaks = peaks.clone();
+                sink(EditorEvent::Peaks { id: s.id.clone(), gen, peaks });
+            }
+        }
+        let due = s.wave.debounce.take_due(now);
+        if !(due || std::mem::take(&mut s.wave.first)) {
+            return;
+        }
+        s.wave.debounce = Debounce::new();
+        s.wave.cancel.store(true, Ordering::Relaxed);
+        s.wave.cancel = Arc::new(AtomicBool::new(false));
+        s.wave.gen += 1;
+        s.wave.slot.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let gen = s.wave.gen;
+        let gains: Vec<f32> = s.lanes.iter().map(|l| mixer::gain_factor(l.gain_db, l.unmuted)).collect();
+        let shared = s.shared.clone();
+        let cancel = s.wave.cancel.clone();
+        let slot = s.wave.slot.clone();
+        let f = peaks_fn.clone();
+        let spawned = std::thread::Builder::new().name("editor-peaks".into()).spawn(move || {
+            let t = Instant::now();
+            let result = f(&shared.stems, &gains, shared.total_frames, mix_waveform::BUCKETS, &cancel);
+            if !cancel.load(Ordering::Relaxed) {
+                *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some((gen, result, t.elapsed().as_millis() as u64));
+            }
+        });
+        if spawned.is_err() {
+            eprintln!("calliope: editor peaks id={} could not start the worker", s.id);
+        }
     }
 
     /// Called every ~20 ms by the ticker thread.
@@ -872,6 +971,7 @@ impl EditorManager {
             return;
         }
         s.transport.tick(now);
+        Self::tick_wave(&sink, s, &self.peaks_fn, now);
         let clipped = s.shared.clipped.load(Ordering::Relaxed);
         if clipped != s.clip_seen {
             s.clip_seen = clipped;

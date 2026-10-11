@@ -173,8 +173,8 @@ fn mix_parsing_is_lenient() {
 fn playback_equals_expected_mix_and_gain_change_applies() {
     let (_t, spec, mut m, b, _e) = open_four();
     let (voc, bass) = (decoded(&spec, "vocals"), decoded(&spec, "bass"));
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
-    m.set_stem(FOUR, "bass", Some(-6.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "bass", Some(-6.0), true, Instant::now()).unwrap();
     assert!(!b.is_open());
     assert!(m.play(FOUR).unwrap().playing);
     assert!(b.is_open());
@@ -182,7 +182,7 @@ fn playback_equals_expected_mix_and_gain_change_applies() {
     // 1300 frames crosses two chunk boundaries
     let out = b.pull(1300);
     assert_close(&out, &expected(&[(&voc, 1.0), (&bass, g)], 0, 1300));
-    m.set_stem(FOUR, "bass", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now()).unwrap();
     let out = b.pull(100);
     assert_close(&out, &expected(&[(&voc, 1.0), (&bass, 1.0)], 1300, 100));
     assert_eq!(m.snapshot(FOUR).unwrap().transport.position_ms, 1400 * 1000 / RATE as u64);
@@ -191,18 +191,18 @@ fn playback_equals_expected_mix_and_gain_change_applies() {
 #[test]
 fn set_stem_snaps_gain() {
     let (_t, _s, mut m, _b, _e) = open_four();
-    assert_eq!(m.set_stem(FOUR, "drums", Some(-0.3), true).unwrap().gain_db, Some(-0.5));
-    assert_eq!(m.set_stem(FOUR, "drums", Some(40.0), true).unwrap().gain_db, Some(12.0));
-    assert_eq!(m.set_stem(FOUR, "drums", Some(-80.0), true).unwrap().gain_db, None);
-    assert_eq!(m.set_stem(FOUR, "drums", None, true).unwrap().gain_db, None);
-    assert!(m.set_stem(FOUR, "nope", Some(0.0), true).is_err());
+    assert_eq!(m.set_stem(FOUR, "drums", Some(-0.3), true, Instant::now()).unwrap().gain_db, Some(-0.5));
+    assert_eq!(m.set_stem(FOUR, "drums", Some(40.0), true, Instant::now()).unwrap().gain_db, Some(12.0));
+    assert_eq!(m.set_stem(FOUR, "drums", Some(-80.0), true, Instant::now()).unwrap().gain_db, None);
+    assert_eq!(m.set_stem(FOUR, "drums", None, true, Instant::now()).unwrap().gain_db, None);
+    assert!(m.set_stem(FOUR, "nope", Some(0.0), true, Instant::now()).is_err());
 }
 
 #[test]
 fn solo_rules() {
     let (_t, spec, mut m, b, _e) = open_four();
     let (gui, voc) = (decoded(&spec, "guitar"), decoded(&spec, "vocals"));
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     let st = m.lane_play(FOUR, "guitar").unwrap();
     assert!(st.playing);
     assert_eq!(st.solo.as_deref(), Some("guitar"));
@@ -238,9 +238,9 @@ fn solo_rules() {
     assert!(!b.is_open());
     // unchecking the soloed stem
     m.lane_play(FOUR, "guitar").unwrap();
-    m.set_stem(FOUR, "bass", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now()).unwrap();
     assert_eq!(m.snapshot(FOUR).unwrap().transport.solo.as_deref(), Some("guitar"));
-    m.set_stem(FOUR, "guitar", Some(0.0), false).unwrap();
+    m.set_stem(FOUR, "guitar", Some(0.0), false, Instant::now()).unwrap();
     assert_eq!(m.snapshot(FOUR).unwrap().transport.solo, None);
 }
 
@@ -248,7 +248,7 @@ fn solo_rules() {
 fn solo_gain_is_the_lanes_own() {
     let (_t, spec, mut m, b, _e) = open_four();
     let gui = decoded(&spec, "guitar");
-    m.set_stem(FOUR, "guitar", Some(-6.0), true).unwrap();
+    m.set_stem(FOUR, "guitar", Some(-6.0), true, Instant::now()).unwrap();
     m.lane_play(FOUR, "guitar").unwrap();
     let g = mixer::gain_factor(Some(-6.0), true);
     assert_close(&b.pull(300), &expected(&[(&gui, g)], 0, 300));
@@ -258,7 +258,7 @@ fn solo_gain_is_the_lanes_own() {
 fn clipping_flag_with_one_second_hold() {
     let (_t, _s, mut m, b, ev) = open_four();
     for n in ["vocals", "drums", "bass"] {
-        m.set_stem(FOUR, n, Some(12.0), true).unwrap();
+        m.set_stem(FOUR, n, Some(12.0), true, Instant::now()).unwrap();
     }
     m.play(FOUR).unwrap();
     let t0 = Instant::now();
@@ -276,7 +276,7 @@ fn clipping_flag_with_one_second_hold() {
 #[test]
 fn no_clipping_flag_for_a_clean_mix() {
     let (_t, _s, mut m, b, _e) = open_four();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     m.play(FOUR).unwrap();
     b.pull(2000);
     m.tick(Instant::now());
@@ -286,7 +286,7 @@ fn no_clipping_flag_for_a_clean_mix() {
 #[test]
 fn pause_is_silent_and_holds_position() {
     let (_t, _s, mut m, b, _e) = open_four();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     m.play(FOUR).unwrap();
     assert!(peak(&b.pull(1000)) > 0.0);
     let st = m.pause(FOUR).unwrap();
@@ -304,7 +304,7 @@ fn pause_is_silent_and_holds_position() {
 fn seek_while_playing_silences_then_resumes() {
     let (_t, spec, mut m, b, _e) = open_four();
     let voc = decoded(&spec, "vocals");
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     m.play(FOUR).unwrap();
     b.pull(100);
     let t0 = Instant::now();
@@ -356,7 +356,7 @@ fn a_seek_in_the_callback_window_wins() {
 #[test]
 fn end_of_track_acts_as_stop() {
     let (_t, _s, mut m, b, ev) = open_four();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     let now = Instant::now();
     m.play(FOUR).unwrap();
     m.seek(FOUR, 11_900, now).unwrap();
@@ -376,7 +376,7 @@ fn end_of_track_acts_as_stop() {
 #[test]
 fn transport_events_are_throttled_while_playing() {
     let (_t, _s, mut m, b, ev) = open_four();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     let t0 = Instant::now();
     m.play(FOUR).unwrap();
     let before = transports(&ev).len();
@@ -396,7 +396,7 @@ fn transport_events_are_throttled_while_playing() {
 #[test]
 fn device_error_stops_playback() {
     let (_t, _s, mut m, b, ev) = open_four();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     m.play(FOUR).unwrap();
     b.fail("device lost");
     m.tick(Instant::now());
@@ -436,8 +436,8 @@ fn second_open_supersedes_a_load_in_progress() {
 #[test]
 fn close_then_open_restores_the_remembered_mix() {
     let (_t, spec, mut m, b, _e) = open_four();
-    m.set_stem(FOUR, "drums", Some(-12.5), true).unwrap();
-    m.set_stem(FOUR, "bass", None, true).unwrap();
+    m.set_stem(FOUR, "drums", Some(-12.5), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "bass", None, true, Instant::now()).unwrap();
     m.play(FOUR).unwrap();
     m.close();
     assert!(!b.is_open());
@@ -453,7 +453,7 @@ fn close_then_open_restores_the_remembered_mix() {
 #[test]
 fn opening_another_track_closes_the_first() {
     let (_t, spec, mut m, b, _e) = open_four();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     m.play(FOUR).unwrap();
     let (_t2, spec2) = spec_of(MIXED);
     m.open(&spec2).unwrap();
@@ -524,8 +524,8 @@ fn save_ignores_solo_and_replaces_the_variant() {
     let (_t, repo, spec) = repo_spec(FOUR);
     let (mut m, _b, ev) = manager();
     m.open(&spec).unwrap();
-    m.set_stem(FOUR, "vocals", Some(-6.0), true).unwrap();
-    m.set_stem(FOUR, "drums", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(-6.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now()).unwrap();
     m.lane_play(FOUR, "vocals").unwrap(); // solo on vocals; drums stays checked
     assert_eq!(m.snapshot(FOUR).unwrap().transport.solo.as_deref(), Some("vocals"));
     let snap = m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
@@ -587,7 +587,7 @@ fn save_conflict_fails_and_leaves_no_part() {
     let (_t, repo, spec) = repo_spec(FOUR);
     let (mut m, _b, ev) = manager();
     m.open(&spec).unwrap();
-    m.set_stem(FOUR, "bass", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now()).unwrap();
     // the stems change on disk after the session opened
     let path = spec.dir.join("track.json");
     let text = fs::read_to_string(&path).unwrap().replace("\"name\": \"guitar\"", "\"name\": \"lead\"");
@@ -646,7 +646,7 @@ fn cancel_through_the_manager_finishes_the_job() {
     let (_t, repo, spec) = repo_spec(FOUR);
     let (mut m, _b, ev) = manager();
     m.open(&spec).unwrap();
-    m.set_stem(FOUR, "bass", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now()).unwrap();
     m.start_save(FOUR, repo, no_lock()).unwrap();
     m.cancel_save(FOUR).unwrap();
     // either the cancel won or the (fast) job had already saved; never a leftover part
@@ -660,7 +660,7 @@ fn save_progress_is_monotonic_and_ends_at_one() {
     let (_t, repo, spec) = repo_spec(FOUR);
     let (mut m, _b, ev) = manager();
     m.open(&spec).unwrap();
-    m.set_stem(FOUR, "bass", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now()).unwrap();
     m.start_save(FOUR, repo, no_lock()).unwrap();
     assert!(matches!(final_event(&ev), EditorEvent::Saved { .. }));
     let p: Vec<f32> = ev
@@ -686,11 +686,174 @@ fn a_panic_in_the_save_thread_fails_the_save_and_frees_the_slot() {
     });
     let mut m = EditorManager::new(Arc::new(ManualBackend::new()), sink);
     m.open(&spec).unwrap();
-    m.set_stem(FOUR, "bass", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now()).unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
     assert!(matches!(final_event(&events), EditorEvent::SaveFailed { .. }));
     assert!(parts_in(&spec.dir).is_empty());
     // the job counts as finished: another save can start
     m.start_save(FOUR, repo, no_lock()).unwrap();
     m.shutdown_save(Duration::from_secs(30));
+}
+
+// ------------------------------------------------------------ mix waveform (plan 2.7)
+
+/// Blocks callers of `wait` until `open` is called.
+#[derive(Default)]
+struct Gate {
+    open: Mutex<bool>,
+    cv: std::sync::Condvar,
+}
+
+impl Gate {
+    fn wait(&self) {
+        let mut g = self.open.lock().unwrap();
+        while !*g {
+            g = self.cv.wait(g).unwrap();
+        }
+    }
+    fn open(&self) {
+        *self.open.lock().unwrap() = true;
+        self.cv.notify_all();
+    }
+}
+
+const WAIT: Duration = Duration::from_secs(20);
+
+fn peak_events(events: &Events) -> Vec<(u64, Vec<f32>)> {
+    events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|e| if let EditorEvent::Peaks { gen, peaks, .. } = e { Some((*gen, peaks.clone())) } else { None })
+        .collect()
+}
+
+/// Ticks (at a time before any debounce is due) until `n` Peaks events exist.
+fn tick_until_peaks(m: &mut EditorManager, events: &Events, now: Instant, n: usize) {
+    let end = Instant::now() + WAIT;
+    while peak_events(events).len() < n {
+        assert!(Instant::now() < end, "no peaks event arrived");
+        m.tick(now);
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn waveform_debounce_restarts_and_starts_once() {
+    let (_t, _spec, mut m, _b, _ev) = open_four();
+    m.set_peaks_fn(Arc::new(|_, _, _, b, _| Some(vec![0.0; b])));
+    let t0 = Instant::now();
+    m.tick(t0); // the first computation is due at once
+    assert_eq!(m.peaks_gen_for_test(), 1);
+    m.set_stem(FOUR, "vocals", Some(0.0), true, t0).unwrap();
+    m.set_stem(FOUR, "vocals", Some(-3.0), true, t0 + Duration::from_millis(200)).unwrap();
+    m.tick(t0 + Duration::from_millis(499));
+    assert_eq!(m.peaks_gen_for_test(), 1);
+    m.tick(t0 + Duration::from_millis(500));
+    assert_eq!(m.peaks_gen_for_test(), 2);
+    m.tick(t0 + Duration::from_millis(900));
+    assert_eq!(m.peaks_gen_for_test(), 2);
+}
+
+#[test]
+fn nothing_waits_on_a_running_waveform_computation() {
+    let (_t, _spec, mut m, backend, events) = open_four();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let started_tx = Mutex::new(started_tx);
+    let gate = Arc::new(Gate::default());
+    let g = gate.clone();
+    m.set_peaks_fn(Arc::new(move |_, _, _, b, _| {
+        started_tx.lock().unwrap().send(()).unwrap();
+        g.wait();
+        Some(vec![0.5; b])
+    }));
+    let t0 = Instant::now();
+    m.tick(t0);
+    started_rx.recv_timeout(WAIT).expect("the worker did not start");
+    // the computation is held; everything else still returns
+    m.set_stem(FOUR, "vocals", Some(0.0), true, t0).unwrap();
+    m.play(FOUR).unwrap();
+    m.seek(FOUR, 1000, t0).unwrap();
+    let snap = m.snapshot(FOUR).unwrap();
+    assert!(snap.peaks.is_empty());
+    m.tick(t0 + Duration::from_millis(20));
+    assert_eq!(backend.pull(512).len(), 1024);
+    assert!(peak_events(&events).is_empty());
+    gate.open();
+    tick_until_peaks(&mut m, &events, t0 + Duration::from_millis(40), 1);
+    assert_eq!(peak_events(&events), vec![(1, vec![0.5; mix_waveform::BUCKETS])]);
+    assert_eq!(m.snapshot(FOUR).unwrap().peaks, vec![0.5; mix_waveform::BUCKETS]);
+}
+
+#[test]
+fn a_superseded_waveform_is_never_emitted() {
+    let (_t, _spec, mut m, _b, events) = open_four();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let started_tx = Mutex::new(started_tx);
+    let gate = Arc::new(Gate::default());
+    let (g, calls) = (gate.clone(), Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+    m.set_peaks_fn(Arc::new(move |_, _, _, b, _| {
+        let n = calls.fetch_add(1, Ordering::SeqCst);
+        started_tx.lock().unwrap().send(()).unwrap();
+        if n == 0 {
+            g.wait();
+        }
+        Some(vec![n as f32; b])
+    }));
+    let t0 = Instant::now();
+    m.tick(t0);
+    started_rx.recv_timeout(WAIT).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, t0).unwrap();
+    m.tick(t0 + Duration::from_millis(300)); // cancels gen 1, starts gen 2
+    assert_eq!(m.peaks_gen_for_test(), 2);
+    started_rx.recv_timeout(WAIT).unwrap();
+    gate.open(); // gen 1 now finishes, too late
+    tick_until_peaks(&mut m, &events, t0 + Duration::from_millis(320), 1);
+    for _ in 0..1000 {
+        m.tick(t0 + Duration::from_millis(340));
+        std::thread::yield_now();
+    }
+    assert_eq!(peak_events(&events), vec![(2, vec![1.0; mix_waveform::BUCKETS])]);
+}
+
+#[test]
+fn emitted_peaks_equal_mix_peaks_of_the_checked_stems() {
+    let (_t, spec, mut m, _b, events) = open_four();
+    let t0 = Instant::now();
+    m.set_stem(FOUR, "vocals", Some(-6.0), true, t0).unwrap();
+    m.tick(t0);
+    tick_until_peaks(&mut m, &events, t0, 1);
+    let stems: Vec<StemPcm> = spec.stems.iter().map(|s| decoded(&spec, &s.name)).collect();
+    let gains: Vec<f32> = spec
+        .stems
+        .iter()
+        .map(|s| if s.name == "vocals" { mixer::gain_factor(Some(-6.0), true) } else { 0.0 })
+        .collect();
+    let want = mix_waveform::mix_peaks(&stems, &gains, stems[0].frames, mix_waveform::BUCKETS, &AtomicBool::new(false)).unwrap();
+    let got = peak_events(&events);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].1, want);
+    assert!(peak(&want) > 0.0);
+    assert_eq!(m.snapshot(FOUR).unwrap().peaks, want);
+}
+
+#[test]
+fn closing_cancels_the_waveform_worker() {
+    let (_t, _spec, mut m, _b, events) = open_four();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    m.set_peaks_fn(Arc::new(move |_, _, _, _, cancel| {
+        tx.lock().unwrap().send("started").unwrap();
+        let end = Instant::now() + WAIT;
+        while !cancel.load(Ordering::Relaxed) && Instant::now() < end {
+            std::thread::yield_now();
+        }
+        tx.lock().unwrap().send(if cancel.load(Ordering::Relaxed) { "cancelled" } else { "timeout" }).unwrap();
+        None
+    }));
+    m.tick(Instant::now());
+    assert_eq!(rx.recv_timeout(WAIT).unwrap(), "started");
+    m.close();
+    assert_eq!(rx.recv_timeout(WAIT).unwrap(), "cancelled");
+    assert!(peak_events(&events).is_empty());
 }

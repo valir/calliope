@@ -187,7 +187,7 @@ fn ready_to_save() -> (tempfile::TempDir, Repository, OpenSpec, EditorManager, M
     let sp = spec(&repo, FOUR);
     let (mut m, b, ev) = manager();
     m.open(&sp).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     (tmp, repo, sp, m, b, ev)
 }
 
@@ -237,7 +237,7 @@ fn ac4_never_saved_track_starts_unchecked_and_play_needs_a_checked_stem() {
     assert_eq!(m.play(FOUR).unwrap_err(), "Check a stem first");
     assert!(!b.is_open(), "no output stream may be opened by a refused Play");
     assert_eq!(m.start_save(FOUR, repo.clone(), no_lock()).unwrap_err(), "Check a stem first");
-    m.set_stem(FOUR, "drums", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now()).unwrap();
     assert!(m.play(FOUR).unwrap().playing);
 }
 
@@ -260,7 +260,7 @@ fn ac3_lane_play_checks_its_unmute_plays_only_that_stem_then_mix_play_returns_to
     let sp = spec(&repo, FOUR);
     let (mut m, b, _e) = manager();
     m.open(&sp).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     let st = m.lane_play(FOUR, "guitar").unwrap();
     assert!(st.playing);
     assert_eq!(st.solo.as_deref(), Some("guitar"));
@@ -284,10 +284,10 @@ fn ac5_play_mixes_exactly_the_checked_stems_with_db_gains_and_off() {
     let sp = spec(&repo, FOUR);
     let (mut m, b, _e) = manager();
     m.open(&sp).unwrap();
-    m.set_stem(FOUR, "vocals", Some(-6.0), true).unwrap();
-    m.set_stem(FOUR, "drums", Some(3.0), true).unwrap();
-    m.set_stem(FOUR, "bass", None, true).unwrap(); // Off: silent even if checked
-    m.set_stem(FOUR, "guitar", Some(0.0), false).unwrap(); // unchecked: silent
+    m.set_stem(FOUR, "vocals", Some(-6.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "drums", Some(3.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "bass", None, true, Instant::now()).unwrap(); // Off: silent even if checked
+    m.set_stem(FOUR, "guitar", Some(0.0), false, Instant::now()).unwrap(); // unchecked: silent
     m.play(FOUR).unwrap();
     let (v, d) = (decode(&sp.dir, "vocals"), decode(&sp.dir, "drums"));
     let (gv, gd) = (10f32.powf(-6.0 / 20.0), 10f32.powf(3.0 / 20.0));
@@ -301,7 +301,7 @@ fn ac9_ac10_pause_holds_position_and_resume_continues() {
     let sp = spec(&repo, FOUR);
     let (mut m, b, _e) = manager();
     m.open(&sp).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     m.play(FOUR).unwrap();
     b.pull(RATE); // 1 s
     let st = m.pause(FOUR).unwrap();
@@ -319,7 +319,7 @@ fn ac8_stop_returns_to_zero() {
     let (_t, repo) = fixture_repo();
     let (mut m, b, _e) = manager();
     m.open(&spec(&repo, FOUR)).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     m.play(FOUR).unwrap();
     b.pull(5000);
     let st = m.stop(FOUR).unwrap();
@@ -350,7 +350,7 @@ fn ac14_ac15_resume_exactly_300ms_after_the_last_adjustment() {
     let sp = spec(&repo, FOUR);
     let (mut m, b, _e) = manager();
     m.open(&sp).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     m.play(FOUR).unwrap();
     b.pull(100);
     let t0 = Instant::now();
@@ -375,7 +375,7 @@ fn adjusting_while_paused_does_not_start_playback() {
     let (_t, repo) = fixture_repo();
     let (mut m, b, _e) = manager();
     m.open(&spec(&repo, FOUR)).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     let t0 = Instant::now();
     m.seek(FOUR, 3000, t0).unwrap();
     m.tick(t0 + Duration::from_secs(5));
@@ -392,7 +392,7 @@ fn owner_hard_clip_and_clip_indicator_hold() {
     let (mut m, b, _e) = manager();
     m.open(&spec(&repo, FOUR)).unwrap();
     for n in ["vocals", "drums", "bass", "guitar"] {
-        m.set_stem(FOUR, n, Some(12.0), true).unwrap();
+        m.set_stem(FOUR, n, Some(12.0), true, Instant::now()).unwrap();
     }
     m.play(FOUR).unwrap();
     let out = b.pull(4000);
@@ -427,7 +427,7 @@ fn owner_track_change_and_close_stop_playback() {
     let (_t, repo) = fixture_repo();
     let (mut m, b, _e) = manager();
     m.open(&spec(&repo, FOUR)).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     m.play(FOUR).unwrap();
     assert!(b.is_open());
     m.open(&spec(&repo, SIX)).unwrap(); // select another track
@@ -435,7 +435,7 @@ fn owner_track_change_and_close_stop_playback() {
     assert_eq!(peak(&b.pull(1000)), 0.0);
     assert_eq!(m.play(FOUR).unwrap_err(), "no editor session for 0199c0a0-0000-7000-8000-000000000201");
     // closing (a track without stems selected) stops too
-    m.set_stem(SIX, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(SIX, "vocals", Some(0.0), true, Instant::now()).unwrap();
     m.play(SIX).unwrap();
     m.close();
     assert!(!b.is_open());
@@ -446,8 +446,8 @@ fn owner_track_change_and_close_stop_playback() {
 #[test]
 fn ac16_ac17_save_writes_one_backing_variant_with_volumes_applied() {
     let (_t, repo, sp, mut m, _b, ev) = ready_to_save();
-    m.set_stem(FOUR, "vocals", Some(-6.0), true).unwrap();
-    m.set_stem(FOUR, "bass", Some(3.5), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(-6.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "bass", Some(3.5), true, Instant::now()).unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
     let EditorEvent::Saved { file, clipped_samples, track, .. } = final_event(&ev) else { panic!("{:?}", ev.lock().unwrap()) };
     assert_eq!(file, "backings/backing.flac");
@@ -485,7 +485,7 @@ fn owner_resave_replaces_the_one_variant_and_trashes_the_old_file() {
     let first = fs::read(sp.dir.join("backings/backing.flac")).unwrap();
     clear(&ev);
     m.tick(Instant::now()); // reap
-    m.set_stem(FOUR, "drums", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now()).unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
     assert!(matches!(final_event(&ev), EditorEvent::Saved { .. }));
     let second = fs::read(sp.dir.join("backings/backing.flac")).unwrap();
@@ -503,7 +503,7 @@ fn owner_resave_replaces_the_one_variant_and_trashes_the_old_file() {
 #[test]
 fn owner_reopen_restores_saved_mix_and_remembers_across_track_changes() {
     let (_t, repo, sp, mut m, _b, ev) = ready_to_save();
-    m.set_stem(FOUR, "vocals", Some(-12.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(-12.0), true, Instant::now()).unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
     assert!(matches!(final_event(&ev), EditorEvent::Saved { .. }));
     // fresh manager = app restart
@@ -551,7 +551,7 @@ fn safety_preexisting_user_file_named_backing_flac_is_never_overwritten() {
     // the user file is not in the trash either, and a re-save replaces our file, not theirs
     clear(&ev);
     m.tick(Instant::now());
-    m.set_stem(FOUR, "drums", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now()).unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
     let EditorEvent::Saved { file: file2, .. } = final_event(&ev) else { panic!() };
     assert_eq!(file2, file);
@@ -733,7 +733,7 @@ fn safety_read_only_backings_folder_restores_the_old_backing() {
     let old = fs::read(sp.dir.join("backings/backing.flac")).unwrap();
     let json_before = fs::read(sp.dir.join("track.json")).unwrap();
     fs::set_permissions(sp.dir.join("backings"), fs::Permissions::from_mode(0o555)).unwrap();
-    m.set_stem(FOUR, "drums", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now()).unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
     let r = final_event(&ev);
     fs::set_permissions(sp.dir.join("backings"), fs::Permissions::from_mode(0o755)).unwrap();
@@ -803,7 +803,7 @@ fn nodevice_null_backend_capture_plays_into_a_file_not_a_device() {
     let sink: EventSink = Arc::new(|_| {});
     let mut m = EditorManager::new(Arc::new(backend), sink);
     m.open(&spec(&repo, FOUR)).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     m.play(FOUR).unwrap();
     std::thread::sleep(Duration::from_millis(300));
     m.close();
@@ -823,7 +823,7 @@ fn nodevice_play_on_a_failing_backend_is_a_message_not_a_panic() {
     let (_t, repo) = fixture_repo();
     let mut m = EditorManager::new(Arc::new(Broken), Arc::new(|_| {}));
     m.open(&spec(&repo, FOUR)).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
     let e = m.play(FOUR).unwrap_err();
     assert!(e.contains("cannot be opened"), "{e}");
     assert!(!m.snapshot(FOUR).unwrap().transport.playing, "a failed Play must not show Pause");
@@ -857,7 +857,7 @@ fn fix_play_after_a_failed_device_open_leaves_lanes_and_transport_unchanged() {
     let sink: EventSink = Arc::new(|_| {});
     let mut m = EditorManager::new(Arc::new(FlakyBackend { inner: inner.clone(), fail: fail.clone() }), sink);
     m.open(&sp).unwrap();
-    m.set_stem(FOUR, "vocals", Some(-3.0), true).unwrap();
+    m.set_stem(FOUR, "vocals", Some(-3.0), true, Instant::now()).unwrap();
     let before = m.snapshot(FOUR).unwrap();
     assert!(m.play(FOUR).is_err());
     assert!(m.lane_play(FOUR, "drums").is_err());

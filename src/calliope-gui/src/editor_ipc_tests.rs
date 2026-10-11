@@ -122,7 +122,7 @@ fn env() -> Env {
 /// Opens FOUR with its first lane checked.
 fn open_checked(e: &Env) {
     do_open_editor(&e.st, &e.repo, FOUR, Arc::new(|_| {})).unwrap();
-    e.st.with(|m| m.set_stem(FOUR, "vocals", Some(0.0), true)).unwrap();
+    e.st.with(|m| m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())).unwrap();
 }
 
 /// Runs `f` on a thread and fails when it does not finish in time.
@@ -158,7 +158,7 @@ fn a_stalled_device_open_does_not_block_other_commands_or_the_ticker() {
     finishes("other commands during the open", move || {
         st.tick(Instant::now());
         do_editor_seek(&st, FOUR, 1000).unwrap();
-        st.with(|m| m.set_stem(FOUR, "drums", Some(-3.0), false)).unwrap();
+        st.with(|m| m.set_stem(FOUR, "drums", Some(-3.0), false, Instant::now())).unwrap();
         assert!(st.with(|m| m.current()).is_some());
     });
     e.backend.open_gate.set(true);
@@ -183,7 +183,7 @@ fn a_stalled_device_close_does_not_block_other_commands_or_the_ticker() {
     finishes("other commands during the close", move || {
         st.tick(Instant::now());
         do_editor_seek(&st, FOUR, 500).unwrap();
-        st.with(|m| m.set_stem(FOUR, "drums", Some(-3.0), true)).unwrap();
+        st.with(|m| m.set_stem(FOUR, "drums", Some(-3.0), true, Instant::now())).unwrap();
     });
     assert!(!stop.is_finished());
     e.backend.drop_gate.set(true);
@@ -270,7 +270,7 @@ fn a_failed_device_open_changes_no_state() {
     e.backend.fail_open.store(false, Ordering::SeqCst);
     do_editor_lane_play(&e.st, MIXED, &name).unwrap();
     e.st.with(|m| m.stop(MIXED)).unwrap();
-    e.st.with(|m| m.set_stem(MIXED, &name, Some(0.0), true)).unwrap();
+    e.st.with(|m| m.set_stem(MIXED, &name, Some(0.0), true, Instant::now())).unwrap();
     e.backend.fail_open.store(true, Ordering::SeqCst);
     assert!(do_editor_play(&e.st, MIXED).is_err());
     assert_eq!(e.st.with(|m| m.snapshot(MIXED)).unwrap().transport.solo, None);

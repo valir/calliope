@@ -8,3 +8,4 @@ task 6 | Tempo map with detected changes | implementer | done
 task 7 | player.json schema 2 | implementer | done
 task 8 | Beats to tempo sections | implementer | done
 task 9 | Mix waveform peaks and debounce | implementer | done
+task 10 | Editor waveform scheduling, worker, peaks event | implementer | done

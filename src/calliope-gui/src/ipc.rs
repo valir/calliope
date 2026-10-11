@@ -963,7 +963,7 @@ pub async fn editor_set_stem(
     gain: Option<f32>,
     unmuted: bool,
 ) -> Result<LaneState, String> {
-    blocking(move || app.state::<EditorState>().with(|m| m.set_stem(&id, &name, gain, unmuted))).await
+    blocking(move || app.state::<EditorState>().with(|m| m.set_stem(&id, &name, gain, unmuted, std::time::Instant::now()))).await
 }
 
 #[tauri::command]
@@ -1395,7 +1395,7 @@ mod tests {
         assert_eq!(st.mgr().play("x").unwrap_err(), "no editor session for x");
         assert!(do_editor_seek(&st, "x", 1000).unwrap_err().contains("no editor session"));
         assert!(do_editor_nudge(&st, "x", -100).unwrap_err().contains("no editor session"));
-        assert!(st.mgr().set_stem("x", "drums", None, true).is_err());
+        assert!(st.mgr().set_stem("x", "drums", None, true, std::time::Instant::now()).is_err());
         do_close_editor(&st);
         st.tick(std::time::Instant::now());
     }
