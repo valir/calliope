@@ -42,7 +42,7 @@ fn spec_of(id: &str) -> (tempfile::TempDir, OpenSpec) {
         .as_array()
         .and_then(|a| a.first())
         .map(|b| serde_json::from_value::<BackingVariant>(b.clone()).unwrap());
-    let spec = OpenSpec { id: id.into(), title: v["title"].as_str().unwrap().into(), dir, stems, missing, variant };
+    let spec = OpenSpec { id: id.into(), title: v["title"].as_str().unwrap().into(), dir, stems, missing, variant, tempo: Default::default() };
     (tmp, spec)
 }
 
@@ -856,4 +856,23 @@ fn closing_cancels_the_waveform_worker() {
     m.close();
     assert_eq!(rx.recv_timeout(WAIT).unwrap(), "cancelled");
     assert!(peak_events(&events).is_empty());
+}
+
+#[test]
+fn the_snapshot_carries_the_tempo_and_set_tempo_replaces_it() {
+    use crate::tempo_map::{Segment, TempoMap};
+    let (_t, _spec, mut m, _b, _ev) = open_four();
+    assert!(m.snapshot(FOUR).unwrap().tempo.segments.is_empty());
+    let map = TempoMap {
+        beats_per_bar: 4,
+        segments: vec![
+            Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None },
+            Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6500.0) },
+        ],
+    };
+    let snap = m.set_tempo(FOUR, map.clone()).unwrap();
+    assert_eq!(snap.tempo.segments, map.segments);
+    assert!(snap.tempo.multi);
+    assert_eq!(m.snapshot(FOUR).unwrap().tempo, snap.tempo);
+    assert!(m.set_tempo("nope", map).is_err());
 }

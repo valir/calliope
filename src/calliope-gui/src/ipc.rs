@@ -597,8 +597,11 @@ pub fn do_open_editor(st: &EditorState, repo: &RepoState, id: &str, sink: EventS
             let root = repo.lock();
             let r = Repository::new(root.clone());
             let rec = r.load_record(id)?;
+            let dir = r.tracks_dir().join(&rec.id);
             OpenSpec {
-                dir: r.tracks_dir().join(&rec.id),
+                tempo: crate::tempo_store::TempoStore::load(&crate::tempo_store::FileTempoStore, &rec.id, &dir)
+                    .unwrap_or_default(),
+                dir,
                 id: rec.id,
                 title: rec.title,
                 stems: rec.stems,

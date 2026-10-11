@@ -9,3 +9,4 @@ task 7 | player.json schema 2 | implementer | done
 task 8 | Beats to tempo sections | implementer | done
 task 9 | Mix waveform peaks and debounce | implementer | done
 task 10 | Editor waveform scheduling, worker, peaks event | implementer | done
+task 11 | Tempo store and Player release | implementer | done (wiring of PlayerTempoStore and editor open via store left to task 13)

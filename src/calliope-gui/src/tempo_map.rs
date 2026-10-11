@@ -28,7 +28,7 @@ pub struct Segment {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct TempoMap {
+pub struct TempoMap {
     pub beats_per_bar: u32,
     pub segments: Vec<Segment>,
 }

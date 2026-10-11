@@ -963,6 +963,7 @@ fn the_reduced_track_opens_in_the_editor_with_four_lanes() {
         stems: rec.stems,
         missing: rec.missing,
         variant: rec.backings.into_iter().next(),
+        tempo: Default::default(),
     };
     let backend = ManualBackend::new();
     let mut m = editor::EditorManager::new(Arc::new(backend), Arc::new(|_| {}));

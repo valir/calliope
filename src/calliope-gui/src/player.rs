@@ -436,6 +436,11 @@ pub enum PlayerEvent {
         id: String,
         message: String,
     },
+    /// The session was released (the Editor wrote a new tempo map): the UI forgets it and
+    /// reopens the track when it next shows it.
+    Closed {
+        id: String,
+    },
 }
 
 pub type EventSink = Arc<dyn Fn(PlayerEvent) + Send + Sync>;
@@ -467,6 +472,8 @@ pub struct Loaded {
     source: String,
     pcm: Pcm,
     peaks: Vec<f32>,
+    /// FNV-1a revision of the `player.json` bytes `state` was read from (none: no file).
+    revision: Option<String>,
 }
 
 /// A source change in progress (`begin_select`).
@@ -502,8 +509,15 @@ fn progress_sink(id: &str, sink: &EventSink) -> impl FnMut(u64, u64) {
     }
 }
 
+/// Revision of `<dir>/player.json`: the FNV-1a hash of its bytes; none when it can't be read.
+fn revision_of(dir: &std::path::Path) -> Option<String> {
+    std::fs::read(dir.join(player_state::PLAYER_FILE)).ok().map(|b| crate::fsutil::fnv1a64_hex(&b))
+}
+
 /// Reads `player.json`, picks the source and decodes it (long; call without the manager lock).
 pub(crate) fn load(spec: &OpenSpec, ticket: &OpenTicket, sink: &EventSink) -> Result<Loaded, String> {
+    // The bytes are read first, so the state is at least as new as the revision.
+    let revision = revision_of(&spec.dir);
     let (mut state, note, _writable) = player_state::load(&spec.dir);
     let keys: Vec<&str> = spec.sources.iter().map(|s| s.key.as_str()).collect();
     let source = player_state::choose_source(state.source.as_deref(), &keys)
@@ -516,7 +530,7 @@ pub(crate) fn load(spec: &OpenSpec, ticket: &OpenTicket, sink: &EventSink) -> Re
     }
     let peaks = player_source::peaks(&pcm, PEAK_BUCKETS);
     state.source = Some(source.clone());
-    Ok(Loaded { state, note, source, pcm, peaks })
+    Ok(Loaded { state, note, source, pcm, peaks, revision })
 }
 
 // ---------------------------------------------------------------------- manager
@@ -785,6 +799,24 @@ fn flush_session(sink: &EventSink, s: &mut Session) {
     }
 }
 
+/// Like `flush_session`, but reports a failed write instead of only emitting an event.
+fn try_flush(s: &mut Session) -> Result<(), String> {
+    if s.state.read_only || (s.dirty_at.is_none() && s.ms_of(s.pos()) == s.state.position_ms) {
+        return Ok(());
+    }
+    let position = s.ms_of(s.pos());
+    let mut state = s.state.clone();
+    state.position_ms = position;
+    player_state::save(&s.dir, &state).map_err(|e| {
+        eprintln!("calliope: player state error id={} message={e}", s.id);
+        format!("Could not save the Player's settings first: {e}")
+    })?;
+    s.state.position_ms = position;
+    s.dirty_at = None;
+    eprintln!("calliope: player state saved id={}", s.id);
+    Ok(())
+}
+
 fn publish(sink: &EventSink, s: &mut Session, now: Instant) -> PlayerTransport {
     let state = s.transport_state();
     let key = s.key();
@@ -894,7 +926,15 @@ impl PlayerManager {
             return Err(SUPERSEDED.into());
         }
         self.pending = None;
-        let Loaded { mut state, note, source, pcm, peaks } = loaded;
+        let Loaded { mut state, mut note, source, pcm, peaks, revision } = loaded;
+        if revision_of(&spec.dir) != revision {
+            // `player.json` was written (the Editor's tempo map) after it was read: use the new
+            // content, so that write is not lost. The decoded source stays.
+            let (fresh, fresh_note, _) = player_state::load(&spec.dir);
+            eprintln!("calliope: player reread id={} (player.json changed while opening)", spec.id);
+            state = fresh;
+            note = fresh_note;
+        }
         let pcm = Arc::new(pcm);
         let mut frames = state.position_ms.saturating_mul(u64::from(pcm.rate)) / 1000;
         if frames >= pcm.frames {
@@ -966,6 +1006,34 @@ impl PlayerManager {
             flush_session(&self.sink, &mut s);
             self.retire(s.output.take().map(|o| o.handle));
         }
+    }
+
+    /// Saves the pending state (loops, position, source, metronome) of the session for `id`, if
+    /// there is one; it stays open. Fails when the write fails.
+    pub fn flush_if_open(&mut self, id: &str) -> Result<(), String> {
+        match self.session.as_mut() {
+            Some(s) if s.id == id => try_flush(s),
+            _ => Ok(()),
+        }
+    }
+
+    /// Hands the track over to a writer of `player.json` (plan 2.2): flushes the session for
+    /// `id`, stops it, closes the output, drops it and emits `Closed`. When the flush fails
+    /// nothing changes. Returns whether there was a session.
+    pub fn release(&mut self, id: &str) -> Result<bool, String> {
+        match self.session.as_mut() {
+            Some(s) if s.id == id => try_flush(s)?,
+            _ => return Ok(false),
+        }
+        let mut s = self.session.take().expect("checked above");
+        if let Some(c) = &s.select_cancel {
+            c.store(true, Ordering::Relaxed);
+        }
+        s.halt();
+        self.retire(s.output.take().map(|o| o.handle));
+        eprintln!("calliope: player released id={id}");
+        (self.sink)(PlayerEvent::Closed { id: id.to_string() });
+        Ok(true)
     }
 
     #[allow(dead_code)] // whole-call form, used by the tests

@@ -26,6 +26,7 @@ pub mod settings;
 pub mod stem_audio;
 pub mod tempo_detect;
 pub mod tempo_map;
+pub mod tempo_store;
 pub mod tools;
 pub mod track_meta;
 pub mod transport;

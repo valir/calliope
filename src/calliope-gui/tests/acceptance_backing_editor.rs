@@ -81,6 +81,7 @@ fn spec(repo: &Repository, id: &str) -> OpenSpec {
         stems: rec.stems,
         missing: rec.missing,
         variant: rec.backings.into_iter().next(),
+        tempo: Default::default(),
     }
 }
 

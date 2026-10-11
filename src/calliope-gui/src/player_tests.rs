@@ -859,3 +859,100 @@ fn engine_callback_never_allocates() {
     assert_eq!(n, 0, "the callback allocated");
     assert!(shared.wraps.load(Ordering::Acquire) > 0);
 }
+
+fn new_map() -> crate::tempo_map::TempoMap {
+    crate::tempo_map::TempoMap {
+        beats_per_bar: 4,
+        segments: vec![crate::tempo_map::Segment { start_ms: 0.0, bpm: 100.0, detected_ms: None }],
+    }
+}
+
+fn closed(e: &Events, id: &str) -> usize {
+    e.lock().unwrap().iter().filter(|x| **x == PlayerEvent::Closed { id: id.into() }).count()
+}
+
+#[test]
+fn release_flushes_the_pending_state_then_the_tempo_write_keeps_it() {
+    use crate::tempo_store::{FileTempoStore, TempoStore};
+    let (_t, spec, mut m, b, e) = opened(WITH_TEMPO);
+    let t0 = Instant::now();
+    m.seek(&spec.id, 7000, t0).unwrap();
+    m.loop_action(&spec.id, LoopAction::Add, t0).unwrap();
+    let loops = m.snapshot(&spec.id).unwrap().loops;
+    assert_eq!(loops.len(), 4);
+    let before = disk(&spec).unwrap();
+    assert_eq!(before["loops"].as_array().unwrap().len(), 3, "the add is still pending");
+
+    assert!(m.release(&spec.id).unwrap());
+    assert!(!m.is_open(&spec.id));
+    assert_eq!(closed(&e, &spec.id), 1);
+    assert!(!m.release(&spec.id).unwrap(), "nothing left to release");
+    assert_eq!(closed(&e, &spec.id), 1);
+    let flushed = disk(&spec).unwrap();
+    assert_eq!(flushed["position_ms"], 7000);
+    assert_eq!(flushed["loops"].as_array().unwrap().len(), 4);
+
+    FileTempoStore.replace(&spec.id, &spec.dir, &|_| Ok(new_map())).unwrap();
+    let v = disk(&spec).unwrap();
+    assert_eq!(v["position_ms"], 7000);
+    assert_eq!(v["loops"].as_array().unwrap().len(), 4);
+    assert_eq!(v["tempo"]["segments"].as_array().unwrap().len(), 1);
+    assert_eq!(v["tempo"]["segments"][0]["bpm"], 100.0);
+
+    // the released session's debounced writer is gone: nothing brings the old tempo back
+    m.tick(t0 + ms(600));
+    m.tick(t0 + ms(20_000));
+    assert_eq!(disk(&spec).unwrap(), v);
+    drop(b);
+}
+
+#[test]
+fn a_failed_flush_keeps_the_session_and_refuses_the_replace() {
+    use crate::tempo_store::{FileTempoStore, TempoStore};
+    let (_t, spec, mut m, _b, e) = opened(PRACTICE);
+    m.seek(&spec.id, 3000, Instant::now()).unwrap();
+    std::fs::remove_dir_all(&spec.dir).unwrap();
+    let err = m.release(&spec.id).unwrap_err();
+    assert!(err.starts_with("Could not save the Player's settings first:"), "{err}");
+    assert!(m.is_open(&spec.id));
+    assert_eq!(closed(&e, &spec.id), 0);
+    // the store only writes after a successful release, and never creates the folder
+    assert!(FileTempoStore.replace(&spec.id, &spec.dir, &|_| Ok(new_map())).is_err());
+    assert!(!spec.dir.exists());
+}
+
+#[test]
+fn flush_if_open_saves_a_dirty_session_and_leaves_it_open() {
+    let (_t, spec, mut m, _b, e) = opened(PRACTICE);
+    m.flush_if_open("other").unwrap();
+    m.flush_if_open(&spec.id).unwrap();
+    assert!(disk(&spec).is_none(), "a clean session writes nothing");
+    let t0 = Instant::now();
+    m.seek(&spec.id, 3000, t0).unwrap();
+    m.flush_if_open(&spec.id).unwrap();
+    assert_eq!(disk(&spec).unwrap()["position_ms"], 3000);
+    assert!(m.is_open(&spec.id));
+    assert_eq!(closed(&e, &spec.id), 0);
+}
+
+#[test]
+fn finish_open_installs_a_player_json_written_after_the_read() {
+    use crate::tempo_store::{FileTempoStore, TempoStore};
+    let (_t, spec) = spec_of(WITH_TEMPO);
+    let (mut m, _b, _e) = manager();
+    let ticket = m.begin_open();
+    let loaded = load(&spec, &ticket, &m.sink()).unwrap();
+    assert!(m.finish_open(&ticket, &spec, loaded).is_ok());
+    // a second open: read, then the Editor writes, then install
+    let ticket = m.begin_open();
+    let loaded = load(&spec, &ticket, &m.sink()).unwrap();
+    FileTempoStore.replace(&spec.id, &spec.dir, &|_| Ok(new_map())).unwrap();
+    let snap = m.finish_open(&ticket, &spec, loaded).unwrap();
+    assert_eq!(snap.tempo.segments.len(), 1);
+    assert_eq!(snap.tempo.segments[0].bpm, 100.0);
+    assert_eq!(snap.loops.len(), 3, "the Player's loops are kept");
+    // an unchanged file is not re-read
+    let ticket = m.begin_open();
+    let loaded = load(&spec, &ticket, &m.sink()).unwrap();
+    assert_eq!(m.finish_open(&ticket, &spec, loaded).unwrap().tempo.segments.len(), 1);
+}

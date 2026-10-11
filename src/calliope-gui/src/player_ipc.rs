@@ -1,7 +1,7 @@
 //! Player commands (plan 2.9): `PlayerHost` (the Tauri-managed wrapper around `PlayerManager`,
 //! the same shape as `EditorState`) and the thin async command wrappers.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -17,7 +17,8 @@ use crate::player::{
 use crate::player_source;
 use crate::player_state::Mark;
 use crate::repository::Repository;
-use crate::tempo_map::Boundary;
+use crate::tempo_map::{Boundary, TempoMap};
+use crate::tempo_store::{FileTempoStore, TempoStore};
 
 /// Managed app state of the Player: the session manager plus the slot holding the webview's
 /// current event channel (replaced by `open_player` and `watch_player`).
@@ -106,6 +107,37 @@ impl PlayerHost {
             let _ = tx.send(());
         });
         let _ = rx.recv_timeout(end.saturating_duration_since(Instant::now()));
+    }
+}
+
+/// The app's tempo store (plan 2.2): `player.json`, with the Player's session for the track
+/// flushed (`load`) or released (`replace`) first, both under one lock of the manager, so
+/// neither side loses the other's writes.
+#[allow(dead_code)] // wired by the detection commands
+pub(crate) struct PlayerTempoStore {
+    host: Arc<PlayerHost>,
+}
+
+#[allow(dead_code)]
+impl PlayerTempoStore {
+    pub(crate) fn new(host: Arc<PlayerHost>) -> Self {
+        Self { host }
+    }
+}
+
+impl TempoStore for PlayerTempoStore {
+    fn load(&self, id: &str, dir: &Path) -> Result<TempoMap, String> {
+        self.host.with(|m| {
+            m.flush_if_open(id)?;
+            FileTempoStore.load(id, dir)
+        })
+    }
+
+    fn replace(&self, id: &str, dir: &Path, f: &dyn Fn(&TempoMap) -> Result<TempoMap, String>) -> Result<TempoMap, String> {
+        self.host.with(|m| {
+            m.release(id)?;
+            FileTempoStore.replace(id, dir, f)
+        })
     }
 }
 

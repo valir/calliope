@@ -20,6 +20,8 @@ use crate::import_job::RepoLock;
 use crate::repository::{Repository, TrackRecord};
 use crate::mix_waveform::{self, Debounce};
 use crate::mixer;
+use crate::player::SnapTempo;
+use crate::tempo_map::TempoMap;
 use crate::stem_audio::{self, Common, StemPcm};
 use crate::track_meta::{BackingVariant, StemEntry};
 use crate::transport::Transport;
@@ -76,6 +78,8 @@ pub struct EditorSnapshot {
     /// Peaks of the checked-stem mix (`mix_waveform::BUCKETS` values); empty until the first
     /// computation is installed. The UI keeps the old ones while new ones are computed.
     pub peaks: Vec<f32>,
+    /// The track's tempo map (`player.json`).
+    pub tempo: SnapTempo,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -120,6 +124,8 @@ pub struct OpenSpec {
     pub missing: Vec<String>,
     /// The first entry of the track's `backings`.
     pub variant: Option<BackingVariant>,
+    /// The tempo map read through the `TempoStore` when the track was opened.
+    pub tempo: TempoMap,
 }
 
 /// Handed out by `begin_open`; a later `begin_open` or `close` cancels it.
@@ -278,6 +284,7 @@ struct Session {
     last_position: u64,
     last_emit: Option<Instant>,
     wave: Wave,
+    tempo: TempoMap,
 }
 
 impl Session {
@@ -327,6 +334,11 @@ impl Session {
             variant: self.variant.clone(),
             saving: None,
             peaks: self.wave.peaks.clone(),
+            tempo: SnapTempo {
+                beats_per_bar: self.tempo.beats_per_bar,
+                segments: self.tempo.segments.clone(),
+                multi: self.tempo.is_multi(),
+            },
         }
     }
 }
@@ -566,6 +578,7 @@ impl EditorManager {
             last_position: 0,
             last_emit: None,
             wave: Wave::new(),
+            tempo: spec.tempo.clone(),
         };
         session.sync_shared();
         let snap = session.snapshot();
@@ -594,6 +607,13 @@ impl EditorManager {
             self.remembered.insert(s.id.clone(), s.lanes.clone());
             self.retire(s.output);
         }
+    }
+
+    /// Replaces the session's tempo map (after a detection, a move or a reload) and returns the
+    /// snapshot.
+    pub fn set_tempo(&mut self, id: &str, tempo: TempoMap) -> Result<EditorSnapshot, String> {
+        self.session(id)?.tempo = tempo;
+        self.snapshot(id)
     }
 
     pub fn is_open(&self, id: &str) -> bool {
