@@ -1193,7 +1193,7 @@ fn hostile_corrupt_player_json_opens_with_defaults_and_a_note() {
         m.set_bpm(&spec.id, 100.0, t0).unwrap();
         m.tick(t0 + Duration::from_millis(700));
         let v: Value = serde_json::from_slice(&std::fs::read(spec.dir.join("player.json")).unwrap()).unwrap();
-        assert_eq!(v["schema_version"], 1);
+        assert_eq!(v["schema_version"], 2);
         m.play(&spec.id, t0).unwrap();
         b.pull(500);
     }
@@ -1256,7 +1256,7 @@ fn hostile_infinite_and_huge_numbers() {
 
 #[test]
 fn hostile_newer_schema_is_read_only_and_never_overwritten() {
-    let text = r#"{"schema_version":2,"source":"stem:guitar","future":{"x":1}}"#;
+    let text = r#"{"schema_version":3,"source":"stem:guitar","future":{"x":1}}"#;
     let (_t, spec, mut m, b, e, r) = open_with_file(text.as_bytes());
     let s = r.unwrap();
     assert!(s.note.as_deref().unwrap().contains("newer version"));
