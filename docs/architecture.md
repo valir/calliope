@@ -19,7 +19,7 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (CLI front) | Laptop | Parses arguments before any GUI init; prints `--help` / `--version` | Rust, hand-written parser (no clap) | `src/main.rs`, `src/cli.rs` |
 | calliope-gui (version) | build time + Laptop | Formats the `YY.MM.BBBB` version; shared by `build.rs` and the crate | Rust, no deps | `src/version.rs`, `build.rs` |
 | calliope-gui (GUI shell) | Laptop | Tauri 2 app: main window, plugins, managed state, IPC handler registration | Rust + Tauri 2 (webkit2gtk-4.1 on Linux), `tauri-plugin-window-state` | `src/gui.rs`, `tauri.conf.json` |
-| calliope-gui (IPC commands) | Laptop | All `#[tauri::command]` functions; thin wrappers over pure modules | Rust | `src/ipc.rs` |
+| calliope-gui (IPC commands) | Laptop | All `#[tauri::command]` functions; thin wrappers over pure modules. The Player's commands are in their own file | Rust | `src/ipc.rs`, `src/player_ipc.rs` |
 | calliope-gui (settings) | Laptop | Loads/saves user settings (theme, repository root, edge-AI server URL, keep-original switch; MIDI/audio later) as JSON | Rust + serde | `src/settings.rs` |
 | calliope-gui (fs helpers) | Laptop | Atomic writes, no-clobber copies, file-name validation, moving to the repository trash, FNV-1a revisions | Rust, std only | `src/fsutil.rs` |
 | calliope-gui (track metadata) | Laptop | `track.json` schema (version 2: track type, stems), validation, v1→v2 migration in memory, ids (UUIDv7), RFC 3339 timestamps | Rust + serde, `uuid` | `src/track_meta.rs` |
@@ -37,7 +37,12 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (audio output) | Laptop | `OutputBackend` trait: `CpalBackend` (default device), `NullBackend` (paced, optional WAV capture; the only backend in `e2e-hooks` builds), `ManualBackend` (unit tests) | Rust, `cpal` (ALSA on Linux) | `src/audio_out.rs` |
 | calliope-gui (editor engine) | Laptop | Editor sessions: load stems, lock-free render callback, transport, transient solo, clip indicator, events, remembered mixes, the backing save job | Rust (std threads) | `src/editor.rs` (+ `src/editor_tests.rs`) |
 | calliope-gui (backing render) | Laptop | Offline render of the mix to FLAC | Rust, `flacenc` | `src/backing_render.rs` |
-| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Editor: shared track tree + stem mixer; Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
+| calliope-gui (tempo map) | Laptop | Tempo segments, beat grid in 1/64-note ticks (16 per beat, `beats_per_bar` default 4), ms<->tick, snapping, "set BPM at position", beats in a range, loop boundary re-snapping | Rust, pure | `src/tempo_map.rs` |
+| calliope-gui (player state) | Laptop | `player.json` schema (lenient read, strict write, newer schema read-only), loop list operations, source choice rule, load/save | Rust + serde, pure | `src/player_state.rs` |
+| calliope-gui (player sources) | Laptop | Dropdown entries of a track (backing variants, `audio`, `original`, stems), decoding one into memory (FLAC: `claxon`; other formats: external `ffmpeg` piped to memory), waveform peaks (2048) | Rust | `src/player_source.rs` |
+| calliope-gui (metronome) | Laptop | Synthesised click (own sound), count-in plan, placing clicks in an output block | Rust, pure | `src/metronome.rs` |
+| calliope-gui (player engine) | Laptop | Player sessions: one decoded source, a callback-owned `Engine` (playback, count-in, loop repeats, metronome, fades) fed by a bounded command channel, transport + scrub rule, events, debounced `player.json` writes | Rust (std threads) | `src/player.rs` (+ `src/player_tests.rs`) |
+| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Editor: shared track tree + stem mixer; Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform, control bar; Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
 | calliope-lib (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation, FLAC STREAMINFO parser, FLAC audible-time scan (`flac_level`: 100 ms windows, RMS of the loudest channel above `AUDIBLE_LEVEL_DBFS = -40`, integer sum-of-squares comparison, peak for display; no 15 s decision), HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel). No Tauri/GTK | Rust; `serde`, `libc`, `claxon`, `ureq` 3 without TLS (feature) | `src/calliope-lib/` |
 | calliope-stems (edge-AI stems service) | archserver (LAN), deployed by hand as a systemd user unit | HTTP server for "calliope-stems API v1": validates FLAC uploads (≤ 15 min), queues jobs (1 running), runs a configurable separator command, measures each stem's audible time, serves the stems, cleans up; `--measure FILE...` prints audible times without starting a server. No Tauri/GTK; the GUI doesn't depend on it | Rust; `tiny_http`, `calliope-lib` | `src/calliope-stems/` |
 | separator adapter | archserver | `<sep> <input.flac> <out_dir> <model>` → `<out_dir>/<stem>.flac`; the real one runs the owner's audio-separator venv with `htdemucs_6s` (frees VRAM from Ollama first) | bash | `src/calliope-stems/separators/audio-separator.sh` |
@@ -96,9 +101,15 @@ the GUI crate, `src/calliope-gui/`.
     `editor_lane_play(id, name)` (check + solo + play), `editor_end_solo(id)`, `editor_pause(id)`,
     `editor_stop(id)`, `editor_seek(id, position)`, `editor_nudge(id, delta)` (ms),
     `editor_set_stem(id, name, gain, unmuted)` (gain in dB or null = Off), `save_backing(id)`,
-    `cancel_backing_save(id)`.
+    `cancel_backing_save(id)`; player (gui-play-backing-track plan §2.9, in `src/player_ipc.rs`):
+    `open_player(id, events)`, `close_player()`, `get_player()`, `watch_player(events)`,
+    `player_select_source(id, source)`, `player_play(id)`, `player_pause(id)`, `player_seek(id, position)`,
+    `player_nudge(id, delta)` (both with the 0.3 s scrub rule), `player_skip(id, delta)` (instant, Rew/FF),
+    `player_leave(id)` (pause + close output + flush), `player_tempo(id, action)` (`set-bpm` | `speed-step` |
+    `speed-reset`), `player_metronome(id, on, count_in)`, `player_loop(id, action)` (tagged action: add, remove,
+    select, mark, set, flags, play, stop). Actions are tagged objects to keep the command list short.
     Types are in `src/ui/lib/ipc.ts` and in the plans (tracks-repository §2.7, stem-extraction §2.10,
-    backing-track-editor §2.7).
+    backing-track-editor §2.7, play-backing-track §2.9).
   - **Long-running jobs and progress**: a command that starts a job takes a
     `tauri::ipc::Channel<Event>` argument (`events`), returns a snapshot at once and runs the
     work on its own std thread; progress goes over the channel (tagged JSON, `phase` field,
@@ -120,7 +131,9 @@ the GUI crate, `src/calliope-gui/`.
   - The frontend never keeps time. Audio/MIDI/sync logic stays in Rust; the frontend displays
     state and sends commands. Audio is played by Rust (`cpal`), never by the webview (no Web
     Audio, no `<audio>`, so the CSP needs no `media-src`/`blob:`). Playback position reaches the UI
-    as `transport` events on the editor channel (on every change, else every 100 ms while playing).
+    as `transport` events on the editor/player channel (on every change, else every 100 ms while playing).
+    Only one engine sounds at a time: Player Play stops the Editor and Editor Play pauses the Player. Both
+    share one `Arc<dyn OutputBackend>` from `select_backend()`.
 - **Frontend log lines** (stderr, prefix `calliope-ui: `), used by the GUI tests:
   `ready view=<id> theme=<t> version=<v>`, `view=<id>`, `theme=<t>`,
   `csp-violation directive=<d> blocked=<uri>`, `error <context>: <msg>`; Library:
@@ -134,12 +147,19 @@ the GUI crate, `src/calliope-gui/`.
   `editor play|pause|stop position=<ms>`, `editor solo name=<n|none>`, `editor leave stop`,
   `editor seek position=<ms>`, `editor nudge delta=<ms>`,
   `editor stem name=<n> gain=<db|off> unmuted=<b>`, `editor saved id=<id> file=<f> clipped=<n>`.
+  Player: `player active id=<id> source=<key> sources=<n> mode=<bpm|time> loops=<n>`, `player inactive id=<id|none>`,
+  `player source key=<key>`, `player play|pause position=<ms>`, `player seek position=<ms>`, `player skip delta=<ms>`,
+  `player bpm value=<v> position=<ms>`, `player metronome on=<b> count_in=<b>`,
+  `player loop <action> index=<n|none> count=<n>`, `player tree collapsed=<b>`, `player leave pause`.
   Rust lines (prefix `calliope: `): `dialog kind=<add-tablature|update-tablature|repository-root|export-track|export-tablature|import-audio|import-video> result=<picked|cancelled>`,
   `import job=<job> phase=<phase>`, `import path kind=<audio|video> result=<accepted|rejected>[ reason=<empty|invalid|relative|missing|folder|not-file|unreadable|extension>]`,
   `tool <name> found=<bool> version=<v>`,
   `audio backend=<cpal|null|capture> rate=<hz>`, `editor open id=<id> stems=<n> duration_ms=<ms>`,
   `editor transport playing=<b> audible=<b> position_ms=<ms> solo=<n|none> clipping=<b>` (changes only),
-  `editor saved id=<id> file=<f> bits=<b> clipped=<n>`.
+  `editor saved id=<id> file=<f> bits=<b> clipped=<n>`, `player open id=<id> source=<key> duration_ms=<ms> rate=<hz>`,
+  `player transport playing=<b> counting_in=<b> loop=<n|none> position_ms=<ms>` (changes only),
+  `player count-in clicks=3 beat_ms=<ms>`, `player wrap loop=<n> count_in=<b>`, `player state saved id=<id>`,
+  `player state error id=<id> message=<m>`.
 - **Settings file**: `$XDG_CONFIG_HOME/app.calliope.gui/settings.json` (Tauri
   `app_config_dir()`), e.g. `{"theme": "dark", "repository_root": null, "edge_ai_url": null, "keep_original": false}`
   (`repository_root`: `null`/absent = the default root, must be an absolute path;
@@ -163,6 +183,7 @@ the GUI crate, `src/calliope-gui/`.
                                   `backings`); this feature writes `backings/backing.flac` (`backing-2`..
                                   if a user file already has the name)
       .calliope-backing-<uuid>.part  a backing being rendered (removed on success/failure/cancel)
+      player.json                 the Player's settings for this track (reserved name; see below)
     tracks/.staging-<id>/         a new track being assembled (marker .calliope-staging);
                                   renamed to tracks/<id> in one step; scan skips dot names
     import-tmp/                   Calliope's own import working space
@@ -206,6 +227,17 @@ the GUI crate, `src/calliope-gui/`.
   and an optimistic `revision` check (FNV-1a of `track.json`) against other writers. No file
   watcher; the Library rescans each time it is shown. A configured root that doesn't exist is
   never created (it may be an unmounted disk); the default root is created on first use.
+- **Player settings file `player.json`** (gui-play-backing-track plan §2.3-2.5), next to `track.json`:
+  `{"schema_version": 1, "source": "backing:<id>"|"audio"|"original"|"stem:<name>", "tempo": {"beats_per_bar": 4,
+  "segments": [{"start_ms": <number>, "bpm": <20..300>}]}, "speed": <0.5..1.5>, "metronome": {"on", "count_in"},
+  "loops": [{"id", "start": {"tick": <int>}|{"ms": <number>}, "end": ..., "repeat", "count_in"}], "current_loop": <id|null>}`.
+  No segments = BPM 0 = timestamp mode; loop boundaries are ticks (1/64 notes from the first segment's start) in BPM
+  mode and ms in timestamp mode, re-snapped (keeping their time) whenever the tempo map changes. One state per track,
+  shared by all sources (stems and backings are sample-aligned). Written with `write_atomic` 500 ms after the last
+  change and at once on track switch, view leave, close and exit; never creates the track folder. Lenient on read
+  (bad parts dropped, unknown fields kept), a newer `schema_version` is never overwritten. Library scans ignore it,
+  Export copies it, Delete moves it with the folder. `player.json` is reserved as a file name like `track.json`
+  (`fsutil::validate_file_name`).
 - **Edge-AI stems protocol ("calliope-stems API v1")**, types and client in
   `calliope-lib` (`stems_api`, `stems_client`), server `calliope-stems`; plain HTTP on the
   LAN, base URL from settings (e.g. `http://archserver:8765`); full table in the
@@ -278,26 +310,33 @@ src/                      ALL source (owner requirement), one folder per crate
     src/*.rs              Rust modules (main, cli, version, gui, ipc, settings, fsutil,
                           track_meta, repository (+ repository_tests), picker, local_source, import_tmp,
                           tools, media, download, import_job, stem_audio, mixer, transport,
-                          audio_out, editor (+ editor_tests), backing_render, ...)
+                          audio_out, editor (+ editor_tests), backing_render, tempo_map,
+                          player_state, player_source, metronome, player (+ player_tests),
+                          player_ipc, ...)
     src/ui/               frontend: index.html, main.ts, app.css, App.svelte,
                           components/ (library/ = tree, pane, tablature panel;
                           import/ = source page (URL box, or local path box + Browse +
                           Extract), edit pane, extraction progress;
-                          editor/ = EditorPane, StemLane, MixLane, TimeField;
+                          editor/ = EditorPane, StemLane, MixLane, TimeField (also used by the Player);
+                          player/ = PlayerPane, SourceSelect, WaveformView, BpmSection,
+                          MetronomeSection, PlaybackSection, LoopsSection;
                           library/TrackBrowser.svelte = tree column shared by Library and Editor;
                           TrackFields.svelte shared by Library and Import),
                           views/ (one file per main view),
                           lib/ (ipc.ts, views.ts, theme.ts, app-state.svelte.ts,
                           fuzzy.ts, library-tree.ts, track-draft.ts, library-state.svelte.ts,
                           url-check.ts, import-state.svelte.ts, editor-state.svelte.ts, time-format.ts,
+                          player-state.svelte.ts, bar-format.ts, bpm-format.ts, waveform-geometry.ts,
                           utils.ts, components/ui/ = shadcn components owned by us),
                           *.test.ts next to the code
     dist/                 generated by `vite build`, gitignored, embedded into the binary
     tests/                cargo integration tests (cli, frontend, acceptance_*, gui_smoke, gui_e2e,
-                          gui_library_e2e, gui_import_e2e, gui_editor_e2e); fixtures/library-sample/ = sample
+                          gui_library_e2e, gui_import_e2e, gui_editor_e2e, gui_player_e2e); fixtures/library-sample/ = sample
                           repository (v1), library-v2/ = mixed v1/v2 incl. a stem track,
                           import/ = generated audio/video/stem fixtures (make-fixtures.sh),
-                          library-editor/ = stem tracks for the Editor (editor/make-fixtures.sh)
+                          library-editor/ = stem tracks for the Editor (editor/make-fixtures.sh),
+                          library-player/ = tracks for the Player incl. an MP3 backing and a player.json
+                          with two tempos and loops (player/make-fixtures.sh)
       support/            test-only stand-ins: stub-separator (bash), bin/yt-dlp (Python 3 stdlib)
   calliope-lib/           shared library (package calliope-lib, lib calliope_lib): Cargo.toml,
                           src/{lib,stems_api,stems_client,flac_level,process}.rs, tests/; no Tauri
@@ -444,6 +483,11 @@ the server out of the GUI.
   constructed by any test (a static test limits where it is referenced), so no test can make a sound
   or needs a sound card. Timing rules (0.3 s resume) are tested with injected `Instant`s, not sleeps.
   Rendered files are decoded and compared sample by sample. Real playback is a manual check.
+- **Player audio** → the same backends. The player's `Engine` is tested directly (`apply`/`render`) and through
+  `ManualBackend`: exact source samples, 3 ms fades at jumps, click onsets at exact frames, count-in timing, loop
+  repeats. GUI tests analyse the capture WAV: tone presence per source frequency (330/440/550/660 Hz fixtures) and
+  click onsets in the 1.5-2 kHz band. Non-FLAC sources go through the real local `ffmpeg` on a generated MP3 fixture.
+  Time-stretch (when added) is checked on synthetic tones (pitch within 1 %, duration); listening quality is manual.
 - MIDI: no fake yet. Each feature that adds hardware must also add a simulator/fake and list it here.
 
 ## Decision log
@@ -891,3 +935,47 @@ and the box is a second way in (rejected: two behaviours on one row, and the box
 the browsed file), and a token for browsed files plus a path for typed ones (rejected: two code
 paths for the same thing, with no security gain once typed paths are accepted). A video's first
 audio stream is used (`-map 0:a:0`, unchanged).
+
+### 2026-10-11: Player settings live in `player.json` next to `track.json`   (feature: gui-play-backing-track; recommended, owner to confirm in plan Q7)
+The Player saves every adjustment (source, tempo map, speed, metronome, loops) with no Save button. Writing
+`track.json` that often would change its revision on each loop edit, so a Library edit in progress would hit a
+save conflict, and the Library would rescan "modified" tracks. Choice: a separate `player.json` in the track folder,
+debounced (500 ms) atomic writes, lenient read, unknown fields kept, a newer schema never overwritten, the name
+reserved like `track.json`, copied by Export, moved with the folder by Delete, ignored by scans. One state per track,
+shared by all sources, because stems and backings are sample-aligned (plan Q5). Alternatives: a `player` object in
+`track.json` (rejected for the conflicts), a per-source state (rejected: duplicated tempo maps and loops that drift
+apart), a hidden dot file (rejected: not "easy to hack with"). The tempo map may move into `track.json` when
+`gui-manipulate-backing-track` makes tempo part of the track metadata.
+
+### 2026-10-11: The Player is its own engine; its playback state lives in the audio callback   (feature: gui-play-backing-track)
+Count-ins, loop repeats and metronome clicks must happen at an exact sample, without waiting for the 20 ms ticker,
+so the Editor's "atomics + manager-side transport" model is not enough. The Player's `Engine` (a pure struct with
+`apply(cmd)` and `render(out)`) is owned by the callback and receives commands through a bounded
+`std::sync::mpsc::sync_channel` (array flavour: no allocation per message); replaced `Arc`s go back through a second
+channel to be freed off the audio thread; status leaves through atomics. The manager keeps the resting state while
+no output is open and builds the engine from it on open. The Editor engine is unchanged; both share the output
+backend and only one sounds at a time. Alternatives: extending `EditorManager` (rejected: the Editor mixes many stems
+with solo, the Player plays one source with timing features, and a merged engine would be harder to test), a
+lock-free ring-buffer crate such as `rtrb` (not needed; std's bounded channel suffices), a mutex shared with the
+callback (rejected: priority inversion on the audio thread).
+
+### 2026-10-11: Tempo map with a 1/64-note grid; loops stored as ticks or ms by mode   (feature: gui-play-backing-track; 4/4 default is plan Q8)
+A tempo map is a list of segments `{start_ms, bpm}`; none = BPM 0 = timestamp mode. The first segment's start is
+bar 1, beat 1 (typing a BPM while paused on the first downbeat sets both tempo and grid); its tempo extends
+backwards. A tick is a 1/64 note (16 per quarter-note beat); `beats_per_bar` is stored (default 4). Later tempo
+changes snap to the nearest tick of the current grid, so tick bases are integers and conversions are exact. Loop
+boundaries are `{tick}` in BPM mode and `{ms}` in timestamp mode (the spec's rule) and are re-snapped, keeping their
+time, whenever the tempo map changes, so a loop stays on the audio the user marked. Speed is one factor per track;
+the BPM shown is `bpm_at(position) * speed`.
+
+### 2026-10-11: Metronome and count-in are rendered in the playback stream   (feature: gui-play-backing-track)
+The click is our own synthesis (decaying 2 kHz / 1.5 kHz sine, -6 dBFS) mixed by the same callback that plays the
+track, after any speed change, so ticks are sample-aligned with the music whatever the device latency. This settles
+the Editor-era note "device latency is not compensated; the Player must revisit": for audio-to-audio sync no
+compensation is needed. Displayed positions still lag by the device latency (tens of ms); the tablature cursor and
+MIDI clock features must compensate when they need tighter visual/MIDI sync.
+
+### 2026-10-11: Non-FLAC sources are decoded by the external ffmpeg into memory   (feature: gui-play-backing-track)
+Plain backing tracks may have MP3/OGG/... audio, and `symphonia` is rejected. The Player runs `ffmpeg` (already a
+runtime prerequisite) with argv only, `-protocol_whitelist file,pipe`, `file:<abs>` input, `-f s16le -ac 2 -ar 44100`
+to a pipe and reads the PCM into memory; no cache file is written. FLAC sources keep using `claxon`.
