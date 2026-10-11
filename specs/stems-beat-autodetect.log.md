@@ -6,3 +6,4 @@ task 4 | Conformance and smoke tests for beats, server README | implementer | do
 task 5 | Real beat-this adapter, unit example, licence records | implementer | done
 task 6 | Tempo map with detected changes | implementer | done
 task 7 | player.json schema 2 | implementer | done
+task 8 | Beats to tempo sections | implementer | done
