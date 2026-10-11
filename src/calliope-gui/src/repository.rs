@@ -17,6 +17,8 @@ use crate::track_meta::{self, BackingVariant, StemEntry, TrackEdits, TrackMeta, 
 pub const MARKER: &str = "calliope-repository.json";
 pub const REPO_SCHEMA: u64 = 1;
 const TRACK_FILE: &str = "track.json";
+/// The player settings next to `track.json` (see `player_state`); copied by Export when present.
+const PLAYER_FILE: &str = "player.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -704,6 +706,9 @@ impl Repository {
         }
         let mut names = vec![TRACK_FILE.to_string()];
         names.extend(track_files(&m));
+        if dir.join(PLAYER_FILE).is_file() {
+            names.push(PLAYER_FILE.to_string());
+        }
         let missing: Vec<&String> = names.iter().filter(|n| !dir.join(n).is_file()).collect();
         if !missing.is_empty() {
             return Err(format!(

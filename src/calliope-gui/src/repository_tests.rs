@@ -522,6 +522,21 @@ fn export_track_creates_named_folders() {
 }
 
 #[test]
+fn export_copies_player_json_when_present() {
+    let env = Env::new();
+    env.track("aaa", &["one.gp5"]);
+    let dest = env.outside.join("exports");
+    fs::create_dir(&dest).unwrap();
+    let a = env.repo.export_track("aaa", &dest).unwrap();
+    assert!(!a.join("player.json").exists());
+    fs::write(env.dir("aaa").join("player.json"), b"{\"schema_version\": 1}").unwrap();
+    let b = env.repo.export_track("aaa", &dest).unwrap();
+    assert_eq!(fs::read(b.join("player.json")).unwrap(), b"{\"schema_version\": 1}");
+    assert!(b.join("track.json").is_file());
+    fs::remove_dir_all(&dest).unwrap();
+}
+
+#[test]
 fn export_track_sanitises_and_drops_empty_parts() {
     let env = Env::new();
     let rec = env.track("aaa", &[]);
