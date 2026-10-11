@@ -1,5 +1,5 @@
 //! Player GUI end-to-end tests. They need an X display and are run with:
-//! `DISPLAY=:1 npm run test:gui` (or
+//! `npm run test:gui` (or
 //! `cargo test --features e2e-hooks --test gui_player_e2e -- --ignored --test-threads=1`).
 //!
 //! Every test works on a copy of `tests/fixtures/library-player` under `target/gui-e2e/<test>/`.
@@ -481,23 +481,31 @@ fn other_sources_and_leaving() {
 /// and 1024x640, tree shown and collapsed; inactive, active (complete and incomplete loops on the
 /// waveform) and counting in. The shots are looked at by hand; the test only checks that the
 /// window keeps the size and that nothing is logged as an error.
+///
+/// The full sweep (22 screenshots) only runs with `CALLIOPE_GUI_SHOTS=1`; by default the test
+/// runs the same flow (tree collapse, count-in) in dark at 1280x800 and takes one screenshot.
 #[test]
 #[ignore]
 fn visual_review() {
     if !ready() {
         return;
     }
-    for theme in ["dark", "light"] {
+    let sweep = std::env::var_os("CALLIOPE_GUI_SHOTS").is_some_and(|v| !v.is_empty() && v != "0");
+    let themes: &[&str] = if sweep { &["dark", "light"] } else { &["dark"] };
+    let sizes: &[(u32, u32)] = if sweep { &[(1280, 800), (1024, 640)] } else { &[(1280, 800)] };
+    for &theme in themes {
         let dirs = player_dirs(&format!("player_visual_{theme}"));
         std::fs::create_dir_all(dirs.app_config()).unwrap();
         std::fs::write(dirs.app_config().join("settings.json"), format!(r#"{{"theme":"{theme}"}}"#)).unwrap();
         let (mut app, wid) = start_player(&dirs);
         let name = |size: &str, tree: &str, what: &str| format!("player-{theme}-{size}-{tree}-{what}");
 
-        for (w, h) in [(1280, 800), (1024, 640)] {
+        for &(w, h) in sizes {
             size(&wid, w, h);
             settle();
-            shot(&name(&format!("{w}x{h}"), "shown", "inactive"));
+            if sweep {
+                shot(&name(&format!("{w}x{h}"), "shown", "inactive"));
+            }
         }
         size(&wid, 1280, 800);
         let mut collapsed = false;
@@ -506,7 +514,7 @@ fn visual_review() {
         at(&app, &wid, METRO_COUNT_IN);
         app.wait_contains("player metronome on=false count_in=true");
 
-        for (w, h) in [(1280, 800), (1024, 640)] {
+        for &(w, h) in sizes {
             size(&wid, w, h);
             let sz = format!("{w}x{h}");
             for tree in ["rail", "shown"] {
@@ -516,7 +524,9 @@ fn visual_review() {
                     collapsed = !collapsed;
                 }
                 settle();
-                shot(&name(&sz, tree, "active"));
+                if sweep || tree == "shown" {
+                    shot(&name(&sz, tree, "active"));
+                }
                 // Count-in: the focus must be off the controls for Space; the label is at x=355 (rail) or 655.
                 let blank = if collapsed { BLANK } else { (655, 47) };
                 at(&app, &wid, blank);
@@ -524,7 +534,9 @@ fn visual_review() {
                 app.key(&wid, "space");
                 app.wait_line(|l| l.contains("player play"), secs(10));
                 ms(400);
-                shot(&name(&sz, tree, "count-in"));
+                if sweep {
+                    shot(&name(&sz, tree, "count-in"));
+                }
                 app.key(&wid, "space");
                 app.wait_line(|l| l.contains("player pause"), secs(10));
             }

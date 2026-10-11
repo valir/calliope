@@ -14,7 +14,7 @@ this directory. Build output goes to the workspace's `target/` at the repository
 * On a PipeWire desktop, also `pipewire-alsa` (needed to run, not to build): without it ALSA's
   default device is the sound card itself, which PipeWire already holds, so Play fails
 * Node.js >= 22.12 with npm
-* Optional: xorg-server-xvfb for headless GUI runs
+* For GUI tests: xorg-server-xvfb (or, as a fallback, Xorg with xf86-video-dummy), i3, xdotool, maim
 * For Import: `sudo pacman -S yt-dlp ffmpeg` (see "Import and stem extraction"; the app runs without them, Import then says what is missing)
 
 Run `npm ci` once after cloning and after `package-lock.json` changes.
@@ -176,10 +176,19 @@ CALLIOPE_BUILD_NUMBER=42 cargo build --release
 
 ```bash
 npm test                         # whole headless suite: svelte-check, vitest, vite build, cargo test, clippy
-DISPLAY=:1 npm run test:gui      # GUI tests, need an X display
+npm run test:gui                 # GUI tests in parallel: one private X display (+ i3) per test binary
+DISPLAY=:1 npm run test:gui:serial   # the same tests one after the other on an existing display
 ```
 
-GUI test screenshots go to `target/gui-shots/` at the repository root.
+`npm run test:gui` (`scripts/test-gui.sh`) builds once, starts one Xvfb (or Xorg with the dummy
+driver) per test binary from display `:90` up, runs each binary with `--ignored
+--test-threads=1`, and prints a summary with the time per binary. It never uses `$DISPLAY`. Output per binary is in `target/gui-logs/<binary>.log`. To run one test:
+`scripts/test-gui.sh -- <test name>` (the filter goes to every binary).
+
+GUI test screenshots go to `target/gui-shots/` at the repository root. The player's visual
+review sweep (dark and light, 1280x800 and 1024x640, tree shown and collapsed, inactive, active
+and counting in: 22 screenshots) only runs with `CALLIOPE_GUI_SHOTS=1`, e.g.
+`CALLIOPE_GUI_SHOTS=1 npm run test:gui`; by default it takes one screenshot.
 
 ## Layout of this crate
 

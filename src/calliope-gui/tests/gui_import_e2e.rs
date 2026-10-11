@@ -1,5 +1,5 @@
 //! Import (stem extraction) GUI end-to-end tests. They need an X display and are run with:
-//! `DISPLAY=:1 npm run test:gui` (or `cargo build -p calliope-stems && cargo test --features
+//! `npm run test:gui` (or `cargo build -p calliope-stems && cargo test --features
 //! e2e-hooks --test gui_import_e2e -- --ignored --test-threads=1`).
 //!
 //! Every test starts the e2e app and the real `calliope-stems` binary (with

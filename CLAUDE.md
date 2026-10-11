@@ -12,6 +12,8 @@ Spec-driven project built by the agent team (see `/build-spec`).
   project), `src/calliope-lib/` (shared library), `src/calliope-stems/` (edge-AI server).
   `Cargo.lock`, `target/`, `docs/` and `specs/` are at the repository root.
 - **npm commands run in `src/calliope-gui/`**: `npm test` (whole headless suite, all crates),
-  `DISPLAY=:1 npm run test:gui` (GUI tests), `npm run build:app`.
+  `npm run test:gui` (GUI tests, parallel, each test binary on its own private X display; no
+  `DISPLAY` needed), `DISPLAY=:1 npm run test:gui:serial` (same tests, one after the other on an
+  existing display), `npm run build:app`.
 - Path conventions and the full layout: "Paths in this document" and "Repository layout" in
   `docs/architecture.md`.

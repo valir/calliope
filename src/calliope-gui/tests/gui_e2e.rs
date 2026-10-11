@@ -1,5 +1,5 @@
 //! GUI end-to-end tests. They need an X display and are run with:
-//! `DISPLAY=:1 npm run test:gui` (or `cargo test --test gui_e2e -- --ignored --test-threads=1`).
+//! `npm run test:gui` (or `cargo test --test gui_e2e -- --ignored --test-threads=1`).
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};

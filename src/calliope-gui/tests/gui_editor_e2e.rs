@@ -1,5 +1,5 @@
 //! Editor GUI end-to-end tests. They need an X display and are run with:
-//! `DISPLAY=:1 npm run test:gui` (or
+//! `npm run test:gui` (or
 //! `cargo test --features e2e-hooks --test gui_editor_e2e -- --ignored --test-threads=1`).
 //!
 //! Every test works on a copy of `tests/fixtures/library-editor` under `target/gui-e2e/<test>/`.

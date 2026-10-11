@@ -640,6 +640,7 @@ fn delete_of_a_done_job_while_a_stem_is_being_read() {
     assert!(!s.jobs().join(&id).exists());
     // the reader can finish or be cut, but the server stays up
     let mut rest = Vec::new();
+    c.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
     let _ = c.read_to_end(&mut rest);
     assert!(s.healthy());
 }
@@ -810,11 +811,11 @@ fn chatty_and_hostile_separator_output_does_not_hurt_the_server() {
 
 #[test]
 fn separator_timeout_kills_a_hung_separator() {
-    let s = start("hang", &["--separator-timeout-min", "1"]);
+    let s = start("hang", &["--separator-timeout-ms", "1000"]);
     let id = submit(s.addr);
     wait_state(s.addr, &id, "running");
     let v = {
-        let end = Instant::now() + Duration::from_secs(90);
+        let end = Instant::now() + Duration::from_secs(30);
         loop {
             let v = status(s.addr, &id).json();
             if v["state"] == "failed" {

@@ -439,7 +439,7 @@ the server out of the GUI.
   ignores the requested size/position unless they're floating). GUI tests are `#[ignore]`d
   cargo tests (`tests/gui_smoke.rs`, `tests/gui_e2e.rs`, `tests/gui_library_e2e.rs`,
   `tests/gui_import_e2e.rs`), run with
-  `DISPLAY=:1 npm run test:gui` (built with `--features e2e-hooks`). Library e2e tests also
+  `npm run test:gui` (built with `--features e2e-hooks`; see "Parallel GUI runs" below). Library e2e tests also
   assert on the files on disk. They launch the real binary with temporary
   `XDG_CONFIG_HOME`/`XDG_DATA_HOME`/`XDG_CACHE_HOME` (never the user's real config), assert
   on the `calliope-ui:` stderr lines and on the settings/window-state files, fail on any
@@ -447,6 +447,23 @@ the server out of the GUI.
   is a launch under `unshare -rn` (no network namespace; X11 still reachable). Agents never
   open windows on any other display. (The earlier note that agents have no display server is
   outdated.)
+- **Parallel GUI runs**: `npm run test:gui` runs `scripts/test-gui.sh`: build once (`npm run
+  build`, `cargo build -p calliope-stems`, `cargo test --no-run --features e2e-hooks`), then
+  every GUI test binary on its own private X display (Xvfb, or `/usr/lib/Xorg` with the dummy
+  driver when Xvfb is not installed; displays `:90` and up, each with its own `i3` because the
+  tests float windows with `i3-msg`), with `--ignored --test-threads=1` inside a binary (tests of
+  one binary stay serial). The user's `$DISPLAY`, `WAYLAND_DISPLAY` and `XAUTHORITY` are not
+  passed on and `HOME` is a folder under `target/gui-e2e/`. Binaries don't share state: each
+  test owns `target/gui-e2e/<test>/` (test names are unique across binaries, keep it so),
+  screenshot names are unique, `calliope-stems` is only started inside `unshare -rn` (its fixed
+  port 8765 is per network namespace, so it also never meets a real server on the host), and the
+  tests are built once. Logs: `target/gui-logs/<binary>.log`. `DISPLAY=:1 npm run
+  test:gui:serial` runs the same binaries one after the other on an existing display.
+- **Screenshot sweeps** (themes x sizes x states) only run with `CALLIOPE_GUI_SHOTS=1`
+  (`gui_player_e2e::visual_review`); by default each test takes its normal screenshots only.
+- Test-only server option `--separator-timeout-ms N` (hidden like `--janitor-interval-ms`, min
+  100, wins over `--separator-timeout-min`) lets the acceptance test exercise the separator
+  timeout in about a second.
 - Rust suites run with `--workspace` (`cargo test --workspace`, `cargo clippy --workspace
   --all-targets -- -D warnings`); `npm test` builds `calliope-stems` first.
 - **Edge-AI server** → the real `calliope-stems` binary (`target/debug/calliope-stems`, or

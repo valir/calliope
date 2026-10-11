@@ -91,6 +91,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
     let mut max_duration_s = calliope_lib::stems_api::MAX_DURATION_S;
     let mut queue = DEFAULT_QUEUE;
     let mut timeout_min = DEFAULT_SEPARATOR_TIMEOUT_MIN;
+    let mut timeout_ms: Option<u64> = None;
     let mut retention_hours = DEFAULT_RETENTION_HOURS;
     let mut janitor_interval = DEFAULT_JANITOR_INTERVAL;
     let mut stem_levels = true;
@@ -115,7 +116,8 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
             "--licenses" => return Ok(Parsed::Licenses),
             "--no-stem-levels" if inline.is_none() => stem_levels = false,
             "--listen" | "--work-dir" | "--separator" | "--model" | "--max-upload-mb" | "--max-duration-s"
-            | "--queue" | "--separator-timeout-min" | "--retention-hours" | "--janitor-interval-ms" => {
+            | "--queue" | "--separator-timeout-min" | "--retention-hours" | "--janitor-interval-ms"
+            | "--separator-timeout-ms" => {
                 let value = match inline {
                     Some(v) => v,
                     None => it.next().ok_or_else(|| format!("{flag} needs a value"))?,
@@ -141,6 +143,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
                     "--retention-hours" => retention_hours = number(&flag, &value, 0)?,
                     // Hidden: lets the tests exercise retention quickly.
                     "--janitor-interval-ms" => janitor_interval = Duration::from_millis(number(&flag, &value, 10)?),
+                    // Hidden: lets the tests exercise the separator timeout quickly. When given, it
+                    // wins over --separator-timeout-min whatever the order.
+                    "--separator-timeout-ms" => timeout_ms = Some(number(&flag, &value, 100)?),
                     _ => unreachable!(),
                 }
             }
@@ -175,7 +180,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
         max_upload_bytes: max_upload_mb.saturating_mul(1024 * 1024),
         max_duration_s,
         queue,
-        separator_timeout: Duration::from_secs(timeout_min * 60),
+        separator_timeout: timeout_ms.map(Duration::from_millis).unwrap_or(Duration::from_secs(timeout_min * 60)),
         retention: Duration::from_secs(retention_hours.saturating_mul(3600)),
         janitor_interval,
         stem_levels,
@@ -245,6 +250,23 @@ mod tests {
         assert_eq!((c.separator_timeout.as_secs(), c.retention.as_secs()), (120, 0));
         assert_eq!(c.janitor_interval, Duration::from_millis(50));
         assert!(c.stem_levels);
+    }
+
+    #[test]
+    fn hidden_separator_timeout_ms_wins_over_minutes_in_any_order() {
+        let s = stub();
+        let c = run(&["--separator", &s, "--separator-timeout-ms", "1000"]).unwrap();
+        assert_eq!(c.separator_timeout, Duration::from_millis(1000));
+        let c = run(&["--separator", &s, "--separator-timeout-ms=250", "--separator-timeout-min", "5"]).unwrap();
+        assert_eq!(c.separator_timeout, Duration::from_millis(250));
+        let c = run(&["--separator", &s, "--separator-timeout-min", "5", "--separator-timeout-ms", "250"]).unwrap();
+        assert_eq!(c.separator_timeout, Duration::from_millis(250));
+        let c = run(&["--separator", &s, "--separator-timeout-min", "5"]).unwrap();
+        assert_eq!(c.separator_timeout, Duration::from_secs(300));
+        assert!(run(&["--separator", &s, "--separator-timeout-ms", "99"]).is_err());
+        assert!(run(&["--separator", &s, "--separator-timeout-ms", "x"]).is_err());
+        assert!(!HELP.contains("separator-timeout-ms"));
+        assert!(run(&["--separator", &s, "--separator-timeout-min", "0"]).is_err());
     }
 
     #[test]
