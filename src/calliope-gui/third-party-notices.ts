@@ -40,12 +40,9 @@ function standardText(expression: string, holders: string): { name: string; text
   if (/\sAND\s/.test(expression)) throw new Error(`no licence file and an AND expression: ${expression}`);
   const preferred = ['Apache-2.0', 'MIT', 'BSD-3-Clause', 'MPL-2.0'].find((id) => ids.includes(id));
   if (!preferred) throw new Error(`no licence file and no template for ${expression}; add one to licence-templates/`);
-  const text =
-    preferred === 'Apache-2.0'
-      ? readFileSync(join(here, '../../LICENSE'), 'utf8')
-      : readFileSync(join(templateDir, `${preferred}.txt`), 'utf8')
-          .replace('<year> <copyright holders>', holders)
-          .replace('<year> <owner>', holders);
+  const text = readFileSync(join(templateDir, `${preferred}.txt`), 'utf8')
+    .replace('<year> <copyright holders>', holders)
+    .replace('<year> <owner>', holders);
   return { name: `${preferred} (standard text)`, text: text.trim() };
 }
 
@@ -169,7 +166,7 @@ export function render(packages: Package[], crate: string): string {
   const out: string[] = [
     'THIRD-PARTY SOFTWARE IN CALLIOPE',
     '',
-    'Calliope is licensed under the Apache License 2.0. It includes the third-party',
+    'Calliope is licensed under the Mozilla Public License 2.0. It includes the third-party',
     'software listed below, each under its own licence. Generated from Cargo.lock',
     '(and, for the app, its bundled npm modules); the licence texts follow the list.',
     '',

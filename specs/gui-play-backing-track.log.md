@@ -16,3 +16,4 @@ task 14 | Control bar sections | implementer | done
 task 15 | Waveform view | implementer | done
 task 16 | Player keyboard shortcuts | implementer | done
 task 17 | GUI end-to-end tests, visual review, docs | implementer | done
+task 18 | Switch the project licence to MPL-2.0 | implementer | done

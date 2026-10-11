@@ -1,6 +1,6 @@
 THIRD-PARTY SOFTWARE IN CALLIOPE
 
-Calliope is licensed under the Apache License 2.0. It includes the third-party
+Calliope is licensed under the Mozilla Public License 2.0. It includes the third-party
 software listed below, each under its own licence. Generated from Cargo.lock
 (and, for the app, its bundled npm modules); the licence texts follow the list.
 

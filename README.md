@@ -32,6 +32,12 @@ then see its README for deployment.
 
 ## Licence
 
-Calliope is licensed under the [Apache License, Version 2.0](LICENSE)
-(SPDX: `Apache-2.0`). Copyright 2026 Valentin Rusu. The licences of its dependencies and
+Calliope is licensed under the [Mozilla Public License 2.0](LICENSE) (SPDX: `MPL-2.0`).
+Copyright 2026 Valentin Rusu.
+
+This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy
+of the MPL was not distributed with this file, You can obtain one at
+https://mozilla.org/MPL/2.0/.
+
+The licences of its dependencies and
 of the external tools it runs are recorded in [`docs/licences.md`](docs/licences.md).

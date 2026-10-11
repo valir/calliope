@@ -11,14 +11,14 @@ dependency in `Cargo.toml` or `package.json` has no row here. Add the row (with 
 read from the package metadata) whenever you add a dependency.
 
 **Flagged (not permissive): none among the bundled code and assets below.** Every entry is MIT, Apache-2.0, ISC or OFL-1.1; no GPL,
-LGPL, MPL or unknown licences. Where a crate is dual-licensed ("MIT OR Apache-2.0") either
+LGPL or unknown licences (MPL-2.0 appears only as Calliope's own licence and in transitive crates, below). Where a crate is dual-licensed ("MIT OR Apache-2.0") either
 may be chosen. Transitive dependencies are not listed here; among them, Tauri pulls in five
 MPL-2.0 crates (`cssparser`, `cssparser-macros`, `dtoa-short`, `selectors` via `tauri-utils`,
 and `option-ext` via `dirs`). MPL-2.0 is file-level copyleft: it covers only those crates'
-own files, which Calliope uses unmodified from crates.io, and does not constrain Calliope's
-licence.
+own files. It is the same licence as Calliope's own now; Calliope still uses those crates
+unmodified from crates.io.
 
-Calliope itself (all crates and the npm project) is licensed under Apache-2.0: see
+Calliope itself (all crates and the npm project) is licensed under MPL-2.0: see
 `LICENSE` at the repository root and `license` in `Cargo.toml` and `package.json`.
 
 **Third-party notices.** Every `vite build` (so every `npm run build:app`) generates
@@ -28,7 +28,7 @@ Calliope itself (all crates and the npm project) is licensed under Apache-2.0: s
 packages `app.css` imports), followed by each distinct licence text once. Generator:
 `src/calliope-gui/third-party-notices.ts`. A package that ships no licence file gets the
 standard text of its declared licence from `src/calliope-gui/licence-templates/` (SPDX texts;
-Apache-2.0 comes from `LICENSE`), and the build fails if no template fits. Checked by
+the Apache-2.0 text is `licence-templates/Apache-2.0.txt`; `LICENSE` is Calliope's own MPL-2.0 text), and the build fails if no template fits. Checked by
 `tests/frontend.rs` (`dist_ships_third_party_notices_for_every_linked_crate`).
 
 The `calliope-stems` server has its own `src/calliope-stems/THIRD-PARTY-NOTICES.txt`, committed
@@ -54,7 +54,7 @@ you do.
 | `tauri-build` | build-dependency | `2` | 2.7.1 | Apache-2.0 OR MIT | Tauri build script |
 | `tempfile` | dev-dependency | `3` | 3.27.0 | MIT OR Apache-2.0 | temporary folders in tests |
 
-`cpal` links the system `libasound` (alsa-lib, LGPL-2.1+). It is a system library, dynamically linked and not bundled with Calliope. `symphonia` (MPL-2.0) was considered for audio decoding and rejected by the owner, which is why `claxon` is used.
+`cpal` links the system `libasound` (alsa-lib, LGPL-2.1+). It is a system library, dynamically linked and not bundled with Calliope. `symphonia` (MPL-2.0) was rejected by the owner because of its MPL-2.0 licence, which is why `claxon` is used. With Calliope itself now under MPL-2.0, the owner may reconsider this; the rule stands until then.
 
 ## Rust crates of other workspace members
 

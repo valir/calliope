@@ -426,3 +426,20 @@ fn cpal_backend_is_only_named_in_audio_out_and_gui() {
         assert!(!text.contains("CpalBackend"), "{} must not name CpalBackend", f.display());
     }
 }
+
+#[test]
+fn project_licence_is_mpl_2_0() {
+    let cargo = fs::read_to_string(repo().join("Cargo.toml")).unwrap();
+    assert!(
+        cargo.lines().any(|l| l.starts_with("package.license = \"MPL-2.0\"")),
+        "root Cargo.toml must set package.license = \"MPL-2.0\""
+    );
+    let pkg: serde_json::Value = serde_json::from_str(&fs::read_to_string(root().join("package.json")).unwrap()).unwrap();
+    assert_eq!(pkg["license"], "MPL-2.0");
+    let licence = fs::read(repo().join("LICENSE")).unwrap();
+    assert!(licence.starts_with(b"Mozilla Public License Version 2.0"));
+    let template = fs::read(root().join("licence-templates/MPL-2.0.txt")).unwrap();
+    assert!(licence == template, "LICENSE must equal licence-templates/MPL-2.0.txt byte for byte");
+    let apache = fs::read_to_string(root().join("licence-templates/Apache-2.0.txt")).unwrap();
+    assert!(apache.trim_start().starts_with("Apache License"));
+}
