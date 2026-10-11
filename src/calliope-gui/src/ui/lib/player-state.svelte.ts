@@ -46,6 +46,8 @@ export const pl = $state({
   /** player.json could not be written. */
   stateError: '',
   treeCollapsed: false,
+  /** Bumped when the backend closed the session (the Editor took the track); the view reopens. */
+  reopen: 0,
 });
 
 const log = (m: string): void => void frontendLog(m);
@@ -221,6 +223,13 @@ function onEvent(gen: number, e: PlayerEvent): void {
       break;
     case 'state-error':
       pl.stateError = e.message;
+      break;
+    case 'closed':
+      // The backend session is gone: forget the selection so the next sync opens the track again.
+      key = null;
+      sessionOpen = false;
+      pl.reopen++;
+      log(`player closed by the backend id=${e.id}`);
       break;
   }
 }

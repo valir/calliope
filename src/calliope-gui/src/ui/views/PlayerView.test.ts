@@ -8,7 +8,8 @@ import SourceSelect from '../components/player/SourceSelect.svelte';
 import { lib, resetLibrary } from '$lib/library-state.svelte';
 import { pl, resetPlayer } from '$lib/player-state.svelte';
 import { FIXTURE_TRACKS, PLAYER_FIXTURE_TRACKS } from '$lib/fixture-tracks';
-import type { PlayerLoop, PlayerSnapshot, PlayerTransport } from '$lib/ipc';
+import type { Channel } from '@tauri-apps/api/core';
+import type { PlayerEvent, PlayerLoop, PlayerSnapshot, PlayerTransport } from '$lib/ipc';
 
 const [practice] = PLAYER_FIXTURE_TRACKS;
 
@@ -115,6 +116,7 @@ describe('Player keyboard shortcuts', () => {
   };
   const incomplete: PlayerLoop = { ...complete, id: 'l2', end: null, end_ms: null };
   let snap: PlayerSnapshot;
+  let events: Channel<PlayerEvent> | undefined;
   let calls: [string, Record<string, unknown>][];
   const of = (cmd: string) => calls.filter((c) => c[0] === cmd).map((c) => c[1]);
   const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -139,7 +141,10 @@ describe('Player keyboard shortcuts', () => {
     mockIPC((cmd, args) => {
       const a = (args ?? {}) as Record<string, unknown>;
       calls.push([cmd, a]);
-      if (cmd === 'open_player') return snap;
+      if (cmd === 'open_player') {
+        events = a.events as Channel<PlayerEvent>;
+        return snap;
+      }
       if (cmd === 'player_loop') return snap;
       if (cmd.startsWith('player_')) return { ...idle };
       if (cmd === 'get_repository') return { root: '/r', is_default: false, status: 'ok' };
@@ -152,6 +157,14 @@ describe('Player keyboard shortcuts', () => {
     await fireEvent.keyDown(target, init);
     await flush();
   };
+
+  it('a closed event reopens the track at once while the view is shown', async () => {
+    await open([complete]);
+    expect(of('open_player')).toHaveLength(1);
+    events!.onmessage({ kind: 'closed', id: practice.id });
+    await waitFor(() => expect(of('open_player')).toHaveLength(2));
+    await waitFor(() => expect(pl.status).toBe('active'));
+  });
 
   it('Space toggles play only outside fields, sliders, buttons, the select and the tree', async () => {
     await open([complete]);

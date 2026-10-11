@@ -91,6 +91,25 @@ describe('player state', () => {
     expect(names()).toContain('close_player');
   });
 
+  it('a closed event bumps reopen and the next sync of the same track opens it again', async () => {
+    syncSelection(practice);
+    await flush();
+    const opens = () => names().filter((n) => n === 'open_player').length;
+    expect(opens()).toBe(1);
+    const before = pl.reopen;
+    channels[0].onmessage({ kind: 'closed', id: 'other' });
+    expect(pl.reopen).toBe(before);
+    syncSelection(practice);
+    expect(opens()).toBe(1);
+    channels[0].onmessage({ kind: 'closed', id: practice.id });
+    expect(pl.reopen).toBe(before + 1);
+    syncSelection(practice);
+    await flush();
+    expect(opens()).toBe(2);
+    expect(names()).not.toContain('close_player');
+    expect(pl.status).toBe('active');
+  });
+
   it('selectSource calls the command and the button reads Play', async () => {
     syncSelection(practice);
     await flush();

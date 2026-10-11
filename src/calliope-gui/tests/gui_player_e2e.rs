@@ -27,17 +27,17 @@ const BLANK: (i32, i32) = (356, 47); // the "Play:" label: a click there only re
 const TRIGGER: (i32, i32) = (555, 47);
 const ITEM_X: i32 = 500;
 const ITEM_Y: [i32; 4] = [113, 167, 221, 275]; // Backing, Original mix, Vocals, Guitar
-const PLAY: (i32, i32) = (477, 469);
-const TIME: (i32, i32) = (669, 469);
-const BPM: (i32, i32) = (445, 287);
-const METRO: (i32, i32) = (754, 329);
-const METRO_COUNT_IN: (i32, i32) = (860, 329);
-const LOOP_ADD: (i32, i32) = (457, 609);
-const MARK_START: (i32, i32) = (798, 609);
-const MARK_END: (i32, i32) = (1203, 609);
-const LOOP_PLAY: (i32, i32) = (402, 676);
-const LOOP_ON: (i32, i32) = (517, 676);
-const LOOP_COUNT_IN: (i32, i32) = (633, 676);
+const PLAY: (i32, i32) = (983, 402);
+const TIME: (i32, i32) = (927, 463);
+const BPM: (i32, i32) = (445, 396);
+const METRO: (i32, i32) = (656, 438);
+const METRO_COUNT_IN: (i32, i32) = (762, 438);
+const LOOP_ADD: (i32, i32) = (457, 597);
+const MARK_START: (i32, i32) = (798, 597);
+const MARK_END: (i32, i32) = (1203, 597);
+const LOOP_PLAY: (i32, i32) = (402, 665);
+const LOOP_ON: (i32, i32) = (517, 665);
+const LOOP_COUNT_IN: (i32, i32) = (633, 665);
 
 fn secs(s: u64) -> Duration {
     Duration::from_secs(s)
@@ -225,7 +225,7 @@ fn play_and_change_source() {
     assert_eq!(app.count("player seek"), 0, "playing or pausing caused a seek");
 
     // Clicking the position slider seeks (its middle is about 10 s of the 20 s).
-    app.click(&wid, 800, 520);
+    app.click(&wid, 1057, 510);
     let l = app.wait_contains("calliope-ui: player seek position=");
     assert!((8500..11500).contains(&position_of(&l)), "{l}");
     finish(&app);

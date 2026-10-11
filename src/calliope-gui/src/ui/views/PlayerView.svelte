@@ -18,6 +18,7 @@
 
   // The player follows the selected track (shared with the Library).
   $effect(() => {
+    void pl.reopen; // the backend closed the session: open the track again
     const track = selectedTrack();
     if (lib.selectedId && !track) return;
     syncSelection(track);

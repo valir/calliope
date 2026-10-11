@@ -9,6 +9,7 @@
   import SourceSelect from './SourceSelect.svelte';
 
   const track = $derived(selectedTrack());
+  const loops = $derived(pl.snap?.loops ?? []);
   const sources = $derived(pl.snap?.sources ?? []);
 </script>
 
@@ -40,7 +41,16 @@
       <p class="truncate text-lg">The tablature will be shown here (gui-tablatures).</p>
     {/if}
   </div>
-  <WaveformView />
+  <WaveformView
+    testid="player-waveform"
+    label={`Waveform, ${loops.length} ${loops.length === 1 ? 'loop' : 'loops'}`}
+    peaks={pl.snap?.peaks ?? []}
+    durationMs={pl.snap?.duration_ms ?? 0}
+    positionMs={pl.transport.position_ms}
+    {loops}
+    currentLoop={pl.snap?.current_loop ?? null}
+    segments={pl.snap?.tempo.segments ?? []}
+  />
   <div class="flex shrink-0 flex-wrap gap-2" data-testid="player-controls">
     <BpmSection />
     <MetronomeSection />

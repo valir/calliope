@@ -15,3 +15,4 @@ task 13 | IPC commands, TS wrappers, store/exit wiring | implementer | done
 task 14 | Remove the Player Detect button | local (missed one test title; fixed by the orchestrator) | done
 task 15 | Remove the Editor BPM & sections tab | local (plan missed App.test.ts; fixed by the orchestrator in a follow-up commit) | done
 task 16 | Waveform geometry for sections and drag | implementer | done
+task 17 | Shared WaveformView with sections, drag and keys; Player sections and reopen | implementer | done (player e2e click coordinates updated: layout shifted after task 14)
