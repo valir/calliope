@@ -14,7 +14,7 @@ export const VIEWS: readonly ViewInfo[] = [
   { id: 'editor', label: 'Editor', digit: 3, summary: 'One track: stems and backing mix, BPM and sections, tablature, MIDI cues.', features: ['gui-backing-track-editor', 'gui-tablatures', 'gui-manipulate-backing-track'] },
   { id: 'playlists', label: 'Playlists', digit: 4, summary: 'Backing-track playlists.', features: [] },
   { id: 'player', label: 'Player', digit: 5, summary: 'Playback with the tablature view.', features: ['gui-play-backing-track'] },
-  { id: 'settings', label: 'Settings', digit: 6, summary: 'MIDI interface, audio output, edge-AI server and theme.', features: ['gui-play-backing-track', 'gui-stem-extracting'] },
+  { id: 'settings', label: 'Settings', digit: 6, summary: 'MIDI interface, audio output, edge-AI server and theme.', features: ['gui-audio-midi-settings', 'gui-stem-extracting'] },
 ];
 
 export interface TrackTab { id: string; label: string; feature: string }
@@ -27,8 +27,8 @@ export const TRACK_TABS: readonly TrackTab[] = [
 
 export interface SettingsSection { id: string; title: string; text: string; feature: string }
 export const SETTINGS_PLACEHOLDERS: readonly SettingsSection[] = [
-  { id: 'midi', title: 'MIDI interface', text: 'Choose the USB-MIDI interface that sends clock and patch changes.', feature: 'gui-play-backing-track' },
-  { id: 'audio', title: 'Audio output', text: 'Choose where the audio goes.', feature: 'gui-play-backing-track' },
+  { id: 'midi', title: 'MIDI interface', text: 'Choose the USB-MIDI interface that sends clock and patch changes.', feature: 'gui-audio-midi-settings' },
+  { id: 'audio', title: 'Audio output', text: 'Choose where the audio goes.', feature: 'gui-audio-midi-settings' },
 ];
 
 export function featureText(features: readonly string[]): string {

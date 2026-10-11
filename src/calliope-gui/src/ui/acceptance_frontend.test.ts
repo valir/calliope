@@ -14,7 +14,7 @@ const FEATURES: Record<string, string[]> = {
   // Import has no placeholder any more: gui-stem-extraction replaced it with the real view.
   // The Stems tab is the real editor now (gui-backing-track-editor); the other tabs stay placeholders.
   Editor: ['gui-tablatures', 'gui-manipulate-backing-track'],
-  Player: ['gui-play-backing-track'],
+  Player: ['gui-tablatures'],
 };
 let logs: string[] = [];
 
@@ -64,7 +64,7 @@ describe('acceptance: navigation (req 4, AC2, AC3)', () => {
       if (name === 'Playlists') expect(text).toContain('Planned; there is no feature spec yet.');
       else if (name === 'Settings') {
         for (const t of ['MIDI interface', 'Audio output', 'Stem extraction', 'External tools', 'Appearance']) expect(text).toContain(t);
-        expect(text).toContain('gui-play-backing-track');
+        expect(text).toContain('gui-audio-midi-settings');
       } else if (name === 'Import') expect(text).toContain('Stem Extraction');
       else if (name === 'Library') await waitFor(() => expect(main().textContent).toContain('No tracks in the repository yet.'));
       else for (const f of FEATURES[name]) expect(text).toContain(f);

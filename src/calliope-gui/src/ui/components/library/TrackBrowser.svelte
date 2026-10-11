@@ -1,12 +1,16 @@
 <script lang="ts">
   import TreeToolbar from './TreeToolbar.svelte';
   import TrackTree from './TrackTree.svelte';
+  import LibraryIcon from '@lucide/svelte/icons/library';
+  import { Button } from '$lib/components/ui/button/index.js';
   import { lib, visibleTree } from '$lib/library-state.svelte';
 
   let {
     heading,
     searchRef = $bindable(null),
-  }: { heading: string; searchRef?: HTMLInputElement | null } = $props();
+    collapsed = false,
+    onexpand,
+  }: { heading: string; searchRef?: HTMLInputElement | null; collapsed?: boolean; onexpand?: () => void } = $props();
 
   let tree: ReturnType<typeof TrackTree> | undefined = $state();
   let showProblems = $state(false);
@@ -17,6 +21,20 @@
   const query = $derived(lib.search.trim());
 </script>
 
+{#if collapsed}
+  <div class="flex w-14 shrink-0 flex-col items-center gap-3 border-r border-border p-1 pt-4" data-testid="tree-rail">
+    <h1 id="view-heading" tabindex="-1" class="sr-only">{heading}</h1>
+    <Button
+      variant="outline"
+      class="h-[3.25rem] w-full px-0"
+      aria-label="Library"
+      title="Show the library (Ctrl+L)"
+      onclick={() => onexpand?.()}
+    >
+      <LibraryIcon class="size-7" />
+    </Button>
+  </div>
+{:else}
   <div class="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-r border-border p-4">
     <h1 id="view-heading" tabindex="-1" class="text-3xl font-semibold tracking-tight">{heading}</h1>
     <div class="flex flex-col gap-3 transition-opacity {lib.mode === 'edit' ? 'opacity-50' : ''}">
@@ -63,3 +81,4 @@
       </div>
     {/if}
   </div>
+{/if}

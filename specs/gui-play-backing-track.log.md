@@ -10,3 +10,4 @@ task 8 | Engine: metronome, count-in and loops | implementer | done
 task 9 | IPC commands, shared backend, ticker, exit | implementer | done
 task 10 | Bar and BPM formatting | implementer (local model wrote no files) | done
 task 11 | Waveform geometry | local (wrote to the wrong folder; moved and verified by the orchestrator) | done
+task 12 | Player view layout, collapsible tree, select, settings placeholders | implementer | done
