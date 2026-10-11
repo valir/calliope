@@ -17,3 +17,5 @@ task 15 | Waveform view | implementer | done
 task 16 | Player keyboard shortcuts | implementer | done
 task 17 | GUI end-to-end tests, visual review, docs | implementer | done
 task 18 | Switch the project licence to MPL-2.0 | implementer | done
+reviewer | CHANGES REQUIRED: 1 major (player.json note/state-error never shown), minors 2-7, 9; minor 8 disproved (LICENSE byte-identical to mozilla.org) | reviewer | done
+tester | 28 criteria PASS; 4 defects (player.json problems not shown; loops unreachable without current_loop; huge tempo start_ms / seek overflow) | tester | done
