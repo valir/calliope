@@ -13,7 +13,7 @@ const MIXED: &str = "0199c0a0-0000-7000-8000-000000000202";
 const MISSING: &str = "0199c0a0-0000-7000-8000-000000000205";
 const RATE: usize = 22050;
 
-fn copy_tree(from: &Path, to: &Path) {
+pub(crate) fn copy_tree(from: &Path, to: &Path) {
     fs::create_dir_all(to).unwrap();
     for e in fs::read_dir(from).unwrap().flatten() {
         let dest = to.join(e.file_name());
@@ -25,7 +25,7 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-fn spec_of(id: &str) -> (tempfile::TempDir, OpenSpec) {
+pub(crate) fn spec_of(id: &str) -> (tempfile::TempDir, OpenSpec) {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-editor/tracks").join(id);
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join(id);
@@ -46,9 +46,9 @@ fn spec_of(id: &str) -> (tempfile::TempDir, OpenSpec) {
     (tmp, spec)
 }
 
-type Events = Arc<Mutex<Vec<EditorEvent>>>;
+pub(crate) type Events = Arc<Mutex<Vec<EditorEvent>>>;
 
-fn manager() -> (EditorManager, ManualBackend, Events) {
+pub(crate) fn manager() -> (EditorManager, ManualBackend, Events) {
     let backend = ManualBackend::new();
     let events: Events = Arc::new(Mutex::new(Vec::new()));
     let ev = events.clone();

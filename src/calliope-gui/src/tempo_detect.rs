@@ -2,7 +2,7 @@
 //!
 //! `detect` cleans the tracker's beats (isolated glitches only), cuts them into sections with an
 //! optimal least-squares segmentation (dynamic programming with PELT-style pruning; sections are
-//! at least one bar of 4 intervals and share their change beat), merges neighbours that differ by
+//! at least one bar of 4 intervals (3 for the last one, which no beat follows) and share their change beat), merges neighbours that differ by
 //! no more than `CHANGE`, and turns the sections into a `TempoMap`: the first segment is the
 //! anchor, every later one a detected change snapped to 1/64 beat of the left section's tempo.
 //!
@@ -174,6 +174,11 @@ fn segment(t: &[f64], sigma: f64) -> Vec<usize> {
         let new = j - MIN_SECTION_BEATS;
         if f[new].is_finite() {
             cands.push(new);
+        }
+        // The last section may be a single bar of 3 intervals: no beat follows it.
+        let last_bar = (j == n - 1 && j > MIN_SECTION_BEATS - 1).then(|| j - (MIN_SECTION_BEATS - 1)).filter(|&i| f[i].is_finite());
+        if let Some(i) = last_bar {
+            cands.push(i);
         }
         let mut best = f64::INFINITY;
         for &i in &cands {

@@ -5,114 +5,10 @@
 use super::*;
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
-use std::net::SocketAddr;
-use std::process::{Child, Command, Stdio};
-
-fn project() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
+use crate::test_server::{pgrep, project, TestServer};
 
 fn fixture(name: &str) -> PathBuf {
     project().join("tests/fixtures/import").join(name)
-}
-
-fn stems_binary() -> PathBuf {
-    // unit tests live in target/<profile>/deps/
-    let exe = std::env::current_exe().unwrap();
-    let bin = exe.parent().unwrap().parent().unwrap().join("calliope-stems");
-    assert!(bin.is_file(), "{} is missing: run cargo build -p calliope-stems (cargo test --workspace builds it)", bin.display());
-    bin
-}
-
-/// The real server; killed when dropped. Its stderr lines are collected.
-struct TestServer {
-    child: Child,
-    url: String,
-    log: Arc<Mutex<Vec<String>>>,
-    outer: tempfile::TempDir,
-}
-
-impl Drop for TestServer {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-impl TestServer {
-    fn start(mode: &str) -> TestServer {
-        TestServer::start_with(mode, &[])
-    }
-
-    fn start_with(mode: &str, extra_args: &[&str]) -> TestServer {
-        let outer = tempfile::tempdir().unwrap();
-        let work = outer.path().join("work");
-        fs::create_dir_all(&work).unwrap();
-        fs::write(work.join("stub-mode"), format!("{mode}\n")).unwrap();
-        let mut child = Command::new(stems_binary())
-            .arg("--separator")
-            .arg(project().join("tests/support/stub-separator"))
-            .args(["--listen", "127.0.0.1:0", "--work-dir"])
-            .arg(&work)
-            .args(extra_args)
-            .env_remove("STUB_SEPARATOR_MODE")
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut lines = BufReader::new(child.stderr.take().unwrap());
-        let mut line = String::new();
-        let addr: SocketAddr = loop {
-            line.clear();
-            assert!(lines.read_line(&mut line).unwrap() > 0, "server exited before listening");
-            if let Some(rest) = line.split("listening addr=").nth(1) {
-                break rest.split_whitespace().next().unwrap().parse().unwrap();
-            }
-        };
-        assert!(addr.ip().is_loopback());
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let l2 = log.clone();
-        std::thread::spawn(move || {
-            let mut s = String::new();
-            while lines.read_line(&mut s).unwrap_or(0) > 0 {
-                l2.lock().unwrap().push(s.trim_end().to_string());
-                s.clear();
-            }
-        });
-        TestServer { child, url: format!("http://{addr}"), log, outer }
-    }
-
-    fn set_mode(&self, mode: &str) {
-        fs::write(self.outer.path().join("work/stub-mode"), format!("{mode}\n")).unwrap();
-    }
-
-    fn saw(&self, needle: &str) -> bool {
-        self.log.lock().unwrap().iter().any(|l| l.contains(needle))
-    }
-
-    fn wait_for(&self, needle: &str) -> bool {
-        let end = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < end {
-            if self.saw(needle) {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        false
-    }
-
-    fn stem_gets(&self, name: &str) -> usize {
-        let suffix = format!("/stems/{name} ");
-        self.log.lock().unwrap().iter().filter(|l| l.contains("method=GET path=/v1/jobs/") && l.contains(&suffix)).count()
-    }
-
-    fn all_stem_gets(&self) -> usize {
-        self.log.lock().unwrap().iter().filter(|l| l.contains("method=GET path=/v1/jobs/") && l.contains("/stems/")).count()
-    }
-
-    fn job_dirs(&self) -> usize {
-        fs::read_dir(self.outer.path().join("work/jobs")).map(|r| r.flatten().count()).unwrap_or(0)
-    }
 }
 
 struct Rig {
@@ -572,10 +468,6 @@ fn a_second_start_is_refused_while_a_job_is_active() {
     assert!(!rig.state.is_active() && rig.state.snapshot().is_none());
     assert!(Rig::names_in(&rig.root.join("import-tmp")).iter().all(|n| !n.starts_with("file-")));
     rig.check_clean();
-}
-
-fn pgrep(pattern: &str) -> bool {
-    Command::new("pgrep").args(["-f", "--", pattern]).output().map(|o| !o.stdout.is_empty()).unwrap_or(false)
 }
 
 #[test]

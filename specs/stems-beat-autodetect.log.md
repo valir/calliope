@@ -10,3 +10,4 @@ task 8 | Beats to tempo sections | implementer | done
 task 9 | Mix waveform peaks and debounce | implementer | done
 task 10 | Editor waveform scheduling, worker, peaks event | implementer | done
 task 11 | Tempo store and Player release | implementer | done (wiring of PlayerTempoStore and editor open via store left to task 13)
+task 12 | Detection job and editor integration | implementer | done (incl. fix: a final 1-bar section at the end of the track is now detected)

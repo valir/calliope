@@ -16,6 +16,7 @@ use serde_json::Value;
 
 use crate::audio_out::{OutputBackend, OutputHandle};
 use crate::backing_render::{self, RenderInput, RenderStem, SaveParams, SaveShared};
+use crate::beat_detect::{self, DetectJob, DetectOutcome, DetectParams, DetectShared, DetectState};
 use crate::import_job::RepoLock;
 use crate::repository::{Repository, TrackRecord};
 use crate::mix_waveform::{self, Debounce};
@@ -80,6 +81,8 @@ pub struct EditorSnapshot {
     pub peaks: Vec<f32>,
     /// The track's tempo map (`player.json`).
     pub tempo: SnapTempo,
+    /// The running beat detection's phase, if any.
+    pub detect: Option<DetectState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -104,6 +107,14 @@ pub enum EditorEvent {
     Peaks { id: String, gen: u64, peaks: Vec<f32> },
     SaveFailed { id: String, message: String },
     SaveCancelled { id: String },
+    Detect {
+        id: String,
+        #[serde(flatten)]
+        state: DetectState,
+    },
+    Detected { id: String, tempo: SnapTempo, beats: usize, replaced: bool },
+    DetectFailed { id: String, message: String },
+    DetectCancelled { id: String },
 }
 
 /// The computation behind the waveform; tests replace it (`EditorManager::set_peaks_fn`).
@@ -339,6 +350,7 @@ impl Session {
                 segments: self.tempo.segments.clone(),
                 multi: self.tempo.is_multi(),
             },
+            detect: None,
         }
     }
 }
@@ -395,6 +407,7 @@ pub struct EditorManager {
     pending: Option<OpenTicket>,
     generation: u64,
     save: Option<SaveRun>,
+    detect: Option<DetectRun>,
     /// Output handles taken out of sessions. Closing a real device can block, so when
     /// `defer_drops` is set they wait here until the caller has released the manager lock
     /// (`take_trash`); otherwise they are dropped at once.
@@ -435,6 +448,13 @@ struct SaveRun {
     handle: JoinHandle<()>,
 }
 
+/// The running (or just finished, not yet reaped) beat detection job.
+struct DetectRun {
+    id: String,
+    shared: Arc<DetectShared>,
+    handle: JoinHandle<()>,
+}
+
 impl EditorManager {
     pub fn new(backend: Arc<dyn OutputBackend>, sink: EventSink) -> Self {
         Self {
@@ -445,6 +465,7 @@ impl EditorManager {
             pending: None,
             generation: 0,
             save: None,
+            detect: None,
             trash: Vec::new(),
             defer_drops: false,
             live_save: Arc::new(Mutex::new(None)),
@@ -602,6 +623,9 @@ impl EditorManager {
         if let Some(t) = self.pending.take() {
             t.cancel.store(true, Ordering::Relaxed);
         }
+        if let Some(run) = &self.detect {
+            run.shared.cancel.store(true, Ordering::SeqCst);
+        }
         if let Some(s) = self.session.take() {
             s.shared.audible.store(false, Ordering::Release);
             self.remembered.insert(s.id.clone(), s.lanes.clone());
@@ -650,6 +674,9 @@ impl EditorManager {
             } else {
                 snap.saving = Some(run.shared.progress());
             }
+        }
+        if let Some(run) = self.detect.as_ref().filter(|r| r.id == snap.id && !r.shared.is_finished()) {
+            snap.detect = Some(run.shared.state());
         }
         snap
     }
@@ -729,6 +756,92 @@ impl EditorManager {
         let end = Instant::now() + cap;
         while !run.handle.is_finished() && Instant::now() < end {
             std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Starts the beat detection of the checked-stem mix (plan 2.8). The job runs on its own
+    /// thread; `tick` emits the one final event.
+    pub fn start_detect(&mut self, id: &str, params: DetectParams) -> Result<EditorSnapshot, String> {
+        self.reap_detect();
+        let sink = self.sink.clone();
+        let busy = self.detect.is_some();
+        let s = self.session(id)?;
+        if !s.lanes.iter().any(|l| l.unmuted && l.gain_db.is_some()) {
+            return Err("Check a stem first".into());
+        }
+        if busy {
+            return Err("Beat detection is already running".into());
+        }
+        if params.url.trim().is_empty() {
+            return Err("Set the edge-AI server in Settings first".into());
+        }
+        let duration_s = s.shared.total_frames as f64 / f64::from(s.sample_rate);
+        if duration_s > calliope_lib::stems_api::MAX_DURATION_S as f64 {
+            return Err(beat_detect::TOO_LONG.into());
+        }
+        let stems = s
+            .lanes
+            .iter()
+            .zip(&s.stems)
+            .filter(|(l, _)| l.unmuted)
+            .map(|(l, e)| RenderStem { path: s.dir.join(&e.file), gain: mixer::gain_factor(l.gain_db, l.unmuted) })
+            .collect();
+        let job = DetectJob {
+            id: s.id.clone(),
+            dir: s.dir.clone(),
+            input: RenderInput { stems, sample_rate: s.sample_rate, bits: s.bits_out, frames: s.shared.total_frames },
+            duration_s,
+            params,
+        };
+        let shared = DetectShared::new();
+        let handle = beat_detect::spawn(job, shared.clone(), sink);
+        self.detect = Some(DetectRun { id: id.to_string(), shared, handle });
+        self.snapshot(id)
+    }
+
+    /// Asks the running detection of `id` to stop; `tick` emits `detect-cancelled`. Too late
+    /// once the job applies the result.
+    pub fn cancel_detect(&mut self, id: &str) -> Result<(), String> {
+        if let Some(run) = self.detect.as_ref().filter(|r| r.id == id) {
+            run.shared.cancel.store(true, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
+    /// App exit: cancels a running detection and waits up to `cap` for it to clean up.
+    pub fn shutdown_detect(&mut self, cap: Duration) {
+        let Some(run) = self.detect.take() else { return };
+        run.shared.cancel.store(true, Ordering::SeqCst);
+        let end = Instant::now() + cap;
+        while !run.handle.is_finished() && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Emits the final event of a finished detection and forgets the job.
+    fn reap_detect(&mut self) {
+        let Some(run) = self.detect.as_ref().filter(|r| r.shared.is_finished()) else { return };
+        let outcome = run.shared.outcome().unwrap_or(DetectOutcome::Cancelled);
+        let run = self.detect.take().expect("checked above");
+        let _ = run.handle.join();
+        let id = run.id;
+        let sink = self.sink.clone();
+        match outcome {
+            DetectOutcome::Done { tempo, beats, replaced } => {
+                let snap = SnapTempo { beats_per_bar: tempo.beats_per_bar, segments: tempo.segments.clone(), multi: tempo.is_multi() };
+                if let Some(s) = self.session.as_mut().filter(|s| s.id == id) {
+                    s.tempo = tempo;
+                }
+                sink(EditorEvent::Detected { id, tempo: snap, beats, replaced });
+            }
+            DetectOutcome::Failed(message) => {
+                eprintln!("calliope: editor detect failed id={id} message={message}");
+                sink(EditorEvent::DetectFailed { id, message });
+            }
+            DetectOutcome::Cancelled => {
+                eprintln!("calliope: editor detect cancelled id={id}");
+                sink(EditorEvent::DetectCancelled { id });
+            }
         }
     }
 
@@ -979,6 +1092,7 @@ impl EditorManager {
     pub fn tick(&mut self, now: Instant) {
         let sink = self.sink.clone();
         self.reap();
+        self.reap_detect();
         let Some(s) = self.session.as_mut() else { return };
         let failed = s.output.as_ref().and_then(|o| o.error());
         if failed.is_some() || s.shared.ended.swap(false, Ordering::AcqRel) {
@@ -1004,4 +1118,4 @@ impl EditorManager {
 
 #[cfg(test)]
 #[path = "editor_tests.rs"]
-mod tests;
+pub(crate) mod tests;

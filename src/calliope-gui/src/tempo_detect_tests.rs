@@ -90,6 +90,24 @@ fn stub_steady_and_bar_end_patterns() {
     assert_eq!(bpms(&d), vec![120.0, 60.0]);
     on_fine_grid(&d);
     assert_eq!(d.map.segments[1].start_ms, 14500.0);
+
+    // The stub's bar-end on 16 s: the last bar (4 beats, 3 intervals) has no beat after it.
+    let stub: Vec<f64> = (0..24).map(|i| 0.5 + i as f64 * 0.5).chain((0..4).map(|i| 12.5 + i as f64)).collect();
+    let down: Vec<f64> = stub.iter().step_by(4).copied().collect();
+    let d = detect(&stub, &down, 4).unwrap();
+    assert_eq!(bpms(&d), vec![120.0, 60.0]);
+    assert_eq!(d.map.segments[1].start_ms, 12500.0);
+    on_fine_grid(&d);
+    for seed in [1, 2, 3] {
+        let mut rng = Lcg(seed);
+        let noisy: Vec<f64> = stub.iter().map(|b| b + rng.next() * 0.010).collect();
+        let d = detect(&noisy, &down, 4).unwrap();
+        assert_bpms(&d, &[120.0, 60.0], 2.0, "jittered bar-end");
+        assert!((d.map.segments[1].start_ms - 12500.0).abs() < 30.0, "{}", d.map.segments[1].start_ms);
+    }
+    // A final bar only 3 % slower is not a section.
+    let near: Vec<f64> = (0..24).map(|i| 0.5 + i as f64 * 0.5).chain((0..4).map(|i| 12.5 + i as f64 * 0.515)).collect();
+    assert_eq!(detect(&near, &down, 4).unwrap().map.segments.len(), 1);
 }
 
 #[test]

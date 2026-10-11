@@ -3,6 +3,7 @@
 
 pub mod audio_out;
 pub mod backing_render;
+pub mod beat_detect;
 pub mod cli;
 pub mod download;
 pub mod editor;
@@ -27,6 +28,8 @@ pub mod stem_audio;
 pub mod tempo_detect;
 pub mod tempo_map;
 pub mod tempo_store;
+#[cfg(test)]
+mod test_server;
 pub mod tools;
 pub mod track_meta;
 pub mod transport;
