@@ -14,3 +14,4 @@ task 12 | Player view layout, collapsible tree, select, settings placeholders | 
 task 13 | Player frontend state | implementer | done
 task 14 | Control bar sections | implementer | done
 task 15 | Waveform view | implementer | done
+task 16 | Player keyboard shortcuts | implementer | done
