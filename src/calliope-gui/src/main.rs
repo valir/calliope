@@ -15,6 +15,8 @@ mod picker;
 mod repository;
 mod settings;
 mod stem_audio;
+#[allow(dead_code)] // until the player session uses it
+mod tempo_map;
 mod tools;
 mod transport;
 mod track_meta;
