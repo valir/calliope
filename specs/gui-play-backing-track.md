@@ -109,6 +109,9 @@ for specific parts of the track to be loop played, or slowed down. Also,
 ## Out of scope
 <!-- What NOT to build. This prevents gold-plating. -->
 
+The other views should be left untouched, we only focus on the playback view
+here.
+
 ## Acceptance criteria
 <!-- Concrete checks that prove it works. The tester turns each one into a test.
      Given <situation>, when <action>, then <observable result>. -->
