@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 license.workspace = true
 
+[lib]
+name = "calliope_gui"
+path = "src/lib.rs"
+
 [[bin]]
 name = "calliope-gui"
 path = "src/main.rs"

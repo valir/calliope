@@ -5,45 +5,26 @@
 //! works on a temp copy of `tests/fixtures/library-editor`.
 #![allow(dead_code, unused_imports, unused_variables, clippy::type_complexity, clippy::all)]
 
-#[path = "../src/fsutil.rs"]
-mod fsutil;
-#[path = "../src/track_meta.rs"]
-mod track_meta;
-#[path = "../src/repository.rs"]
-mod repository;
-#[path = "../src/settings.rs"]
-mod settings;
-#[path = "../src/picker.rs"]
-mod picker;
-#[path = "../src/local_source.rs"]
+use calliope_gui::fsutil;
+use calliope_gui::track_meta;
+use calliope_gui::repository;
+use calliope_gui::settings;
+use calliope_gui::picker;
 #[allow(dead_code)]
-mod local_source;
-#[path = "../src/import_tmp.rs"]
-mod import_tmp;
-#[path = "../src/media.rs"]
-mod media;
-#[path = "../src/download.rs"]
-mod download;
-#[path = "../src/tools.rs"]
-mod tools;
-#[path = "../src/import_job.rs"]
-mod import_job;
-#[path = "../src/transport.rs"]
-mod transport;
-#[path = "../src/mixer.rs"]
-mod mixer;
-#[path = "../src/stem_audio.rs"]
-mod stem_audio;
-#[path = "../src/audio_out.rs"]
-mod audio_out;
-#[path = "../src/backing_render.rs"]
-mod backing_render;
-#[path = "../src/editor.rs"]
-mod editor;
-#[path = "../src/ipc.rs"]
-mod ipc;
+use calliope_gui::local_source;
+use calliope_gui::import_tmp;
+use calliope_gui::media;
+use calliope_gui::download;
+use calliope_gui::tools;
+use calliope_gui::import_job;
+use calliope_gui::transport;
+use calliope_gui::mixer;
+use calliope_gui::stem_audio;
+use calliope_gui::audio_out;
+use calliope_gui::backing_render;
+use calliope_gui::editor;
+use calliope_gui::ipc;
 
-pub const VERSION: &str = env!("CALLIOPE_VERSION");
 
 use audio_out::{backend_kind, BackendKind, ManualBackend};
 use editor::{EditorEvent, EditorManager, EventSink, OpenSpec};

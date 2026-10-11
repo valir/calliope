@@ -18,7 +18,7 @@ use crate::player_state::{self, LoopRec, Mark, PlayerState};
 use crate::tempo_map::{Boundary, Segment, TempoMap};
 use crate::transport::Transport;
 
-pub(crate) const SUPERSEDED: &str = "superseded";
+pub const SUPERSEDED: &str = "superseded";
 const OUTPUT_LOST: &str = "Playback was interrupted; try again";
 /// A change is written this long after the last change.
 pub(crate) const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -355,7 +355,7 @@ impl Engine {
 // -------------------------------------------------------------------- IPC types
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) struct PlayerTransport {
+pub struct PlayerTransport {
     pub playing: bool,
     pub counting_in: bool,
     pub resume_pending: bool,
@@ -366,13 +366,13 @@ pub(crate) struct PlayerTransport {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) struct SourceEntry {
+pub struct SourceEntry {
     pub key: String,
     pub label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) struct PlayerLoop {
+pub struct PlayerLoop {
     pub id: String,
     pub start: Boundary,
     pub end: Option<Boundary>,
@@ -383,20 +383,20 @@ pub(crate) struct PlayerLoop {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) struct SnapTempo {
+pub struct SnapTempo {
     pub beats_per_bar: u32,
     pub segments: Vec<Segment>,
     pub multi: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) struct SnapMetronome {
+pub struct SnapMetronome {
     pub on: bool,
     pub count_in: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) struct PlayerSnapshot {
+pub struct PlayerSnapshot {
     pub id: String,
     pub title: String,
     pub sources: Vec<SourceEntry>,
@@ -418,7 +418,7 @@ pub(crate) struct PlayerSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
-pub(crate) enum PlayerEvent {
+pub enum PlayerEvent {
     Loading {
         id: String,
         progress: f64,
@@ -438,13 +438,13 @@ pub(crate) enum PlayerEvent {
     },
 }
 
-pub(crate) type EventSink = Arc<dyn Fn(PlayerEvent) + Send + Sync>;
+pub type EventSink = Arc<dyn Fn(PlayerEvent) + Send + Sync>;
 
 // ------------------------------------------------------------------ open inputs
 
 /// What the IPC layer extracts from the track record.
 #[derive(Debug, Clone)]
-pub(crate) struct OpenSpec {
+pub struct OpenSpec {
     pub id: String,
     pub title: String,
     pub dir: PathBuf,
@@ -455,13 +455,13 @@ pub(crate) struct OpenSpec {
 
 /// Handed out by `begin_open`; a later `begin_open` or `close` cancels it.
 #[derive(Clone)]
-pub(crate) struct OpenTicket {
+pub struct OpenTicket {
     gen: u64,
     cancel: Arc<AtomicBool>,
 }
 
 /// A decoded track; produced without holding the manager.
-pub(crate) struct Loaded {
+pub struct Loaded {
     state: PlayerState,
     note: Option<String>,
     source: String,
@@ -471,7 +471,7 @@ pub(crate) struct Loaded {
 
 /// A source change in progress (`begin_select`).
 #[derive(Clone)]
-pub(crate) struct SelectJob {
+pub struct SelectJob {
     id: String,
     key: String,
     token: u64,
@@ -481,7 +481,7 @@ pub(crate) struct SelectJob {
     cancel: Arc<AtomicBool>,
 }
 
-pub(crate) struct LoadedSource {
+pub struct LoadedSource {
     pcm: Pcm,
     peaks: Vec<f32>,
 }
@@ -529,14 +529,14 @@ struct Output {
 }
 
 /// What it takes to open the device; `open` blocks and must run without the manager lock.
-pub(crate) struct OutputRequest {
+pub struct OutputRequest {
     backend: Arc<dyn OutputBackend>,
     shared: Arc<Shared>,
     pcm: Arc<Pcm>,
     start: u64,
 }
 
-pub(crate) struct OpenedOutput {
+pub struct OpenedOutput {
     shared: Arc<Shared>,
     output: Output,
 }
@@ -811,7 +811,7 @@ fn publish(sink: &EventSink, s: &mut Session, now: Instant) -> PlayerTransport {
 
 /// What the Loops section asks for.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum LoopAction {
+pub enum LoopAction {
     Add,
     Remove,
     /// Previous (-1) or next (+1); jumps to the start of the loop at once.
@@ -828,7 +828,7 @@ pub(crate) enum LoopAction {
     Stop,
 }
 
-pub(crate) struct PlayerManager {
+pub struct PlayerManager {
     backend: Arc<dyn OutputBackend>,
     sink: EventSink,
     session: Option<Session>,
@@ -1409,7 +1409,7 @@ impl PlayerManager {
 }
 
 /// Decodes the source of a `SelectJob` (long; call without the manager lock).
-pub(crate) fn load_source(job: &SelectJob, sink: &EventSink) -> Result<LoadedSource, String> {
+pub fn load_source(job: &SelectJob, sink: &EventSink) -> Result<LoadedSource, String> {
     let mut progress = progress_sink(&job.id, sink);
     let pcm = player_source::decode(&job.dir.join(&job.file), job.ffmpeg.as_deref(), &job.cancel, &mut progress)?;
     if job.cancel.load(Ordering::Relaxed) {

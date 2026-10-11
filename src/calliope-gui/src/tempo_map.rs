@@ -12,7 +12,7 @@ pub(crate) const MIN_BPM: f64 = 20.0;
 pub(crate) const MAX_BPM: f64 = 300.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Segment {
+pub struct Segment {
     pub start_ms: f64,
     pub bpm: f64,
 }
@@ -26,7 +26,7 @@ pub(crate) struct TempoMap {
 /// A loop boundary: a grid tick (BPM mode) or an absolute time (timestamp mode).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
-pub(crate) enum Boundary {
+pub enum Boundary {
     Tick { tick: i64 },
     Ms { ms: f64 },
 }

@@ -16,7 +16,7 @@ the GUI crate, `src/calliope-gui/`.
 
 | Name | Runs on | Responsibility | Stack | Code location |
 |------|---------|----------------|-------|---------------|
-| calliope-gui (CLI front) | Laptop | Parses arguments before any GUI init; prints `--help` / `--version` | Rust, hand-written parser (no clap) | `src/main.rs`, `src/cli.rs` |
+| calliope-gui (CLI front) | Laptop | Parses arguments before any GUI init; prints `--help` / `--version` | Rust, hand-written parser (no clap) | `src/main.rs` (thin binary), `src/cli.rs` |
 | calliope-gui (version) | build time + Laptop | Formats the `YY.MM.BBBB` version; shared by `build.rs` and the crate | Rust, no deps | `src/version.rs`, `build.rs` |
 | calliope-gui (GUI shell) | Laptop | Tauri 2 app: main window, plugins, managed state, IPC handler registration | Rust + Tauri 2 (webkit2gtk-4.1 on Linux), `tauri-plugin-window-state` | `src/gui.rs`, `tauri.conf.json` |
 | calliope-gui (IPC commands) | Laptop | All `#[tauri::command]` functions; thin wrappers over pure modules. The Player's commands are in their own file | Rust | `src/ipc.rs`, `src/player_ipc.rs` |
@@ -310,7 +310,8 @@ src/                      ALL source (owner requirement), one folder per crate
     svelte.config.js, tsconfig.json, components.json (shadcn-svelte CLI config)
     icons/                app icons
     README.md             build, run, test and usage of the GUI
-    src/*.rs              Rust modules (main, cli, version, gui, ipc, settings, fsutil,
+    src/lib.rs            declares all modules (library crate `calliope_gui`); main.rs is the thin binary
+    src/*.rs              Rust modules (cli, version, gui, ipc, settings, fsutil,
                           track_meta, repository (+ repository_tests), picker, local_source, import_tmp,
                           tools, media, download, import_job, stem_audio, mixer, transport,
                           audio_out, editor (+ editor_tests), backing_render, tempo_map,
@@ -412,13 +413,22 @@ the server out of the GUI.
 - Whole headless suite: `npm test` (= `npm run check && npm run test:ui && npm run build && cargo test && cargo clippy --all-targets -- -D warnings`).
 - Pure logic (parsing, formatting, settings, metadata, later: timing math) is unit-tested in
   its Rust module. The repository is tested on temp repositories (`tempfile`) in
-  `src/repository_tests.rs`. The crate is a bin, so these are module tests, not `tests/` files.
+  `src/repository_tests.rs`. These are module tests of the library target (they run once, in
+  the `lib` test binary).
   Each test also checks that a sibling "outside" folder is unchanged. The committed sample
   repository `tests/fixtures/library-sample/` is always copied to a temp dir first.
 - **Tests never touch the user's data**: no test reads or writes `~/.local/share/calliope`,
   `~/.config/app.calliope.gui` or the OS trash. Rust tests take paths as parameters (no env
   lookups), frontend tests fake IPC, and GUI tests use temp XDG dirs and assert that the
   repository root is under `target/`.
+- `calliope-gui` is a library (`src/lib.rs`, crate `calliope_gui`, declares all modules) plus a
+  thin binary (`src/main.rs`: CLI dispatch, then `gui::run()`). Integration tests in `tests/`
+  `use calliope_gui::...` (no `#[path = "../src/..."]` includes, which re-ran every module's unit
+  tests in each test file). Modules the tests need are `pub mod`; items they need are `pub`,
+  the rest stays `pub(crate)`. Test doubles the integration tests need (`ManualBackend`,
+  `ScriptedPicker`) are `#[doc(hidden)] pub` and always compiled; only the env-driven
+  `ScriptedPicker::from_env` stays behind `e2e-hooks`. `build.rs` still includes `version.rs`
+  by `#[path]` (it cannot depend on the crate).
 - CLI behaviour is tested headlessly by running the built binary (`CARGO_BIN_EXE_calliope-gui`)
   with `DISPLAY`/`WAYLAND_DISPLAY` removed.
 - Static checks (`tests/frontend.rs`): strict production CSP (no `'unsafe-inline'`/`'unsafe-eval'`/`ws:`), no `devCsp`/`devUrl` in `tauri.conf.json`, `devCsp` in `tauri.dev.conf.json` = production CSP plus only the two allowed tokens, window config, no

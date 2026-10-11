@@ -1,33 +1,4 @@
-mod audio_out;
-mod backing_render;
-mod cli;
-mod download;
-mod editor;
-mod fsutil;
-mod import_job;
-mod import_tmp;
-mod gui;
-mod ipc;
-mod local_source;
-mod media;
-mod metronome;
-mod mixer;
-mod picker;
-mod player;
-mod player_ipc;
-mod player_source;
-mod player_state;
-mod repository;
-mod settings;
-mod stem_audio;
-mod tempo_map;
-mod tools;
-mod transport;
-mod track_meta;
-#[allow(dead_code)] // only build.rs uses it outside tests
-mod version;
-
-const VERSION: &str = env!("CALLIOPE_VERSION");
+use calliope_gui::{cli, gui, VERSION};
 
 fn main() {
     match cli::parse_args(std::env::args().skip(1)) {

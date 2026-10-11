@@ -32,7 +32,6 @@ impl DialogKind {
         }
     }
 
-    #[cfg(any(test, feature = "e2e-hooks"))]
     fn parse(s: &str) -> Option<Self> {
         [
             DialogKind::AddTablature,
@@ -220,15 +219,14 @@ impl Picker for TauriPicker {
     }
 }
 
-/// Test-only picker driven by an answers file. Compiled only with the `e2e-hooks` feature
-/// (and in unit tests).
-#[cfg(any(test, feature = "e2e-hooks"))]
+/// Test-only picker driven by an answers file. The app only builds one (`from_env`) with the
+/// `e2e-hooks` feature; unit and integration tests construct it directly.
+#[doc(hidden)]
 pub struct ScriptedPicker {
     answers: std::path::PathBuf,
     lock: Mutex<()>,
 }
 
-#[cfg(any(test, feature = "e2e-hooks"))]
 impl ScriptedPicker {
     pub fn new(answers: PathBuf) -> Self {
         Self { answers, lock: Mutex::new(()) }
@@ -286,7 +284,6 @@ impl ScriptedPicker {
     }
 }
 
-#[cfg(any(test, feature = "e2e-hooks"))]
 impl Picker for ScriptedPicker {
     fn pick_file(&self, req: &FileReq) -> Option<PathBuf> {
         self.answer(req.kind)

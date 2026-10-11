@@ -227,7 +227,8 @@ fn play_solo_nudge_save_clip() {
         app.wait_line(|l| l.contains(&format!("editor stem name={name} gain=12")), secs(10));
     }
     app.click(&wid, MIX_PLAY.0, MIX_PLAY.1);
-    app.wait_line(|l| l.contains("editor play"), secs(10));
+    // The backend's clipping line can come before or after the frontend's "editor play" line, and
+    // wait_line consumes lines in order, so only the clipping line is waited for.
     app.wait_line(|l| l.contains("calliope: editor transport") && l.contains("clipping=true"), secs(10));
     settle();
     shot("editor-clip");

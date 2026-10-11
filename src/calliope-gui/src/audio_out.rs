@@ -348,21 +348,19 @@ where
 
 // ------------------------------------------------------------------- manual
 
-/// Test backend: nothing runs until the test calls `pull`, which runs the real render callback.
-#[cfg(test)]
+/// Test backend (used by unit and integration tests; never opens a device): nothing runs until the test calls `pull`, which runs the real render callback.
 #[derive(Clone, Default)]
+#[doc(hidden)]
 pub struct ManualBackend {
     render: Arc<Mutex<Option<RenderFn>>>,
     error: Arc<Mutex<Option<String>>>,
 }
 
-#[cfg(test)]
 struct ManualHandle {
     render: Arc<Mutex<Option<RenderFn>>>,
     error: Arc<Mutex<Option<String>>>,
 }
 
-#[cfg(test)]
 impl ManualBackend {
     pub fn new() -> Self {
         Self::default()
@@ -387,7 +385,6 @@ impl ManualBackend {
     }
 }
 
-#[cfg(test)]
 impl OutputBackend for ManualBackend {
     fn name(&self) -> &'static str {
         "manual"
@@ -400,14 +397,12 @@ impl OutputBackend for ManualBackend {
     }
 }
 
-#[cfg(test)]
 impl OutputHandle for ManualHandle {
     fn error(&self) -> Option<String> {
         self.error.lock().unwrap().clone()
     }
 }
 
-#[cfg(test)]
 impl Drop for ManualHandle {
     fn drop(&mut self) {
         *self.render.lock().unwrap() = None;

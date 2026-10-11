@@ -17,8 +17,7 @@ use crate::track_meta::{self, BackingVariant, StemEntry, TrackEdits, TrackMeta, 
 pub const MARKER: &str = "calliope-repository.json";
 pub const REPO_SCHEMA: u64 = 1;
 const TRACK_FILE: &str = "track.json";
-/// The player settings next to `track.json` (see `player_state`); copied by Export when present.
-const PLAYER_FILE: &str = "player.json";
+use crate::player_state::PLAYER_FILE; // next to `track.json`; copied by Export when present
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]

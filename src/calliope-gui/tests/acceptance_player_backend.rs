@@ -7,28 +7,17 @@
 //! tests are compiled and run here once more.)
 #![allow(dead_code, unused_imports, unused_macros, clippy::all)]
 
-#[path = "../src/audio_out.rs"]
-mod audio_out;
-#[path = "../src/fsutil.rs"]
-mod fsutil;
-#[path = "../src/metronome.rs"]
-mod metronome;
-#[path = "../src/player.rs"]
-mod player;
-#[path = "../src/player_source.rs"]
-mod player_source;
-#[path = "../src/player_state.rs"]
-mod player_state;
-#[path = "../src/repository.rs"]
-mod repository;
-#[path = "../src/stem_audio.rs"]
-mod stem_audio;
-#[path = "../src/tempo_map.rs"]
-mod tempo_map;
-#[path = "../src/track_meta.rs"]
-mod track_meta;
-#[path = "../src/transport.rs"]
-mod transport;
+use calliope_gui::audio_out;
+use calliope_gui::fsutil;
+use calliope_gui::metronome;
+use calliope_gui::player;
+use calliope_gui::player_source;
+use calliope_gui::player_state;
+use calliope_gui::repository;
+use calliope_gui::stem_audio;
+use calliope_gui::tempo_map;
+use calliope_gui::track_meta;
+use calliope_gui::transport;
 
 use audio_out::ManualBackend;
 use player::*;

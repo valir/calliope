@@ -205,7 +205,7 @@ dist/                              build output of `vite build` (gitignored), em
 Cargo.toml, build.rs, tauri.conf.json, icons/, capabilities/
 tauri.dev.conf.json                dev-only config (used only by npm run dev:app)
 .taurignore                        keeps tauri dev from rebuilding Rust on frontend edits
-src/*.rs                           Rust: main, cli, version, gui, ipc, settings, repository, import, tools, media
+src/*.rs                           Rust: lib (module list), main (thin binary), cli, version, gui, ipc, settings, repository, import, tools, media
 src/ui/index.html                  Vite entry HTML
 src/ui/main.ts                     bootstrap: CSP listener, load theme, mount App
 src/ui/app.css                     Tailwind v4 + tw-animate-css + Inter font + theme tokens

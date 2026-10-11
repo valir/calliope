@@ -80,7 +80,7 @@ impl Default for PlayerState {
 
 /// Which loop boundary a mark sets.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum Mark {
+pub enum Mark {
     Start,
     End,
 }
@@ -219,7 +219,7 @@ pub(crate) fn save(dir: &Path, state: &PlayerState) -> Result<(), String> {
 
 /// The default source rule (plan 2.2): the saved key if it still exists, else the first
 /// `backing:*`, else `audio`, else the first `stem:*`. `original` is never chosen automatically.
-pub(crate) fn choose_source<S: AsRef<str>>(saved: Option<&str>, keys: &[S]) -> Option<String> {
+pub fn choose_source<S: AsRef<str>>(saved: Option<&str>, keys: &[S]) -> Option<String> {
     let has = |k: &str| keys.iter().any(|x| x.as_ref() == k);
     if let Some(s) = saved.filter(|s| has(s)) {
         return Some(s.to_string());
