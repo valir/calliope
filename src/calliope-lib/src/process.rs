@@ -53,6 +53,44 @@ pub fn spawn<S: AsRef<OsStr>>(
     on_stdout_line: impl FnMut(String) + Send + 'static,
     on_stderr_line: impl FnMut(String) + Send + 'static,
 ) -> io::Result<Running> {
+    spawn_with(program, args, cwd, move |out| read_lines(out, on_stdout_line), on_stderr_line)
+}
+
+/// Like [`spawn`], but stdout is binary: every chunk read is passed to `on_stdout_chunk`
+/// unchanged (for piping decoded audio).
+pub fn spawn_raw_stdout<S: AsRef<OsStr>>(
+    program: impl AsRef<OsStr>,
+    args: &[S],
+    cwd: Option<&Path>,
+    mut on_stdout_chunk: impl FnMut(&[u8]) + Send + 'static,
+    on_stderr_line: impl FnMut(String) + Send + 'static,
+) -> io::Result<Running> {
+    spawn_with(
+        program,
+        args,
+        cwd,
+        move |mut out| {
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                match out.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => on_stdout_chunk(&buf[..n]),
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+            }
+        },
+        on_stderr_line,
+    )
+}
+
+fn spawn_with<S: AsRef<OsStr>>(
+    program: impl AsRef<OsStr>,
+    args: &[S],
+    cwd: Option<&Path>,
+    on_stdout: impl FnOnce(std::process::ChildStdout) + Send + 'static,
+    on_stderr_line: impl FnMut(String) + Send + 'static,
+) -> io::Result<Running> {
     let program = program.as_ref();
     let mut cmd = Command::new(program);
     cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -77,7 +115,7 @@ pub fn spawn<S: AsRef<OsStr>>(
     let out = child.stdout.take().expect("piped stdout");
     let err = child.stderr.take().expect("piped stderr");
     let readers = vec![
-        std::thread::spawn(move || read_lines(out, on_stdout_line)),
+        std::thread::spawn(move || on_stdout(out)),
         std::thread::spawn(move || read_lines(err, on_stderr_line)),
     ];
     let child = Arc::new(Mutex::new(child));

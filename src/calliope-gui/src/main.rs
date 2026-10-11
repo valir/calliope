@@ -13,6 +13,8 @@ mod media;
 mod mixer;
 mod picker;
 #[allow(dead_code)] // until the player session uses it
+mod player_source;
+#[allow(dead_code)] // until the player session uses it
 mod player_state;
 mod repository;
 mod settings;

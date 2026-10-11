@@ -3,3 +3,4 @@ task 1 | Player test fixtures | implementer | done
 task 2 | Reserve the file name player.json | local | done
 task 3 | Tempo map | implementer | done
 task 4 | Player state and player.json, export | implementer | done
+task 5 | Sources, decoding and peaks | implementer | done (plan fixes: raw-stdout spawn in calliope-lib; fixture envelope amplitude)

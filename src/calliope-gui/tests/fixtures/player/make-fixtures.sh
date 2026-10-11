@@ -22,10 +22,10 @@ sine() {
   ff -f lavfi -i "sine=frequency=$2:sample_rate=22050:duration=$3" -ac "$4" -sample_fmt s16 -c:a flac "$1"
 }
 
-# envelope PATH FREQ : 20 s stereo sine, amplitude 0.2 / 0.9 / 0.5 / 0.9 per 5 s
+# envelope PATH FREQ : 20 s stereo sine (full scale: the sine filter peaks at 1/8, hence the 8), amplitude 0.2 / 0.9 / 0.5 / 0.9 per 5 s
 envelope() {
-  ff -f lavfi -i "sine=frequency=$2:sample_rate=22050:duration=20,volume='if(lt(t,5),0.2,if(lt(t,10),0.9,if(lt(t,15),0.5,0.9)))':eval=frame" \
-    -ac 2 -sample_fmt s16 -c:a flac "$1"
+  ff -f lavfi -i "sine=frequency=$2:sample_rate=22050:duration=20,volume='8*if(lt(t,5),0.2,if(lt(t,10),0.9,if(lt(t,15),0.5,0.9)))':eval=frame,pan=stereo|c0=c0|c1=c0" \
+    -sample_fmt s16 -c:a flac "$1"
 }
 
 printf '{"schema_version": 1}\n' > "$repo/calliope-repository.json"
