@@ -1,6 +1,8 @@
 import {
   cancelBackingSave,
   closeEditor,
+  editorCancelDetect,
+  editorDetect,
   editorEndSolo,
   editorLanePlay,
   editorNudge,
@@ -9,22 +11,29 @@ import {
   editorSeek,
   editorSetStem,
   editorStop,
+  editorTempo,
   frontendLog,
   openEditor,
   saveBacking,
   EDITOR_SUPERSEDED,
   type EditorEvent,
+  type DetectState,
   type EditorSnapshot,
   type LaneState,
   type TrackRecord,
+  type TempoSnap,
   type TransportState,
   watchEditor,
 } from './ipc';
+import { ui } from './app-state.svelte';
 import { load, selectTrack } from './library-state.svelte';
 import { formatPosition } from './time-format';
+import { offsetSteps } from './waveform-geometry';
 
 export type EditorStatus = 'inactive' | 'loading' | 'active' | 'error';
 type Variant = EditorSnapshot['variant'];
+
+const NO_TEMPO: TempoSnap = { beats_per_bar: 4, segments: [], multi: false };
 
 const STOPPED: TransportState = {
   playing: false, position_ms: 0, resume_pending: false, solo: null, clipping: false,
@@ -47,6 +56,13 @@ export const ed = $state({
   saveError: '',
   /** Playback stopped by an audio error. */
   audioError: '',
+  /** Peaks of the checked-stem mix; the old ones stay until new ones arrive. */
+  peaks: [] as number[],
+  tempo: { ...NO_TEMPO } as TempoSnap,
+  /** The running beat detection, if any. */
+  detect: null as DetectState | null,
+  detectMessage: '',
+  detectError: '',
 });
 
 const log = (m: string): void => void frontendLog(m);
@@ -71,7 +87,13 @@ function resetFields(): void {
   ed.saveMessage = '';
   ed.saveError = '';
   ed.audioError = '';
+  ed.peaks = [];
+  ed.tempo = { ...NO_TEMPO };
+  ed.detect = null;
+  ed.detectMessage = '';
+  ed.detectError = '';
   gainPending.clear();
+  movePending.clear();
   seekPending = null;
   seekGuard = null;
 }
@@ -161,6 +183,24 @@ function applySnapshot(s: EditorSnapshot): void {
   ed.transport = { ...s.transport };
   ed.variant = { ...s.variant };
   ed.saving = s.saving;
+  ed.peaks = s.peaks;
+  ed.tempo = s.tempo;
+  ed.detect = s.detect ? { ...s.detect } : null;
+  if (s.peaks.length > 0) logWaveform(s.peaks);
+}
+
+function logWaveform(peaks: number[]): void {
+  log(`editor waveform peaks=${peaks.length} max=${peaks.reduce((m, p) => Math.max(m, p), 0).toFixed(2)}`);
+}
+
+/** The newest message owns the slot: a save message replaces a detection one and vice versa. */
+function clearDetectMessages(): void {
+  ed.detectMessage = '';
+  ed.detectError = '';
+}
+function clearSaveMessages(): void {
+  ed.saveMessage = '';
+  ed.saveError = '';
 }
 
 /** Re-attaches to an open backend session after a webview reload (nothing is selected yet then). */
@@ -224,6 +264,7 @@ function onEvent(gen: number, e: EditorEvent): void {
       break;
     case 'saved': {
       ed.saving = null;
+      clearDetectMessages();
       ed.saveError = '';
       const secs = ed.sampleRate > 0 ? e.clipped_samples / (ed.sampleRate * 2) : 0;
       ed.saveMessage =
@@ -238,13 +279,48 @@ function onEvent(gen: number, e: EditorEvent): void {
     }
     case 'save-failed':
       ed.saving = null;
+      clearDetectMessages();
       ed.saveMessage = '';
       ed.saveError = e.message;
       break;
     case 'save-cancelled':
       ed.saving = null;
+      clearDetectMessages();
       ed.saveError = '';
       ed.saveMessage = 'Save cancelled.';
+      break;
+    case 'peaks':
+      ed.peaks = e.peaks;
+      logWaveform(e.peaks);
+      break;
+    case 'detect':
+      if (ed.detect?.phase !== e.phase) log(`editor detect phase=${e.phase}`);
+      ed.detect = { phase: e.phase, progress: e.progress };
+      break;
+    case 'detected': {
+      ed.detect = null;
+      ed.tempo = e.tempo;
+      clearSaveMessages();
+      ed.detectError = '';
+      const k = e.tempo.segments.length;
+      ed.detectMessage =
+        `Detected ${e.beats} beats: ${k} tempo ${k === 1 ? 'section' : 'sections'}.` +
+        (e.replaced ? ' The previous tempo map was replaced.' : '');
+      log(`editor detected segments=${k} bpm=${e.tempo.segments.map((s) => Math.round(s.bpm)).join(',')}`);
+      break;
+    }
+    case 'detect-failed':
+      ed.detect = null;
+      clearSaveMessages();
+      ed.detectMessage = '';
+      ed.detectError = e.message;
+      log(`editor detect error message=${e.message}`);
+      break;
+    case 'detect-cancelled':
+      ed.detect = null;
+      clearSaveMessages();
+      ed.detectError = '';
+      ed.detectMessage = 'Detection cancelled.';
       break;
     case 'audio-error':
       ed.audioError = e.message;
@@ -261,6 +337,20 @@ export const stopEnabled = (): boolean =>
   ed.status === 'active' && (ed.transport.playing || ed.transport.position_ms > 0);
 export const saveEnabled = (): boolean =>
   ed.status === 'active' && ed.saving === null && ed.stems.some((s) => s.unmuted);
+
+/** A stem is checked with its volume above Off. */
+export const hasAudibleStem = (): boolean => ed.stems.some((s) => s.unmuted && s.gain_db !== null);
+/** The edge-AI address is set (the footer status is 'not-configured' exactly then). */
+export const edgeAiSet = (): boolean => ui.edgeAi !== 'not-configured';
+export const canDetect = (): boolean =>
+  ed.status === 'active' && ed.detect === null && hasAudibleStem() && edgeAiSet();
+/** Why Autodetect BPM is disabled, or '' (the URL hint comes first). */
+export const detectHint = (): string => {
+  if (ed.status !== 'active' || ed.detect !== null) return '';
+  if (!edgeAiSet()) return 'Set the edge-AI server in Settings to detect the BPM';
+  if (!hasAudibleStem()) return 'Check a stem to detect its BPM';
+  return '';
+};
 
 // ---- actions ----
 
@@ -424,8 +514,8 @@ export async function save(): Promise<void> {
   const id = ed.trackId;
   if (!saveEnabled() || !id) return;
   const gen = generation;
-  ed.saveMessage = '';
-  ed.saveError = '';
+  clearSaveMessages();
+  clearDetectMessages();
   ed.audioError = '';
   ed.saving = 0;
   try {
@@ -453,3 +543,93 @@ export async function cancelSave(): Promise<void> {
 
 /** For the pane's time display. */
 export const positionText = (): string => formatPosition(ed.transport.position_ms);
+
+export async function detect(): Promise<void> {
+  const id = ed.trackId;
+  if (!canDetect() || !id) return;
+  const gen = generation;
+  clearDetectMessages();
+  log('editor detect start');
+  try {
+    const snap = await editorDetect(id);
+    if (gen !== generation) return;
+    // Events may already have finished the job; only take a running state.
+    if (ed.detect !== null || snap.detect !== null) ed.detect = snap.detect;
+  } catch (err) {
+    if (gen !== generation) return;
+    ed.detect = null;
+    clearSaveMessages();
+    ed.detectError = String(err).replace(/^Error: /, '');
+    log(`editor detect error message=${ed.detectError}`);
+  }
+}
+
+export async function cancelDetect(): Promise<void> {
+  const id = ed.trackId;
+  if (!id || ed.detect === null) return;
+  log('editor detect cancel');
+  try {
+    await editorCancelDetect(id);
+  } catch (err) {
+    fail('editor_cancel_detect', err);
+  }
+}
+
+// Tempo moves: one call in flight; while it runs only the latest offset per change is kept.
+const movePending = new Map<number, number>();
+let moveRunning = false;
+
+/** The offset the backend applied: the change's distance from `detected_ms` in steps of the left tempo. */
+function appliedSteps(tempo: TempoSnap, index: number): number {
+  const seg = tempo.segments[index];
+  const prev = tempo.segments[index - 1];
+  if (!seg || !prev || seg.detected_ms == null) return 0;
+  return offsetSteps(seg.start_ms, seg.detected_ms, prev.bpm);
+}
+
+async function drainMoves(): Promise<void> {
+  if (moveRunning) return;
+  moveRunning = true;
+  const gen = generation;
+  try {
+    while (movePending.size > 0 && gen === generation) {
+      const [index, steps] = movePending.entries().next().value!;
+      movePending.delete(index);
+      const id = ed.trackId;
+      if (!id) break;
+      try {
+        const snap = await editorTempo(id, { kind: 'move', index, steps });
+        if (gen !== generation) break;
+        ed.tempo = snap.tempo;
+        log(`editor tempo move index=${index} steps=${steps} applied=${appliedSteps(snap.tempo, index)}`);
+      } catch (err) {
+        if (gen === generation) fail('editor_tempo', err);
+      }
+    }
+  } finally {
+    moveRunning = false;
+    if (movePending.size > 0 && gen === generation) void drainMoves();
+  }
+}
+
+/** Moves a detected tempo change to the absolute offset `steps` from its detected position. */
+export function moveChange(index: number, steps: number): void {
+  if (ed.status !== 'active' || ed.detect !== null) return;
+  movePending.set(index, steps);
+  void drainMoves();
+}
+
+/** Refreshes the tempo map (the Player may have changed it); called on each Editor view entry. */
+export async function reloadTempo(): Promise<void> {
+  const id = ed.trackId;
+  if (ed.status !== 'active' || !id) return;
+  const gen = generation;
+  try {
+    const snap = await editorTempo(id, { kind: 'reload' });
+    if (gen !== generation) return;
+    ed.tempo = snap.tempo;
+    log(`editor tempo reload segments=${snap.tempo.segments.length}`);
+  } catch (err) {
+    if (gen === generation) fail('editor_tempo', err);
+  }
+}

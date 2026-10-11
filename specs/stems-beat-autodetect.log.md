@@ -16,3 +16,4 @@ task 14 | Remove the Player Detect button | local (missed one test title; fixed 
 task 15 | Remove the Editor BPM & sections tab | local (plan missed App.test.ts; fixed by the orchestrator in a follow-up commit) | done
 task 16 | Waveform geometry for sections and drag | implementer | done
 task 17 | Shared WaveformView with sections, drag and keys; Player sections and reopen | implementer | done (player e2e click coordinates updated: layout shifted after task 14)
+task 18 | Editor frontend state | implementer | done

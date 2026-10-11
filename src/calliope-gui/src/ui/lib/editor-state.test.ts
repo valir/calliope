@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import type { Channel } from '@tauri-apps/api/core';
 import {
-  canPlay, ed, lanePlay, leaveEditor, resetEditor, save, saveEnabled, seek, setGain, setUnmuted, stopEnabled,
+  cancelDetect, canDetect, canPlay, detect, detectHint, ed, lanePlay, moveChange, reloadTempo, leaveEditor, resetEditor, save, saveEnabled, seek, setGain, setUnmuted, stopEnabled,
   syncSelection, togglePlay,
 } from './editor-state.svelte';
+import { ui } from './app-state.svelte';
 import { resetLibrary } from './library-state.svelte';
 import { FIXTURE_TRACKS } from './fixture-tracks';
-import type { EditorEvent, EditorSnapshot, TrackRecord, TransportState } from './ipc';
+import type { EditorEvent, EditorSnapshot, TempoSnap, TrackRecord, TransportState } from './ipc';
 
 const plainTrack = FIXTURE_TRACKS[0];
 const stemTrack = FIXTURE_TRACKS[FIXTURE_TRACKS.length - 1];
@@ -366,5 +367,162 @@ describe('events and save', () => {
     await flush();
     channels[0].onmessage({ kind: 'save-failed', id: stemTrack.id, message: 'disk full' });
     expect(ed.saveError).toBe('disk full');
+  });
+});
+
+describe('waveform, tempo and detection', () => {
+  const tempo = (offset = 0): TempoSnap => ({
+    beats_per_bar: 4, multi: true,
+    segments: [
+      { start_ms: 0, bpm: 120 },
+      { start_ms: 6000 + offset * (500 / 64), bpm: 90, detected_ms: 6000 },
+    ],
+  });
+  const open = async () => {
+    syncSelection(stemTrack);
+    await flush();
+    ed.stems[0].unmuted = true;
+  };
+  const emit = (e: object) => channels[0].onmessage({ id: stemTrack.id, ...e } as EditorEvent);
+
+  afterEach(() => { ui.edgeAi = 'not-configured'; });
+
+  it('canDetect truth table and hints', async () => {
+    ui.edgeAi = 'connected';
+    expect(canDetect()).toBe(false);
+    await open();
+    expect(canDetect()).toBe(true);
+    expect(detectHint()).toBe('');
+    ed.stems[0].gain_db = null;
+    expect(canDetect()).toBe(false);
+    expect(detectHint()).toBe('Check a stem to detect its BPM');
+    ed.stems[0].gain_db = 0;
+    ed.stems[0].unmuted = false;
+    expect(canDetect()).toBe(false);
+    ed.stems[0].unmuted = true;
+    ui.edgeAi = 'unreachable';
+    expect(canDetect()).toBe(true);
+    ui.edgeAi = 'not-configured';
+    expect(canDetect()).toBe(false);
+    expect(detectHint()).toBe('Set the edge-AI server in Settings to detect the BPM');
+    ui.edgeAi = 'connected';
+    ed.detect = { phase: 'mixing', progress: 0.4 };
+    expect(canDetect()).toBe(false);
+    expect(detectHint()).toBe('');
+  });
+
+  it('takes peaks and tempo from the snapshot and peaks events', async () => {
+    handlers.open_editor = (a) => ({ ...snapshot(a.id as string), peaks: [0.1, 0.5], tempo: tempo() });
+    await open();
+    expect(ed.peaks).toEqual([0.1, 0.5]);
+    expect(ed.tempo.segments).toHaveLength(2);
+    emit({ kind: 'peaks', peaks: [0, 0.25, 0.75] });
+    expect(ed.peaks).toEqual([0, 0.25, 0.75]);
+    expect(logs()).toContain('editor waveform peaks=3 max=0.75');
+    channels[0].onmessage({ kind: 'peaks', id: 'zzz', peaks: [1] });
+    expect(ed.peaks).toHaveLength(3);
+  });
+
+  it('detect starts, shows phases and ends with the tempo and a message', async () => {
+    ui.edgeAi = 'connected';
+    await open();
+    handlers.editor_detect = () => ({ ...snapshot(stemTrack.id), detect: { phase: 'checking', progress: null } });
+    await detect();
+    expect(ed.detect).toEqual({ phase: 'checking', progress: null });
+    expect(logs()).toContain('editor detect start');
+    emit({ kind: 'detect', phase: 'uploading', progress: 0.7 });
+    emit({ kind: 'detect', phase: 'uploading', progress: 0.8 });
+    expect(ed.detect).toEqual({ phase: 'uploading', progress: 0.8 });
+    expect(logs().filter((l) => l === 'editor detect phase=uploading')).toHaveLength(1);
+    ed.saveMessage = 'Saved.';
+    emit({ kind: 'detected', tempo: tempo(), beats: 400, replaced: true });
+    expect(ed.detect).toBeNull();
+    expect(ed.tempo.segments).toHaveLength(2);
+    expect(ed.detectMessage).toBe('Detected 400 beats: 2 tempo sections. The previous tempo map was replaced.');
+    expect(ed.saveMessage).toBe('');
+    expect(logs()).toContain('editor detected segments=2 bpm=120,90');
+    emit({ kind: 'detected', tempo: tempo(), beats: 400, replaced: false });
+    expect(ed.detectMessage).not.toContain('replaced');
+    emit({ kind: 'saved', file: 'f', clipped_samples: 0, track: stemTrack, warnings: [] });
+    expect(ed.detectMessage).toBe('');
+    expect(ed.saveMessage).toBe('Saved.');
+  });
+
+  it('detect-failed and detect-cancelled end the job', async () => {
+    await open();
+    ed.detect = { phase: 'waiting', progress: null };
+    emit({ kind: 'detect-failed', message: 'server down' });
+    expect(ed.detect).toBeNull();
+    expect(ed.detectError).toBe('server down');
+    expect(logs()).toContain('editor detect error message=server down');
+    ed.detect = { phase: 'waiting', progress: null };
+    emit({ kind: 'detect-cancelled' });
+    expect(ed.detect).toBeNull();
+    expect(ed.detectError).toBe('');
+    expect(ed.detectMessage).toBe('Detection cancelled.');
+  });
+
+  it('a failing editor_detect call shows the error; cancel calls the backend', async () => {
+    ui.edgeAi = 'connected';
+    await open();
+    handlers.editor_detect = () => { throw 'no mix'; };
+    await detect();
+    expect(ed.detectError).toBe('no mix');
+    expect(ed.detect).toBeNull();
+    ed.detect = { phase: 'detecting', progress: null };
+    await cancelDetect();
+    expect(names()).toContain('editor_cancel_detect');
+    expect(logs()).toContain('editor detect cancel');
+  });
+
+  it('moveChange coalesces to the latest absolute steps and logs the applied ones', async () => {
+    await open();
+    ed.tempo = tempo();
+    const sent: number[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    handlers.editor_tempo = async (a) => {
+      const act = a.action as { kind: string; steps: number };
+      sent.push(act.steps);
+      if (sent.length === 1) await gate;
+      return { ...snapshot(stemTrack.id), tempo: tempo(Math.min(act.steps, 3)) };
+    };
+    moveChange(1, 1);
+    moveChange(1, 2);
+    moveChange(1, 5);
+    await flush();
+    expect(sent).toEqual([1]);
+    release();
+    await sleep(20);
+    expect(sent).toEqual([1, 5]);
+    expect(ed.tempo.segments[1].start_ms).toBeCloseTo(6000 + 3 * (500 / 64));
+    expect(logs()).toContain('editor tempo move index=1 steps=1 applied=1');
+    expect(logs()).toContain('editor tempo move index=1 steps=5 applied=3');
+  });
+
+  it('moveChange is ignored during a detection; reloadTempo refreshes the map', async () => {
+    await open();
+    ed.detect = { phase: 'mixing', progress: 0 };
+    moveChange(1, 4);
+    await flush();
+    expect(names()).not.toContain('editor_tempo');
+    handlers.editor_tempo = () => ({ ...snapshot(stemTrack.id), tempo: tempo() });
+    await reloadTempo();
+    expect(ed.tempo.segments).toHaveLength(2);
+    expect(logs()).toContain('editor tempo reload segments=2');
+  });
+
+  it('late results of a closed session are dropped', async () => {
+    await open();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    handlers.editor_tempo = async () => { await gate; return { ...snapshot(stemTrack.id), tempo: tempo() }; };
+    const p = reloadTempo();
+    syncSelection(otherStemTrack);
+    release();
+    await p;
+    expect(ed.tempo.segments).toHaveLength(0);
+    emit({ kind: 'peaks', peaks: [1] });
+    expect(ed.peaks).toEqual([]);
   });
 });
