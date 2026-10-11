@@ -17,3 +17,4 @@ task 15 | Remove the Editor BPM & sections tab | local (plan missed App.test.ts;
 task 16 | Waveform geometry for sections and drag | implementer | done
 task 17 | Shared WaveformView with sections, drag and keys; Player sections and reopen | implementer | done (player e2e click coordinates updated: layout shifted after task 14)
 task 18 | Editor frontend state | implementer | done
+task 19 | Mix lane UI | implementer | done (4th lane clipped at 1280x800, left for the task 20 visual review)

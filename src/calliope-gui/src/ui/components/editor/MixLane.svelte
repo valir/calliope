@@ -3,8 +3,9 @@
   import { Progress } from '$lib/components/ui/progress/index.js';
   import TimeField from './TimeField.svelte';
   import { Slider } from '$lib/components/ui/slider/index.js';
+  import WaveformView from '../player/WaveformView.svelte';
   import {
-    canPlay, cancelSave, ed, nudge, positionText, save, saveEnabled, seek, stop, stopEnabled, togglePlay,
+    canDetect, canPlay, cancelDetect, cancelSave, detect, detectHint, ed, moveChange, nudge, positionText, save, saveEnabled, seek, stop, stopEnabled, togglePlay,
   } from '$lib/editor-state.svelte';
 
   const active = $derived(ed.status === 'active');
@@ -14,6 +15,22 @@
   const saveTarget = $derived(
     ed.variant ? `${ed.variant.name} (${ed.variant.file})` : 'Backing (backings/backing.flac)',
   );
+
+  const PHASE_TEXT: Record<string, string> = {
+    checking: 'Checking the edge-AI server',
+    mixing: 'Preparing the mix',
+    uploading: 'Uploading',
+    waiting: 'Waiting for the edge-AI server',
+    detecting: 'Detecting beats',
+    applying: 'Saving the tempo',
+  };
+  const phaseText = $derived.by(() => {
+    const d = ed.detect;
+    if (!d) return '';
+    const base = PHASE_TEXT[d.phase] ?? d.phase;
+    return d.progress == null ? base : `${base} ${Math.round(d.progress * 100)}%`;
+  });
+  const hint = $derived(detectHint());
 
   // The position slider is frozen (shows the drag value) while the user drags it.
   let dragging = $state(false);
@@ -35,6 +52,18 @@
 <svelte:window onpointerup={endDrag} onpointercancel={endDrag} />
 
 <div class="flex flex-col gap-2 rounded-lg border-2 border-border bg-card p-3" data-testid="mix-lane" role="group" aria-label="Mix">
+  <WaveformView
+    testid="mix-waveform"
+    label="Mix waveform"
+    peaks={ed.peaks}
+    durationMs={ed.durationMs}
+    positionMs={ed.transport.position_ms}
+    segments={ed.tempo.segments}
+    onmove={moveChange}
+    locked={ed.detect !== null}
+    class="h-16"
+  />
+
   <div class="flex items-center gap-3">
     <!-- Fixed-size cell: the solo name and the CLIP badge appear here without moving anything. -->
     <div class="flex h-[3.25rem] w-28 shrink-0 flex-col justify-between">
@@ -52,6 +81,12 @@
     <Button variant="outline" class="h-[3.25rem] w-20 text-lg" disabled={!stopEnabled()} onclick={() => void stop()}>
       Stop
     </Button>
+    <span class="flex-1"></span>
+    {#if ed.detect !== null}
+      <Button variant="outline" class="h-[3.25rem] w-44 shrink-0 text-lg" onclick={() => void cancelDetect()}>Cancel</Button>
+    {:else}
+      <Button variant="outline" class="h-[3.25rem] w-44 shrink-0 text-lg" disabled={!canDetect()} title={hint} aria-describedby={hint ? 'detect-hint' : undefined} onclick={() => void detect()}>Autodetect BPM</Button>
+    {/if}
   </div>
 
   <div class="flex items-center gap-3">
@@ -96,6 +131,16 @@
       <p class="text-base text-destructive" role="alert" data-testid="save-error">{ed.saveError}</p>
     {:else if ed.audioError}
       <p class="text-base text-destructive" role="alert" data-testid="audio-error">{ed.audioError}</p>
+    {/if}
+    {#if ed.detectError}
+      <p class="text-base text-destructive" role="alert" data-testid="detect-error">{ed.detectError}</p>
+    {:else if ed.detectMessage}
+      <p class="text-base" role="status" data-testid="detect-message">{ed.detectMessage}</p>
+    {/if}
+    {#if phaseText}
+      <p class="text-base" role="status" data-testid="detect-status">{phaseText}</p>
+    {:else if hint && !ed.detectError && !ed.detectMessage && !ed.saveMessage && !ed.saveError && !ed.audioError}
+      <p class="text-base text-muted-foreground" id="detect-hint" data-testid="detect-hint">{hint}</p>
     {/if}
     {#if ed.saveMessage}
       <p class="text-base {ed.saveMessage.includes('clipped') ? 'text-amber-700 dark:text-amber-500' : ''}" role="status" data-testid="save-message">{ed.saveMessage}</p>

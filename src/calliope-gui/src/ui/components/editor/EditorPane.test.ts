@@ -5,6 +5,7 @@ import type { Channel } from '@tauri-apps/api/core';
 import EditorPane from './EditorPane.svelte';
 import EditorView from '../../views/EditorView.svelte';
 import { ed, resetEditor, syncSelection } from '$lib/editor-state.svelte';
+import { ui } from '$lib/app-state.svelte';
 import { lib, resetLibrary } from '$lib/library-state.svelte';
 import { FIXTURE_TRACKS } from '$lib/fixture-tracks';
 import type { EditorEvent, EditorSnapshot, TransportState } from '$lib/ipc';
@@ -155,6 +156,58 @@ describe('controls', () => {
     expect(names()).toContain('cancel_backing_save');
     send({ kind: 'save-failed', id: stemTrack.id, message: 'disk full' });
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('disk full'));
+  });
+});
+
+describe('autodetect', () => {
+  afterEach(() => { ui.edgeAi = 'not-configured'; });
+  const detectBtn = () => btn('Autodetect BPM');
+
+  it('has the waveform and hints: no URL, then no stem, then enabled', async () => {
+    await active();
+    expect(screen.getByTestId('mix-waveform')).toBeTruthy();
+    expect(detectBtn().disabled).toBe(true);
+    expect(screen.getByTestId('detect-hint').textContent).toBe('Set the edge-AI server in Settings to detect the BPM');
+    ui.edgeAi = 'connected';
+    await waitFor(() =>
+      expect(screen.getByTestId('detect-hint').textContent).toBe('Check a stem to detect its BPM'));
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Unmute Drums' }));
+    await waitFor(() => expect(detectBtn().disabled).toBe(false));
+    expect(screen.queryByTestId('detect-hint')).toBeNull();
+  });
+
+  it('click calls editor_detect; phase text, Cancel, and the messages', async () => {
+    ui.edgeAi = 'connected';
+    await active();
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Unmute Drums' }));
+    await waitFor(() => expect(detectBtn().disabled).toBe(false));
+    handlers.editor_detect = () => ({ ...snapshot(stemTrack.id), detect: { phase: 'checking', progress: null } });
+    await fireEvent.click(detectBtn());
+    expect(names()).toContain('editor_detect');
+    send({ kind: 'detect', id: stemTrack.id, phase: 'mixing', progress: 0.4 });
+    await waitFor(() => expect(screen.getByTestId('detect-status').textContent).toBe('Preparing the mix 40%'));
+    expect(screen.queryByRole('button', { name: 'Autodetect BPM' })).toBeNull();
+    send({ kind: 'detect', id: stemTrack.id, phase: 'waiting', progress: null });
+    await waitFor(() =>
+      expect(screen.getByTestId('detect-status').textContent).toBe('Waiting for the edge-AI server'));
+    await fireEvent.click(btn('Cancel'));
+    expect(names()).toContain('editor_cancel_detect');
+    send({ kind: 'detect-cancelled', id: stemTrack.id });
+    await waitFor(() => expect(screen.getByTestId('detect-message').textContent).toBe('Detection cancelled.'));
+    expect(detectBtn()).toBeTruthy();
+    send({ kind: 'detect-failed', id: stemTrack.id, message: 'no beats' });
+    await waitFor(() => expect(screen.getByTestId('detect-error').textContent).toBe('no beats'));
+    expect(screen.queryByTestId('detect-message')).toBeNull();
+  });
+
+  it('the Editor view reloads the tempo on mount', async () => {
+    handlers.editor_tempo = () => snapshot(stemTrack.id);
+    render(EditorView);
+    await waitFor(() => expect(screen.queryAllByRole('treeitem').length).toBeGreaterThan(0));
+    lib.selectedId = stemTrack.id;
+    await waitFor(() => expect(ed.status).toBe('active'));
+    render(EditorView);
+    await waitFor(() => expect(calls.some((c) => c[0] === 'editor_tempo')).toBe(true));
   });
 });
 

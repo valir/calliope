@@ -4,7 +4,7 @@
   import TrackBrowser from '../components/library/TrackBrowser.svelte';
   import EditorPane from '../components/editor/EditorPane.svelte';
   import { lib, load, selectedTrack } from '$lib/library-state.svelte';
-  import { attachEditor, save, syncSelection, togglePlay } from '$lib/editor-state.svelte';
+  import { attachEditor, reloadTempo, save, syncSelection, togglePlay } from '$lib/editor-state.svelte';
   import { TRACK_TABS } from '$lib/views';
 
   let searchRef = $state<HTMLInputElement | null>(null);
@@ -15,6 +15,8 @@
     // After a webview reload the backend may still hold a session. With a track selected
     // the editor opens that one instead, and a late attach must not take its event sink.
     if (!lib.selectedId) void attachEditor();
+    // The Player may have changed the tempo map since the last visit.
+    void reloadTempo();
   });
 
   // The editor follows the selected track (shared with the Library).

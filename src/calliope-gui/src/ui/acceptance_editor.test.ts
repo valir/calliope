@@ -54,6 +54,7 @@ beforeEach(() => {
     if (cmd === 'get_repository') return { root: '/r', is_default: false, status: 'ok' };
     if (cmd === 'list_tracks') return { root: '/r', tracks: [plain, stemA, stemB], problems: [] };
     if (cmd === 'editor_set_stem') return { name: a.name, gain_db: a.gain, unmuted: a.unmuted };
+    if (cmd === 'editor_tempo') return snap(a.id as string);
     if (cmd === 'editor_play') return { ...idle, playing: true };
     if (cmd === 'editor_pause') return { ...idle, position_ms: 4000 };
     if (cmd === 'editor_seek') return { ...idle, position_ms: a.position as number };
@@ -207,6 +208,19 @@ describe('through the whole app', () => {
     await waitFor(() => expect(btn('Save').disabled).toBe(false));
     await fireEvent.click(btn('Save'));
     await waitFor(() => expect(names().filter((n) => n === 'save_backing')).toHaveLength(1));
+  });
+
+  it('Autodetect BPM in the Mix lane: disabled without an edge-AI URL, click calls editor_detect once enabled', async () => {
+    await openEditorOn(stemA);
+    await waitFor(() => expect(ed.status).toBe('active'));
+    expect(screen.getByTestId('mix-waveform')).toBeTruthy();
+    expect(btn('Autodetect BPM').disabled).toBe(true);
+    ui.edgeAi = 'connected';
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Unmute Drums' }));
+    await waitFor(() => expect(btn('Autodetect BPM').disabled).toBe(false));
+    await fireEvent.click(btn('Autodetect BPM'));
+    await waitFor(() => expect(names()).toContain('editor_detect'));
+    ui.edgeAi = 'not-configured';
   });
 });
 
