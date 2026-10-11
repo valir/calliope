@@ -19,3 +19,5 @@ task 17 | Shared WaveformView with sections, drag and keys; Player sections and 
 task 18 | Editor frontend state | implementer | done
 task 19 | Mix lane UI | implementer | done (4th lane clipped at 1280x800, left for the task 20 visual review)
 task 20 | GUI e2e, visual review, docs | implementer | done
+reviewer | APPROVED; 9 minors (notably: unit example hard-requires the beat adapter; typed change just before a detected change can make bases non-monotonic; no backend guard on tempo move during detection) | reviewer | done
+tester | A1-A17 PASS; D1 set_change_offset(i64::MIN) panics; D2 typed BPM in the stretched beat leaves tick bases out of order (92/5880 sweep cases) | tester | done

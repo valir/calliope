@@ -224,6 +224,36 @@ describe('through the whole app', () => {
   });
 });
 
+describe('beat autodetect (QA)', () => {
+  it('A4: checked stems at Off keep Autodetect BPM disabled with a hint; above Off enables it; no server disables it', async () => {
+    await openEditorOn(stemA);
+    await waitFor(() => expect(ed.status).toBe('active'));
+    ui.edgeAi = 'connected';
+    expect(btn('Autodetect BPM').disabled).toBe(true);
+    // checked but Off (gain -60 slider -> null)
+    ed.stems = ed.stems.map((l) => ({ ...l, unmuted: true, gain_db: null }));
+    await tick();
+    expect(btn('Autodetect BPM').disabled).toBe(true);
+    expect(screen.getByTestId('detect-hint').textContent).toMatch(/Check a stem/);
+    ed.stems = ed.stems.map((l, i) => (i === 0 ? { ...l, gain_db: -12 } : l));
+    await tick();
+    expect(btn('Autodetect BPM').disabled).toBe(false);
+    ui.edgeAi = 'not-configured';
+    await tick();
+    expect(btn('Autodetect BPM').disabled).toBe(true);
+    expect(screen.getByTestId('detect-hint').textContent).toMatch(/edge-AI server/);
+  });
+
+  it('A17/A14: the Editor has exactly three tabs and the Player has no Detect button', async () => {
+    render(App);
+    await key(3);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent!.trim())).toEqual(['Stems', 'Tablature', 'MIDI cues']);
+    await key(2);
+    expect(screen.queryByRole('button', { name: 'Detect' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: /BPM & sections/ })).toBeNull();
+  });
+});
+
 describe('fix round 1 probes', () => {
   it('fast A -> B -> A track switching ends with A active and one live session', async () => {
     await openEditorOn(stemA);
