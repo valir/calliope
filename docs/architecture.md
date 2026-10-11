@@ -35,20 +35,26 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (mixer) | Laptop | Pure mixing shared by playback and Save: dB gains (-60 = Off .. +12), unmuted, mono->stereo, sum, hard clip with clipped-sample count, quantise | Rust, std only | `src/mixer.rs` |
 | calliope-gui (transport) | Laptop | Play/pause/stop/seek state machine with the 0.3 s scrub-resume rule; time injected | Rust, pure | `src/transport.rs` |
 | calliope-gui (audio output) | Laptop | `OutputBackend` trait: `CpalBackend` (default device), `NullBackend` (paced, optional WAV capture; the only backend in `e2e-hooks` builds), `ManualBackend` (unit tests) | Rust, `cpal` (ALSA on Linux) | `src/audio_out.rs` |
-| calliope-gui (editor engine) | Laptop | Editor sessions: load stems, lock-free render callback, transport, transient solo, clip indicator, events, remembered mixes, the backing save job | Rust (std threads) | `src/editor.rs` (+ `src/editor_tests.rs`) |
+| calliope-gui (editor engine) | Laptop | Editor sessions: load stems, lock-free render callback, transport, transient solo, clip indicator, events, remembered mixes, the backing save job, the mix waveform (0.3 s debounce, worker thread), the session's tempo map, the beat-detection job's start/cancel/outcome | Rust (std threads) | `src/editor.rs` (+ `src/editor_tests.rs`) |
+| calliope-gui (mix waveform) | Laptop | `mix_peaks` (2048 max-abs buckets of the checked stems' mix, the playback mixer's maths, cancellable) and `Debounce` (restartable 300 ms deadline, injected `Instant`s) | Rust, pure | `src/mix_waveform.rs` |
+| calliope-gui (tempo detection) | Laptop | Beats + downbeats (from the edge-AI server) → tempo sections: change points, BPM per section (0.1), anchor on the first downbeat, each change snapped to the previous section's 1/64 grid | Rust, pure | `src/tempo_detect.rs` |
+| calliope-gui (tempo store) | Laptop | `TempoStore` (load/replace a track's tempo map): `FileTempoStore` on `player.json`; the app's `PlayerTempoStore` goes through an open Player session under the `PlayerHost` lock | Rust | `src/tempo_store.rs`, `src/player_ipc.rs` |
+| calliope-gui (beat detection job) | Laptop | Renders the current mix to a part file, uploads it to `POST /v1/beats`, waits, fetches and validates the beats, derives the sections, saves them through the `TempoStore`; phases, cancel, cleanup | Rust (own std thread) | `src/beat_detect.rs` (+ `src/beat_detect_tests.rs`) |
 | calliope-gui (backing render) | Laptop | Offline render of the mix to FLAC | Rust, `flacenc` | `src/backing_render.rs` |
-| calliope-gui (tempo map) | Laptop | Tempo segments, beat grid in 1/64-note ticks (16 per beat, `beats_per_bar` default 4), ms<->tick, snapping, "set BPM at position", beats in a range, loop boundary re-snapping | Rust, pure | `src/tempo_map.rs` |
+| calliope-gui (tempo map) | Laptop | Tempo segments, beat grid in 1/64-note ticks (16 per beat, `beats_per_bar` default 4), ms<->tick, snapping, "set BPM at position", beats in a range, loop boundary re-snapping, `move_change` (a section start moved in ticks of the left section, ±64 per move) | Rust, pure | `src/tempo_map.rs` |
 | calliope-gui (player state) | Laptop | `player.json` schema (lenient read, strict write, newer schema read-only), loop list operations, source choice rule, load/save | Rust + serde, pure | `src/player_state.rs` |
 | calliope-gui (player sources) | Laptop | Dropdown entries of a track (backing variants, `audio`, `original`, stems), decoding one into memory (FLAC: `claxon`; other formats: external `ffmpeg` piped to memory), waveform peaks (2048) | Rust | `src/player_source.rs` |
 | calliope-gui (metronome) | Laptop | Synthesised click (own sound), count-in plan, placing clicks in an output block | Rust, pure | `src/metronome.rs` |
-| calliope-gui (player engine) | Laptop | Player sessions: one decoded source, a callback-owned `Engine` (playback, count-in, loop repeats, metronome, fades) fed by a bounded command channel, transport + scrub rule, events, debounced `player.json` writes | Rust (std threads) | `src/player.rs` (+ `src/player_tests.rs`) |
-| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Editor: shared track tree + stem mixer; Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform, control bar; Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
-| calliope-lib (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation, FLAC STREAMINFO parser, FLAC audible-time scan (`flac_level`: 100 ms windows, RMS of the loudest channel above `AUDIBLE_LEVEL_DBFS = -40`, integer sum-of-squares comparison, peak for display; no 15 s decision), HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel). No Tauri/GTK | Rust; `serde`, `libc`, `claxon`, `ureq` 3 without TLS (feature) | `src/calliope-lib/` |
-| calliope-stems (edge-AI stems service) | archserver (LAN), deployed by hand as a systemd user unit | HTTP server for "calliope-stems API v1": validates FLAC uploads (≤ 15 min), queues jobs (1 running), runs a configurable separator command, measures each stem's audible time, serves the stems, cleans up; `--measure FILE...` prints audible times without starting a server. No Tauri/GTK; the GUI doesn't depend on it | Rust; `tiny_http`, `calliope-lib` | `src/calliope-stems/` |
+| calliope-gui (player engine) | Laptop | Player sessions: one decoded source, a callback-owned `Engine` (playback, count-in, loop repeats, metronome, fades) fed by a bounded command channel, transport + scrub rule, events, debounced `player.json` writes, `replace_tempo` (a map set from the Editor, pushed to the UI as a `snapshot` event) | Rust (std threads) | `src/player.rs` (+ `src/player_tests.rs`) |
+| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Editor: shared track tree + stem mixer + Mix lane with the mix waveform (tempo sections, draggable changes) and Autodetect BPM; Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform, control bar; Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
+| calliope-lib (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation (incl. the beats document, `check_beats`), FLAC STREAMINFO parser, FLAC audible-time scan (`flac_level`: 100 ms windows, RMS of the loudest channel above `AUDIBLE_LEVEL_DBFS = -40`, integer sum-of-squares comparison, peak for display; no 15 s decision), HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel). No Tauri/GTK | Rust; `serde`, `libc`, `claxon`, `ureq` 3 without TLS (feature) | `src/calliope-lib/` |
+| calliope-stems (edge-AI stems service) | archserver (LAN), deployed by hand as a systemd user unit | HTTP server for "calliope-stems API v1": validates FLAC uploads (≤ 15 min), queues jobs (1 running), runs a configurable separator command, measures each stem's audible time, serves the stems, cleans up; beat jobs (`POST /v1/beats`) run a configurable beat-tracker command in the same queue; `--measure FILE...` prints audible times without starting a server. No Tauri/GTK; the GUI doesn't depend on it | Rust; `tiny_http`, `calliope-lib` | `src/calliope-stems/` |
 | separator adapter | archserver | `<sep> <input.flac> <out_dir> <model>` → `<out_dir>/<stem>.flac`; the real one runs the owner's audio-separator venv with `htdemucs_6s` (frees VRAM from Ollama first) | bash | `src/calliope-stems/separators/audio-separator.sh` |
 | yt-dlp, ffmpeg, ffprobe | Laptop | External executables, installed by the user, never bundled | upstream | system `PATH` |
 | audio-separator, Demucs, PyTorch | archserver | The real separation model, the owner's existing install in `~/edge-ai/stems/.venv`; never bundled, never run by tests | upstream (Python) | outside this repo |
-| test stand-ins | dev machine | `tests/support/stub-separator` (canned stems, failure modes) used with the real `calliope-stems` on 127.0.0.1; `tests/support/bin/yt-dlp` (fake downloader) | bash / Python 3 stdlib | `tests/support/` |
+| beat-tracker adapter | archserver | `<tracker> <input.flac> <out_dir>` → `<out_dir>/beats.json`; the real one runs Beat This! (`Audio2Beats`, checkpoint `final0`, CUDA with CPU fallback) from the beats venv | bash + embedded Python | `src/calliope-stems/trackers/beat-this.sh` |
+| Beat This! (beat-this 1.1.0, MIT code and weights), PyTorch, soundfile | archserver | The beat/downbeat model, the owner's install in its own venv `~/edge-ai/beats/.venv`, checkpoint `~/edge-ai/beats/models/final0.ckpt`; never bundled, never run by tests | upstream (Python) | outside this repo |
+| test stand-ins | dev machine | `tests/support/stub-separator` (canned stems, failure modes) and `tests/support/stub-beat-tracker` (beats computed from the input's duration: two tempos 120→90, steady, failure modes) used with the real `calliope-stems` on 127.0.0.1; `tests/support/bin/yt-dlp` (fake downloader) | bash / Python 3 stdlib | `tests/support/` |
 
 ## Interfaces
 <!-- Between components and with external gear: protocol, message/data formats, timing. -->
@@ -101,16 +107,18 @@ the GUI crate, `src/calliope-gui/`.
     `editor_lane_play(id, name)` (check + solo + play), `editor_end_solo(id)`, `editor_pause(id)`,
     `editor_stop(id)`, `editor_seek(id, position)`, `editor_nudge(id, delta)` (ms),
     `editor_set_stem(id, name, gain, unmuted)` (gain in dB or null = Off), `save_backing(id)`,
-    `cancel_backing_save(id)`; player (gui-play-backing-track plan §2.9, in `src/player_ipc.rs`):
+    `cancel_backing_save(id)`, beat detection and tempo (stems-beat-autodetect plan §2.11): `editor_detect(id)` (renders the
+    current mix and starts the detection job), `editor_cancel_detect(id)`, `editor_tempo(id, action)` (`move` {index, ticks} |
+    `reload`); player (gui-play-backing-track plan §2.9, in `src/player_ipc.rs`):
     `open_player(id, events)`, `close_player()`, `get_player()`, `watch_player(events)`,
     `player_select_source(id, source)` (stops playback, keeps the position), `player_play(id)`, `player_pause(id)`, `player_seek(id, position)`,
     `player_nudge(id, delta)` (both with the 0.3 s scrub rule), `player_skip(id, delta)` (instant, Rew/FF),
     `player_leave(id)` (pause + close output + flush), `player_tempo(id, action)` (`set-bpm` | `speed-step` |
     `speed-reset`), `player_metronome(id, on, count_in)`, `player_loop(id, action)` (tagged action: add, remove,
     select, mark, set, flags, play, stop; loops may have no end yet). Actions are tagged objects to keep the command list
-    short. BPM detection (`Detect`) comes with the later spec `gui-play-backing-track-detect`.
+    short. BPM detection runs from the Editor (Autodetect BPM, stems-beat-autodetect); the Player has no Detect button.
     Types are in `src/ui/lib/ipc.ts` and in the plans (tracks-repository §2.7, stem-extraction §2.10,
-    backing-track-editor §2.7, play-backing-track §2.9).
+    backing-track-editor §2.7, play-backing-track §2.9, stems-beat-autodetect §2.11).
   - **Long-running jobs and progress**: a command that starts a job takes a
     `tauri::ipc::Channel<Event>` argument (`events`), returns a snapshot at once and runs the
     work on its own std thread; progress goes over the channel (tagged JSON, `phase` field,
@@ -147,7 +155,10 @@ the GUI crate, `src/calliope-gui/`.
   Editor: `editor active id=<id> stems=<n>`, `editor inactive id=<id|none>`,
   `editor play|pause|stop position=<ms>`, `editor solo name=<n|none>`, `editor leave stop`,
   `editor seek position=<ms>`, `editor nudge delta=<ms>`,
-  `editor stem name=<n> gain=<db|off> unmuted=<b>`, `editor saved id=<id> file=<f> clipped=<n>`.
+  `editor stem name=<n> gain=<db|off> unmuted=<b>`, `editor saved id=<id> file=<f> clipped=<n>`,
+  `editor waveform peaks=<count> max=<0..1>`, `editor detect start|cancel`, `editor detect phase=<p>`,
+  `editor detected segments=<k> bpm=<a,b,..>`, `editor detect error message=<m>`,
+  `editor tempo move index=<i> ticks=<k> applied=<k'>`, `editor tempo reload segments=<k>`.
   Player: `player active id=<id> source=<key> sources=<n> mode=<bpm|time> loops=<n> position=<ms>`, `player inactive id=<id|none>`,
   `player source key=<key>`, `player play|pause position=<ms>`, `player seek position=<ms>`, `player skip delta=<ms>`,
   `player bpm value=<v> position=<ms>`, `player metronome on=<b> count_in=<b>`,
@@ -157,7 +168,10 @@ the GUI crate, `src/calliope-gui/`.
   `tool <name> found=<bool> version=<v>`,
   `audio backend=<cpal|null|capture> rate=<hz>`, `editor open id=<id> stems=<n> duration_ms=<ms>`,
   `editor transport playing=<b> audible=<b> position_ms=<ms> solo=<n|none> clipping=<b>` (changes only),
-  `editor saved id=<id> file=<f> bits=<b> clipped=<n>`, `player open id=<id> source=<key> duration_ms=<ms> rate=<hz> position_ms=<ms>`,
+  `editor saved id=<id> file=<f> bits=<b> clipped=<n>`, `editor peaks id=<id> gen=<n> ms=<ms>`,
+  `editor detect id=<id> phase=<checking|mixing|uploading|waiting|detecting|applying>`,
+  `editor detected id=<id> beats=<n> downbeats=<m> bar_beats=<b> segments=<k> bpm=<..> starts_ms=<..>`,
+  `editor detect failed id=<id> message=<m>`, `editor detect cancelled id=<id>`, `tempo saved id=<id> via=<player|file> segments=<k>`, `player open id=<id> source=<key> duration_ms=<ms> rate=<hz> position_ms=<ms>`,
   `player transport playing=<b> counting_in=<b> loop=<n|none> position_ms=<ms>` (changes only),
   `player count-in clicks=3 beat_ms=<ms>`, `player wrap loop=<index, 0-based> count_in=<b>`, `player state saved id=<id>`,
   `player state error id=<id> message=<m>`.
@@ -241,6 +255,11 @@ the GUI crate, `src/calliope-gui/`.
   (bad parts dropped, unknown fields kept), a newer `schema_version` is never overwritten. Library scans ignore it,
   Export copies it, Delete moves it with the folder. `player.json` is reserved as a file name like `track.json`
   (`fsutil::validate_file_name`).
+  **The track's one tempo map** (stems-beat-autodetect plan §2.2): `tempo` in `player.json` is also written by the Editor
+  (Autodetect BPM, moving a tempo change) through `TempoStore::replace`, under the `PlayerHost` lock: through the Player's
+  session when it has the track open (`PlayerManager::replace_tempo`, `PlayerEvent::Snapshot` to the UI), else load → apply →
+  `write_atomic` of the file. Same rules as a typed BPM: loops re-snapped keeping their time, `speed` 1.0, other fields kept,
+  a newer schema never overwritten. The Editor reads the map through the store at open and on each Editor view entry.
 - **Edge-AI stems protocol ("calliope-stems API v1")**, types and client in
   `calliope-lib` (`stems_api`, `stems_client`), server `calliope-stems`; plain HTTP on the
   LAN, base URL from settings (e.g. `http://archserver:8765`); full table in the
@@ -259,6 +278,14 @@ the GUI crate, `src/calliope-gui/`.
   audible_ms ≤ 24 h and a multiple of window_ms; otherwise "bad stem level list") and uses an entry
   only when its level and window equal its own `flac_level` constants;
   `GET /v1/jobs/<id>/stems/<name>` → FLAC (409 not done); `DELETE /v1/jobs/<id>` → 204 (cancel + cleanup).
+  **Beats (additive, stems-beat-autodetect plan §2.4):** health gains `"tasks": ["stems"]` or `["stems","beats"]` (absent =
+  stems only); `POST /v1/beats` (FLAC body, same checks as jobs; 501 without a tracker) → `202 {"job","state"}`; the job's
+  status has `"kind":"beats"` (stem jobs have no `kind` key, unchanged JSON) and `"stems": null`;
+  `GET /v1/jobs/<id>/beats` → `{"beats":[s..],"downbeats":[s..],"tracker"}` (409 not done, 404 unknown or not a beats job);
+  `stems/<n>` of a beats job → 404. Beats document (`stems_api::check_beats`, on server and client): seconds, finite,
+  0..duration+1 s, strictly increasing, ≤ 20 000 beats, each downbeat equals a beat within 1e-6 s, `tracker` ≤ 100 chars,
+  JSON ≤ 1 MiB. Beat jobs share the queue and the single worker with separation jobs. The app derives tempo sections
+  itself (`tempo_detect`); the server only reports beats.
   Errors are `{"error": "..."}`. **No auth** (LAN only, owner-approved default). Client:
   connect 5 s / request 30 s timeouts, 1 s polling, job id and stem names validated, ≤ 16
   stems, ≤ 1 GiB each, FLAC magic checked. "running" = the server confirmed processing start
@@ -276,10 +303,13 @@ the GUI crate, `src/calliope-gui/`.
   `~/.local/state/calliope-stems`), `--separator PATH` (**required**, so nothing starts the real
   model by accident), `--model` (`htdemucs_6s`), `--max-upload-mb` (300), `--max-duration-s`
   (900), `--queue` (2 waiting; 1 running, fixed), `--separator-timeout-min` (30),
-  `--retention-hours` (24), `--no-stem-levels` (don't measure or report `stem_levels`); `--measure FILE...` (diagnostic: print each FLAC file's `audible_ms`/`windows`/`peak_dbfs` and exit, no `--separator` needed). Jobs live in memory; job folders `<work>/jobs/<uuid>/` carry a
+  `--retention-hours` (24), `--no-stem-levels` (don't measure or report `stem_levels`), `--beat-tracker PATH` (optional;
+  enables `POST /v1/beats`), `--beat-timeout-min` (10; hidden test knob `--beat-timeout-ms`, min 100); `--measure FILE...` (diagnostic: print each FLAC file's `audible_ms`/`windows`/`peak_dbfs` and exit, no `--separator` needed). Jobs live in memory; job folders `<work>/jobs/<uuid>/` carry a
   marker and are the only things it deletes. Logs on stderr (journald), prefix `calliope-stems: `.
   **Separator contract**: `<separator> <input.flac> <out_dir> <model>`, writes
   `<out_dir>/<stem>.flac`, optional stdout `progress <0..1>`, exit 0; outputs are validated.
+  **Beat-tracker contract**: `<tracker> <input.flac> <out_dir>`, writes `<out_dir>/beats.json` (the beats document), optional
+  `progress <0..1>` lines, exit 0; validated with `check_beats`; killed (process group) on cancel, timeout and server exit.
 - **Track length limit**: 15 minutes, checked by Calliope before upload and by the server
   (`MAX_DURATION_S` in `calliope-lib`).
 - **External tools** (not bundled, found on `PATH` once at start-up, versions checked):
@@ -316,13 +346,14 @@ src/                      ALL source (owner requirement), one folder per crate
                           tools, media, download, import_job, stem_audio, mixer, transport,
                           audio_out, editor (+ editor_tests), backing_render, tempo_map,
                           player_state, player_source, metronome, player (+ player_tests),
-                          player_ipc, ...)
+                          player_ipc, mix_waveform, tempo_detect, tempo_store,
+                          beat_detect (+ beat_detect_tests), ...)
     src/ui/               frontend: index.html, main.ts, app.css, App.svelte,
                           components/ (library/ = tree, pane, tablature panel;
                           import/ = source page (URL box, or local path box + Browse +
                           Extract), edit pane, extraction progress;
                           editor/ = EditorPane, StemLane, MixLane, TimeField (also used by the Player);
-                          player/ = PlayerPane, SourceSelect, WaveformView, BpmSection,
+                          player/ = PlayerPane, SourceSelect, WaveformView (shared with the Editor's Mix lane, props-driven), BpmSection,
                           MetronomeSection, PlaybackSection, LoopsSection;
                           library/TrackBrowser.svelte = tree column shared by Library and Editor;
                           TrackFields.svelte shared by Library and Import),
@@ -341,11 +372,13 @@ src/                      ALL source (owner requirement), one folder per crate
                           library-editor/ = stem tracks for the Editor (editor/make-fixtures.sh),
                           library-player/ = tracks for the Player incl. an MP3 backing and a player.json
                           with two tempos and loops (player/make-fixtures.sh)
-      support/            test-only stand-ins: stub-separator (bash), bin/yt-dlp (Python 3 stdlib)
+      support/            test-only stand-ins: stub-separator (bash), stub-beat-tracker (Python 3 stdlib),
+                          bin/yt-dlp (Python 3 stdlib)
   calliope-lib/           shared library (package calliope-lib, lib calliope_lib): Cargo.toml,
                           src/{lib,stems_api,stems_client,flac_level,process}.rs, tests/; no Tauri
   calliope-stems/         the edge-AI stems server: Cargo.toml, src/*.rs, tests/conformance.rs,
-                          separators/audio-separator.sh, deploy/calliope-stems.service, README.md;
+                          separators/audio-separator.sh, trackers/beat-this.sh,
+                          deploy/calliope-stems.service, README.md;
                           no Tauri
 ```
 
@@ -471,6 +504,13 @@ the server out of the GUI.
   test:gui:serial` runs the same binaries one after the other on an existing display.
 - **Screenshot sweeps** (themes x sizes x states) only run with `CALLIOPE_GUI_SHOTS=1`
   (`gui_player_e2e::visual_review`); by default each test takes its normal screenshots only.
+- **Beat detection** → the real `calliope-stems` with `--beat-tracker tests/support/stub-beat-tracker` (modes
+  `ok` (120 BPM from 0.5 s for whole bars up to half the input, then 90 BPM), `steady`, `few`, `fail`, `slow`, `hang`,
+  `bad-output`, via `STUB_TRACKER_MODE` or `<work dir>/stub-tracker-mode`; argv to `$STUB_TRACKER_LOG`) and
+  `--beat-timeout-ms`; an "old server" is the binary without `--beat-tracker`. The real adapter is only syntax-checked
+  (`bash -n` and `ast.parse` of its embedded Python); no test runs Beat This! or PyTorch. Tempo sections are tested on
+  synthetic beat lists (`tempo_detect`), the mix waveform's 0.3 s debounce with injected `Instant`s and a blocking peaks
+  hook (`EditorManager::set_peaks_fn`), the detection job against the real server with 50 ms polling.
 - Test-only server option `--separator-timeout-ms N` (hidden like `--janitor-interval-ms`, min
   100, wins over `--separator-timeout-min`) lets the acceptance test exercise the separator
   timeout in about a second.
@@ -1026,3 +1066,40 @@ compatible (MPL is file-level copyleft and covers only Calliope's own files). Co
 (e.g. Bungee for time-stretch) no longer clash with the project licence, and the "no symphonia" rule, which came from
 symphonia's MPL-2.0 licence, may be reconsidered by the owner (not lifted). LGPL code linked statically would still
 bring relinking obligations for distributed binaries.
+
+### 2026-10-11: Beat detection = Beat This! on archserver behind additive `calliope-stems` endpoints; the app derives the tempo sections   (feature: stems-beat-autodetect; direction accepted by the owner in gui-play-backing-track, details pending plan Q3)
+The spec delegates AI processing to `calliope-stems`. Beat This! 1.1.0 (CPJKU) finds beats and downbeats without assuming
+one tempo; its code and published weights are MIT (some training data is not, noted in `docs/licences.md`). Choice: a
+configurable **beat-tracker command** with a small contract (`<tracker> <input.flac> <out_dir>` → `beats.json`), exactly
+like the separator, so the model can change without touching the server and tests use a stub; additive endpoints
+(`POST /v1/beats`, `GET /v1/jobs/<id>/beats`, `tasks` in health, `kind` in a beats job's status) in the one job queue (one GPU);
+the real adapter runs in its own uv venv `~/edge-ai/beats/.venv` (an upgrade can't break Demucs) with a pre-downloaded
+checkpoint, CUDA with CPU fallback. The server only reports beats (validated by the shared `check_beats`); the app turns
+them into sections (`tempo_detect`), the same "server measures, app decides" split as `stem_levels`. Alternatives: a local
+non-AI detector in Rust (weaker on real music and tempo changes), madmom (non-commercial models), aubio/Essentia (GPL/AGPL),
+librosa (one tempo only), a new API version (unnecessary for additive routes).
+
+### 2026-10-11: One tempo map per track, in `player.json`, shared by the Editor and the Player   (feature: stems-beat-autodetect; pending plan Q1)
+The detected tempo serves the metronome and count-in, which read `player.json`, and all sources of a track are
+sample-aligned. Choice: the Editor writes the same `tempo` through a `TempoStore`: under the `PlayerHost` lock, through the
+Player's session when it holds the track (so neither side overwrites the other; the Player UI gets a `snapshot` event), else
+straight to the file with the Player's rules (loops re-snapped keeping their time, speed 1.0, newer schema never
+overwritten). Detection replaces the whole map; the raw beats are not stored. Alternatives: `track.json` (Player change,
+revision churn on every typed BPM, Library save conflicts), a copy per backing variant (goes stale). The 2026-10-11
+`player.json` entry's note still holds: the map may move into `track.json` with `gui-manipulate-backing-track`.
+
+### 2026-10-11: Tempo changes snap to the previous section's 1/64 grid; moves are ±4 beats per gesture   (feature: stems-beat-autodetect; pending plan Q4-Q6)
+Detected sections: a change is a > 4 % tempo difference sustained for 8 beats, sections ≥ 2 bars, BPM by least squares
+rounded to 0.1, the first segment anchored on the first downbeat with the quantisation drift centred, and each later start
+placed on the nearest 1/64-note tick of the map built so far (the `set_bpm_at` rule), so tick bases stay integers.
+`tempo_map::move_change` moves a start in ticks of the left section (±64 = 4 beats per call, clamped one beat from both
+neighbours) and re-snaps later starts so they keep their time; the frontend's drag preview uses the same clamp. 4/4 stays.
+
+### 2026-10-11: The Editor's mix waveform is computed in Rust, debounced 0.3 s, on a worker thread   (feature: stems-beat-autodetect)
+The frontend never keeps time, so the 0.3 s restartable wait is a pure `Debounce` in the editor session driven by the
+20 ms ticker with injected `Instant`s. The peaks are the playback mixer's own maths over the in-memory i16 stems (what Play
+and Save produce), on a worker thread that never takes the manager lock, with a generation number and a cancel flag, so
+IPC, playback and the audio callback never wait. 2048 buckets, same bucket rule as the Player's peaks. The Player's canvas
+component became props-driven and is shared (no visible Player change). Alternatives: summing per-stem peak envelopes
+(wrong: max of a sum is not a sum of maxes), recomputing in the webview (needs the PCM in JS), a frontend timer (keeps time
+in JS).
