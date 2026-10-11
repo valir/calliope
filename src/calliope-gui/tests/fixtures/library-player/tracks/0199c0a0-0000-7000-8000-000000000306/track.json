@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "id": "0199c0a0-0000-7000-8000-000000000306",
+  "type": "backing",
+  "band": "The Example Band",
+  "album": "Player Tests",
+  "title": "Missing Audio",
+  "composers": [],
+  "year": null,
+  "source_url": null,
+  "copyright": null,
+  "audio": "gone.flac",
+  "original": null,
+  "stems": [],
+  "stem_model": null,
+  "tablatures": [],
+  "backings": [],
+  "imported": "2026-10-07T10:00:00Z",
+  "modified": "2026-10-07T10:00:00Z"
+}
