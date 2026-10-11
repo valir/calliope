@@ -14,3 +14,4 @@ task 12 | Detection job and editor integration | implementer | done (incl. fix: 
 task 13 | IPC commands, TS wrappers, store/exit wiring | implementer | done
 task 14 | Remove the Player Detect button | local (missed one test title; fixed by the orchestrator) | done
 task 15 | Remove the Editor BPM & sections tab | local (plan missed App.test.ts; fixed by the orchestrator in a follow-up commit) | done
+task 16 | Waveform geometry for sections and drag | implementer | done
