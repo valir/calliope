@@ -53,11 +53,24 @@ impl Server {
 }
 
 fn start_in(outer: tempfile::TempDir, mode: &str, extra: &[&str]) -> Server {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_calliope-stems"))
-        .arg("--separator")
+    start_full(outer, mode, None, extra)
+}
+
+/// With `tracker_mode` the stub beat tracker is enabled in that mode, with a 500 ms timeout
+/// unless `extra` has its own `--beat-timeout-ms`.
+fn start_full(outer: tempfile::TempDir, mode: &str, tracker_mode: Option<&str>, extra: &[&str]) -> Server {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_calliope-stems"));
+    cmd.arg("--separator")
         .arg(root().join("tests/support/stub-separator"))
         .args(["--listen", "127.0.0.1:0", "--work-dir"])
-        .arg(outer.path().join("work"))
+        .arg(outer.path().join("work"));
+    if let Some(t) = tracker_mode {
+        cmd.arg("--beat-tracker").arg(root().join("tests/support/stub-beat-tracker")).env("STUB_TRACKER_MODE", t);
+        if !extra.contains(&"--beat-timeout-ms") {
+            cmd.args(["--beat-timeout-ms", "500"]);
+        }
+    }
+    let mut child = cmd
         .args(extra)
         .env("STUB_SEPARATOR_MODE", mode)
         .stderr(Stdio::piped())
@@ -87,6 +100,11 @@ fn start_in(outer: tempfile::TempDir, mode: &str, extra: &[&str]) -> Server {
 
 fn start(mode: &str, extra: &[&str]) -> Server {
     start_in(tempfile::tempdir().unwrap(), mode, extra)
+}
+
+/// A server with the stub beat tracker in `tracker_mode` (and the stub separator in "ok").
+fn start_beats(tracker_mode: &str, extra: &[&str]) -> Server {
+    start_full(tempfile::tempdir().unwrap(), "ok", Some(tracker_mode), extra)
 }
 
 struct Resp {
@@ -640,4 +658,197 @@ fn no_stem_levels_flag_gives_the_old_json() {
     for n in SIX {
         assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/{n}"), &[], b"").status, 200);
     }
+}
+
+// ---- beats (the 16 s stem fixture is the upload: the stub gives 27 beats and 7 downbeats for it) ----
+
+fn post_beats(addr: SocketAddr, file: &str) -> Resp {
+    let body = std::fs::read(fixture(file)).unwrap();
+    http(
+        addr,
+        "POST",
+        "/v1/beats",
+        &[("Content-Type", "audio/flac".into()), ("Content-Length", body.len().to_string())],
+        &body,
+    )
+}
+
+fn submit_beats_raw(s: &Server) -> String {
+    let r = post_beats(s.addr, "stems/vocals.flac");
+    assert_eq!(r.status, 202, "{:?}", String::from_utf8_lossy(&r.body));
+    let v = r.json();
+    assert_eq!(v["state"], "queued");
+    v["job"].as_str().unwrap().to_string()
+}
+
+fn get_beats(s: &Server, job: &str) -> Resp {
+    http(s.addr, "GET", &format!("/v1/jobs/{job}/beats"), &[], b"")
+}
+
+#[test]
+fn health_tasks_follow_the_tracker_flag() {
+    let s = start("ok", &[]);
+    let v = http(s.addr, "GET", "/v1/health", &[], b"").json();
+    assert_eq!(v["tasks"], serde_json::json!(["stems"]));
+    assert!(!StemsClient::supports_beats(&s.client().health().unwrap()));
+    // Without a tracker beats are refused, whatever the body.
+    let r = post_beats(s.addr, "stems/vocals.flac");
+    assert_eq!(r.status, 501);
+    assert_eq!(r.json()["error"], "beat detection is not configured on this server");
+    assert_eq!(http(s.addr, "POST", "/v1/beats", &[], b"").status, 501);
+    let cancel = AtomicBool::new(false);
+    assert!(matches!(
+        s.client().submit_beats(&fixture("stems/vocals.flac"), &cancel, |_, _| {}),
+        Err(ClientError::Rejected { status: 501, .. })
+    ));
+    assert!(!s.jobs().exists() || std::fs::read_dir(s.jobs()).unwrap().next().is_none());
+
+    let t = start_beats("ok", &[]);
+    let v = http(t.addr, "GET", "/v1/health", &[], b"").json();
+    assert_eq!(v["tasks"], serde_json::json!(["stems", "beats"]));
+    assert!(StemsClient::supports_beats(&t.client().health().unwrap()));
+}
+
+#[test]
+fn beats_ok_flow_raw_and_with_the_client() {
+    let s = start_beats("ok", &[]);
+    let job = submit_beats_raw(&s);
+    let done = wait_state(s.addr, &job, "done");
+    assert_eq!(done["kind"], "beats");
+    assert!(done["stems"].is_null());
+    assert!(done.get("stem_levels").is_none(), "{done}");
+    let r = get_beats(&s, &job);
+    assert_eq!(r.status, 200);
+    let v = r.json();
+    assert_eq!(v["beats"].as_array().unwrap().len(), 27);
+    assert_eq!(v["downbeats"].as_array().unwrap().len(), 7);
+    assert_eq!(v["tracker"], "stub-beat-tracker");
+    assert_eq!(v["beats"][0], 0.5);
+    // Stems of a beats job do not exist.
+    assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/vocals"), &[], b"").status, 404);
+    let log = s.log();
+    assert!(log.contains(&format!("job id={job} kind=beats state=running")), "{log}");
+    assert!(log.contains(&format!("job id={job} beats=27 downbeats=7 tracker=\"stub-beat-tracker\"")), "{log}");
+
+    // Through the shared client, 16 s fixture.
+    let c = s.client();
+    let cancel = AtomicBool::new(false);
+    let job2 = c.submit_beats(&fixture("stems/vocals.flac"), &cancel, |_, _| {}).unwrap();
+    let st = c.wait_final(&job2, &cancel, Duration::from_millis(50), Duration::from_secs(20), |_| {}).unwrap();
+    assert_eq!(st.state, calliope_lib::stems_api::JobState::Done);
+    assert_eq!(st.kind.as_deref(), Some("beats"));
+    let b = c.fetch_beats(&job2, 16.0).unwrap();
+    assert_eq!((b.beats.len(), b.downbeats.len()), (27, 7));
+    assert_eq!(b.tracker, "stub-beat-tracker");
+    // A shorter audio length than the document's makes it invalid.
+    assert!(matches!(c.fetch_beats(&job2, 5.0), Err(ClientError::Invalid(_))));
+    assert!(matches!(c.fetch_beats("../x", 16.0), Err(ClientError::Invalid(_))));
+
+    // A stem job on the same server: no `kind` key, and no beats.
+    let sj = submit_raw(&s);
+    let sdone = wait_state(s.addr, &sj, "done");
+    assert!(sdone.get("kind").is_none(), "{sdone}");
+    assert_eq!(get_beats(&s, &sj).status, 404);
+
+    // DELETE removes a beats job's folder.
+    let dir = s.jobs().join(&job);
+    assert!(dir.exists());
+    assert_eq!(http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), &[], b"").status, 204);
+    assert!(!dir.exists());
+    assert_eq!(get_beats(&s, &job).status, 404);
+    assert!(matches!(c.fetch_beats(&job, 16.0), Err(ClientError::Restarted)));
+    assert_eq!(get_beats(&s, "abcd").status, 404);
+    assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job2}/beats/x"), &[], b"").status, 404);
+    assert_eq!(http(s.addr, "GET", "/v1/beats/", &[], b"").status, 404);
+    assert_eq!(http(s.addr, "GET", "/v1/beats", &[], b"").status, 405);
+    assert_eq!(http(s.addr, "POST", &format!("/v1/jobs/{job2}/beats"), &[], b"").status, 405);
+    c.delete(&job2);
+    c.delete(&sj);
+    assert_confined(&s);
+}
+
+#[test]
+fn rejected_beat_uploads() {
+    let s = start_beats("ok", &["--max-upload-mb", "1"]);
+    let flac = [("Content-Type", "audio/flac".to_string())];
+    assert_eq!(http(s.addr, "POST", "/v1/beats", &flac, b"").status, 411);
+    assert_eq!(post_beats(s.addr, "not-flac.flac").status, 415);
+    assert_eq!(post_beats(s.addr, "long.flac").status, 413);
+    let r = http(s.addr, "POST", "/v1/beats", &[("Content-Type", "audio/mpeg".into()), ("Content-Length", "4".into())], b"abcd");
+    assert_eq!(r.status, 415);
+    let big = [("Content-Type", "audio/flac".to_string()), ("Content-Length", (2 * 1024 * 1024).to_string())];
+    let r = http(s.addr, "POST", "/v1/beats", &big, b"");
+    assert_eq!(r.status, 413);
+    assert!(r.json()["error"].is_string());
+    assert!(!s.jobs().exists() || std::fs::read_dir(s.jobs()).unwrap().next().is_none());
+}
+
+#[test]
+fn beats_are_409_while_running() {
+    let s = start_beats("slow", &["--beat-timeout-ms", "20000"]);
+    let job = submit_beats_raw(&s);
+    wait_state(s.addr, &job, "running");
+    assert_eq!(get_beats(&s, &job).status, 409);
+    assert!(matches!(s.client().fetch_beats(&job, 16.0), Err(ClientError::Invalid(m)) if m == "not done"));
+    wait_state(s.addr, &job, "done");
+    assert_eq!(get_beats(&s, &job).json()["beats"].as_array().unwrap().len(), 27);
+}
+
+#[test]
+fn failing_trackers_fail_the_job() {
+    for mode in ["fail", "bad-output"] {
+        let s = start_beats(mode, &[]);
+        let job = submit_beats_raw(&s);
+        let v = wait_state(s.addr, &job, "failed");
+        let msg = v["error"].as_str().unwrap_or("");
+        assert!(!msg.is_empty(), "{mode}: {v}");
+        if mode == "fail" {
+            assert!(msg.contains("simulated failure"), "{msg}");
+        } else {
+            assert!(msg.contains("invalid output"), "{msg}");
+        }
+        assert_eq!(v["kind"], "beats");
+        assert_eq!(get_beats(&s, &job).status, 409);
+        assert_eq!(s.client().status(&job).unwrap().error.as_deref(), Some(msg));
+    }
+    // A document with very few beats is valid for the server (the app judges it).
+    let s = start_beats("few", &[]);
+    let job = submit_beats_raw(&s);
+    wait_state(s.addr, &job, "done");
+    assert_eq!(get_beats(&s, &job).json()["beats"].as_array().unwrap().len(), 3);
+}
+
+#[test]
+fn hanging_tracker_is_killed_on_delete_and_on_timeout() {
+    let s = start_beats("hang", &["--beat-timeout-ms", "20000"]);
+    let job = submit_beats_raw(&s);
+    wait_state(s.addr, &job, "running");
+    wait_until("stub running", 10, || !pids_mentioning(&job).is_empty());
+    assert_eq!(http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), &[], b"").status, 204);
+    wait_until("stub gone", 10, || pids_mentioning(&job).is_empty());
+    assert!(!s.jobs().join(&job).exists());
+    assert_eq!(raw_status(s.addr, &job)["state"], "cancelled");
+    assert_eq!(http(s.addr, "GET", "/v1/health", &[], b"").json()["busy"], false);
+
+    let t = start_beats("hang", &[]); // 500 ms timeout
+    let started = Instant::now();
+    let job = submit_beats_raw(&t);
+    let v = wait_state(t.addr, &job, "failed");
+    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+    assert!(v["error"].as_str().unwrap().contains("timed out"), "{v}");
+    wait_until("stub gone", 10, || pids_mentioning(&job).is_empty());
+}
+
+#[test]
+fn beats_job_waits_behind_a_running_separation() {
+    let t = start_full(tempfile::tempdir().unwrap(), "slow", Some("ok"), &[]);
+    let stems = submit_raw(&t);
+    wait_state(t.addr, &stems, "running");
+    let beats = submit_beats_raw(&t);
+    let v = raw_status(t.addr, &beats);
+    assert_eq!((v["state"].as_str(), v["kind"].as_str()), (Some("queued"), Some("beats")), "{v}");
+    assert_eq!(get_beats(&t, &beats).status, 409);
+    wait_state(t.addr, &stems, "done");
+    wait_state(t.addr, &beats, "done");
+    assert_eq!(get_beats(&t, &beats).status, 200);
 }

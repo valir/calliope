@@ -33,6 +33,7 @@ fn start_in(work: tempfile::TempDir, mode: &str, extra: &[&str]) -> Server {
         .args(["--listen", "127.0.0.1:0", "--work-dir"])
         .arg(work.path())
         .args(extra)
+        .env("STUB_TRACKER_MODE", "ok")
         .env("STUB_SEPARATOR_MODE", mode)
         .stderr(Stdio::piped())
         .spawn()
@@ -274,4 +275,45 @@ fn sigterm_stops_the_server_and_its_separator() {
         assert!(Instant::now() < end, "server did not exit after SIGTERM");
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+fn beats_flags() -> [String; 2] {
+    ["--beat-tracker".into(), root().join("tests/support/stub-beat-tracker").to_string_lossy().into()]
+}
+
+#[test]
+fn beats_flow_with_the_stub_tracker_and_501_without() {
+    let f = beats_flags();
+    let s = start("ok", &[&f[0], &f[1]]);
+    let body = std::fs::read(root().join("tests/fixtures/import/stems/vocals.flac")).unwrap();
+    let hdr = [("Content-Type", "audio/flac".to_string()), ("Content-Length", body.len().to_string())];
+    let r = http(s.addr, "POST", "/v1/beats", &hdr, &body);
+    assert_eq!(r.status, 202);
+    let job = r.json()["job"].as_str().unwrap().to_string();
+    wait_state(s.addr, &job, "done");
+    let b = http(s.addr, "GET", &format!("/v1/jobs/{job}/beats"), &[], b"").json();
+    assert_eq!((b["beats"].as_array().unwrap().len(), b["downbeats"].as_array().unwrap().len()), (27, 7));
+    assert_eq!(http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), &[], b"").status, 204);
+    assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/beats"), &[], b"").status, 404);
+
+    let old = start("ok", &[]);
+    assert_eq!(http(old.addr, "GET", "/v1/health", &[], b"").json()["tasks"], serde_json::json!(["stems"]));
+    assert_eq!(http(old.addr, "POST", "/v1/beats", &hdr, &body).status, 501);
+}
+
+#[test]
+fn stub_tracker_modes_give_the_documented_counts() {
+    let input = root().join("tests/fixtures/import/stems/vocals.flac"); // 16 s
+    let tracker = root().join("tests/support/stub-beat-tracker");
+    for (mode, beats, downbeats) in [("ok", 27, 7), ("steady", 31, 8), ("bar-end", 28, 7), ("few", 3, 1)] {
+        let out = tempfile::tempdir().unwrap();
+        let st = Command::new(&tracker).arg(&input).arg(out.path()).env("STUB_TRACKER_MODE", mode).output().unwrap();
+        assert!(st.status.success(), "{mode}");
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(out.path().join("beats.json")).unwrap()).unwrap();
+        assert_eq!(v["beats"].as_array().unwrap().len(), beats, "{mode}");
+        assert_eq!(v["downbeats"].as_array().unwrap().len(), downbeats, "{mode}");
+    }
+    let out = tempfile::tempdir().unwrap();
+    let st = Command::new(&tracker).arg(&input).arg(out.path()).env("STUB_TRACKER_MODE", "fail").output().unwrap();
+    assert_eq!(st.status.code(), Some(3));
 }

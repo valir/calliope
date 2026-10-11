@@ -33,6 +33,8 @@ calliope-stems --separator PATH [options]
 | `--queue N` | 2 | jobs allowed to wait behind the running one |
 | `--separator-timeout-min N` | 30 | a separator running longer is killed |
 | `--retention-hours N` | 24 | finished jobs are deleted after this |
+| `--beat-tracker PATH` | none (beats off) | the beat tracker executable, run as `PATH <input.flac> <out_dir>`; without it `POST /v1/beats` answers 501 and `/v1/health` lists only the `stems` task |
+| `--beat-timeout-min N` | 10 | a beat tracker running longer is killed |
 | `--no-stem-levels` | off | do not measure the stems' audible time; the job status then has no `stem_levels` |
 | `--help`, `--version` | | |
 | `--licenses` | | prints the licences of the third-party code in the binary (`THIRD-PARTY-NOTICES.txt`; regenerate with `npm run notices:stems` in `src/calliope-gui` after changing dependencies) |
@@ -48,14 +50,35 @@ expose it to the internet. The GUI talks plain `http://` to it (Settings > Stem 
 ## HTTP API v1
 
 * `GET /v1/health`: JSON with `service` (`calliope-stems`), `api` (1), `version`, `models`,
-  `default_model`, `busy`, `max_duration_s` and `max_upload_bytes`
+  `default_model`, `busy`, `max_duration_s`, `max_upload_bytes` and `tasks` (`["stems"]`, or
+  `["stems","beats"]` with a beat tracker; absent on older servers = stems only)
 * `POST /v1/jobs[?model=NAME]`: the FLAC as the request body (`Content-Type: audio/flac`, a
   `Content-Length` is required); returns the job id (413 too large or too long, 415 not FLAC,
   503 queue full)
 * `GET /v1/jobs/<id>`: status and progress. When the job is `done` the status also has
   `stem_levels`, measured by the server (see below)
 * `GET /v1/jobs/<id>/stems/<name>`: one finished stem as FLAC
-* `DELETE /v1/jobs/<id>`: cancel (kills the separator) and remove the job's files
+* `POST /v1/beats`: like `POST /v1/jobs` (same body and 411/413/415/503), without a model; returns
+  `202 {"job","state":"queued"}`. `501` when the server has no `--beat-tracker`
+* `GET /v1/jobs/<id>/beats`: the beats document of a done beats job (see below); 409 if the job is
+  not done (or failed), 404 if the job is unknown or is not a beats job
+* `DELETE /v1/jobs/<id>`: cancel (kills the separator or tracker) and remove the job's files
+
+Beats jobs share the one queue and worker with stem jobs (one GPU). The status of a beats job
+has `"kind":"beats"` and `"stems":null`; the status of a stem job has no `kind` key. `stems/<name>`
+of a beats job is 404. No `stem_levels` are measured for beats jobs.
+
+### The beats document
+
+```json
+{"beats":[0.5,1.0,1.5,2.0],"downbeats":[0.5],"tracker":"beat_this 1.1.0 final0 cuda"}
+```
+
+Seconds, finite, `0 <= t <= duration + 1`, strictly increasing, at most 20000 beats, every
+downbeat equal (within 1e-6 s) to a beat, `tracker` at most 100 characters, at most 1 MiB of
+JSON. The server checks it against the upload's duration (`calliope_lib::stems_api::check_beats`);
+a tracker whose output fails the check fails the job ("invalid output"). The log has
+`job id=… kind=beats state=…` and `job id=… beats=<n> downbeats=<m> tracker="…"`.
 
 ### `stem_levels`
 
@@ -121,6 +144,25 @@ Two implementations live in this repository:
 * `src/calliope-gui/tests/support/stub-separator` (the shared test stubs live in the GUI crate's `tests/`): copies canned stems, with failure
   modes. All automated tests use the stub; no test runs the real model.
 
+## The beat tracker contract
+
+With `--beat-tracker`, the server runs the executable once per beats job, in the job's folder:
+
+```
+<tracker> <input.flac> <out_dir>
+```
+
+* It must write `<out_dir>/beats.json` (the beats document above) and exit 0.
+* stdout may carry `progress <0..1>` lines; the server relays them as job progress.
+* Any other exit status, a missing or invalid `beats.json`, or running longer than
+  `--beat-timeout-min` fails the job; the message (and the tail of stderr) goes to the client.
+* The server kills the tracker's whole process group on cancel, on timeout and when it exits.
+
+`src/calliope-gui/tests/support/stub-beat-tracker` is the test stub (modes `ok`, `steady`,
+`bar-end`, `few`, `fail`, `slow`, `hang`, `bad-output`); the real adapter is
+`trackers/beat-this.sh` (Beat This! with the `final0` checkpoint, in its own virtualenv). The
+hidden `--beat-timeout-ms` (at least 100) exists for the tests only.
+
 ## Manual deployment (by the owner)
 
 Nothing in this repository installs or starts the service. On the server (archserver), in a
@@ -143,6 +185,36 @@ checkout of this repository:
    `curl http://<server>:8765/v1/health` from the laptop answers with `"service":"calliope-stems"`.
 
 Updating: repeat steps 1-2, then `systemctl --user restart calliope-stems`.
+
+### Enabling beat detection (by the owner)
+
+On the server, in the checkout:
+
+1. `git pull && cargo build --release -p calliope-stems`
+2. Create the environment (separate from the Demucs one):
+   ```bash
+   uv venv --python 3.12 ~/edge-ai/beats/.venv
+   uv pip install --python ~/edge-ai/beats/.venv/bin/python \
+       --index-url https://download.pytorch.org/whl/cu128 torch==2.11.0 torchaudio==2.11.0
+   uv pip install --python ~/edge-ai/beats/.venv/bin/python beat-this==1.1.0 soundfile
+   mkdir -p ~/edge-ai/beats/models
+   curl -fL -o ~/edge-ai/beats/models/final0.ckpt \
+       https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt
+   ```
+3. Install the binaries:
+   ```bash
+   install -m755 target/release/calliope-stems ~/.local/bin/
+   install -m755 src/calliope-stems/trackers/beat-this.sh ~/.local/bin/calliope-beats-beat-this
+   ```
+4. Smoke test: `BEATS_HOME=~/edge-ai/beats calliope-beats-beat-this song.flac /tmp/bt && head -c 300
+   /tmp/bt/beats.json` prints progress lines, then the JSON with `beats`, `downbeats` and `tracker` (which
+   names the device).
+5. In `~/.config/systemd/user/calliope-stems.service` add `Environment=BEATS_HOME=%h/edge-ai/beats` and
+   `--beat-tracker %h/.local/bin/calliope-beats-beat-this` (as in the example unit), then
+   `systemctl --user daemon-reload && systemctl --user restart calliope-stems`.
+6. From the laptop: `curl http://archserver:8765/v1/health` shows `"tasks":["stems","beats"]`.
+7. Optional: compare the licences in `~/edge-ai/beats/.venv/lib/python3.12/site-packages/*.dist-info/METADATA`
+   with `docs/licences.md`.
 
 The Python environment, `audio-separator` and the model weights are the owner's own install
 (`~/edge-ai/stems`); they are not part of this repository. Their licences are listed in
