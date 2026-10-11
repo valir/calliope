@@ -37,16 +37,16 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (audio output) | Laptop | `OutputBackend` trait: `CpalBackend` (default device), `NullBackend` (paced, optional WAV capture; the only backend in `e2e-hooks` builds), `ManualBackend` (unit tests) | Rust, `cpal` (ALSA on Linux) | `src/audio_out.rs` |
 | calliope-gui (editor engine) | Laptop | Editor sessions: load stems, lock-free render callback, transport, transient solo, clip indicator, events, remembered mixes, the backing save job, the mix waveform (0.3 s debounce, worker thread), the session's tempo map, the beat-detection job's start/cancel/outcome | Rust (std threads) | `src/editor.rs` (+ `src/editor_tests.rs`) |
 | calliope-gui (mix waveform) | Laptop | `mix_peaks` (2048 max-abs buckets of the checked stems' mix, the playback mixer's maths, cancellable) and `Debounce` (restartable 300 ms deadline, injected `Instant`s) | Rust, pure | `src/mix_waveform.rs` |
-| calliope-gui (tempo detection) | Laptop | Beats + downbeats (from the edge-AI server) → tempo sections: change points, BPM per section (0.1), anchor on the first downbeat, each change snapped to the previous section's 1/64 grid | Rust, pure | `src/tempo_detect.rs` |
-| calliope-gui (tempo store) | Laptop | `TempoStore` (load/replace a track's tempo map): `FileTempoStore` on `player.json`; the app's `PlayerTempoStore` goes through an open Player session under the `PlayerHost` lock | Rust | `src/tempo_store.rs`, `src/player_ipc.rs` |
+| calliope-gui (tempo detection) | Laptop | Beats + downbeats (from the edge-AI server) → tempo sections: glitch repair, optimal segmentation (sections ≥ 1 bar, > 4 % apart), BPM per section (0.1), anchor on the first downbeat, each change snapped to the previous section's 1/64-beat step and recorded as detected | Rust, pure | `src/tempo_detect.rs` |
+| calliope-gui (tempo store) | Laptop | `TempoStore` (load/replace a track's tempo map): `FileTempoStore` on `player.json`; the app's `PlayerTempoStore` works under the `PlayerHost` lock: `load` flushes an open Player session first, `replace` flushes and closes it (`PlayerManager::release`) before writing the file | Rust | `src/tempo_store.rs`, `src/player_ipc.rs` |
 | calliope-gui (beat detection job) | Laptop | Renders the current mix to a part file, uploads it to `POST /v1/beats`, waits, fetches and validates the beats, derives the sections, saves them through the `TempoStore`; phases, cancel, cleanup | Rust (own std thread) | `src/beat_detect.rs` (+ `src/beat_detect_tests.rs`) |
 | calliope-gui (backing render) | Laptop | Offline render of the mix to FLAC | Rust, `flacenc` | `src/backing_render.rs` |
-| calliope-gui (tempo map) | Laptop | Tempo segments, beat grid in 1/64-note ticks (16 per beat, `beats_per_bar` default 4), ms<->tick, snapping, "set BPM at position", beats in a range, loop boundary re-snapping, `move_change` (a section start moved in ticks of the left section, ±64 per move) | Rust, pure | `src/tempo_map.rs` |
-| calliope-gui (player state) | Laptop | `player.json` schema (lenient read, strict write, newer schema read-only), loop list operations, source choice rule, load/save | Rust + serde, pure | `src/player_state.rs` |
+| calliope-gui (tempo map) | Laptop | Tempo segments, beat grid in 1/64-note ticks (16 per beat, `beats_per_bar` default 4), ms<->tick, snapping, "set BPM at position", beats in a range, loop boundary re-snapping; detected changes (`Segment.detected_ms`): beat-rounded tick base, stretched last beat, `set_change_offset` (1/64-beat steps of the left tempo, ±256 = 4 beats from the detected position) | Rust, pure | `src/tempo_map.rs` |
+| calliope-gui (player state) | Laptop | `player.json` schema 2 (reads 1 and 2; lenient read, strict write, newer schema read-only), loop list operations, source choice rule, load/save | Rust + serde, pure | `src/player_state.rs` |
 | calliope-gui (player sources) | Laptop | Dropdown entries of a track (backing variants, `audio`, `original`, stems), decoding one into memory (FLAC: `claxon`; other formats: external `ffmpeg` piped to memory), waveform peaks (2048) | Rust | `src/player_source.rs` |
 | calliope-gui (metronome) | Laptop | Synthesised click (own sound), count-in plan, placing clicks in an output block | Rust, pure | `src/metronome.rs` |
-| calliope-gui (player engine) | Laptop | Player sessions: one decoded source, a callback-owned `Engine` (playback, count-in, loop repeats, metronome, fades) fed by a bounded command channel, transport + scrub rule, events, debounced `player.json` writes, `replace_tempo` (a map set from the Editor, pushed to the UI as a `snapshot` event) | Rust (std threads) | `src/player.rs` (+ `src/player_tests.rs`) |
-| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Editor: shared track tree + stem mixer + Mix lane with the mix waveform (tempo sections, draggable changes) and Autodetect BPM; Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform, control bar; Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
+| calliope-gui (player engine) | Laptop | Player sessions: one decoded source, a callback-owned `Engine` (playback, count-in, loop repeats, metronome, fades) fed by a bounded command channel, transport + scrub rule, events, debounced `player.json` writes, `release(id)` (flush + close + `closed` event when the Editor writes the tempo), `finish_open` re-reads a `player.json` changed since its off-lock load | Rust (std threads) | `src/player.rs` (+ `src/player_tests.rs`) |
+| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Editor: shared track tree + stem mixer + Mix lane with the mix waveform (tempo sections, draggable changes) and Autodetect BPM; Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform (loops + read-only tempo sections), control bar; Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
 | calliope-lib (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation (incl. the beats document, `check_beats`), FLAC STREAMINFO parser, FLAC audible-time scan (`flac_level`: 100 ms windows, RMS of the loudest channel above `AUDIBLE_LEVEL_DBFS = -40`, integer sum-of-squares comparison, peak for display; no 15 s decision), HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel). No Tauri/GTK | Rust; `serde`, `libc`, `claxon`, `ureq` 3 without TLS (feature) | `src/calliope-lib/` |
 | calliope-stems (edge-AI stems service) | archserver (LAN), deployed by hand as a systemd user unit | HTTP server for "calliope-stems API v1": validates FLAC uploads (≤ 15 min), queues jobs (1 running), runs a configurable separator command, measures each stem's audible time, serves the stems, cleans up; beat jobs (`POST /v1/beats`) run a configurable beat-tracker command in the same queue; `--measure FILE...` prints audible times without starting a server. No Tauri/GTK; the GUI doesn't depend on it | Rust; `tiny_http`, `calliope-lib` | `src/calliope-stems/` |
 | separator adapter | archserver | `<sep> <input.flac> <out_dir> <model>` → `<out_dir>/<stem>.flac`; the real one runs the owner's audio-separator venv with `htdemucs_6s` (frees VRAM from Ollama first) | bash | `src/calliope-stems/separators/audio-separator.sh` |
@@ -108,8 +108,8 @@ the GUI crate, `src/calliope-gui/`.
     `editor_stop(id)`, `editor_seek(id, position)`, `editor_nudge(id, delta)` (ms),
     `editor_set_stem(id, name, gain, unmuted)` (gain in dB or null = Off), `save_backing(id)`,
     `cancel_backing_save(id)`, beat detection and tempo (stems-beat-autodetect plan §2.11): `editor_detect(id)` (renders the
-    current mix and starts the detection job), `editor_cancel_detect(id)`, `editor_tempo(id, action)` (`move` {index, ticks} |
-    `reload`); player (gui-play-backing-track plan §2.9, in `src/player_ipc.rs`):
+    current mix and starts the detection job), `editor_cancel_detect(id)`, `editor_tempo(id, action)` (`move` {index, steps: absolute
+    offset from the detected position, -256..256} | `reload`); player (gui-play-backing-track plan §2.9, in `src/player_ipc.rs`):
     `open_player(id, events)`, `close_player()`, `get_player()`, `watch_player(events)`,
     `player_select_source(id, source)` (stops playback, keeps the position), `player_play(id)`, `player_pause(id)`, `player_seek(id, position)`,
     `player_nudge(id, delta)` (both with the 0.3 s scrub rule), `player_skip(id, delta)` (instant, Rew/FF),
@@ -158,7 +158,7 @@ the GUI crate, `src/calliope-gui/`.
   `editor stem name=<n> gain=<db|off> unmuted=<b>`, `editor saved id=<id> file=<f> clipped=<n>`,
   `editor waveform peaks=<count> max=<0..1>`, `editor detect start|cancel`, `editor detect phase=<p>`,
   `editor detected segments=<k> bpm=<a,b,..>`, `editor detect error message=<m>`,
-  `editor tempo move index=<i> ticks=<k> applied=<k'>`, `editor tempo reload segments=<k>`.
+  `editor tempo move index=<i> steps=<s> applied=<s'>`, `editor tempo reload segments=<k>`, `player reopen id=<id>`.
   Player: `player active id=<id> source=<key> sources=<n> mode=<bpm|time> loops=<n> position=<ms>`, `player inactive id=<id|none>`,
   `player source key=<key>`, `player play|pause position=<ms>`, `player seek position=<ms>`, `player skip delta=<ms>`,
   `player bpm value=<v> position=<ms>`, `player metronome on=<b> count_in=<b>`,
@@ -170,8 +170,9 @@ the GUI crate, `src/calliope-gui/`.
   `editor transport playing=<b> audible=<b> position_ms=<ms> solo=<n|none> clipping=<b>` (changes only),
   `editor saved id=<id> file=<f> bits=<b> clipped=<n>`, `editor peaks id=<id> gen=<n> ms=<ms>`,
   `editor detect id=<id> phase=<checking|mixing|uploading|waiting|detecting|applying>`,
-  `editor detected id=<id> beats=<n> downbeats=<m> bar_beats=<b> segments=<k> bpm=<..> starts_ms=<..>`,
-  `editor detect failed id=<id> message=<m>`, `editor detect cancelled id=<id>`, `tempo saved id=<id> via=<player|file> segments=<k>`, `player open id=<id> source=<key> duration_ms=<ms> rate=<hz> position_ms=<ms>`,
+  `editor detected id=<id> beats=<n> downbeats=<m> bar_beats=<b> sigma_ms=<s> segments=<k> bpm=<..> starts_ms=<..>`,
+  `editor detect failed id=<id> message=<m>`, `editor detect cancelled id=<id>`, `player released id=<id> flushed=<b>`,
+  `tempo saved id=<id> segments=<k> detected=<n>`, `player open id=<id> source=<key> duration_ms=<ms> rate=<hz> position_ms=<ms>`,
   `player transport playing=<b> counting_in=<b> loop=<n|none> position_ms=<ms>` (changes only),
   `player count-in clicks=3 beat_ms=<ms>`, `player wrap loop=<index, 0-based> count_in=<b>`, `player state saved id=<id>`,
   `player state error id=<id> message=<m>`.
@@ -243,8 +244,8 @@ the GUI crate, `src/calliope-gui/`.
   watcher; the Library rescans each time it is shown. A configured root that doesn't exist is
   never created (it may be an unmounted disk); the default root is created on first use.
 - **Player settings file `player.json`** (gui-play-backing-track plan §2.3-2.5), next to `track.json`:
-  `{"schema_version": 1, "source": "backing:<id>"|"audio"|"original"|"stem:<name>", "position_ms": <int>, "tempo": {"beats_per_bar": 4,
-  "segments": [{"start_ms": <number>, "bpm": <20..300>}]}, "speed": <0.5..1.5>, "metronome": {"on", "count_in"},
+  `{"schema_version": 2, "source": "backing:<id>"|"audio"|"original"|"stem:<name>", "position_ms": <int>, "tempo": {"beats_per_bar": 4,
+  "segments": [{"start_ms": <number>, "bpm": <20..300>[, "detected_ms": <number>]}]}, "speed": <0.5..1.5>, "metronome": {"on", "count_in"},
   "loops": [{"id", "start": {"tick": <int>}|{"ms": <number>}, "end": <same>|null, "repeat", "count_in"}], "current_loop": <id|null>}`.
   `end: null` = a loop created with `+` whose end is not set yet (no repeat, Play disabled, only its start mark drawn).
   The playback position is saved per track (on pause/seek/leave/switch/exit and every 10 s while playing).
@@ -255,11 +256,22 @@ the GUI crate, `src/calliope-gui/`.
   (bad parts dropped, unknown fields kept), a newer `schema_version` is never overwritten. Library scans ignore it,
   Export copies it, Delete moves it with the folder. `player.json` is reserved as a file name like `track.json`
   (`fsutil::validate_file_name`).
+  **Schema 2** (stems-beat-autodetect plan §2.3): a segment may carry `detected_ms`, the position beat detection gave that
+  tempo change (never on the first segment). Such a *detected change* starts its section on a beat: its tick base is rounded
+  to the nearest whole beat of the global count and the 16 ticks of the left section's last beat are spread linearly up to
+  `start_ms` (a stretched beat of 1/2..3/2 beats); it moves in 1/64-beat steps of the left tempo, at most ±256 steps from
+  `detected_ms`. Typed changes keep the tick rule; loops still snap to 1/64 notes. Schema 1 files are read as before
+  (they have no detected changes); writes are schema 2, so older builds treat the file as newer and never overwrite it.
+  Typing a BPM at a detected change's start keeps its `detected_ms`; removing or merging a segment drops it; a new
+  detection replaces the whole map.
   **The track's one tempo map** (stems-beat-autodetect plan §2.2): `tempo` in `player.json` is also written by the Editor
-  (Autodetect BPM, moving a tempo change) through `TempoStore::replace`, under the `PlayerHost` lock: through the Player's
-  session when it has the track open (`PlayerManager::replace_tempo`, `PlayerEvent::Snapshot` to the UI), else load → apply →
-  `write_atomic` of the file. Same rules as a typed BPM: loops re-snapped keeping their time, `speed` 1.0, other fields kept,
-  a newer schema never overwritten. The Editor reads the map through the store at open and on each Editor view entry.
+  (Autodetect BPM, moving a detected change) through `TempoStore::replace`, entirely under the `PlayerHost` lock: if the
+  Player holds the track, its pending state is flushed and its session closed (`PlayerEvent::Closed`; the Player view
+  reopens the track when it is shown), then the file is loaded → tempo replaced (loops re-snapped keeping their time,
+  `speed` 1.0, position and other fields kept) → `write_atomic`. A failed flush refuses the write. The Player's
+  `finish_open` re-reads a `player.json` whose revision changed since its off-lock load, so neither side loses the
+  other's write. The Editor reads the map through the store (flushing an open Player session) at open and on each Editor
+  view entry.
 - **Edge-AI stems protocol ("calliope-stems API v1")**, types and client in
   `calliope-lib` (`stems_api`, `stems_client`), server `calliope-stems`; plain HTTP on the
   LAN, base URL from settings (e.g. `http://archserver:8765`); full table in the
@@ -1067,7 +1079,7 @@ compatible (MPL is file-level copyleft and covers only Calliope's own files). Co
 symphonia's MPL-2.0 licence, may be reconsidered by the owner (not lifted). LGPL code linked statically would still
 bring relinking obligations for distributed binaries.
 
-### 2026-10-11: Beat detection = Beat This! on archserver behind additive `calliope-stems` endpoints; the app derives the tempo sections   (feature: stems-beat-autodetect; direction accepted by the owner in gui-play-backing-track, details pending plan Q3)
+### 2026-10-11: Beat detection = Beat This! on archserver behind additive `calliope-stems` endpoints; the app derives the tempo sections   (feature: stems-beat-autodetect; owner decision, training-data note accepted)
 The spec delegates AI processing to `calliope-stems`. Beat This! 1.1.0 (CPJKU) finds beats and downbeats without assuming
 one tempo; its code and published weights are MIT (some training data is not, noted in `docs/licences.md`). Choice: a
 configurable **beat-tracker command** with a small contract (`<tracker> <input.flac> <out_dir>` → `beats.json`), exactly
@@ -1079,27 +1091,36 @@ them into sections (`tempo_detect`), the same "server measures, app decides" spl
 non-AI detector in Rust (weaker on real music and tempo changes), madmom (non-commercial models), aubio/Essentia (GPL/AGPL),
 librosa (one tempo only), a new API version (unnecessary for additive routes).
 
-### 2026-10-11: One tempo map per track, in `player.json`, shared by the Editor and the Player   (feature: stems-beat-autodetect; pending plan Q1)
+### 2026-10-11: One tempo map per track, in `player.json`; the Editor's writes close the Player's session   (feature: stems-beat-autodetect; owner decisions 1 and 8a)
 The detected tempo serves the metronome and count-in, which read `player.json`, and all sources of a track are
-sample-aligned. Choice: the Editor writes the same `tempo` through a `TempoStore`: under the `PlayerHost` lock, through the
-Player's session when it holds the track (so neither side overwrites the other; the Player UI gets a `snapshot` event), else
-straight to the file with the Player's rules (loops re-snapped keeping their time, speed 1.0, newer schema never
-overwritten). Detection replaces the whole map; the raw beats are not stored. Alternatives: `track.json` (Player change,
-revision churn on every typed BPM, Library save conflicts), a copy per backing variant (goes stale). The 2026-10-11
-`player.json` entry's note still holds: the map may move into `track.json` with `gui-manipulate-backing-track`.
+sample-aligned, so the Editor writes the same `tempo`. Choice (owner): no live hand-over. `TempoStore::replace` runs under
+the `PlayerHost` lock, flushes and closes a Player session holding the track, then rewrites the file from its flushed
+content (only `tempo`, the loops' ticks re-expressed at the same times, and `speed` change). The Player reopens the track
+when next shown; `finish_open` re-reads a file whose revision changed since its off-lock load. So the Editor never loses
+the Player's loops or position, and the Player can never write the old tempo back. Detection replaces the whole map
+without a dialog; the raw beats are not stored. Alternatives: pushing the new map into the open session (rejected by the
+owner), `track.json` (Player change, revision churn on every typed BPM), a copy per backing variant (goes stale). The
+2026-10-11 `player.json` entry's note still holds: the map may move into `track.json` with `gui-manipulate-backing-track`.
 
-### 2026-10-11: Tempo changes snap to the previous section's 1/64 grid; moves are ±4 beats per gesture   (feature: stems-beat-autodetect; pending plan Q4-Q6)
-Detected sections: a change is a > 4 % tempo difference sustained for 8 beats, sections ≥ 2 bars, BPM by least squares
-rounded to 0.1, the first segment anchored on the first downbeat with the quantisation drift centred, and each later start
-placed on the nearest 1/64-note tick of the map built so far (the `set_bpm_at` rule), so tick bases stay integers.
-`tempo_map::move_change` moves a start in ticks of the left section (±64 = 4 beats per call, clamped one beat from both
-neighbours) and re-snaps later starts so they keep their time; the frontend's drag preview uses the same clamp. 4/4 stays.
+### 2026-10-11: Detected tempo changes: 1/64-beat positions in ms with a stored detected position; `player.json` schema 2   (feature: stems-beat-autodetect; owner decisions 4-6)
+The owner set the move step to 1/64 of a beat (4 beats = 256 steps) and the limit to ±4 beats from the detected position
+in total, and allowed sections of one bar. The tick grid (1/16 beat) holds the Player's loops, so it stays. Choice: change
+positions stay in `start_ms` (as before) and a detected change also stores `detected_ms`; it is placed and moved in
+`fine_ms = 60000/(bpm*64)` steps of its left section's tempo, always measured from `detected_ms` (the frontend sends the
+absolute offset). A detected change starts its section on a beat: its tick base rounds to the nearest whole beat and the
+left section's last beat is stretched to reach it, keeping `ms_at`/`tick_near` monotonic and inverse. Typed changes, loop
+snapping and existing maps are unchanged. `player.json` becomes schema 2 so older builds can't drop `detected_ms` or
+re-round bases. Sections come from an optimal segmentation (least-squares line per section, PELT, penalty from the measured
+beat jitter), at least 4 beats long, merged when within 4 %; isolated missed/double beats are repaired first. A 1-bar
+section is found when it differs by > 4 % and the jitter is ≤ about 10 ms. Alternatives: raising `TICKS_PER_BEAT` to 64
+(changes how every loop snaps, needs a loop migration), a second fine tick grid (two grids to keep consistent), the
+earlier median rule (cannot see a 1-bar section), per-gesture limits (rejected by the owner).
 
 ### 2026-10-11: The Editor's mix waveform is computed in Rust, debounced 0.3 s, on a worker thread   (feature: stems-beat-autodetect)
 The frontend never keeps time, so the 0.3 s restartable wait is a pure `Debounce` in the editor session driven by the
 20 ms ticker with injected `Instant`s. The peaks are the playback mixer's own maths over the in-memory i16 stems (what Play
 and Save produce), on a worker thread that never takes the manager lock, with a generation number and a cancel flag, so
 IPC, playback and the audio callback never wait. 2048 buckets, same bucket rule as the Player's peaks. The Player's canvas
-component became props-driven and is shared (no visible Player change). Alternatives: summing per-stem peak envelopes
+component became props-driven and is shared; the Player shows the tempo sections read-only (owner 8b, 8c). Alternatives: summing per-stem peak envelopes
 (wrong: max of a sum is not a sum of maxes), recomputing in the webview (needs the PCM in JS), a frontend timer (keeps time
 in JS).
