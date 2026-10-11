@@ -104,7 +104,8 @@ describe('BPM and metronome', () => {
     await open(timestamps());
     expect(input('BPM').value).toBe('0');
     for (const n of ['On/Off', 'Count In']) expect(btn('Metronome', n).disabled).toBe(true);
-    for (const n of ['Slower', 'Faster', 'Reset', 'Detect']) expect(btn('BPM', n).disabled).toBe(true);
+    for (const n of ['Slower', 'Faster', 'Reset']) expect(btn('BPM', n).disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Detect' })).toBeNull();
   });
 });
 

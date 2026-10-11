@@ -64,7 +64,6 @@
     <Button variant="outline" class="h-[3.25rem] w-14 text-xl" disabled title={HINT} aria-label="Slower">-</Button>
     <Button variant="outline" class="h-[3.25rem] w-14 text-xl" disabled title={HINT} aria-label="Faster">+</Button>
     <Button variant="outline" class="h-[3.25rem] text-lg" disabled title={HINT}>Reset</Button>
-    <Button variant="outline" class="h-[3.25rem] text-lg" disabled title={HINT}>Detect</Button>
   </div>
   <span class="min-h-5 text-sm {invalid ? 'text-destructive' : 'text-muted-foreground'}" role={invalid ? 'alert' : undefined} data-testid="bpm-note">{invalid ?? HINT}</span>
 </div>

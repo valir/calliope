@@ -116,17 +116,17 @@ describe('AC13: track without tempo', () => {
     expect(btn('BPM', 'Slower').disabled).toBe(true);
     expect(btn('BPM', 'Faster').disabled).toBe(true);
     expect(btn('BPM', 'Reset').disabled).toBe(true);
-    expect(btn('BPM', 'Detect').disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Detect' })).toBeNull();
   });
 
-  it('on a track with a tempo (increment A) -, +, Reset and Detect stay disabled but Metronome works', async () => {
+  it('on a track with a tempo (increment A) -, +, Reset stay disabled but Metronome works', async () => {
     snap = bpmSnap();
     render(PlayerView);
     await openTrack(snap);
     expect(input('BPM').value).toBe('120');
     expect(btn('Metronome', 'On/Off').disabled).toBe(false);
     expect(btn('Metronome', 'Count In').disabled).toBe(false);
-    for (const n of ['Slower', 'Faster', 'Reset', 'Detect']) expect(btn('BPM', n).disabled, n).toBe(true);
+    for (const n of ['Slower', 'Faster', 'Reset']) expect(btn('BPM', n).disabled, n).toBe(true);
     await fireEvent.click(btn('Metronome', 'On/Off'));
     await flush();
     expect(of('player_metronome')).toHaveLength(1);
