@@ -121,7 +121,7 @@ fn parse_tempo(v: Option<&Value>) -> TempoMap {
             let start_ms = s.get("start_ms").and_then(Value::as_f64).filter(|m| m.abs() <= MAX_SEGMENT_MS);
             let bpm = s.get("bpm").and_then(Value::as_f64).filter(|b| (MIN_BPM..=MAX_BPM).contains(b));
             if let (Some(start_ms), Some(bpm)) = (start_ms, bpm) {
-                map.segments.push(Segment { start_ms, bpm });
+                map.segments.push(Segment { start_ms, bpm, detected_ms: None });
             }
         }
         map.segments.sort_by(|a, b| a.start_ms.total_cmp(&b.start_ms));
@@ -431,7 +431,7 @@ mod tests {
     }
 
     fn bpm_state() -> PlayerState {
-        let tempo = TempoMap { beats_per_bar: 4, segments: vec![Segment { start_ms: 500.0, bpm: 120.0 }] };
+        let tempo = TempoMap { beats_per_bar: 4, segments: vec![Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None }] };
         PlayerState { tempo, ..PlayerState::default() }
     }
 
@@ -480,7 +480,7 @@ mod tests {
         assert!(note.is_none());
         assert_eq!(st.speed, MAX_SPEED);
         assert_eq!(st.position_ms, 0);
-        assert_eq!(st.tempo.segments, vec![Segment { start_ms: 10.0, bpm: 100.0 }]);
+        assert_eq!(st.tempo.segments, vec![Segment { start_ms: 10.0, bpm: 100.0, detected_ms: None }]);
         assert_eq!(st.tempo.beats_per_bar, 3);
         let ids: Vec<_> = st.loops.iter().map(|l| l.id.as_str()).collect();
         assert_eq!(ids, ["c", "a"]);
