@@ -5,6 +5,7 @@
   import LoopsSection from './LoopsSection.svelte';
   import MetronomeSection from './MetronomeSection.svelte';
   import PlaybackSection from './PlaybackSection.svelte';
+  import WaveformView from './WaveformView.svelte';
   import SourceSelect from './SourceSelect.svelte';
 
   const track = $derived(selectedTrack());
@@ -30,7 +31,7 @@
   <p class="min-h-0 flex-1 rounded-lg border border-dashed border-border p-6 text-lg" data-testid="placeholder">
     The tablature will be shown here (gui-tablatures).
   </p>
-  <div class="h-24 shrink-0 rounded-lg border border-border" data-testid="player-waveform"></div>
+  <WaveformView />
   <div class="flex shrink-0 flex-wrap gap-3" data-testid="player-controls">
     <BpmSection />
     <MetronomeSection />

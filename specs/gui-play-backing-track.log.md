@@ -13,3 +13,4 @@ task 11 | Waveform geometry | local (wrote to the wrong folder; moved and verifi
 task 12 | Player view layout, collapsible tree, select, settings placeholders | implementer | done
 task 13 | Player frontend state | implementer | done
 task 14 | Control bar sections | implementer | done
+task 15 | Waveform view | implementer | done
