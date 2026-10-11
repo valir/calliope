@@ -175,4 +175,19 @@ describe('playback', () => {
     await flush();
     expect(of('player_skip').map((c) => c.delta)).toEqual([-5000, 5000]);
   });
+
+  it('the moving position slider does not seek by itself; a key on it does', async () => {
+    await open(withTempo());
+    for (const p of [3530, 3790, 3849, 3911]) {
+      channel.onmessage({ kind: 'transport', id: practice.id, ...idle, playing: true, position_ms: p });
+      await flush();
+    }
+    expect(of('player_seek')).toHaveLength(0);
+    const slider = screen.getByRole('slider', { name: 'Position' });
+    slider.focus();
+    await fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    await fireEvent.keyUp(slider, { key: 'ArrowRight' });
+    await flush();
+    expect(of('player_seek').length).toBeGreaterThan(0);
+  });
 });

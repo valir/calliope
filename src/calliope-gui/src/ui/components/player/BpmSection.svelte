@@ -42,7 +42,7 @@
 </script>
 
 <div class="flex flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="BPM">
-  <div class="flex items-center gap-2">
+  <div class="flex flex-wrap items-center gap-2">
     <label for="bpm-field" class="text-lg font-semibold">BPM</label>
     <input
       id="bpm-field"
@@ -60,7 +60,7 @@
       V
     </label>
   </div>
-  <div class="flex items-center gap-2">
+  <div class="flex flex-wrap items-center gap-2">
     <Button variant="outline" class="h-[3.25rem] w-14 text-xl" disabled title={HINT} aria-label="Slower">-</Button>
     <Button variant="outline" class="h-[3.25rem] w-14 text-xl" disabled title={HINT} aria-label="Faster">+</Button>
     <Button variant="outline" class="h-[3.25rem] text-lg" disabled title={HINT}>Reset</Button>

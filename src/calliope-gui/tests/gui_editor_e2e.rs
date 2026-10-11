@@ -11,8 +11,6 @@
 mod common;
 
 use common::*;
-use std::path::Path;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 fn ready() -> bool {
@@ -46,58 +44,6 @@ fn secs(s: u64) -> Duration {
 fn finish(app: &App) {
     app.no_csp_violation();
     app.assert_no_real_audio();
-}
-
-// ---- audio analysis ----
-
-/// Interleaved stereo f32 samples of the capture WAV from byte `from` of the file (the header
-/// is 44 bytes; its sizes are only patched when the stream closes, so they are ignored).
-fn capture_from(path: &Path, from: usize) -> Vec<f32> {
-    let b = std::fs::read(path).unwrap();
-    let from = from.max(44) & !7;
-    b[from.min(b.len())..].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
-}
-
-fn capture_len(path: &Path) -> usize {
-    std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0)
-}
-
-/// Mean power of `freq` in the left channel (Goertzel).
-fn tone_power(stereo: &[f32], rate: f64, freq: f64) -> f64 {
-    let left: Vec<f64> = stereo.chunks_exact(2).map(|c| f64::from(c[0])).collect();
-    let n = left.len();
-    assert!(n > 1000, "too little audio: {n} frames");
-    let w = 2.0 * std::f64::consts::PI * freq / rate;
-    let coeff = 2.0 * w.cos();
-    let (mut s1, mut s2) = (0.0, 0.0);
-    for x in &left {
-        let s0 = x + coeff * s1 - s2;
-        s2 = s1;
-        s1 = s0;
-    }
-    let p = s1 * s1 + s2 * s2 - coeff * s1 * s2;
-    p / (n as f64 * n as f64)
-}
-
-fn db(a: f64, b: f64) -> f64 {
-    10.0 * ((a + 1e-30) / (b + 1e-30)).log10()
-}
-
-/// Decodes any audio file to interleaved stereo f32 with ffmpeg.
-fn decode(path: &Path) -> Vec<f32> {
-    let o = Command::new("ffmpeg")
-        .args(["-nostdin", "-v", "error", "-i"])
-        .arg(path)
-        .args(["-f", "f32le", "-ac", "2", "-"])
-        .output()
-        .unwrap();
-    assert!(o.status.success(), "ffmpeg decode of {}", path.display());
-    o.stdout.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
-}
-
-fn rate_of(app: &App) -> f64 {
-    let l = app.all_lines().into_iter().rev().find(|l| l.contains("audio backend=")).expect("audio backend line");
-    field(&l, "rate").parse().unwrap()
 }
 
 // ---- tests ----

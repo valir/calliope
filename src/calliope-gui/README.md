@@ -52,6 +52,9 @@ Starts the Vite dev server with hot reload plus the debug app. It uses a dev-onl
 
 * Alt+1 ... Alt+6: Library, Import, Editor, Playlists, Player, Settings
 * Ctrl+B: collapse navigation
+* Player (Alt+5): Space play/pause, b / e mark the loop start / end, Left / Right previous / next loop,
+  l or Shift+L loop on/off, Ctrl+L collapse the track tree, Ctrl+F search. The letter keys do nothing
+  while a field, button or the source dropdown has the focus.
 
 ## Track repository
 
@@ -84,6 +87,28 @@ The Editor view (Alt+3) mixes the stems of the track selected in the tree into a
   `e2e-hooks` can only use it; `CALLIOPE_E2E_AUDIO=capture:<path>` also writes what would have
   been heard to a WAV).
 * To try it: copy `tests/fixtures/library-editor` to a new folder and choose it in Settings.
+
+## Player
+
+The Player view (Alt+5) plays the track selected in the tree (the same tree as the Library and the Editor;
+Ctrl+L folds it to a narrow rail).
+
+* "Play:" chooses the audio: the backings, the plain audio, the original mix or one stem. Changing it
+  stops playback and keeps the position.
+* The waveform shows the whole source, the playhead and the loops (the current loop in amber, a loop
+  without an end as a start mark only).
+* BPM: type a tempo (20 to 300; 0 clears it) to place it at the playback position. Metronome: On/Off
+  clicks on the beat, Count In plays three clicks before the audio starts. The bar fields of the loops
+  need a BPM; without one they show times.
+* Playback: Rew / FF jump 5 s, the time field takes a time (the mouse wheel nudges by 100 ms), the
+  slider seeks.
+* Loops: "+" starts a loop at the position (it has no end until you press "<"), ">" and "<" set the
+  start and end at the position, Prev/Next select, "-" removes. The loop Play button plays the current
+  loop; Loop On repeats it, Count-In counts in before every pass.
+* Everything is saved by itself in `player.json` next to `track.json` (source, tempo, metronome,
+  loops, position) and restored the next time the track is opened.
+* Audio output and tests: as for the Editor. To try it, copy `tests/fixtures/library-player` to a new
+  folder and choose it in Settings.
 
 ## Import and stem extraction
 

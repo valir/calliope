@@ -81,6 +81,6 @@
   bind:this={canvas}
   role="img"
   aria-label={label}
-  class="h-24 w-full shrink-0 rounded-lg border border-border"
+  class="h-20 w-full shrink-0 rounded-lg border border-border"
   data-testid="player-waveform"
 ></canvas>

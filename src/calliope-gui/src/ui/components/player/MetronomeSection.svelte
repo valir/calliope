@@ -5,7 +5,7 @@
   const usable = $derived(pl.status === 'active' && pl.snap?.mode === 'bpm');
   const on = $derived(pl.snap?.metronome.on ?? false);
   const countIn = $derived(pl.snap?.metronome.count_in ?? false);
-  const pressed = 'bg-amber-500 text-black hover:bg-amber-500/90';
+  const pressed = 'bg-amber-500! text-black! hover:bg-amber-500/90!';
 </script>
 
 <div class="flex flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Metronome">

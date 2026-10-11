@@ -159,7 +159,7 @@ the GUI crate, `src/calliope-gui/`.
   `editor transport playing=<b> audible=<b> position_ms=<ms> solo=<n|none> clipping=<b>` (changes only),
   `editor saved id=<id> file=<f> bits=<b> clipped=<n>`, `player open id=<id> source=<key> duration_ms=<ms> rate=<hz> position_ms=<ms>`,
   `player transport playing=<b> counting_in=<b> loop=<n|none> position_ms=<ms>` (changes only),
-  `player count-in clicks=3 beat_ms=<ms>`, `player wrap loop=<n> count_in=<b>`, `player state saved id=<id>`,
+  `player count-in clicks=3 beat_ms=<ms>`, `player wrap loop=<index, 0-based> count_in=<b>`, `player state saved id=<id>`,
   `player state error id=<id> message=<m>`.
 - **Settings file**: `$XDG_CONFIG_HOME/app.calliope.gui/settings.json` (Tauri
   `app_config_dir()`), e.g. `{"theme": "dark", "repository_root": null, "edge_ai_url": null, "keep_original": false}`

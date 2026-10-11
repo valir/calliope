@@ -135,3 +135,19 @@
   slider. Control sizes: buttons 3.25 rem high, Play 4.5 rem wide.
 - Known limit: at 1024x640 only about 1.5 stem lanes are visible above the Mix lane, so six
   stems need scrolling. Collapsing the navigation (Ctrl+B) gives the lanes more width.
+- (gui-play-backing-track, task 17) Player layout. Left the shared track tree (20 rem, Ctrl+L folds it to
+  a rail), right the pane: source row ("Play:" dropdown 15 rem wide, then the title), the dashed
+  tablature placeholder (one line, it gives way first), the waveform (5 rem), then the control bar:
+  BPM and Metronome, Playback and Loops as bordered groups in a wrapping row. With the tree folded at
+  1280x800 everything fits without scrolling (BPM + Metronome, Playback, Loops in two rows); with the
+  tree shown, or at 1024x640, the pane scrolls vertically (never sideways: the groups wrap inside
+  themselves). Nothing moves when state changes (every message has a reserved line).
+- Toggle buttons that are on (Metronome On/Off and Count In, Loop On, loop Count-In) are filled amber
+  with dark text in both themes. The `bg-amber-500!` form is needed because the outline button variant
+  sets its own dark-theme fill. Waveform marks use `--primary` (amber); the current loop is solid, the
+  others 55% opacity, a loop without an end is a start line only; the playhead is a 1 px foreground line.
+- Player keys: Space, b, e, Left, Right, l / Shift+L, Ctrl+L, Ctrl+F; they are ignored while a form
+  control or the select has the focus, so Space still presses a focused button.
+- Known limits: at 1024x640 the controls need scrolling (about 1.5 screens high with the tree
+  shown), and the unfilled part of the position slider is faint in the light theme (the slider is
+  shared with the Editor).

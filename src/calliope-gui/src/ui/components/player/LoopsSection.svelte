@@ -17,7 +17,7 @@
       ? Math.min(100, Math.max(0, Math.round(((pl.transport.position_ms - cur.start_ms) / (cur.end_ms - cur.start_ms)) * 100)))
       : 0,
   );
-  const pressed = 'bg-amber-500 text-black hover:bg-amber-500/90';
+  const pressed = 'bg-amber-500! text-black! hover:bg-amber-500/90!';
 
   function show(b: Boundary | null, ms: number | null): string {
     if (b === null) return '';
@@ -69,19 +69,19 @@
   }
   const flags = (repeat: boolean, count_in: boolean): void => void loop({ kind: 'flags', repeat, count_in });
   const btn = 'h-[3.25rem] text-lg';
-  const box = 'w-28 rounded-md border border-input bg-background px-2 py-1 text-center text-xl tabular-nums';
+  const box = 'w-24 rounded-md border border-input bg-background px-2 py-1 text-center text-xl tabular-nums';
 </script>
 
-<div class="flex min-w-0 flex-1 flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Loops">
+<div class="flex w-full flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Loops">
   <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
-    <div class="flex items-center gap-2" role="group" aria-label="Loop list">
+    <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Loop list">
       <Button variant="outline" class={btn} disabled={!active || !cur} onclick={() => void loop({ kind: 'select', delta: -1 })}>Prev</Button>
       <Button variant="outline" class="{btn} w-14" disabled={!active} aria-label="Add loop" onclick={() => void loop({ kind: 'add' })}>+</Button>
       <input type="text" readonly tabindex="-1" class="w-20 rounded-md border border-input bg-background px-2 py-1 text-center text-xl tabular-nums" aria-label="Loop" data-testid="loop-box" value={boxText} />
       <Button variant="outline" class="{btn} w-14" disabled={!active || !cur} aria-label="Remove loop" onclick={() => void loop({ kind: 'remove' })}>-</Button>
       <Button variant="outline" class={btn} disabled={!active || !cur} onclick={() => void loop({ kind: 'select', delta: 1 })}>Next</Button>
     </div>
-    <div class="flex items-center gap-2" role="group" aria-label="Loop range">
+    <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Loop range">
       <Button variant="outline" class="{btn} w-14" disabled={!active || !cur} aria-label="Mark start" onclick={() => void loop({ kind: 'mark', edge: 'start' })}>&gt;</Button>
       <input
         type="text" class={box} aria-label="bar1" placeholder="start" disabled={!active || !cur}
@@ -91,7 +91,7 @@
       />
       <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
       <div
-        class="relative h-2 w-32 shrink-0 overflow-hidden rounded-full bg-muted"
+        class="relative h-2 w-20 shrink-0 overflow-hidden rounded-full bg-muted"
         role="slider"
         aria-label="Position in the loop"
         aria-readonly="true"
@@ -113,7 +113,7 @@
       />
       <Button variant="outline" class="{btn} w-14" disabled={!active || !cur} aria-label="Mark end" onclick={() => void loop({ kind: 'mark', edge: 'end' })}>&lt;</Button>
     </div>
-    <div class="flex items-center gap-2" role="group" aria-label="Loop playback">
+    <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Loop playback">
       <Button class="{btn} w-24" disabled={!active || !complete} onclick={() => void loop({ kind: pl.transport.loop_playing ? 'stop' : 'play' })}>
         {pl.transport.loop_playing ? 'Stop' : 'Play'}
       </Button>

@@ -648,3 +648,170 @@ impl App {
         assert!(!lines.iter().any(|l| l.contains("audio backend=") && !(l.contains("backend=capture") || l.contains("backend=null"))));
     }
 }
+
+
+// ---- audio analysis (Editor and Player tests) ----
+
+/// Interleaved stereo f32 samples of the capture WAV from byte `from` of the file (the header
+/// is 44 bytes; its sizes are only patched when the stream closes, so they are ignored).
+pub fn capture_from(path: &Path, from: usize) -> Vec<f32> {
+    let b = std::fs::read(path).unwrap();
+    let from = from.max(44) & !7;
+    b[from.min(b.len())..].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+}
+
+pub fn capture_len(path: &Path) -> usize {
+    std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0)
+}
+
+/// Mean power of `freq` in the left channel (Goertzel).
+pub fn tone_power(stereo: &[f32], rate: f64, freq: f64) -> f64 {
+    let left: Vec<f64> = stereo.chunks_exact(2).map(|c| f64::from(c[0])).collect();
+    let n = left.len();
+    assert!(n > 1000, "too little audio: {n} frames");
+    let w = 2.0 * std::f64::consts::PI * freq / rate;
+    let coeff = 2.0 * w.cos();
+    let (mut s1, mut s2) = (0.0, 0.0);
+    for x in &left {
+        let s0 = x + coeff * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    let p = s1 * s1 + s2 * s2 - coeff * s1 * s2;
+    p / (n as f64 * n as f64)
+}
+
+pub fn db(a: f64, b: f64) -> f64 {
+    10.0 * ((a + 1e-30) / (b + 1e-30)).log10()
+}
+
+/// Decodes any audio file to interleaved stereo f32 with ffmpeg.
+pub fn decode(path: &Path) -> Vec<f32> {
+    let o = Command::new("ffmpeg")
+        .args(["-nostdin", "-v", "error", "-i"])
+        .arg(path)
+        .args(["-f", "f32le", "-ac", "2", "-"])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "ffmpeg decode of {}", path.display());
+    o.stdout.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+}
+
+pub fn rate_of(app: &App) -> f64 {
+    let l = app.all_lines().into_iter().rev().find(|l| l.contains("audio backend=")).expect("audio backend line");
+    field(&l, "rate").parse().unwrap()
+}
+
+
+/// Onsets (ms from the start of `stereo`) of clicks in the 1.5 and 2 kHz band: windows of 4 ms
+/// every 1 ms; an onset is the first window whose band power passes 25% of the maximum after
+/// at least 100 ms below it.
+pub fn click_onsets_ms(stereo: &[f32], rate: f64) -> Vec<f64> {
+    let left: Vec<f64> = stereo.chunks_exact(2).map(|c| f64::from(c[0])).collect();
+    let win = (rate * 0.004) as usize;
+    let hop = (rate * 0.001) as usize;
+    let power = |start: usize, hz: f64| {
+        let w = 2.0 * std::f64::consts::PI * hz / rate;
+        let coeff = 2.0 * w.cos();
+        let (mut s1, mut s2) = (0.0, 0.0);
+        for x in &left[start..start + win] {
+            let s0 = x + coeff * s1 - s2;
+            s2 = s1;
+            s1 = s0;
+        }
+        s1 * s1 + s2 * s2 - coeff * s1 * s2
+    };
+    let mut p = Vec::new();
+    let mut i = 0;
+    while i + win <= left.len() {
+        p.push(power(i, 1500.0) + power(i, 2000.0));
+        i += hop;
+    }
+    let max = p.iter().cloned().fold(0.0, f64::max);
+    let mut out = Vec::new();
+    let mut quiet = usize::MAX / 2;
+    for (k, v) in p.iter().enumerate() {
+        if *v > max * 0.25 {
+            if quiet >= 100 {
+                out.push(k as f64);
+            }
+            quiet = 0;
+        } else {
+            quiet = quiet.saturating_add(1);
+        }
+    }
+    out
+}
+
+/// Time (ms from the start of `stereo`) at which a tone of `freq` starts: the first 10 ms
+/// window holding a quarter of the maximum power is half filled, so its middle is the onset.
+pub fn tone_start_ms(stereo: &[f32], rate: f64, freq: f64) -> Option<f64> {
+    let left: Vec<f64> = stereo.chunks_exact(2).map(|c| f64::from(c[0])).collect();
+    let win = (rate * 0.01) as usize;
+    let hop = (rate * 0.001) as usize;
+    let w = 2.0 * std::f64::consts::PI * freq / rate;
+    let coeff = 2.0 * w.cos();
+    let mut p = Vec::new();
+    let mut i = 0;
+    while i + win <= left.len() {
+        let (mut s1, mut s2) = (0.0, 0.0);
+        for x in &left[i..i + win] {
+            let s0 = x + coeff * s1 - s2;
+            s2 = s1;
+            s1 = s0;
+        }
+        p.push(s1 * s1 + s2 * s2 - coeff * s1 * s2);
+        i += hop;
+    }
+    let max = p.iter().cloned().fold(0.0, f64::max);
+    p.iter().position(|v| *v > max * 0.25).map(|k| (k * hop + win / 2) as f64 * 1000.0 / rate)
+}
+
+impl App {
+    /// Marks every line logged so far as consumed, so `wait_line` only sees new ones.
+    pub fn skip_seen(&mut self) {
+        self.seen = self.lines.lock().unwrap().len();
+    }
+}
+
+// ---- player helpers ----
+
+pub const PL_PRACTICE: &str = "0199c0a0-0000-7000-8000-000000000301";
+pub const PL_STEMS: &str = "0199c0a0-0000-7000-8000-000000000302";
+pub const PL_MP3: &str = "0199c0a0-0000-7000-8000-000000000303";
+pub const PL_TEMPO: &str = "0199c0a0-0000-7000-8000-000000000304";
+pub const PL_MISSING_BACKING: &str = "0199c0a0-0000-7000-8000-000000000305";
+pub const PL_MISSING_AUDIO: &str = "0199c0a0-0000-7000-8000-000000000306";
+
+impl Dirs {
+    pub fn player_json(&self, id: &str) -> PathBuf {
+        self.track_dir(id).join("player.json")
+    }
+}
+
+/// A temp dir with the `library-player` fixture as the default repository.
+pub fn player_dirs(test: &str) -> Dirs {
+    let dirs = Dirs::new(test);
+    assert!(dirs.0.starts_with(repo().join("target")), "temp dir is not under target/");
+    copy_dir(&root().join("tests/fixtures/library-player"), &dirs.repo());
+    dirs
+}
+
+/// Starts the e2e app on the Player fixture with the capturing fake audio backend (never a real
+/// device), floats the window at 1280x800 and opens the Player (Alt+5). Works on the same dirs
+/// again after a restart (the capture file is rewritten).
+pub fn start_player(dirs: &Dirs) -> (App, String) {
+    if !cfg!(feature = "e2e-hooks") {
+        panic!("Player GUI tests need --features e2e-hooks; without it the app would open the real sound device");
+    }
+    let audio = format!("capture:{}", dirs.capture().display());
+    let mut app = App::start_with(dirs, true, &[("CALLIOPE_E2E_AUDIO", Path::new(&audio))]);
+    app.wait_ready();
+    app.wait_line(|l| l.contains("library root="), Duration::from_secs(20));
+    let wid = app.wid();
+    float(&wid);
+    size(&wid, 1280, 800);
+    app.key(&wid, "alt+5");
+    app.wait_view("player");
+    (app, wid)
+}

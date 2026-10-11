@@ -25,7 +25,7 @@
     if (v && v !== value) onchange(v);
   }}
 >
-  <Select.Trigger aria-label="Audio source" class="w-72" data-testid="source-select">
+  <Select.Trigger aria-label="Audio source" class="w-60" data-testid="source-select">
     <span class="truncate">{current || 'No source'}</span>
   </Select.Trigger>
   <Select.Content>
