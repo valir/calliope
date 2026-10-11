@@ -103,11 +103,12 @@ the GUI crate, `src/calliope-gui/`.
     `editor_set_stem(id, name, gain, unmuted)` (gain in dB or null = Off), `save_backing(id)`,
     `cancel_backing_save(id)`; player (gui-play-backing-track plan §2.9, in `src/player_ipc.rs`):
     `open_player(id, events)`, `close_player()`, `get_player()`, `watch_player(events)`,
-    `player_select_source(id, source)`, `player_play(id)`, `player_pause(id)`, `player_seek(id, position)`,
+    `player_select_source(id, source)` (stops playback, keeps the position), `player_play(id)`, `player_pause(id)`, `player_seek(id, position)`,
     `player_nudge(id, delta)` (both with the 0.3 s scrub rule), `player_skip(id, delta)` (instant, Rew/FF),
     `player_leave(id)` (pause + close output + flush), `player_tempo(id, action)` (`set-bpm` | `speed-step` |
     `speed-reset`), `player_metronome(id, on, count_in)`, `player_loop(id, action)` (tagged action: add, remove,
-    select, mark, set, flags, play, stop). Actions are tagged objects to keep the command list short.
+    select, mark, set, flags, play, stop; loops may have no end yet). Actions are tagged objects to keep the command list
+    short. BPM detection (`Detect`) comes with the later spec `gui-play-backing-track-detect`.
     Types are in `src/ui/lib/ipc.ts` and in the plans (tracks-repository §2.7, stem-extraction §2.10,
     backing-track-editor §2.7, play-backing-track §2.9).
   - **Long-running jobs and progress**: a command that starts a job takes a
@@ -147,16 +148,16 @@ the GUI crate, `src/calliope-gui/`.
   `editor play|pause|stop position=<ms>`, `editor solo name=<n|none>`, `editor leave stop`,
   `editor seek position=<ms>`, `editor nudge delta=<ms>`,
   `editor stem name=<n> gain=<db|off> unmuted=<b>`, `editor saved id=<id> file=<f> clipped=<n>`.
-  Player: `player active id=<id> source=<key> sources=<n> mode=<bpm|time> loops=<n>`, `player inactive id=<id|none>`,
+  Player: `player active id=<id> source=<key> sources=<n> mode=<bpm|time> loops=<n> position=<ms>`, `player inactive id=<id|none>`,
   `player source key=<key>`, `player play|pause position=<ms>`, `player seek position=<ms>`, `player skip delta=<ms>`,
   `player bpm value=<v> position=<ms>`, `player metronome on=<b> count_in=<b>`,
-  `player loop <action> index=<n|none> count=<n>`, `player tree collapsed=<b>`, `player leave pause`.
+  `player loop <action> index=<n|none> count=<n> complete=<b>`, `player tree collapsed=<b>`, `player leave pause`.
   Rust lines (prefix `calliope: `): `dialog kind=<add-tablature|update-tablature|repository-root|export-track|export-tablature|import-audio|import-video> result=<picked|cancelled>`,
   `import job=<job> phase=<phase>`, `import path kind=<audio|video> result=<accepted|rejected>[ reason=<empty|invalid|relative|missing|folder|not-file|unreadable|extension>]`,
   `tool <name> found=<bool> version=<v>`,
   `audio backend=<cpal|null|capture> rate=<hz>`, `editor open id=<id> stems=<n> duration_ms=<ms>`,
   `editor transport playing=<b> audible=<b> position_ms=<ms> solo=<n|none> clipping=<b>` (changes only),
-  `editor saved id=<id> file=<f> bits=<b> clipped=<n>`, `player open id=<id> source=<key> duration_ms=<ms> rate=<hz>`,
+  `editor saved id=<id> file=<f> bits=<b> clipped=<n>`, `player open id=<id> source=<key> duration_ms=<ms> rate=<hz> position_ms=<ms>`,
   `player transport playing=<b> counting_in=<b> loop=<n|none> position_ms=<ms>` (changes only),
   `player count-in clicks=3 beat_ms=<ms>`, `player wrap loop=<n> count_in=<b>`, `player state saved id=<id>`,
   `player state error id=<id> message=<m>`.
@@ -228,9 +229,11 @@ the GUI crate, `src/calliope-gui/`.
   watcher; the Library rescans each time it is shown. A configured root that doesn't exist is
   never created (it may be an unmounted disk); the default root is created on first use.
 - **Player settings file `player.json`** (gui-play-backing-track plan §2.3-2.5), next to `track.json`:
-  `{"schema_version": 1, "source": "backing:<id>"|"audio"|"original"|"stem:<name>", "tempo": {"beats_per_bar": 4,
+  `{"schema_version": 1, "source": "backing:<id>"|"audio"|"original"|"stem:<name>", "position_ms": <int>, "tempo": {"beats_per_bar": 4,
   "segments": [{"start_ms": <number>, "bpm": <20..300>}]}, "speed": <0.5..1.5>, "metronome": {"on", "count_in"},
-  "loops": [{"id", "start": {"tick": <int>}|{"ms": <number>}, "end": ..., "repeat", "count_in"}], "current_loop": <id|null>}`.
+  "loops": [{"id", "start": {"tick": <int>}|{"ms": <number>}, "end": <same>|null, "repeat", "count_in"}], "current_loop": <id|null>}`.
+  `end: null` = a loop created with `+` whose end is not set yet (no repeat, Play disabled, only its start mark drawn).
+  The playback position is saved per track (on pause/seek/leave/switch/exit and every 10 s while playing).
   No segments = BPM 0 = timestamp mode; loop boundaries are ticks (1/64 notes from the first segment's start) in BPM
   mode and ms in timestamp mode, re-snapped (keeping their time) whenever the tempo map changes. One state per track,
   shared by all sources (stems and backings are sample-aligned). Written with `write_atomic` 500 ms after the last
@@ -798,7 +801,9 @@ Alternative: streaming decode with a ring buffer: less memory, but a more comple
 usual Rust streaming decoder (`symphonia`) is excluded (next entry).
 
 ### 2026-10-08: `symphonia` (MPL-2.0) is rejected   (owner decision)
-The owner rejected `symphonia` permanently; no MPL-2.0 decoder is used. FLAC is decoded with `claxon`.
+The owner rejected `symphonia` permanently; no MPL-2.0 decoder is used. (Note 2026-10-11: the rejection came from its
+MPL-2.0 licence. Calliope itself is now MPL-2.0, see the licence entry below, so the owner can reconsider; the rule
+stands until the owner lifts it.) FLAC is decoded with `claxon`.
 The Player and later features must handle other formats (e.g. imported `backing.mp3`) another way, such
 as converting once with the external `ffmpeg` (already required for imports) to FLAC.
 
@@ -936,13 +941,14 @@ the browsed file), and a token for browsed files plus a path for typed ones (rej
 paths for the same thing, with no security gain once typed paths are accepted). A video's first
 audio stream is used (`-map 0:a:0`, unchanged).
 
-### 2026-10-11: Player settings live in `player.json` next to `track.json`   (feature: gui-play-backing-track; recommended, owner to confirm in plan Q7)
-The Player saves every adjustment (source, tempo map, speed, metronome, loops) with no Save button. Writing
+### 2026-10-11: Player settings live in `player.json` next to `track.json`   (feature: gui-play-backing-track; owner-confirmed)
+The Player saves every adjustment (source, tempo map, speed, metronome, loops, playback position) with no Save button. Writing
 `track.json` that often would change its revision on each loop edit, so a Library edit in progress would hit a
 save conflict, and the Library would rescan "modified" tracks. Choice: a separate `player.json` in the track folder,
 debounced (500 ms) atomic writes, lenient read, unknown fields kept, a newer schema never overwritten, the name
 reserved like `track.json`, copied by Export, moved with the folder by Delete, ignored by scans. One state per track,
-shared by all sources, because stems and backings are sample-aligned (plan Q5). Alternatives: a `player` object in
+shared by all sources, because stems and backings are sample-aligned (owner-confirmed). Changing the source stops
+playback and keeps the position (owner). Alternatives: a `player` object in
 `track.json` (rejected for the conflicts), a per-source state (rejected: duplicated tempo maps and loops that drift
 apart), a hidden dot file (rejected: not "easy to hack with"). The tempo map may move into `track.json` when
 `gui-manipulate-backing-track` makes tempo part of the track metadata.
@@ -959,14 +965,17 @@ with solo, the Player plays one source with timing features, and a merged engine
 lock-free ring-buffer crate such as `rtrb` (not needed; std's bounded channel suffices), a mutex shared with the
 callback (rejected: priority inversion on the audio thread).
 
-### 2026-10-11: Tempo map with a 1/64-note grid; loops stored as ticks or ms by mode   (feature: gui-play-backing-track; 4/4 default is plan Q8)
+### 2026-10-11: Tempo map with a 1/64-note grid; loops stored as ticks or ms by mode   (feature: gui-play-backing-track; 4/4 owner-confirmed, time signatures come with the tablatures)
 A tempo map is a list of segments `{start_ms, bpm}`; none = BPM 0 = timestamp mode. The first segment's start is
 bar 1, beat 1 (typing a BPM while paused on the first downbeat sets both tempo and grid); its tempo extends
 backwards. A tick is a 1/64 note (16 per quarter-note beat); `beats_per_bar` is stored (default 4). Later tempo
 changes snap to the nearest tick of the current grid, so tick bases are integers and conversions are exact. Loop
 boundaries are `{tick}` in BPM mode and `{ms}` in timestamp mode (the spec's rule) and are re-snapped, keeping their
 time, whenever the tempo map changes, so a loop stays on the audio the user marked. Speed is one factor per track;
-the BPM shown is `bpm_at(position) * speed`.
+the BPM shown is `bpm_at(position) * speed`. At BPM 0 there is no speed change (`-`/`+`/`Reset` disabled, owner).
+A loop is created with `+` at the position and **no end** (owner): it is "incomplete" (stored `end: null`, never
+repeats, Play/Loop On/Count-In disabled, start mark only) until `<` sets an end after the start; `>` at or after the end
+moves the start and clears the end again, so a loop is never silently reversed.
 
 ### 2026-10-11: Metronome and count-in are rendered in the playback stream   (feature: gui-play-backing-track)
 The click is our own synthesis (decaying 2 kHz / 1.5 kHz sine, -6 dBFS) mixed by the same callback that plays the
@@ -979,3 +988,14 @@ MIDI clock features must compensate when they need tighter visual/MIDI sync.
 Plain backing tracks may have MP3/OGG/... audio, and `symphonia` is rejected. The Player runs `ffmpeg` (already a
 runtime prerequisite) with argv only, `-protocol_whitelist file,pipe`, `file:<abs>` input, `-f s16le -ac 2 -ar 44100`
 to a pipe and reads the PCM into memory; no cache file is written. FLAC sources keep using `claxon`.
+
+### 2026-10-11: Calliope is licensed under MPL-2.0 (was Apache-2.0)   (owner decision; applied by gui-play-backing-track plan task 18)
+The owner switches all three crates and the npm project to the Mozilla Public License 2.0. `LICENSE` holds the exact
+official MPL-2.0 text; `package.license` in the workspace `Cargo.toml` (inherited by every crate) and `license` in
+`package.json` say `MPL-2.0`; the README carries the MPL Exhibit A notice (no per-file headers, which MPL allows when
+the notice is where recipients will look). The third-party notices generator no longer takes the Apache-2.0 standard
+text from `LICENSE` but from `licence-templates/Apache-2.0.txt`. Apache-2.0, MIT, ISC, BSD and OFL dependencies stay
+compatible (MPL is file-level copyleft and covers only Calliope's own files). Consequences: MPL-2.0 dependencies
+(e.g. Bungee for time-stretch) no longer clash with the project licence, and the "no symphonia" rule, which came from
+symphonia's MPL-2.0 licence, may be reconsidered by the owner (not lifted). LGPL code linked statically would still
+bring relinking obligations for distributed binaries.
