@@ -27,6 +27,9 @@ Options:
   --max-duration-s N          longer audio is refused with 413 (default 900)
   --queue N                   jobs allowed to wait behind the running one (default 2)
   --separator-timeout-min N   a separator running longer is killed (default 30)
+  --beat-tracker PATH         the beat tracker executable (optional); it is run as
+                              <PATH> <input.flac> <out_dir>; without it beats are refused (501)
+  --beat-timeout-min N        a beat tracker running longer is killed (default 10)
   --retention-hours N         finished jobs are deleted after this (default 24)
   --no-stem-levels            do not measure the stems' audible time (the job status then has no
                               stem_levels)
@@ -92,6 +95,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
     let mut queue = DEFAULT_QUEUE;
     let mut timeout_min = DEFAULT_SEPARATOR_TIMEOUT_MIN;
     let mut timeout_ms: Option<u64> = None;
+    let mut beat_tracker: Option<PathBuf> = None;
+    let mut beat_timeout_min = DEFAULT_BEAT_TIMEOUT_MIN;
+    let mut beat_timeout_ms: Option<u64> = None;
     let mut retention_hours = DEFAULT_RETENTION_HOURS;
     let mut janitor_interval = DEFAULT_JANITOR_INTERVAL;
     let mut stem_levels = true;
@@ -117,7 +123,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
             "--no-stem-levels" if inline.is_none() => stem_levels = false,
             "--listen" | "--work-dir" | "--separator" | "--model" | "--max-upload-mb" | "--max-duration-s"
             | "--queue" | "--separator-timeout-min" | "--retention-hours" | "--janitor-interval-ms"
-            | "--separator-timeout-ms" => {
+            | "--separator-timeout-ms" | "--beat-tracker" | "--beat-timeout-min" | "--beat-timeout-ms" => {
                 let value = match inline {
                     Some(v) => v,
                     None => it.next().ok_or_else(|| format!("{flag} needs a value"))?,
@@ -146,6 +152,10 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
                     // Hidden: lets the tests exercise the separator timeout quickly. When given, it
                     // wins over --separator-timeout-min whatever the order.
                     "--separator-timeout-ms" => timeout_ms = Some(number(&flag, &value, 100)?),
+                    "--beat-tracker" => beat_tracker = Some(PathBuf::from(value)),
+                    "--beat-timeout-min" => beat_timeout_min = number(&flag, &value, 1)?,
+                    // Hidden, like --separator-timeout-ms; wins over --beat-timeout-min.
+                    "--beat-timeout-ms" => beat_timeout_ms = Some(number(&flag, &value, 100)?),
                     _ => unreachable!(),
                 }
             }
@@ -161,6 +171,16 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
         return Err(format!("--separator: '{}' is not an executable file", separator.display()));
     }
     let separator = std::path::absolute(&separator).map_err(|e| format!("--separator: {e}"))?;
+
+    let beat_tracker = match beat_tracker {
+        Some(t) => {
+            if !is_executable_file(&t) {
+                return Err(format!("--beat-tracker: '{}' is not an executable file", t.display()));
+            }
+            Some(std::path::absolute(&t).map_err(|e| format!("--beat-tracker: {e}"))?)
+        }
+        None => None,
+    };
 
     let work_dir = match work_dir {
         Some(d) => d,
@@ -181,6 +201,8 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
         max_duration_s,
         queue,
         separator_timeout: timeout_ms.map(Duration::from_millis).unwrap_or(Duration::from_secs(timeout_min * 60)),
+        beat_tracker,
+        beat_timeout: beat_timeout_ms.map(Duration::from_millis).unwrap_or(Duration::from_secs(beat_timeout_min * 60)),
         retention: Duration::from_secs(retention_hours.saturating_mul(3600)),
         janitor_interval,
         stem_levels,
@@ -267,6 +289,36 @@ mod tests {
         assert!(run(&["--separator", &s, "--separator-timeout-ms", "x"]).is_err());
         assert!(!HELP.contains("separator-timeout-ms"));
         assert!(run(&["--separator", &s, "--separator-timeout-min", "0"]).is_err());
+    }
+
+    #[test]
+    fn beat_tracker_flags() {
+        let s = stub();
+        let tracker = concat!(env!("CARGO_MANIFEST_DIR"), "/../calliope-gui/tests/support/stub-beat-tracker");
+        let c = run(&["--separator", &s]).unwrap();
+        assert!(c.beat_tracker.is_none());
+        assert_eq!(c.beat_timeout, Duration::from_secs(600));
+        let c = run(&["--separator", &s, "--beat-tracker", tracker, "--beat-timeout-min", "2"]).unwrap();
+        assert!(c.beat_tracker.unwrap().is_absolute());
+        assert_eq!(c.beat_timeout, Duration::from_secs(120));
+        // the hidden milliseconds flag wins in any order
+        let c = run(&["--separator", &s, "--beat-timeout-ms=250", "--beat-timeout-min", "5"]).unwrap();
+        assert_eq!(c.beat_timeout, Duration::from_millis(250));
+        let c = run(&["--separator", &s, "--beat-timeout-min", "5", "--beat-timeout-ms", "250"]).unwrap();
+        assert_eq!(c.beat_timeout, Duration::from_millis(250));
+        for bad in [
+            vec!["--beat-tracker", "/nonexistent/tracker"],
+            vec!["--beat-tracker", "/etc/passwd"],
+            vec!["--beat-tracker"],
+            vec!["--beat-timeout-ms", "99"],
+            vec!["--beat-timeout-min", "0"],
+        ] {
+            let mut a = vec!["--separator", s.as_str()];
+            a.extend(bad.iter());
+            assert!(run(&a).is_err(), "{bad:?} should fail");
+        }
+        assert!(HELP.contains("--beat-tracker") && HELP.contains("--beat-timeout-min"));
+        assert!(!HELP.contains("beat-timeout-ms"));
     }
 
     #[test]

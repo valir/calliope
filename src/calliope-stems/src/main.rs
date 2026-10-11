@@ -105,7 +105,8 @@ fn main() {
         let m = mgr.clone();
         std::thread::spawn(move || m.run_janitor());
     }
-    log(format_args!("listening addr={addr} model={} separator={}", cfg.model, cfg.separator.display()));
+    let tracker = cfg.beat_tracker.as_ref().map_or("none".to_string(), |t| t.display().to_string());
+    log(format_args!("listening addr={addr} model={} separator={} beat_tracker={tracker}", cfg.model, cfg.separator.display()));
 
     while !TERMINATE.load(Ordering::SeqCst) {
         match http.recv_timeout(Duration::from_millis(200)) {

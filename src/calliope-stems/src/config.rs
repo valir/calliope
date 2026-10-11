@@ -9,6 +9,7 @@ pub const DEFAULT_MODEL: &str = "htdemucs_6s";
 pub const DEFAULT_MAX_UPLOAD_MB: u64 = 300;
 pub const DEFAULT_QUEUE: usize = 2;
 pub const DEFAULT_SEPARATOR_TIMEOUT_MIN: u64 = 30;
+pub const DEFAULT_BEAT_TIMEOUT_MIN: u64 = 10;
 pub const DEFAULT_RETENTION_HOURS: u64 = 24;
 pub const DEFAULT_JANITOR_INTERVAL: Duration = Duration::from_secs(600);
 
@@ -25,6 +26,9 @@ pub struct Config {
     /// Jobs allowed to wait behind the running one.
     pub queue: usize,
     pub separator_timeout: Duration,
+    /// Absolute path of the beat tracker executable; `None` = no beat detection (501).
+    pub beat_tracker: Option<PathBuf>,
+    pub beat_timeout: Duration,
     pub retention: Duration,
     pub janitor_interval: Duration,
     /// Measure every stem's audible time and report it (`--no-stem-levels` turns it off).

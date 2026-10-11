@@ -13,13 +13,15 @@ use tiny_http::{Header, Request, Response, StatusCode};
 
 use crate::cli::VERSION;
 use crate::config::Config;
-use crate::jobs::{Manager, StemLookup};
+use crate::jobs::{BeatsLookup, Kind, Manager, StemLookup};
 use crate::{log, workdir};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Route {
     Health,
     CreateJob,
+    CreateBeats,
+    Beats(String),
     JobStatus(String),
     Stem(String, String),
     DeleteJob(String),
@@ -36,6 +38,8 @@ pub fn route(method: &str, path: &str) -> Route {
     match parts.as_slice() {
         ["", "v1", "health"] => allow("GET", Route::Health),
         ["", "v1", "jobs"] => allow("POST", Route::CreateJob),
+        ["", "v1", "beats"] => allow("POST", Route::CreateBeats),
+        ["", "v1", "jobs", id, "beats"] if is_valid_job_id(id) => allow("GET", Route::Beats(id.to_string())),
         ["", "v1", "jobs", id] if is_valid_job_id(id) => match method {
             "GET" => Route::JobStatus(id.to_string()),
             "DELETE" => Route::DeleteJob(id.to_string()),
@@ -118,10 +122,19 @@ pub fn handle(mgr: &Arc<Manager>, cfg: &Config, mut req: Request) {
                 busy: mgr.busy(),
                 max_duration_s: cfg.max_duration_s,
                 max_upload_bytes: cfg.max_upload_bytes,
-                tasks: vec!["stems".into()],
+                tasks: if cfg.beat_tracker.is_some() { vec!["stems".into(), "beats".into()] } else { vec!["stems".into()] },
             },
         ),
-        Route::CreateJob => create_job(mgr, cfg, &mut req, query),
+        Route::CreateJob => create_job(mgr, cfg, &mut req, query, Kind::Stems),
+        Route::CreateBeats if cfg.beat_tracker.is_none() => {
+            Reply::error(501, "beat detection is not configured on this server")
+        }
+        Route::CreateBeats => create_job(mgr, cfg, &mut req, query, Kind::Beats),
+        Route::Beats(id) => match mgr.beats(&id) {
+            BeatsLookup::Found(b) => Reply::json(200, &b),
+            BeatsLookup::UnknownJob => Reply::error(404, "unknown job"),
+            BeatsLookup::NotDone => Reply::error(409, "the job is not done"),
+        },
         Route::JobStatus(id) => match mgr.status(&id) {
             Some(s) => Reply::json(200, &s),
             None => Reply::error(404, "unknown job"),
@@ -131,7 +144,7 @@ pub fn handle(mgr: &Arc<Manager>, cfg: &Config, mut req: Request) {
                 Ok((f, n)) => Reply { status: 200, body: Body::File(f, n), content_type: "audio/flac", close: false },
                 Err(_) => Reply::error(404, "stem file is gone"),
             },
-            StemLookup::UnknownJob | StemLookup::UnknownStem => Reply::error(404, "unknown stem"),
+            StemLookup::UnknownJob | StemLookup::UnknownStem | StemLookup::NotStems => Reply::error(404, "unknown stem"),
             StemLookup::NotDone => Reply::error(409, "the job is not done"),
         },
         Route::DeleteJob(id) => {
@@ -172,7 +185,7 @@ fn is_flac_content_type(value: &str) -> bool {
     essence.eq_ignore_ascii_case("audio/flac") || essence.eq_ignore_ascii_case("audio/x-flac")
 }
 
-fn create_job(mgr: &Arc<Manager>, cfg: &Config, req: &mut Request, query: &str) -> Reply {
+fn create_job(mgr: &Arc<Manager>, cfg: &Config, req: &mut Request, query: &str, kind: Kind) -> Reply {
     let Some(length) = req.body_length() else {
         return Reply::error(411, "Content-Length is required");
     };
@@ -182,7 +195,7 @@ fn create_job(mgr: &Arc<Manager>, cfg: &Config, req: &mut Request, query: &str) 
     }
     for pair in query.split('&').filter(|p| !p.is_empty()) {
         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-        if k == "model" && v != cfg.model {
+        if kind == Kind::Stems && k == "model" && v != cfg.model {
             return Reply::error(400, "unknown model");
         }
     }
@@ -205,8 +218,8 @@ fn create_job(mgr: &Arc<Manager>, cfg: &Config, req: &mut Request, query: &str) 
         }
     };
     match receive(cfg, req, length, &dir) {
-        Ok(()) => {
-            mgr.enqueue(slot, id.clone(), dir);
+        Ok(duration_s) => {
+            mgr.enqueue(slot, id.clone(), dir, kind, duration_s);
             Reply::json(202, &JobCreated { job: id, state: JobState::Queued })
         }
         Err((status, msg)) => {
@@ -220,7 +233,7 @@ fn create_job(mgr: &Arc<Manager>, cfg: &Config, req: &mut Request, query: &str) 
 
 /// Streams the body to `input.flac.part`, checking the header first and the length last, then
 /// renames it to `input.flac`.
-fn receive(cfg: &Config, req: &mut Request, length: u64, dir: &std::path::Path) -> Result<(), (u16, String)> {
+fn receive(cfg: &Config, req: &mut Request, length: u64, dir: &std::path::Path) -> Result<f64, (u16, String)> {
     let io_err = |e: std::io::Error| (500u16, format!("cannot store the upload: {e}"));
     let part = dir.join("input.flac.part");
     let mut reader = req.as_reader().take(length);
@@ -228,17 +241,17 @@ fn receive(cfg: &Config, req: &mut Request, length: u64, dir: &std::path::Path) 
     // The FLAC magic and STREAMINFO come first: refuse a wrong file before storing megabytes.
     let mut head = Vec::with_capacity(64);
     reader.by_ref().take(42).read_to_end(&mut head).map_err(|_| (400u16, "the upload was interrupted".to_string()))?;
-    match flac_info(&mut Cursor::new(&head)) {
+    let duration_s = match flac_info(&mut Cursor::new(&head)) {
         Ok(info) if info.duration_s > cfg.max_duration_s as f64 => {
             return Err((
                 413,
                 format!("the audio is longer than the limit of {} minutes", cfg.max_duration_s.div_ceil(60)),
             ))
         }
-        Ok(_) => {}
+        Ok(info) => info.duration_s,
         Err(FlacError::Io(_)) => return Err((400, "the upload was interrupted".into())),
         Err(e) => return Err((415, e.to_string())),
-    }
+    };
 
     let mut file = File::create(&part).map_err(io_err)?;
     file.write_all(&head).map_err(io_err)?;
@@ -257,7 +270,7 @@ fn receive(cfg: &Config, req: &mut Request, length: u64, dir: &std::path::Path) 
     }
     file.sync_all().map_err(io_err)?;
     std::fs::rename(&part, dir.join("input.flac")).map_err(io_err)?;
-    Ok(())
+    Ok(duration_s)
 }
 
 #[cfg(test)]
@@ -270,6 +283,11 @@ mod tests {
     fn route_table() {
         assert_eq!(route("GET", "/v1/health"), Route::Health);
         assert_eq!(route("POST", "/v1/jobs"), Route::CreateJob);
+        assert_eq!(route("POST", "/v1/beats"), Route::CreateBeats);
+        assert_eq!(route("GET", &format!("/v1/jobs/{ID}/beats")), Route::Beats(ID.into()));
+        assert_eq!(route("GET", "/v1/beats"), Route::MethodNotAllowed);
+        assert_eq!(route("POST", &format!("/v1/jobs/{ID}/beats")), Route::MethodNotAllowed);
+        assert_eq!(route("DELETE", &format!("/v1/jobs/{ID}/beats")), Route::MethodNotAllowed);
         assert_eq!(route("GET", &format!("/v1/jobs/{ID}")), Route::JobStatus(ID.into()));
         assert_eq!(route("DELETE", &format!("/v1/jobs/{ID}")), Route::DeleteJob(ID.into()));
         assert_eq!(route("GET", &format!("/v1/jobs/{ID}/stems/vocals")), Route::Stem(ID.into(), "vocals".into()));
@@ -302,6 +320,10 @@ mod tests {
             format!("/v1/jobs/{ID}/stems/..%2Fx"),
             format!("/v1/jobs/{ID}/stems/Vocals.flac"),
             format!("/v1/jobs/{ID}/other"),
+            format!("/v1/jobs/{ID}/beats/"),
+            format!("/v1/jobs/{ID}/beats/x"),
+            "/v1/beats/".to_string(),
+            "/v1/jobs/UPPER/beats".to_string(),
             format!("/v1/jobs/{ID}/stems/a/b"),
         ])
         .collect();
