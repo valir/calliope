@@ -262,7 +262,9 @@ the GUI crate, `src/calliope-gui/`.
   `start_ms` (a stretched beat of 1/2..3/2 beats); it moves in 1/64-beat steps of the left tempo, at most ±256 steps from
   `detected_ms`. Typed changes keep the tick rule; loops still snap to 1/64 notes. Schema 1 files are read as before
   (they have no detected changes); writes are schema 2, so older builds treat the file as newer and never overwrite it.
-  Typing a BPM at a detected change's start keeps its `detected_ms`; removing or merging a segment drops it; a new
+  Typing a BPM at a detected change's start, or anywhere inside the stretched last beat before it, replaces that change's
+  BPM and keeps its position and `detected_ms` (so the tick bases stay strictly increasing; `bases()` also clamps them as a
+  safety net); removing or merging a segment drops it; a new
   detection replaces the whole map.
   **The track's one tempo map** (stems-beat-autodetect plan §2.2): `tempo` in `player.json` is also written by the Editor
   (Autodetect BPM, moving a detected change) through `TempoStore::replace`, entirely under the `PlayerHost` lock: if the
@@ -316,7 +318,7 @@ the GUI crate, `src/calliope-gui/`.
   model by accident), `--model` (`htdemucs_6s`), `--max-upload-mb` (300), `--max-duration-s`
   (900), `--queue` (2 waiting; 1 running, fixed), `--separator-timeout-min` (30),
   `--retention-hours` (24), `--no-stem-levels` (don't measure or report `stem_levels`), `--beat-tracker PATH` (optional;
-  enables `POST /v1/beats`), `--beat-timeout-min` (10; hidden test knob `--beat-timeout-ms`, min 100); `--measure FILE...` (diagnostic: print each FLAC file's `audible_ms`/`windows`/`peak_dbfs` and exit, no `--separator` needed). Jobs live in memory; job folders `<work>/jobs/<uuid>/` carry a
+  enables `POST /v1/beats`; a missing or non-executable path logs a warning and runs with beats off, a missing value is an error), `--beat-timeout-min` (10; hidden test knob `--beat-timeout-ms`, min 100); `--measure FILE...` (diagnostic: print each FLAC file's `audible_ms`/`windows`/`peak_dbfs` and exit, no `--separator` needed). Jobs live in memory; job folders `<work>/jobs/<uuid>/` carry a
   marker and are the only things it deletes. Logs on stderr (journald), prefix `calliope-stems: `.
   **Separator contract**: `<separator> <input.flac> <out_dir> <model>`, writes
   `<out_dir>/<stem>.flac`, optional stdout `progress <0..1>`, exit 0; outputs are validated.

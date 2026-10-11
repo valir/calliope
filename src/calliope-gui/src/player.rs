@@ -1022,7 +1022,13 @@ impl PlayerManager {
     /// nothing changes. Returns whether there was a session.
     pub fn release(&mut self, id: &str) -> Result<bool, String> {
         match self.session.as_mut() {
-            Some(s) if s.id == id => try_flush(s)?,
+            Some(s) if s.id == id => {
+                // a newer-schema file can't be written: refuse before interrupting the Player
+                if !player_state::load(&s.dir).2 {
+                    return Err(crate::tempo_store::NEWER.into());
+                }
+                try_flush(s)?
+            }
             _ => return Ok(false),
         }
         let mut s = self.session.take().expect("checked above");

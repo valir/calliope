@@ -164,6 +164,21 @@ describe('WaveformView editing', () => {
     expect(screen.queryByTestId('wf-readout')).toBeNull();
   });
 
+  it('resets the drag instead of throwing when the segments shrink mid-drag', async () => {
+    const onmove = (i: number, s: number) => moves.push([i, s]);
+    moves = [];
+    const { rerender } = render(WaveformView, { props: { ...base, segments: edit, onmove } });
+    const c = screen.getByTestId('wf');
+    await fireEvent.pointerDown(c, { clientX: barX(3) });
+    await fireEvent.pointerMove(c, { clientX: barX(3) + 4 });
+    expect(screen.queryByTestId('wf-readout')).not.toBeNull();
+    await rerender({ ...base, segments: edit.slice(0, 2), onmove });
+    await tick();
+    expect(screen.queryByTestId('wf-readout')).toBeNull();
+    await fireEvent.pointerUp(c);
+    expect(moves).toEqual([]);
+  });
+
   it('Escape cancels a drag', async () => {
     const c = mount();
     await fireEvent.pointerDown(c, { clientX: barX(1) });

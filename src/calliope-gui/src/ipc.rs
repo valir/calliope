@@ -690,6 +690,9 @@ pub fn do_editor_tempo(st: &EditorState, store: &dyn TempoStore, id: &str, actio
     let dir = st.with(|m| m.dir_of(id))?;
     let tempo = match action {
         TempoEdit::Move { index, steps } => {
+            if st.with(|m| m.detect_running(id)) {
+                return Err("Beat detection is running; wait for it to finish".into());
+            }
             store.replace(id, &dir, &|old| old.set_change_offset(index, steps).map(|(map, _applied)| map))?
         }
         TempoEdit::Reload => store.load(id, &dir)?,

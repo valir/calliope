@@ -63,7 +63,6 @@ fn a12_total_offset_is_limited_to_256_steps_over_any_number_of_moves() {
 
 /// Defect D1: `steps.abs()` overflows (panic in debug, a wrong accept in release) for i64::MIN.
 #[test]
-#[ignore = "known defect D1: set_change_offset(i64::MIN) overflows"]
 fn a12_extreme_step_counts_are_refused_not_a_panic() {
     let m = map(vec![typed(500.0, 120.0), det(6500.0, 90.0)]);
     assert!(m.set_change_offset(1, i64::MIN).is_err());
@@ -166,7 +165,6 @@ fn typed_bpm_inside_a_stretched_beat_keeps_the_grid_sane() {
 /// Defect D2: a BPM typed in the last (stretched) beat before a detected change leaves the tick
 /// bases out of order; the typed section has no effect on the metronome grid.
 #[test]
-#[ignore = "known defect D2: typed change inside the stretched beat gives unordered tick bases"]
 fn typed_bpm_inside_a_stretched_beat_keeps_tick_bases_ordered() {
     typed_sweep(true);
 }

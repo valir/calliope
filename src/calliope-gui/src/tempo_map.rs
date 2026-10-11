@@ -3,6 +3,10 @@
 //! A beat is a quarter note; a tick is a 1/64 note (1/16 beat). The first segment's start is the
 //! anchor (tick 0 = bar 1, beat 1); its tempo extends backwards (negative ticks). An empty map
 //! means "no tempo" (timestamp mode).
+//!
+//! Anchor rule for typed BPMs: a BPM typed at a change's start, or inside the stretched last beat
+//! before a following detected change, replaces that change's BPM (its position and `detected_ms`
+//! are kept). `bases()` additionally keeps tick bases strictly increasing.
 
 use serde::{Deserialize, Serialize};
 
@@ -98,9 +102,11 @@ impl TempoMap {
                 let ticks = (s.start_ms - p.start_ms) / tick_ms(p.bpm);
                 if s.detected_ms.is_some() {
                     let beat = TICKS_PER_BEAT as f64;
-                    t = TICKS_PER_BEAT * ((t as f64 + ticks) / beat).round() as i64;
+                    let aligned = TICKS_PER_BEAT * ((t as f64 + ticks) / beat).round() as i64;
+                    // safety net: bases stay strictly increasing (next beat boundary at least)
+                    t = aligned.max((t.div_euclid(TICKS_PER_BEAT) + 1) * TICKS_PER_BEAT);
                 } else {
-                    t += ticks.round() as i64;
+                    t = (t + ticks.round() as i64).max(t + 1);
                 }
             }
             out.push(t);
@@ -207,6 +213,13 @@ impl TempoMap {
                 self.segments[0].bpm = bpm;
             } else if let Some(i) = bases.iter().position(|&b| b == tick) {
                 self.segments[i].bpm = bpm;
+            } else if let Some(i) = bases
+                .iter()
+                .position(|&b| b > tick)
+                .filter(|&i| self.segments[i].detected_ms.is_some() && tick > bases[i] - TICKS_PER_BEAT)
+            {
+                // inside the stretched last beat before a detected change: applied at that change
+                self.segments[i].bpm = bpm;
             } else {
                 let start_ms = self.ms_at(tick);
                 let at = self.segments.iter().position(|s| s.start_ms > start_ms).unwrap_or(self.segments.len());
@@ -229,7 +242,7 @@ impl TempoMap {
             return Err("Only detected tempo changes can be moved; type the BPM again in the Player to change this one"
                 .to_string());
         };
-        if steps.abs() > MAX_OFFSET_STEPS {
+        if steps.unsigned_abs() > MAX_OFFSET_STEPS as u64 {
             return Err(format!("A tempo change can move at most {MAX_OFFSET_STEPS} steps from its detected position"));
         }
         let prev = &self.segments[index - 1];

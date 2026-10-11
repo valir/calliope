@@ -33,7 +33,7 @@ calliope-stems --separator PATH [options]
 | `--queue N` | 2 | jobs allowed to wait behind the running one |
 | `--separator-timeout-min N` | 30 | a separator running longer is killed |
 | `--retention-hours N` | 24 | finished jobs are deleted after this |
-| `--beat-tracker PATH` | none (beats off) | the beat tracker executable, run as `PATH <input.flac> <out_dir>`; without it `POST /v1/beats` answers 501 and `/v1/health` lists only the `stems` task |
+| `--beat-tracker PATH` | none (beats off) | the beat tracker executable, run as `PATH <input.flac> <out_dir>`; without it (or when the path is missing or not executable: a warning is logged at start and the server runs with beats off) `POST /v1/beats` answers 501 and `/v1/health` lists only the `stems` task |
 | `--beat-timeout-min N` | 10 | a beat tracker running longer is killed |
 | `--no-stem-levels` | off | do not measure the stems' audible time; the job status then has no `stem_levels` |
 | `--help`, `--version` | | |
@@ -211,7 +211,9 @@ On the server, in the checkout:
    names the device).
 5. In `~/.config/systemd/user/calliope-stems.service` add `Environment=BEATS_HOME=%h/edge-ai/beats` and
    `--beat-tracker %h/.local/bin/calliope-beats-beat-this` (as in the example unit), then
-   `systemctl --user daemon-reload && systemctl --user restart calliope-stems`.
+   `systemctl --user daemon-reload && systemctl --user restart calliope-stems`. The unit may be
+   deployed before the adapter is installed: a missing or non-executable `--beat-tracker` path only logs a
+   warning and the server runs with beats off (stems are unaffected); install the adapter and restart.
 6. From the laptop: `curl http://archserver:8765/v1/health` shows `"tasks":["stems","beats"]`.
 7. Optional: compare the licences in `~/edge-ai/beats/.venv/lib/python3.12/site-packages/*.dist-info/METADATA`
    with `docs/licences.md`.

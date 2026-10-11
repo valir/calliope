@@ -804,6 +804,21 @@ impl EditorManager {
         self.snapshot(id)
     }
 
+    /// Whether a beat detection for `id` is running (not yet finished).
+    pub fn detect_running(&self, id: &str) -> bool {
+        self.detect.as_ref().is_some_and(|r| r.id == id && !r.shared.is_finished())
+    }
+
+    /// Test hook: registers a detection that never finishes by itself.
+    #[cfg(test)]
+    pub(crate) fn test_fake_detect(&mut self, id: &str) {
+        self.detect = Some(DetectRun {
+            id: id.to_string(),
+            shared: DetectShared::new(),
+            handle: std::thread::spawn(|| {}),
+        });
+    }
+
     /// Asks the running detection of `id` to stop; `tick` emits `detect-cancelled`. Too late
     /// once the job applies the result.
     pub fn cancel_detect(&mut self, id: &str) -> Result<(), String> {
@@ -1067,7 +1082,7 @@ impl EditorManager {
             }
         }
         let due = s.wave.debounce.take_due(now);
-        if !(due || std::mem::take(&mut s.wave.first)) {
+        if !(due || s.wave.first) {
             return;
         }
         s.wave.debounce = Debounce::new();
@@ -1088,8 +1103,9 @@ impl EditorManager {
                 *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some((gen, result, t.elapsed().as_millis() as u64));
             }
         });
-        if spawned.is_err() {
-            eprintln!("calliope: editor peaks id={} could not start the worker", s.id);
+        match spawned {
+            Ok(_) => s.wave.first = false,
+            Err(_) => eprintln!("calliope: editor peaks id={} could not start the worker", s.id),
         }
     }
 

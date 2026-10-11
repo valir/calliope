@@ -450,6 +450,7 @@ impl Manager {
         let mut st = self.lock();
         let cancelled = st.jobs.get(id).is_none_or(|j| j.state == JobState::Cancelled);
         let mut remove_files = false;
+        let mut remove_input = false;
         if !cancelled {
             match outcome {
                 Ok(output) => {
@@ -476,6 +477,7 @@ impl Manager {
                     j.cancel = None;
                     let k = if kind == Kind::Beats { "kind=beats " } else { "" };
                     log(format_args!("job id={id} {k}state=done duration_s={secs:.1}"));
+                    remove_input = kind == Kind::Beats; // only the small result is kept
                 }
                 Err(msg) => {
                     self.fail_locked(&mut st, id, msg);
@@ -490,6 +492,8 @@ impl Manager {
         self.idle.notify_all();
         if remove_files {
             let _ = workdir::remove_job_dir(&self.cfg.work_dir, id);
+        } else if remove_input {
+            let _ = std::fs::remove_file(dir.join("input.flac"));
         }
     }
 

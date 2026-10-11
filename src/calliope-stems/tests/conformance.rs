@@ -707,6 +707,12 @@ fn health_tasks_follow_the_tracker_flag() {
     let v = http(t.addr, "GET", "/v1/health", &[], b"").json();
     assert_eq!(v["tasks"], serde_json::json!(["stems", "beats"]));
     assert!(StemsClient::supports_beats(&t.client().health().unwrap()));
+
+    // A missing tracker executable only turns beats off (warning at start); the flag stays valid.
+    let m = start("ok", &["--beat-tracker", "/nonexistent/tracker"]);
+    let v = http(m.addr, "GET", "/v1/health", &[], b"").json();
+    assert_eq!(v["tasks"], serde_json::json!(["stems"]));
+    assert_eq!(post_beats(m.addr, "stems/vocals.flac").status, 501);
 }
 
 #[test]
@@ -724,6 +730,9 @@ fn beats_ok_flow_raw_and_with_the_client() {
     assert_eq!(v["downbeats"].as_array().unwrap().len(), 7);
     assert_eq!(v["tracker"], "stub-beat-tracker");
     assert_eq!(v["beats"][0], 0.5);
+    // The uploaded audio is not kept once the job is done; only the small result stays.
+    let input = s.jobs().join(&job).join("input.flac");
+    wait_until("the beats input removed", 5, || !input.exists());
     // Stems of a beats job do not exist.
     assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/vocals"), &[], b"").status, 404);
     let log = s.log();

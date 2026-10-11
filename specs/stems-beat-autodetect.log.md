@@ -21,3 +21,4 @@ task 19 | Mix lane UI | implementer | done (4th lane clipped at 1280x800, left f
 task 20 | GUI e2e, visual review, docs | implementer | done
 reviewer | APPROVED; 9 minors (notably: unit example hard-requires the beat adapter; typed change just before a detected change can make bases non-monotonic; no backend guard on tempo move during detection) | reviewer | done
 tester | A1-A17 PASS; D1 set_change_offset(i64::MIN) panics; D2 typed BPM in the stretched beat leaves tick bases out of order (92/5880 sweep cases) | tester | done
+fix round 1 | D1, D2 (typed BPM in the stretched beat applies at the detected change; bases kept increasing); missing beat adapter only warns; move refused during detection; release checks writability first; first-waveform retry; beats input.flac removed when done; drag reset when segments shrink | implementer | done

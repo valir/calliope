@@ -393,6 +393,18 @@ fn tempo_move_uses_absolute_steps_and_persists() {
 }
 
 #[test]
+fn tempo_move_is_refused_while_a_detection_runs() {
+    let e = env();
+    two_sections(&e, true);
+    do_open_editor(&e.st, &e.repo, &FileTempoStore, FOUR, Arc::new(|_| {})).unwrap();
+    e.st.with(|m| m.test_fake_detect(FOUR));
+    let err = do_editor_tempo(&e.st, &FileTempoStore, FOUR, TempoEdit::Move { index: 1, steps: 3 }).unwrap_err();
+    assert_eq!(err, "Beat detection is running; wait for it to finish");
+    let dir = e.st.with(|m| m.dir_of(FOUR)).unwrap();
+    assert_eq!(FileTempoStore.load(FOUR, &dir).unwrap().segments[1].start_ms, 8500.0);
+}
+
+#[test]
 fn tempo_move_refuses_a_typed_change_and_unknown_sessions() {
     let e = env();
     two_sections(&e, false);

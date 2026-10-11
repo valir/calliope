@@ -922,6 +922,16 @@ fn a_failed_flush_keeps_the_session_and_refuses_the_replace() {
 }
 
 #[test]
+fn release_refuses_a_newer_schema_file_and_keeps_the_session() {
+    let (_t, spec, mut m, _b, e) = opened(PRACTICE);
+    std::fs::write(spec.dir.join("player.json"), br#"{"schema_version": 9}"#).unwrap();
+    let err = m.release(&spec.id).unwrap_err();
+    assert_eq!(err, crate::tempo_store::NEWER);
+    assert!(m.is_open(&spec.id));
+    assert_eq!(closed(&e, &spec.id), 0);
+}
+
+#[test]
 fn flush_if_open_saves_a_dirty_session_and_leaves_it_open() {
     let (_t, spec, mut m, _b, e) = opened(PRACTICE);
     m.flush_if_open("other").unwrap();

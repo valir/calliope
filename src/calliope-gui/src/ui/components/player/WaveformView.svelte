@@ -42,6 +42,11 @@
   let hoverTyped = $state(false);
   let hoverBar = $state(false);
 
+  // the sections can shrink mid-drag (a new tempo map arrives): drop the drag
+  $effect(() => {
+    if (drag && drag.index >= segments.length) drag = null;
+  });
+
   const editable = $derived(!!onmove);
   const shown = $derived(
     drag
@@ -78,7 +83,7 @@
     return `Tempo change ${pos} of ${detectedIdx.length} at ${fmt(segments[sel].start_ms, 3)}, ${bpmText(segments[sel].bpm)} BPM, ${signed(n)}/64 beat`;
   });
   const readout = $derived.by(() => {
-    if (!drag) return '';
+    if (!drag || drag.index >= segments.length) return '';
     const ms = drag.steps * fineMs(segments[drag.index - 1].bpm);
     const sign = ms < 0 ? '-' : '+';
     return `${signed(drag.steps)}/64 beat (${sign}${fmt(Math.abs(ms), 3)}) · limit ±${MAX_OFFSET_STEPS / 64} beats`;

@@ -174,10 +174,16 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
 
     let beat_tracker = match beat_tracker {
         Some(t) => {
-            if !is_executable_file(&t) {
-                return Err(format!("--beat-tracker: '{}' is not an executable file", t.display()));
+            if is_executable_file(&t) {
+                Some(std::path::absolute(&t).map_err(|e| format!("--beat-tracker: {e}"))?)
+            } else {
+                // not fatal: a unit deployed before the adapter is installed must still separate stems
+                crate::log(format_args!(
+                    "warning: --beat-tracker '{}' is not an executable file; beat detection is unavailable (stems only)",
+                    t.display()
+                ));
+                None
             }
-            Some(std::path::absolute(&t).map_err(|e| format!("--beat-tracker: {e}"))?)
         }
         None => None,
     };
@@ -306,9 +312,12 @@ mod tests {
         assert_eq!(c.beat_timeout, Duration::from_millis(250));
         let c = run(&["--separator", &s, "--beat-timeout-min", "5", "--beat-timeout-ms", "250"]).unwrap();
         assert_eq!(c.beat_timeout, Duration::from_millis(250));
+        // a missing or non-executable tracker only turns beats off (the server still starts)
+        for missing in ["/nonexistent/tracker", "/etc/passwd"] {
+            let c = run(&["--separator", &s, "--beat-tracker", missing]).unwrap();
+            assert!(c.beat_tracker.is_none(), "{missing}");
+        }
         for bad in [
-            vec!["--beat-tracker", "/nonexistent/tracker"],
-            vec!["--beat-tracker", "/etc/passwd"],
             vec!["--beat-tracker"],
             vec!["--beat-timeout-ms", "99"],
             vec!["--beat-timeout-min", "0"],
