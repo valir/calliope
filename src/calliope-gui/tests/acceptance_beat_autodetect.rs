@@ -793,3 +793,104 @@ fn a2_debounce_type_restarts_and_fires_once() {
     assert!(d.take_due(t0 + Duration::from_millis(599)));
     assert!(!d.take_due(t0 + Duration::from_secs(9)), "fires once");
 }
+
+// ================================================================ fix round 1 re-probes
+
+#[test]
+fn fix1_typed_bpm_more_than_a_beat_before_a_detected_change_is_still_a_new_change() {
+    for steps in [-100i64, 0, 11, 200] {
+        let (m0, _) = map(vec![typed(500.0, 120.0), det(6500.0, 90.0), det(12500.0, 100.0)]).set_change_offset(1, steps).unwrap();
+        let change = m0.segments[1].start_ms;
+        let bases = m0.bases();
+        // one beat of ticks before the change is the border: strictly inside swallows, at or before it does not
+        for back_ticks in [17i64, 20, 32, 80] {
+            let pos = m0.ms_at(bases[1] - back_ticks);
+            let mut m = m0.clone();
+            m.set_bpm_at(pos, 110.0).unwrap();
+            assert_eq!(m.segments.len(), 4, "typed {back_ticks} ticks before (move {steps}) must insert: {:?}", m.segments);
+            assert_eq!(m.segments[2], m0.segments[1], "the detected change keeps bpm, start and detected_ms");
+            assert_eq!(m.segments[1].bpm, 110.0);
+            assert_eq!(m.segments[1].detected_ms, None);
+            assert_sane(&m, "typed before", true);
+        }
+        // strictly inside the last beat: the detected change takes the BPM and keeps its position
+        for back_ticks in [1i64, 5, 15] {
+            let pos = m0.ms_at(bases[1] - back_ticks);
+            let mut m = m0.clone();
+            m.set_bpm_at(pos, 110.0).unwrap();
+            assert_eq!(m.segments.len(), 3, "{back_ticks}: {:?}", m.segments);
+            assert_eq!(m.segments[1].bpm, 110.0);
+            assert_eq!(m.segments[1].start_ms, change);
+            assert_eq!(m.segments[1].detected_ms, m0.segments[1].detected_ms);
+            assert_sane(&m, "typed inside", true);
+        }
+        // the change itself still moves afterwards, with the total limit
+        let mut m = m0.clone();
+        m.set_bpm_at(m0.ms_at(bases[1] - 5), 110.0).unwrap();
+        assert!(m.set_change_offset(1, 256).is_ok());
+    }
+}
+
+#[test]
+fn fix1_i64_min_is_refused_and_a_full_typed_sweep_keeps_bases_strict() {
+    let m = map(vec![typed(500.0, 120.0), det(6500.0, 90.0)]);
+    assert!(m.set_change_offset(1, i64::MIN).is_err());
+    assert!(m.set_change_offset(1, i64::MAX).is_err());
+    // random typed edits (including zero BPM and equal BPMs) on maps with many changes
+    let mut rng = Lcg(7);
+    for _ in 0..300 {
+        let mut m = map(vec![typed(500.0, 120.0), det(6500.0, 90.0), det(9000.0, 130.0), det(14000.0, 70.0)]);
+        for i in 1..=3usize {
+            let _ = m.set_change_offset(i, 0).map(|(n, _)| m = n);
+        }
+        for _ in 0..4 {
+            let pos = 200.0 + rng.next() * 16000.0;
+            let bpm = [0.0, 60.0, 90.0, 120.0, 130.0, 250.0][(rng.next() * 6.0) as usize % 6];
+            let _ = m.set_bpm_at(pos, bpm);
+            if !m.is_empty() {
+                assert_sane(&m, "random typed", true);
+            }
+        }
+    }
+}
+
+#[test]
+fn fix1_server_with_a_bogus_beat_tracker_still_serves_stems_and_reports_no_beats() {
+    for bogus in ["/nonexistent/tracker", "/etc/passwd"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        fs::create_dir_all(&work).unwrap();
+        fs::write(work.join("stub-mode"), "ok\n").unwrap();
+        let mut child = Command::new(stems_binary())
+            .args(["--beat-tracker", bogus, "--separator"])
+            .arg(support("stub-separator"))
+            .args(["--listen", "127.0.0.1:0", "--work-dir"])
+            .arg(&work)
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut lines = BufReader::new(child.stderr.take().unwrap());
+        let mut line = String::new();
+        let mut warned = false;
+        let addr = loop {
+            line.clear();
+            if lines.read_line(&mut line).unwrap() == 0 {
+                let _ = child.kill();
+                panic!("server exited with a bogus tracker {bogus}");
+            }
+            warned |= line.contains("warning") && line.contains("beat");
+            if let Some(rest) = line.split("listening addr=").nth(1) {
+                break rest.split_whitespace().next().unwrap().to_string();
+            }
+        };
+        assert!(addr.starts_with("127.0.0.1:"));
+        let out = Command::new("curl").args(["-s", "--max-time", "5", &format!("http://{addr}/v1/health")]).output().unwrap();
+        let health: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(warned, "no warning for {bogus}");
+        let tasks = health["tasks"].as_array().cloned().unwrap_or_default();
+        assert!(tasks.iter().any(|t| t == "stems"), "{health}");
+        assert!(!tasks.iter().any(|t| t == "beats"), "{health}");
+    }
+}
