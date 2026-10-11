@@ -14,6 +14,7 @@ pub mod ipc;
 pub mod local_source;
 pub mod media;
 pub mod metronome;
+pub mod mix_waveform;
 pub mod mixer;
 pub mod picker;
 pub mod player;
