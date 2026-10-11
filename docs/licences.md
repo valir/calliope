@@ -131,13 +131,32 @@ only), not from memory, except where marked.
 | PyTorch (`torch` 2.11.0+cu128) | BSD-3-Clause | `License: BSD-3-Clause` in its package metadata (the CUDA wheels also bring NVIDIA libraries under NVIDIA's own licence, which is the owner's install). |
 | `htdemucs_6s` model weights (`5c90dfd2-34c22ccb.th`) | MIT | Meta's official checkpoint (`dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th`), released with the MIT-licensed Demucs project; the model card of the derived https://huggingface.co/adityalakhani/htdemucs-6s-guitar-ft states "The base `htdemucs_6s` weights (Meta AI) are released under MIT". Confirmed by the owner 2026-10-07. Calliope does not ship the weights. Note: that Hugging Face model is a different checkpoint (a guitar fine-tune, Apache-2.0, trained on MoisesDB under Moises.ai research terms); Calliope does not use it. |
 
-The server's Rust code (`calliope-stems`) only runs `audio-separator` through the adapter script
-`src/calliope-stems/separators/audio-separator.sh`; it contains no model or Python code.
+Beat detection (optional, `--beat-tracker`) runs in its own virtualenv `~/edge-ai/beats/.venv`. Rows marked
+"per PyPI" were read from the public PyPI JSON and the upstream README on 2026-10-11, not from local metadata;
+confirm against the installed `dist-info` (README, "Enabling beat detection", step 7).
+
+| Component | Licence | Notes |
+|---|---|---|
+| `beat-this` 1.1.0 (Beat This!, CPJKU) | MIT | Per PyPI, 2026-10-11: `License-Expression: MIT`. Upstream README (https://github.com/CPJKU/beat_this): "The code and the published model weights are released under the MIT license". |
+| `final0` checkpoint (`final0.ckpt`, about 78 MB) | MIT | Downloaded once by the owner from the authors' cloud space (https://cloud.cp.jku.at/index.php/s/7ik4RrBKTS273gp); checked 2026-10-11 that the file URL answers. Same README sentence as above. Training-data note, also from the README: "some of the training files are fully copyrighted or under limited Creative Commons licenses, and it is up to the user to assess whether this may impact their use case". Accepted by the owner 2026-10-11 for personal use. Calliope does not ship the weights. |
+| `torch` 2.11.0 (cu128) and `torchaudio` 2.11.0 | BSD-3-Clause; BSD | Per PyPI, 2026-10-11: torch 2.11.0 `License: BSD-3-Clause`; torchaudio 2.11.0 classifier `License :: OSI Approved :: BSD License`. Same note about NVIDIA libraries in the CUDA wheels as above. |
+| `einops` (0.8.2 at check time) | MIT | Per PyPI, 2026-10-11. Dependency of `beat-this`. |
+| `rotary-embedding-torch` (0.9.1 at check time) | MIT | Per PyPI, 2026-10-11. Dependency of `beat-this`. |
+| `soxr` (python-soxr, 1.1.0 at check time) | LGPL-2.1-or-later | Per PyPI, 2026-10-11 (`License-Expression`). **Not permissive**, but only installed by pip as a separate library in the owner's venv on the server; nothing is linked into or distributed with Calliope. |
+| `numpy` (2.5.4 at check time) | BSD-3-Clause (plus 0BSD, MIT, Zlib, CC0-1.0 for bundled parts) | Per PyPI, 2026-10-11. Dependency of `beat-this`. |
+| `soundfile` 0.14.0 | BSD-3-Clause | Per PyPI, 2026-10-11 (`License: BSD 3-Clause License`). The wheel bundles `libsndfile` (LGPL-2.1+), a separate library in the owner's venv. |
+
+These are separate processes on the owner's server and are never distributed with Calliope. The pinned versions
+are `torch==2.11.0`, `torchaudio==2.11.0`, `beat-this==1.1.0` and `soundfile` (unpinned in the README; 0.14.0 at check time); the others come
+in as dependencies of `beat-this`.
+
+The server's Rust code (`calliope-stems`) only runs `audio-separator` and the beat tracker through the adapter scripts
+`src/calliope-stems/separators/audio-separator.sh` and `src/calliope-stems/trackers/beat-this.sh`; it contains no model or Python code.
 
 ## Test-only tools
 
 Used by the test suites on the developer machine, never shipped: `python3` (PSF-2.0, runs the fake
-`src/calliope-gui/tests/support/bin/yt-dlp`), `bash` (the stub separator and the real adapter), `ffmpeg`/`ffprobe`
+`src/calliope-gui/tests/support/bin/yt-dlp`), `bash` (the stub separator, the stub beat tracker and the real adapters, whose syntax is checked), `ffmpeg`/`ffprobe`
 (see above; the fixtures in `src/calliope-gui/tests/fixtures/import/` were generated with them and are
 synthetic tones, so they carry no third-party rights), and for the GUI tests `xdotool`, `i3-msg`,
 `unshare` and `ip`.

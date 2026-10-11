@@ -317,3 +317,39 @@ fn stub_tracker_modes_give_the_documented_counts() {
     let st = Command::new(&tracker).arg(&input).arg(out.path()).env("STUB_TRACKER_MODE", "fail").output().unwrap();
     assert_eq!(st.status.code(), Some(3));
 }
+
+#[test]
+fn real_beat_adapter_is_valid_and_checks_its_arguments() {
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("trackers/beat-this.sh");
+    let st = Command::new("bash").arg("-n").arg(&script).status().unwrap();
+    assert!(st.success(), "bash -n");
+
+    // The embedded Python program must parse (python3 -I, nothing is imported or run).
+    let text = std::fs::read_to_string(&script).unwrap();
+    let body = text.split("<<'PY'\n").nth(1).expect("heredoc start").split("\nPY\n").next().expect("heredoc end");
+    let mut py = Command::new("python3")
+        .args(["-I", "-c", "import ast,sys; ast.parse(sys.stdin.read())"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    py.stdin.take().unwrap().write_all(body.as_bytes()).unwrap();
+    assert!(py.wait().unwrap().success(), "embedded python does not parse");
+
+    // Argument and environment checks fail before any Python runs.
+    let none = Command::new("bash").arg(&script).output().unwrap();
+    assert_eq!(none.status.code(), Some(64));
+    let work = tempfile::tempdir().unwrap();
+    let out = work.path().join("out");
+    let missing_in = Command::new("bash").arg(&script).arg(work.path().join("nope.flac")).arg(&out).output().unwrap();
+    assert_eq!(missing_in.status.code(), Some(2));
+    let input = root().join("tests/fixtures/import/stems/vocals.flac");
+    let no_env = Command::new("bash")
+        .arg(&script)
+        .arg(&input)
+        .arg(&out)
+        .env("BEATS_HOME", work.path().join("no-such-home"))
+        .output()
+        .unwrap();
+    assert_eq!(no_env.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&no_env.stderr).contains("BEATS_HOME"));
+}
