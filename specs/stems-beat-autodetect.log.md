@@ -24,3 +24,4 @@ tester | A1-A17 PASS; D1 set_change_offset(i64::MIN) panics; D2 typed BPM in the
 fix round 1 | D1, D2 (typed BPM in the stretched beat applies at the detected change; bases kept increasing); missing beat adapter only warns; move refused during detection; release checks writability first; first-waveform retry; beats input.flac removed when done; drag reset when segments shrink | implementer | done
 reviewer (fix round 1) | APPROVED; 2 optional minors | reviewer | done
 tester (fix round 1) | D1, D2 fixed; no new defects | tester | done
+report | written | orchestrator | done
