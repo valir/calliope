@@ -147,7 +147,7 @@ tester for the features.
 - [x] `gui-stem-extraction-active-time`: empty stems are judged by audible time, not peak (increment, rewritten requirement 9)
 - [x] `gui-existing-track-import.md`: import an existing backing track from various sources
 - [x] `gui-play-backing-track.md`: start playing a backing track
-- [ ] `stems-beat-autodetect.md`: specifies how the beat autodetection should work
+- [x] `stems-beat-autodetect.md`: specifies how the beat autodetection should work
 - [ ] `gui-tablatures.md`: associate tablature to backing track
 - [ ] `gui-manipulate-backing-track.md`: associate tempo and MIDI commands into the backing track
 - [ ] `stems-empty-detection.md`: better detection of the empty resulting stems
