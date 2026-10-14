@@ -27,17 +27,24 @@ const BLANK: (i32, i32) = (356, 47); // the "Play:" label: a click there only re
 const TRIGGER: (i32, i32) = (555, 47);
 const ITEM_X: i32 = 500;
 const ITEM_Y: [i32; 4] = [113, 167, 221, 275]; // Backing, Original mix, Vocals, Guitar
-const PLAY: (i32, i32) = (983, 402);
-const TIME: (i32, i32) = (927, 463);
-const BPM: (i32, i32) = (445, 396);
-const METRO: (i32, i32) = (656, 438);
-const METRO_COUNT_IN: (i32, i32) = (762, 438);
-const LOOP_ADD: (i32, i32) = (457, 597);
-const MARK_START: (i32, i32) = (798, 597);
-const MARK_END: (i32, i32) = (1203, 597);
-const LOOP_PLAY: (i32, i32) = (402, 665);
-const LOOP_ON: (i32, i32) = (517, 665);
-const LOOP_COUNT_IN: (i32, i32) = (633, 665);
+const BPM: (i32, i32) = (445, 272);
+const METRO: (i32, i32) = (988, 315);
+const METRO_COUNT_IN: (i32, i32) = (1094, 315);
+const PLAY: (i32, i32) = (477, 472);
+const TIME: (i32, i32) = (669, 471);
+const LOOP_ADD: (i32, i32) = (457, 611);
+const MARK_START: (i32, i32) = (798, 611);
+const MARK_END: (i32, i32) = (1203, 611);
+const LOOP_PLAY: (i32, i32) = (402, 679);
+const LOOP_ON: (i32, i32) = (517, 679);
+const LOOP_COUNT_IN: (i32, i32) = (633, 679);
+// The Sections group, the waveform (section 0 | the change bar at 8500 ms | section 1) and its labels.
+const SEC_ADD: (i32, i32) = (643, 347);
+const SEC_REMOVE: (i32, i32) = (734, 347);
+const SEC_DOUBLE: (i32, i32) = (820, 347);
+const WAVE_BAR: (i32, i32) = (729, 180);
+const WAVE_SECTION1: (i32, i32) = (1000, 180);
+const WAVE_LABEL0: (i32, i32) = (370, 215);
 
 fn secs(s: u64) -> Duration {
     Duration::from_secs(s)
@@ -225,7 +232,7 @@ fn play_and_change_source() {
     assert_eq!(app.count("player seek"), 0, "playing or pausing caused a seek");
 
     // Clicking the position slider seeks (its middle is about 10 s of the 20 s).
-    app.click(&wid, 1057, 510);
+    app.click(&wid, 798, 523);
     let l = app.wait_contains("calliope-ui: player seek position=");
     assert!((8500..11500).contains(&position_of(&l)), "{l}");
     finish(&app);
@@ -302,6 +309,126 @@ fn tempo_metronome_count_in() {
         "the tone starts at {tone} ms, the first click at {} ms",
         clicks[0]
     );
+    finish(&app);
+}
+
+const SECTIONS_FIXTURE: &str = r#"{"schema_version":2,"tempo":{"beats_per_bar":4,"segments":[
+    {"start_ms":500,"bpm":120},{"start_ms":8500,"bpm":93,"detected_ms":8500}]}}"#;
+
+/// The backend's line for a moved change (the frontend logs its own after the answer).
+fn moved(app: &mut App) -> String {
+    app.wait_line(|l| l.contains("calliope: player section move") && l.contains("applied="), secs(10))
+}
+
+/// The segment starts of a `player sections ...` line.
+fn starts_of(line: &str) -> Vec<f64> {
+    field(line, "starts").split(',').map(|s| s.parse().unwrap()).collect()
+}
+
+fn change_start(v: &Value, i: usize) -> f64 {
+    v["tempo"]["segments"][i]["start_ms"].as_f64().unwrap()
+}
+
+/// Editing the sections of a detected tempo map in the Player: drag and key a change, retype a
+/// BPM, double one while it plays (the clicks follow, nothing stops), add and remove, restart.
+#[test]
+#[ignore]
+fn player_tempo_sections() {
+    if !ready() {
+        return;
+    }
+    let dirs = player_dirs("player_tempo_sections");
+    std::fs::write(dirs.player_json(PL_PRACTICE), SECTIONS_FIXTURE).unwrap();
+    let (mut app, wid) = start_player(&dirs);
+    let mut collapsed = false;
+    pick(&mut app, &wid, &mut collapsed, "practice song", PL_PRACTICE);
+    let cap = dirs.capture();
+
+    // 1. The detected map is shown.
+    assert_eq!(app.count("player sections segments=2 bpm=120,93 starts=500,8500"), 1);
+    shot("player-sections");
+
+    // 2. Drag the change bar far right: it stops 4 beats (256 steps) from where it was detected.
+    app.drag(&wid, WAVE_BAR.0, 1250, WAVE_BAR.1, || ());
+    let l = moved(&mut app);
+    assert_eq!(field(&l, "applied"), "256", "{l}");
+    let v = wait_json(&dirs, PL_PRACTICE, |v| change_start(v, 1) == 10500.0);
+    assert_eq!(v["schema_version"], 3, "{v}");
+    assert_eq!(v["tempo"]["segments"][1]["detected_ms"].as_f64(), Some(8500.0), "{v}");
+
+    // 3. The waveform has the focus: Left moves it one step back.
+    app.key(&wid, "Left");
+    let l = moved(&mut app);
+    assert_eq!(field(&l, "applied"), "255", "{l}");
+
+    // 4. Click the first label, type 110; the overlay is shown before Enter.
+    at(&app, &wid, WAVE_LABEL0);
+    ms(300);
+    app.key(&wid, "ctrl+a");
+    app.typ(&wid, "110");
+    ms(200);
+    shot("player-section-bpm");
+    app.key(&wid, "Return");
+    app.wait_contains("player sections segments=2 bpm=110,93");
+
+    // 5. Section 1 is the target; double it while the metronome plays.
+    at(&app, &wid, WAVE_SECTION1);
+    enter(&app, &wid, TIME, "0:11.0");
+    app.wait_contains("player seek position=11000");
+    at(&app, &wid, METRO);
+    app.wait_contains("player metronome on=true");
+    let start = mark(&app, &cap);
+    app.skip_seen();
+    at(&app, &wid, PLAY);
+    app.wait_contains("audio backend=capture");
+    app.wait_contains("player play");
+    let rate = rate_of(&app);
+    ms(1000);
+    at(&app, &wid, SEC_DOUBLE);
+    let l = app.wait_contains("player sections segments=2 bpm=110,186");
+    let doubled = starts_of(&l);
+    ms(1500);
+    let between: Vec<String> =
+        app.all_lines().into_iter().filter(|l| l.contains("player pause") || l.contains("player play")).collect();
+    assert_eq!(between.len(), 1, "playback stopped or restarted: {between:?}");
+    at(&app, &wid, PLAY);
+    app.wait_contains("player pause");
+    let heard = since(&app, &cap, start);
+    let on = click_onsets_ms(&heard, rate);
+    let gaps: Vec<f64> = on.windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(gaps.len() >= 4, "click onsets: {on:?}");
+    assert!((gaps[0] - 645.16).abs() <= 5.0, "before: {gaps:?}");
+    assert!((gaps[gaps.len() - 1] - 322.58).abs() <= 5.0, "after: {gaps:?}");
+
+    // 6. Add at 15.0 s with 140 BPM: the new change is on the 186-BPM fine grid (5.04 ms).
+    enter(&app, &wid, TIME, "0:15.0");
+    app.wait_contains("player seek position=15000");
+    at(&app, &wid, SEC_ADD);
+    ms(300);
+    app.key(&wid, "ctrl+a");
+    app.typ(&wid, "140");
+    app.key(&wid, "Return");
+    let l = app.wait_contains("player sections segments=3 bpm=110,186,140");
+    let added = starts_of(&l);
+    assert_eq!(&added[..2], &doubled[..], "{l}");
+    assert!((added[2] - 15000.0).abs() <= 60000.0 / 186.0 / 64.0 / 2.0 + 0.01, "{l}");
+
+    // 7. Remove the new section (it is selected).
+    at(&app, &wid, SEC_REMOVE);
+    let l = app.wait_contains("player sections segments=2 bpm=110,186");
+    assert_eq!(starts_of(&l), doubled, "{l}");
+
+    // 8. Restart: the same sections, schema 3.
+    app.close_gracefully(&wid);
+    app.wait_exit(secs(5));
+    let v = serde_json::from_slice::<Value>(&std::fs::read(dirs.player_json(PL_PRACTICE)).unwrap()).unwrap();
+    assert_eq!(v["schema_version"], 3, "{v}");
+    let (mut app, wid) = start_player(&dirs);
+    let mut collapsed = false;
+    pick(&mut app, &wid, &mut collapsed, "practice song", PL_PRACTICE);
+    let l = app.all_lines().into_iter().rev().find(|l| l.contains("player sections segments=")).unwrap();
+    assert!(l.contains("segments=2 bpm=110,186"), "{l}");
+    assert_eq!(starts_of(&l), doubled, "{l}");
     finish(&app);
 }
 
@@ -477,12 +604,38 @@ fn other_sources_and_leaving() {
     finish(&app);
 }
 
+/// The waveform of "with tempo" (20 s; sections at 0.5 s and 10.5 s) in the floated window: its
+/// left and right edge, the y of its middle and the y of its label row. The tree state decides
+/// where it is; the values were read from the screenshots of the sweep.
+fn wave_box(w: u32, collapsed: bool) -> (i32, i32, i32, i32) {
+    let left = if collapsed { 334 } else { 634 };
+    // at 1024 px with the tree shown the title wraps onto its own row
+    let down = if !collapsed && w < 1280 { 35 } else { 0 };
+    (left, w as i32 - 19, 180 + down, 216 + down)
+}
+
+/// "Section selected" (a click in section 1: its bar is drawn 4 px wide) and "overlay open" (its
+/// label clicked) screenshots. Ends with section 0 selected and the overlay closed.
+fn sections_states(app: &App, wid: &str, name: impl Fn(&str) -> String, w: u32, collapsed: bool) {
+    let (x0, x1, y, label_y) = wave_box(w, collapsed);
+    let bar = x0 + (x1 - x0) * 10500 / 20000;
+    app.click(wid, bar + 60, y);
+    settle();
+    shot(&name("section-selected"));
+    app.click(wid, bar + 20, label_y);
+    ms(400);
+    shot(&name("overlay-open"));
+    app.key(wid, "Escape");
+    app.click(wid, x0 + 20, y);
+    ms(200);
+}
+
 /// Screenshots for the visual review (`target/gui-shots/player-*.png`): dark and light, 1280x800
 /// and 1024x640, tree shown and collapsed; inactive, active (complete and incomplete loops on the
 /// waveform) and counting in. The shots are looked at by hand; the test only checks that the
 /// window keeps the size and that nothing is logged as an error.
 ///
-/// The full sweep (22 screenshots) only runs with `CALLIOPE_GUI_SHOTS=1`; by default the test
+/// The full sweep (38 screenshots) only runs with `CALLIOPE_GUI_SHOTS=1`; by default the test
 /// runs the same flow (tree collapse, count-in) in dark at 1280x800 and takes one screenshot.
 #[test]
 #[ignore]
@@ -526,6 +679,9 @@ fn visual_review() {
                 settle();
                 if sweep || tree == "shown" {
                     shot(&name(&sz, tree, "active"));
+                }
+                if sweep {
+                    sections_states(&app, &wid, |what| name(&sz, tree, what), w, collapsed);
                 }
                 // Count-in: the focus must be off the controls for Space; the label is at x=355 (rail) or 655.
                 let blank = if collapsed { BLANK } else { (655, 47) };

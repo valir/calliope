@@ -145,19 +145,37 @@
   (Autodetect below Play) and the whole Editor pane scrolls; the lane list keeps at least 14 rem.
 - Tempo sections in a waveform (Editor and Player): an amber 2 px bar at each section start and a label
   "<bpm> BPM" (bold 15 px, readable at 1-2 m) right of it, or just the number when the next bar is close.
-  Changes typed in the Player are dimmed (read-only); detected ones can be moved: drag the bar (8 px
+  In the Editor, changes typed in the Player are dimmed (read-only) and detected ones can be moved: drag the bar (8 px
   grab zone, the pointer shows a resize cursor, a readout at the top left gives "+N/64 beat (time) · limit 4 beats") or focus the waveform and use Left/Right (1/64 beat), Shift+Left/Right (1 beat),
   Up/Down (select the change; the selected one is a 4 px bar). The waveform is locked during a
-  detection. In the Player the waveform is read-only (sections only); a detected change sits beside the
+  detection. A detected change sits beside the
   loop marks without colliding (loops have a cap on the bar, sections do not).
+- (gui-player-tempo-sections) Player sections are editable. Every change can be dragged (no read-only
+  dimming in the Player); the waveform in the Player selects a section by a click (4 px bar, and the label
+  underlined), and the selected section, else the one at the playhead, is the target of the Sections group.
+  A change moves in 1/64-beat steps, at most 4 beats from where it was detected or added; edits made
+  while playing never stop the audio, and the clicks follow from the next beat. Keys with the waveform
+  focused: Up/Down select a section, Left/Right move the change by 1/64 beat, Shift+Left/Right by a beat,
+  Enter edits the BPM, Delete or Backspace removes the change, `a` adds one at the playhead; Space,
+  `b`, `e`, `l` and Shift+L keep their Player meaning there. Clicking a label opens the BPM overlay: a
+  small field over the label (for Add: at the playhead), prefilled and selected. Enter commits (20 to
+  300; otherwise "Enter a BPM between 20 and 300" shows in the group's message line and the field stays),
+  Escape or clicking away cancels, so nothing is added by accident.
+- The Sections group sits in the control bar after BPM: a title, a status line ("Section 2 of 3 · 93
+  BPM", or "No tempo"), the buttons Add, Remove, x2 and /2 (3.25 rem high; each disabled one has a
+  title that says why) and a reserved message line, so nothing moves. At 1280x800 with the tree
+  folded, BPM, Sections and Metronome share the first row, Playback has the second and Loops the
+  third; the pane scrolls by a few pixels. With the tree shown or at 1024x640 the groups wrap into
+  one column or two and the pane scrolls.
 - The Player has no Detect button any more. At 1280x800 with the tree folded to the rail, BPM, Metronome
   and Playback share one row and the Loops group fills the row below; with the tree shown, Playback
   wraps to its own row (the pane scrolls). The groups are as tall as the tallest in their row.
 - (gui-play-backing-track, task 17) Player layout. Left the shared track tree (20 rem, Ctrl+L folds it to
   a rail), right the pane: source row ("Play:" dropdown 15 rem wide, then the title), the dashed
   tablature placeholder (one line, it gives way first), the waveform (5 rem), then the control bar:
-  BPM and Metronome, Playback and Loops as bordered groups in a wrapping row. With the tree folded at
-  1280x800 everything fits without scrolling (BPM + Metronome, Playback, Loops in two rows); with the
+  BPM, Metronome, Playback and Loops (and, since gui-player-tempo-sections, Sections after BPM) as
+  bordered groups in a wrapping row. With the tree folded at 1280x800 (before the Sections group)
+  everything fit without scrolling (BPM + Metronome, Playback, Loops in two rows); with the
   tree shown, or at 1024x640, the pane scrolls vertically (never sideways: the groups wrap inside
   themselves). Nothing moves when state changes (every message has a reserved line).
 - Toggle buttons that are on (Metronome On/Off and Count In, Loop On, loop Count-In) are filled amber
@@ -165,7 +183,9 @@
   sets its own dark-theme fill. Waveform marks use `--primary` (amber); the current loop is solid, the
   others 55% opacity, a loop without an end is a start line only; the playhead is a 1 px foreground line.
 - Player keys: Space, b, e, Left, Right, l / Shift+L, Ctrl+L, Ctrl+F; they are ignored while a form
-  control or the select has the focus, so Space still presses a focused button.
+  control or the select has the focus, so Space still presses a focused button. The waveform is the
+  exception: focused, it keeps Space, b, e, l and Shift+L, and uses the section keys above (Left and
+  Right move the selected change there, not the loop).
 - Known limits: at 1024x640 the controls need scrolling (about 1.5 screens high with the tree
   shown), and the unfilled part of the position slider is faint in the light theme (the slider is
   shared with the Editor).

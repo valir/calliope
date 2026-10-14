@@ -55,6 +55,10 @@ Starts the Vite dev server with hot reload plus the debug app. It uses a dev-onl
 * Player (Alt+5): Space play/pause, b / e mark the loop start / end, Left / Right previous / next loop,
   l or Shift+L loop on/off, Ctrl+L collapse the track tree, Ctrl+F search. The letter keys do nothing
   while a field, button or the source dropdown has the focus.
+* Player waveform (click it or Tab to it): Up / Down select a tempo section, Left / Right move the selected
+  change by 1/64 beat, Shift+Left / Shift+Right by one beat (limit 4 beats from where it was detected or
+  added), Enter edits its BPM, Delete or Backspace removes the change, `a` adds one at the playhead.
+  Space, b, e and l keep their Player meaning.
 * Mix waveform (Editor) with detected tempo changes: click it or Tab to it, then Left / Right move the
   selected change by 1/64 beat, Shift+Left / Shift+Right by one beat (limit 4 beats from where it was
   detected), Up / Down select another change, Escape cancels a mouse drag.
@@ -108,10 +112,16 @@ Ctrl+L folds it to a narrow rail).
   stops playback and keeps the position.
 * The waveform shows the whole source, the playhead and the loops (the current loop in amber, a loop
   without an end as a start mark only). Tempo sections (from Autodetect BPM in the Editor or a typed
-  tempo) show as bars labelled with their BPM; only the Editor moves them.
+  tempo) show as bars labelled with their BPM; the Player edits them (see Sections below).
 * BPM: type a tempo (20 to 300; 0 clears it) to place it at the playback position. Metronome: On/Off
   clicks on the beat, Count In plays three clicks before the audio starts. The bar fields of the loops
   need a BPM; without one they show times.
+* Sections: the tempo can change along the song. Click a section in the waveform to select it (else the
+  one at the playhead is used) and drag a change's bar to move it, or use the keys (see Keyboard). Click
+  a label to type that section's BPM. The Sections group has Add (a new change at the playhead, you type its
+  BPM), Remove (joins the section to the previous one), x2 and /2 (for a half- or double-time detection).
+  The metronome follows every edit from the next beat, also while playing. The sections are saved in
+  `player.json` and shown in the Editor.
 * Playback: Rew / FF jump 5 s, the time field takes a time (the mouse wheel nudges by 100 ms), the
   slider seeks.
 * Loops: "+" starts a loop at the position (it has no end until you press "<"), ">" and "<" set the
@@ -199,7 +209,7 @@ driver) per test binary from display `:90` up, runs each binary with `--ignored
 
 GUI test screenshots go to `target/gui-shots/` at the repository root. The player's visual
 review sweep (dark and light, 1280x800 and 1024x640, tree shown and collapsed, inactive, active
-and counting in: 22 screenshots) only runs with `CALLIOPE_GUI_SHOTS=1`, e.g.
+counting in, section selected and BPM overlay open: 38 screenshots) only runs with `CALLIOPE_GUI_SHOTS=1`, e.g.
 `CALLIOPE_GUI_SHOTS=1 npm run test:gui`; by default it takes one screenshot.
 
 ## Layout of this crate

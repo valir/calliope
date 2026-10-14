@@ -547,7 +547,7 @@ check` clean (both in `src/calliope-gui/`).
   - `PlayerView`'s key filter lets Space, b, e and l/L through from `[data-player-keys]`.
 - **tests:**
   - **`ControlBar.test.ts`:**
-    - the group's buttons, names and disabled reasons (BPM 0; section 1 → Remove disabled; 186 → ×2 enabled, 160
+    - the group's buttons, names and disabled reasons (BPM 0; section 1 → Remove disabled; 93 → both enabled, 160
       → ×2 disabled with its title);
     - clicks → the right `player_tempo` actions;
     - the status line;
