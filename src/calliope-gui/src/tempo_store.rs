@@ -58,7 +58,7 @@ mod tests {
     use serde_json::json;
 
     fn map(bpm: f64) -> TempoMap {
-        TempoMap { beats_per_bar: 4, segments: vec![Segment { start_ms: 500.0, bpm, detected_ms: None }] }
+        TempoMap { beats_per_bar: 4, segments: vec![Segment { start_ms: 500.0, bpm, detected_ms: None, on_beat: false }] }
     }
 
     fn write(dir: &Path, v: serde_json::Value) {

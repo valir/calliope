@@ -866,8 +866,8 @@ fn the_snapshot_carries_the_tempo_and_set_tempo_replaces_it() {
     let map = TempoMap {
         beats_per_bar: 4,
         segments: vec![
-            Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None },
-            Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6500.0) },
+            Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false },
+            Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6500.0), on_beat: false },
         ],
     };
     let snap = m.set_tempo(FOUR, map.clone()).unwrap();

@@ -859,7 +859,7 @@ fn engine_callback_never_allocates() {
 fn new_map() -> crate::tempo_map::TempoMap {
     crate::tempo_map::TempoMap {
         beats_per_bar: 4,
-        segments: vec![crate::tempo_map::Segment { start_ms: 0.0, bpm: 100.0, detected_ms: None }],
+        segments: vec![crate::tempo_map::Segment { start_ms: 0.0, bpm: 100.0, detected_ms: None, on_beat: false }],
     }
 }
 

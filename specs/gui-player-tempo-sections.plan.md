@@ -311,7 +311,7 @@ check` clean (both in `src/calliope-gui/`).
     - only `segments[index].bpm` changes; `detected_ms`/`on_beat` kept; no merge with an equal neighbour;
     - "too short" refusal for a 1-beat section set slower;
     - one decimal enforced.
-  - **Scale:** 93 → 186 → 93; 93.5 ÷2 → 46.8; 160 ×2 refused ("320 BPM is over 300"); 39.9 ÷2 refused.
+  - **Scale:** 93 → 186 → 93; 93.5 ÷2 → 46.8; 160 ×2 refused ("320 BPM is over 300"); 39.8 ÷2 refused ("19.9 BPM is under 20"; 39.9 ÷2 rounds to 20.0 and is allowed).
   - **Remove:** index 0 refused; removing a detected change in the middle makes the next detected change's left
     section the previous one (its stretched beat recomputed, monotonic); removing the last change leaves one
     section.
@@ -467,7 +467,7 @@ check` clean (both in `src/calliope-gui/`).
        });
        it('refuses results outside 20..300', () => {
          expect(scaleBpm(160, 2)).toBeNull();
-         expect(scaleBpm(39.9, 0.5)).toBeNull();
+         expect(scaleBpm(39.8, 0.5)).toBeNull();
        });
      });
      ```

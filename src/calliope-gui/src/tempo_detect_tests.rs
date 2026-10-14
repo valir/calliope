@@ -74,8 +74,8 @@ fn stub_ok_pattern_is_exact() {
     assert_eq!(
         d.map.segments,
         vec![
-            Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None },
-            Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6500.0) },
+            Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false },
+            Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6500.0), on_beat: false },
         ]
     );
 }

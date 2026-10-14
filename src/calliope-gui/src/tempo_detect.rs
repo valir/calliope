@@ -487,7 +487,7 @@ pub(crate) fn detect(beats_s: &[f64], downbeats_s: &[f64], _beats_per_bar: u32) 
     let anchor_beat = down.iter().map(|&x| nearest(x)).find(|&i| i < bounds[1]).unwrap_or(0);
     let (bpm0, f0) = q[0];
     let anchor = round_ms(intercept(&t, bounds[0], bounds[1], anchor_beat, bpm0, f0));
-    let mut segments = vec![Segment { start_ms: anchor, bpm: bpm0, detected_ms: None }];
+    let mut segments = vec![Segment { start_ms: anchor, bpm: bpm0, detected_ms: None, on_beat: false }];
     for k in 1..q.len() {
         let (bpm, f) = q[k];
         let tk = intercept(&t, bounds[k], bounds[k + 1], bounds[k], bpm, f);
@@ -497,7 +497,7 @@ pub(crate) fn detect(beats_s: &[f64], downbeats_s: &[f64], _beats_per_bar: u32) 
         if start - left.start_ms < 60000.0 / left.bpm - 1e-6 || bpm == left.bpm {
             continue;
         }
-        segments.push(Segment { start_ms: start, bpm, detected_ms: Some(start) });
+        segments.push(Segment { start_ms: start, bpm, detected_ms: Some(start), on_beat: false });
     }
     let last = *t.last().unwrap();
     let sections = segments
