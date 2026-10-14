@@ -248,3 +248,183 @@ describe('WaveformView editing', () => {
     expect(c.getAttribute('aria-valuetext')).toMatch(/^Tempo change 1 of 2/);
   });
 });
+
+describe('WaveformView Player mode (freeMove)', () => {
+  // detected at 6500, placed (on_beat) at 10000, typed at 15000
+  const ps: TempoSegment[] = [seg(0, 120), seg(6508, 90, 6500), { start_ms: 10000, bpm: 100, on_beat: true }, seg(15000, 110)];
+  let calls: Record<string, unknown[][]>;
+  const mountP = (extra: Record<string, unknown> = {}) => {
+    calls = { move: [], select: [], label: [], remove: [], add: [], commit: [], invalid: [], cancel: [] };
+    render(WaveformView, {
+      props: {
+        ...base, segments: ps, freeMove: true, selected: 0,
+        onmove: (...a: unknown[]) => calls.move.push(a), onselect: (...a: unknown[]) => calls.select.push(a),
+        onlabel: (...a: unknown[]) => calls.label.push(a), onremove: (...a: unknown[]) => calls.remove.push(a),
+        onadd: (...a: unknown[]) => calls.add.push(a), oncommitbpm: (...a: unknown[]) => calls.commit.push(a),
+        oninvalidbpm: (...a: unknown[]) => calls.invalid.push(a), oncancelbpm: (...a: unknown[]) => calls.cancel.push(a),
+        ...extra,
+      },
+    });
+    return screen.getByTestId('wf');
+  };
+  const px = (i: number) => sectionMarks(ps, 20000, 200)[i].x!;
+  const pxMs = 20000 / 199;
+
+  it('marks the canvas data-player-keys; the Editor mode does not', () => {
+    expect(mountP().hasAttribute('data-player-keys')).toBe(true);
+    cleanup();
+    render(WaveformView, { props: { ...base, segments: ps, onmove() {} } });
+    expect(screen.getByTestId('wf').hasAttribute('data-player-keys')).toBe(false);
+  });
+
+  it('a drag of a placed change sends one onmove measured from the left start, without the 256 limit', async () => {
+    const c = mountP();
+    const x0 = px(2);
+    await fireEvent.pointerDown(c, { clientX: x0, clientY: 10 });
+    await fireEvent.pointerMove(c, { clientX: x0 + 30 });
+    expect(screen.getByTestId('wf-readout').textContent).toMatch(/^[+-]\d+\/64 beat \([+-]0:\d\d\.\d{3}\)$/);
+    await fireEvent.pointerUp(c);
+    expect(calls.move.length).toBe(1);
+    const expected = Math.round(((x0 + 30) * pxMs - 6508) / fineMs(90));
+    expect(calls.move[0][0]).toBe(2);
+    expect(Math.abs((calls.move[0][1] as number) - expected)).toBeLessThanOrEqual(1);
+    expect(calls.move[0][1] as number).toBeGreaterThan(256); // past the detected limit
+    expect(calls.select).toEqual([[2]]);
+  });
+
+  it('a detected change still stops at 256; Escape cancels', async () => {
+    const c = mountP();
+    await fireEvent.pointerDown(c, { clientX: px(1), clientY: 10 });
+    await fireEvent.pointerMove(c, { clientX: px(1) + 60 });
+    expect(screen.getByTestId('wf-readout').textContent).toMatch(/limit ±4 beats$/);
+    await fireEvent.pointerUp(c);
+    expect(calls.move[0]).toEqual([1, 256]);
+    calls.move.length = 0;
+    await fireEvent.pointerDown(c, { clientX: px(1), clientY: 10 });
+    await fireEvent.pointerMove(c, { clientX: px(1) + 4 });
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    await fireEvent.pointerUp(c);
+    expect(calls.move).toEqual([]);
+  });
+
+  it('a typed change can be dragged too', async () => {
+    const c = mountP();
+    await fireEvent.pointerDown(c, { clientX: px(3), clientY: 10 });
+    await fireEvent.pointerMove(c, { clientX: px(3) - 12 });
+    await fireEvent.pointerUp(c);
+    expect(calls.move.length).toBe(1);
+    expect(calls.move[0][0]).toBe(3);
+  });
+
+  it('a click on a label calls onlabel; a click elsewhere selects the section under the pointer', async () => {
+    const c = mountP();
+    await tick();
+    await fireEvent.pointerDown(c, { clientX: px(1) + 12, clientY: 90 });
+    await fireEvent.pointerUp(c);
+    expect(calls.label).toEqual([[1]]);
+    await fireEvent.pointerDown(c, { clientX: 20, clientY: 30 });
+    await fireEvent.pointerDown(c, { clientX: px(2) + 40, clientY: 30 });
+    await fireEvent.pointerUp(c);
+    expect(calls.label.length).toBe(1);
+    expect(calls.select).toEqual([[0], [2]]);
+  });
+
+  it('draws the target with a 4 px bar and an underlined label', async () => {
+    mountP({ selected: 1 });
+    await tick();
+    expect(rects.filter((r) => r.w === 4 && r.h === 96).map((r) => r.x)).toEqual([px(1) - 1]);
+    expect(rects.filter((r) => r.h === 2 && r.y === 94).length).toBe(1);
+  });
+
+  it('keys: arrows select (section 0 included) and move, Enter, Delete, a; Space is not prevented', async () => {
+    const c = mountP({ selected: 1 });
+    await fireEvent.focus(c);
+    expect(c.getAttribute('aria-valuetext')).toBe('Section 2 of 4 from 0:06.508, 90 BPM, detected, +1/64 beat');
+    await fireEvent.keyDown(c, { key: 'ArrowUp' });
+    await fireEvent.keyDown(c, { key: 'ArrowDown' });
+    expect(calls.select).toEqual([[0], [2]]);
+    await fireEvent.keyDown(c, { key: 'ArrowRight' });
+    await fireEvent.keyDown(c, { key: 'ArrowLeft', shiftKey: true });
+    expect(calls.move).toEqual([[1, 2], [1, -62]]);
+    await fireEvent.keyDown(c, { key: 'Enter' });
+    await fireEvent.keyDown(c, { key: 'Delete' });
+    await fireEvent.keyDown(c, { key: 'Backspace' });
+    await fireEvent.keyDown(c, { key: 'a' });
+    expect(calls.label).toEqual([[1]]);
+    expect(calls.remove).toEqual([[1], [1]]);
+    expect(calls.add.length).toBe(1);
+    expect(await fireEvent.keyDown(c, { key: ' ' })).toBe(true);
+    expect(await fireEvent.keyDown(c, { key: 'b' })).toBe(true);
+  });
+
+  it('reads out a placed or typed section', async () => {
+    const c = mountP({ selected: 2 });
+    expect(c.getAttribute('aria-valuetext')).toMatch(/^Section 3 of 4 from 0:10\.000, 100 BPM, placed, [+-]\d+\/64 beat$/);
+    cleanup();
+    expect(mountP({ selected: 3 }).getAttribute('aria-valuetext')).toBe('Section 4 of 4 from 0:15.000, 110 BPM, typed');
+  });
+
+  it('is read-only at BPM 0', async () => {
+    const c = mountP({ segments: [seg(0, 0)] });
+    expect(c.getAttribute('role')).toBe('img');
+    await fireEvent.pointerDown(c, { clientX: 20, clientY: 30 });
+    expect(calls.select).toEqual([]);
+  });
+
+  describe('BPM overlay', () => {
+    const open = () => mountP({ bpmEdit: { index: 1 } });
+    const input = () => screen.getByTestId('section-bpm-input') as HTMLInputElement;
+
+    it('is prefilled and focused; Enter with 186 commits', async () => {
+      open();
+      await tick();
+      expect(input().value).toBe('90');
+      expect(document.activeElement).toBe(input());
+      await fireEvent.input(input(), { target: { value: '186' } });
+      await fireEvent.keyDown(input(), { key: 'Enter' });
+      expect(calls.commit).toEqual([[186]]);
+    });
+
+    it('refuses 0 and 301 and stays open', async () => {
+      open();
+      for (const v of ['0', '301']) {
+        await fireEvent.input(input(), { target: { value: v } });
+        await fireEvent.keyDown(input(), { key: 'Enter' });
+      }
+      expect(calls.invalid).toEqual([['Enter a BPM between 20 and 300'], ['Enter a BPM between 20 and 300']]);
+      expect(calls.commit).toEqual([]);
+      expect(calls.cancel).toEqual([]);
+      expect(screen.queryByTestId('section-bpm-input')).not.toBeNull();
+    });
+
+    it('Escape and blur cancel', async () => {
+      open();
+      await fireEvent.keyDown(input(), { key: 'Escape' });
+      expect(calls.cancel.length).toBe(1);
+      cleanup();
+      open();
+      await fireEvent.blur(input());
+      expect(calls.cancel.length).toBe(1);
+    });
+
+    it('for Add it is prefilled with the BPM at the playhead', async () => {
+      mountP({ bpmEdit: { addAt: 12000 } });
+      expect(input().value).toBe('100');
+    });
+  });
+});
+
+describe('WaveformView Editor mode is unchanged by the Player props', () => {
+  it('placed and typed changes do not start a drag without freeMove', async () => {
+    const s: TempoSegment[] = [seg(0, 120), { start_ms: 10000, bpm: 100, on_beat: true }, seg(15000, 110, 15000)];
+    const moves: unknown[] = [];
+    render(WaveformView, { props: { ...base, segments: s, onmove: (...a: unknown[]) => moves.push(a) } });
+    const c = screen.getByTestId('wf');
+    const x = sectionMarks(s, 20000, 200)[1].x!;
+    await fireEvent.pointerDown(c, { clientX: x });
+    await fireEvent.pointerMove(c, { clientX: x + 6 });
+    expect(screen.queryByTestId('wf-readout')).toBeNull();
+    await fireEvent.pointerUp(c);
+    expect(moves).toEqual([]);
+  });
+});

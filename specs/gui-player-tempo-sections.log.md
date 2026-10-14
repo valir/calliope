@@ -8,3 +8,4 @@ task 5 | TS IPC types for the section actions | local | done (gemma4 edits corre
 task 6 | scaleBpm | local | done (gemma4 correct on first try; extra trailing blank line trimmed)
 task 7 | Waveform geometry for free moves | implementer | done
 task 8 | Player frontend state for sections | implementer | done
+task 9 | Editable Player waveform and the BPM overlay | implementer | done

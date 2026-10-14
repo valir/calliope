@@ -2,8 +2,9 @@
   import { onMount } from 'svelte';
   import type { PlayerLoop, TempoSegment } from '$lib/ipc';
   import {
-    columns, dragSteps, fineMs, labelFits, loopMarks, MAX_OFFSET_STEPS, offsetSteps, sectionMarks, xOf,
+    columns, dragSteps, fineMs, labelFits, loopMarks, MAX_OFFSET_STEPS, moveLimit, moveRefMs, offsetSteps, sectionMarks, xOf,
   } from '$lib/waveform-geometry';
+  import SectionBpmInput from './SectionBpmInput.svelte';
 
   interface Props {
     peaks: number[];
@@ -20,10 +21,26 @@
     /** Start of the accessible name; the tempos are appended. */
     label?: string;
     class?: string;
+    /** Player mode: every change can move (`onmove` gets the offset from `moveRefMs`), and the selection is controlled. */
+    freeMove?: boolean;
+    /** The target section (freeMove only). */
+    selected?: number | null;
+    onselect?: (index: number) => void;
+    /** The label of section `index` was clicked, or Enter was pressed on it. */
+    onlabel?: (index: number) => void;
+    onremove?: (index: number) => void;
+    onadd?: () => void;
+    /** The BPM overlay to show: over a section's label, or at a playhead position. */
+    bpmEdit?: { index: number } | { addAt: number } | null;
+    oncommitbpm?: (bpm: number) => void;
+    oncancelbpm?: () => void;
+    oninvalidbpm?: (message: string) => void;
   }
   let {
     peaks, durationMs, positionMs, loops = [], currentLoop = null, segments = [], onmove, locked = false,
     testid, label = 'Waveform', class: cls = 'h-20',
+    freeMove = false, selected = null, onselect, onlabel, onremove, onadd,
+    bpmEdit = null, oncommitbpm, oncancelbpm, oninvalidbpm,
   }: Props = $props();
 
   const GRAB_PX = 8;
@@ -36,7 +53,9 @@
   /** Index of the change being dragged and its previewed offset. */
   let drag = $state<{ index: number; steps: number } | null>(null);
   let focused = $state(false);
-  let selected = $state<number | null>(null);
+  let selectedInt = $state<number | null>(null);
+  /** Where the labels were drawn last (for the click hit-test). */
+  let labelRects: { index: number; x: number; y: number; w: number; h: number }[] = [];
   /** The offset last asked for by the keys (the segments update only after the backend answers). */
   let keyTarget: { index: number; steps: number } | null = null;
   let hoverTyped = $state(false);
@@ -50,12 +69,18 @@
   const editable = $derived(!!onmove);
   const shown = $derived(
     drag
-      ? segments.map((s, i) => (i === drag!.index ? { ...s, start_ms: s.detected_ms! + drag!.steps * fineMs(segments[i - 1].bpm) } : s))
+      ? segments.map((s, i) => (i === drag!.index ? { ...s, start_ms: moveRefMs(segments, i) + drag!.steps * fineMs(segments[i - 1].bpm) } : s))
       : segments,
   );
   const detectedIdx = $derived(segments.flatMap((s, i) => (i > 0 && s.detected_ms != null ? [i] : [])));
-  const active = $derived(editable && !locked && detectedIdx.length > 0);
-  const sel = $derived(selected !== null && detectedIdx.includes(selected) ? selected : (detectedIdx[0] ?? null));
+  const active = $derived(
+    editable && !locked && (freeMove ? segments.length > 0 && segments[0].bpm > 0 : detectedIdx.length > 0),
+  );
+  const sel = $derived(
+    freeMove
+      ? Math.min(Math.max(selected ?? 0, 0), Math.max(segments.length - 1, 0))
+      : selectedInt !== null && detectedIdx.includes(selectedInt) ? selectedInt : (detectedIdx[0] ?? null),
+  );
 
   function fmt(ms: number, decimals: 1 | 3): string {
     const total = Math.max(0, ms) / 1000;
@@ -74,10 +99,17 @@
   });
 
   function offsetOf(i: number): number {
-    return offsetSteps(segments[i].start_ms, segments[i].detected_ms!, segments[i - 1].bpm);
+    return offsetSteps(segments[i].start_ms, moveRefMs(segments, i), segments[i - 1].bpm);
   }
   const valueText = $derived.by(() => {
     if (!active || sel === null) return undefined;
+    if (freeMove) {
+      const s = segments[sel];
+      const head = `Section ${sel + 1} of ${segments.length} ${sel === 0 ? 'from the start' : `from ${fmt(s.start_ms, 3)}`}, ${bpmText(s.bpm)} BPM`;
+      if (sel === 0) return head;
+      const kind = s.detected_ms != null ? 'detected' : s.on_beat ? 'placed' : 'typed';
+      return kind === 'typed' ? `${head}, typed` : `${head}, ${kind}, ${signed(offsetOf(sel))}/64 beat`;
+    }
     const n = offsetOf(sel);
     const pos = detectedIdx.indexOf(sel) + 1;
     return `Tempo change ${pos} of ${detectedIdx.length} at ${fmt(segments[sel].start_ms, 3)}, ${bpmText(segments[sel].bpm)} BPM, ${signed(n)}/64 beat`;
@@ -86,7 +118,9 @@
     if (!drag || drag.index >= segments.length) return '';
     const ms = drag.steps * fineMs(segments[drag.index - 1].bpm);
     const sign = ms < 0 ? '-' : '+';
-    return `${signed(drag.steps)}/64 beat (${sign}${fmt(Math.abs(ms), 3)}) · limit ±${MAX_OFFSET_STEPS / 64} beats`;
+    const limit = freeMove ? moveLimit(segments, drag.index) : MAX_OFFSET_STEPS;
+    const tail = Number.isFinite(limit) ? ` · limit ±${limit / 64} beats` : '';
+    return `${signed(drag.steps)}/64 beat (${sign}${fmt(Math.abs(ms), 3)})${tail}`;
   });
 
   /** Neighbour limits of change `i` in ms, as `set_change_offset`. */
@@ -97,7 +131,8 @@
   }
   function stepsFor(i: number, pointerMs: number): number {
     const [lo, hi] = limits(i);
-    return dragSteps(segments[i].detected_ms!, pointerMs, segments[i - 1].bpm, lo, hi);
+    const limit = freeMove ? moveLimit(segments, i) : MAX_OFFSET_STEPS;
+    return dragSteps(moveRefMs(segments, i), pointerMs, segments[i - 1].bpm, lo, hi, limit);
   }
 
   function colour(style: CSSStyleDeclaration, name: string, fallback: string): string {
@@ -151,8 +186,8 @@
     const secs = sectionMarks(shown, duration, width);
     secs.forEach((m) => {
       if (m.x === null) return;
-      const isSel = active && focused && m.index === sel;
-      ctx.globalAlpha = editable && !m.detected ? 0.55 : 1;
+      const isSel = freeMove ? active && m.index === sel : active && focused && m.index === sel;
+      ctx.globalAlpha = editable && !freeMove && !m.detected ? 0.55 : 1;
       ctx.fillStyle = accent;
       if (isSel) ctx.fillRect(m.x - 1, 0, 4, height);
       else ctx.fillRect(m.x, 0, 2, height);
@@ -162,6 +197,7 @@
     ctx.font = FONT;
     ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = text;
+    labelRects = [];
     secs.forEach((m, i) => {
       if (m.bpm <= 0) return;
       const x = m.x === null ? 3 : m.x + 5;
@@ -169,7 +205,10 @@
       const b = bpmText(m.bpm);
       for (const t of [`${b} BPM`, b]) {
         if (labelFits(x, nextX, ctx.measureText(t).width)) {
+          const w = ctx.measureText(t).width;
           ctx.fillText(t, x, height - 4);
+          labelRects.push({ index: m.index, x, y: height - 19, w, h: 19 });
+          if (freeMove && active && m.index === sel) ctx.fillRect(x, height - 2, w, 2);
           break;
         }
       }
@@ -178,7 +217,7 @@
 
   $effect(() => {
     // Redraw on every change of what is shown.
-    void [width, height, peaks, loops, currentLoop, durationMs, positionMs, shown, canvas, focused, sel, active, editable];
+    void [width, height, peaks, loops, currentLoop, durationMs, positionMs, shown, canvas, focused, sel, active, editable, freeMove];
     draw();
   });
 
@@ -212,12 +251,49 @@
     return best;
   }
 
+  const localY = (e: PointerEvent): number => e.clientY - (canvas?.getBoundingClientRect().top ?? 0);
+
+  function labelAt(x: number, y: number): number | null {
+    const r = labelRects.find((l) => x >= l.x && x <= l.x + l.w && y >= l.y && y <= l.y + l.h);
+    return r ? r.index : null;
+  }
+
+  /** The section the pixel `x` falls in. */
+  function sectionAt(x: number): number {
+    let at = 0;
+    sectionMarks(segments, durationMs, width).forEach((m) => {
+      if (m.x !== null && m.x <= x) at = m.index;
+    });
+    return at;
+  }
+
   function onpointerdown(e: PointerEvent): void {
     if (!editable || locked || e.button > 0) return;
-    const i = barAt(localX(e));
+    const x = localX(e);
+    if (freeMove) {
+      if (!active) return;
+      e.preventDefault();
+      canvas?.focus();
+      keyTarget = null;
+      const l = labelAt(x, localY(e));
+      if (l !== null) {
+        onlabel?.(l);
+        return;
+      }
+      const b = barAt(x);
+      if (b === null) {
+        onselect?.(sectionAt(x));
+        return;
+      }
+      drag = { index: b, steps: offsetOf(b) };
+      onselect?.(b);
+      canvas?.setPointerCapture?.(e.pointerId);
+      return;
+    }
+    const i = barAt(x);
     if (i === null || segments[i].detected_ms == null) return;
     drag = { index: i, steps: offsetOf(i) };
-    selected = i;
+    selectedInt = i;
     keyTarget = null;
     canvas?.setPointerCapture?.(e.pointerId);
     e.preventDefault();
@@ -230,8 +306,8 @@
       return;
     }
     const i = locked ? null : barAt(localX(e));
-    hoverBar = i !== null && segments[i].detected_ms != null;
-    hoverTyped = i !== null && segments[i].detected_ms == null;
+    hoverBar = i !== null && (freeMove || segments[i].detected_ms != null);
+    hoverTyped = !freeMove && i !== null && segments[i].detected_ms == null;
   }
 
   function onpointerup(): void {
@@ -252,7 +328,7 @@
 
   function onfocus(): void {
     focused = true;
-    selected = detectedIdx[0] ?? null;
+    if (!freeMove) selectedInt = detectedIdx[0] ?? null;
     keyTarget = null;
   }
 
@@ -264,22 +340,77 @@
   function onkeydown(e: KeyboardEvent): void {
     if (!active || sel === null || drag || e.ctrlKey || e.altKey || e.metaKey) return;
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      const at = detectedIdx.indexOf(sel) + (e.key === 'ArrowUp' ? -1 : 1);
-      selected = detectedIdx[Math.min(Math.max(at, 0), detectedIdx.length - 1)];
+      if (freeMove) {
+        onselect?.(Math.min(Math.max(sel + (e.key === 'ArrowUp' ? -1 : 1), 0), segments.length - 1));
+      } else {
+        const at = detectedIdx.indexOf(sel) + (e.key === 'ArrowUp' ? -1 : 1);
+        selectedInt = detectedIdx[Math.min(Math.max(at, 0), detectedIdx.length - 1)];
+      }
       keyTarget = null;
       e.preventDefault();
       return;
     }
+    if (freeMove && !e.shiftKey) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        onlabel?.(sel);
+        return;
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        onremove?.(sel);
+        return;
+      }
+      if (e.key === 'a') {
+        e.preventDefault();
+        onadd?.();
+        return;
+      }
+    }
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     e.preventDefault();
+    if (sel === 0) return;
     const delta = (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 64 : 1);
     const base = keyTarget && keyTarget.index === sel ? keyTarget.steps : offsetOf(sel);
-    const wanted = Math.min(Math.max(base + delta, -MAX_OFFSET_STEPS), MAX_OFFSET_STEPS);
+    const limit = freeMove ? moveLimit(segments, sel) : MAX_OFFSET_STEPS;
+    const wanted = Math.min(Math.max(base + delta, -limit), limit);
     const fine = fineMs(segments[sel - 1].bpm);
-    const steps = stepsFor(sel, segments[sel].detected_ms! + wanted * fine);
+    const steps = stepsFor(sel, moveRefMs(segments, sel) + wanted * fine);
     if (steps === base) return;
     keyTarget = { index: sel, steps };
     onmove?.(sel, steps);
+  }
+
+  // ---- BPM overlay ----
+
+  const overlay = $derived.by(() => {
+    if (!bpmEdit || width <= 0 || segments.length === 0) return null;
+    let x: number;
+    let initial: number;
+    let name: string;
+    if ('addAt' in bpmEdit) {
+      x = xOf(bpmEdit.addAt, durationMs, width);
+      initial = segments.filter((s, i) => i === 0 || s.start_ms <= bpmEdit.addAt).at(-1)!.bpm;
+      name = 'BPM of the new section';
+    } else {
+      const i = bpmEdit.index;
+      if (i < 0 || i >= segments.length) return null;
+      x = i === 0 ? 3 : xOf(segments[i].start_ms, durationMs, width) + 5;
+      initial = segments[i].bpm;
+      name = `BPM of section ${i + 1}`;
+    }
+    return { x: Math.max(0, Math.min(x, width - 100)), initial, name };
+  });
+
+  function commitBpm(bpm: number): void {
+    oncommitbpm?.(bpm);
+    canvas?.focus();
+  }
+  function cancelBpm(): void {
+    // Escape (the input still has the focus) hands the focus back; a blur must not take it
+    const byKey = document.activeElement?.hasAttribute('data-bpm-input');
+    oncancelbpm?.();
+    if (byKey) canvas?.focus();
   }
 
   const title = $derived(
@@ -295,9 +426,10 @@
     bind:this={canvas}
     role={active ? 'slider' : 'img'}
     aria-label={ariaLabel}
-    aria-valuemin={active ? -MAX_OFFSET_STEPS : undefined}
-    aria-valuemax={active ? MAX_OFFSET_STEPS : undefined}
-    aria-valuenow={active && sel !== null ? offsetOf(sel) : undefined}
+    aria-valuemin={active && !freeMove ? -MAX_OFFSET_STEPS : undefined}
+    aria-valuemax={active && !freeMove ? MAX_OFFSET_STEPS : undefined}
+    aria-valuenow={active && sel !== null ? (sel === 0 ? 0 : offsetOf(sel)) : undefined}
+    data-player-keys={freeMove ? '' : undefined}
     aria-valuetext={valueText}
     tabindex={active ? 0 : undefined}
     {title}
@@ -311,6 +443,16 @@
     {onfocus}
     {onblur}
   ></canvas>
+  {#if overlay}
+    <SectionBpmInput
+      xPx={overlay.x}
+      initial={overlay.initial}
+      label={overlay.name}
+      oncommit={commitBpm}
+      oncancel={cancelBpm}
+      oninvalid={(m) => oninvalidbpm?.(m)}
+    />
+  {/if}
   {#if drag}
     <div class="pointer-events-none absolute top-1 left-1 rounded bg-background/90 px-2 py-0.5 text-base" data-testid="{testid}-readout">{readout}</div>
   {/if}
