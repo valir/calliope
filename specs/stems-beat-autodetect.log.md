@@ -26,3 +26,4 @@ reviewer (fix round 1) | APPROVED; 2 optional minors | reviewer | done
 tester (fix round 1) | D1, D2 fixed; no new defects | tester | done
 report | written | orchestrator | done
 owner change 1 | detect on drums+bass+guitar; absorb glitch sections; fold 2x/0.5x sections | implementer | done
+owner change 2 | metronome: one 1.5 kHz click on every beat (no accent tone) | orchestrator | done

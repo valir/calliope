@@ -542,13 +542,13 @@ fn edge_bpm_text_values() {
 // =========================================================================================
 
 #[test]
-fn ac19_metronome_ticks_on_every_beat_accent_on_beat_one_and_off_stops() {
+fn ac19_metronome_ticks_on_every_beat_in_one_tone_and_off_stops() {
     let mut r = rig(WITH_TEMPO);
     r.m.select_source(&r.id(), "stem:vocals", r.t0).unwrap();
     r.m.set_metronome(&r.id(), true, false, r.t0).unwrap();
     r.seek(1100);
     r.play();
-    let n = RATE * 18 / 10; // 1.1 s .. 2.9 s: beats at 1500 (k=2), 2000 (k=3), 2500 (k=4 accent)
+    let n = RATE * 18 / 10; // 1.1 s .. 2.9 s: beats at 1500 (k=2), 2000 (k=3), 2500 (k=4, bar start)
     let got = r.b.pull(n);
     let pcm = r.pcm();
     let want = expected(&pcm, 1100 * RATE / 1000, n);
@@ -558,15 +558,15 @@ fn ac19_metronome_ticks_on_every_beat_accent_on_beat_one_and_off_stops() {
     for (o, b) in on.iter().zip(beats) {
         assert!((*o as i64 - b as i64).abs() < 100, "onset {o} vs beat {b}");
     }
-    // accent: beat 1 of the bar (k=4) has 2 kHz energy, plain beats 1.5 kHz
+    // one tone (owner, 2026-10-14): every beat, the bar start included, is 1.5 kHz
     let win = |o: usize| {
         let res: Vec<f32> = (o..o + 600).flat_map(|f| [got[2 * f] - want[2 * f], 0.0]).collect();
         (goertzel(&res, 2000.0), goertzel(&res, 1500.0))
     };
-    let (a2, a15) = win(beats[2]);
-    let (p2, p15) = win(beats[0]);
-    assert!(a2 > a15 * 2.0, "accent is 2 kHz: {a2} {a15}");
-    assert!(p15 > p2 * 2.0, "plain beat is 1.5 kHz: {p2} {p15}");
+    for b in beats {
+        let (h2, h15) = win(b);
+        assert!(h15 > h2 * 2.0, "beat at {b} is 1.5 kHz: {h2} {h15}");
+    }
     // Off
     r.m.set_metronome(&r.id(), false, false, r.t0).unwrap();
     let got = r.b.pull(RATE);

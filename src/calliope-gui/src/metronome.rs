@@ -3,17 +3,16 @@
 use std::f32::consts::TAU;
 
 pub(crate) const CLICK_PEAK: f32 = 0.5;
-pub(crate) const ACCENT_HZ: f32 = 2000.0;
-pub(crate) const NORMAL_HZ: f32 = 1500.0;
+/// One tone for every beat (owner: the lower of the two earlier tones; no accent on the bar start).
+pub(crate) const CLICK_HZ: f32 = 1500.0;
 const CLICK_SECONDS: f32 = 0.030;
 /// Decay time constant: `exp(-30 ms / tau)` is about 0.0067, so the click is below 0.01 at 30 ms.
 const DECAY_TAU: f32 = 0.006;
 
-/// The two pre-rendered click sounds at the output rate.
+/// The pre-rendered click sound at the output rate.
 #[derive(Debug, Clone)]
 pub(crate) struct Click {
-    accent: Vec<f32>,
-    normal: Vec<f32>,
+    samples: Vec<f32>,
 }
 
 fn render(hz: f32, rate: u32) -> Vec<f32> {
@@ -35,18 +34,11 @@ fn render(hz: f32, rate: u32) -> Vec<f32> {
 
 impl Click {
     pub(crate) fn new(rate: u32) -> Self {
-        Click {
-            accent: render(ACCENT_HZ, rate),
-            normal: render(NORMAL_HZ, rate),
-        }
+        Click { samples: render(CLICK_HZ, rate) }
     }
 
-    pub(crate) fn samples(&self, accent: bool) -> &[f32] {
-        if accent {
-            &self.accent
-        } else {
-            &self.normal
-        }
+    pub(crate) fn samples(&self) -> &[f32] {
+        &self.samples
     }
 }
 
@@ -110,23 +102,19 @@ mod tests {
     fn click_peak_and_decay() {
         let rate = 22050;
         let c = Click::new(rate);
-        for accent in [true, false] {
-            let s = c.samples(accent);
-            let peak = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-            assert!((peak - 0.5).abs() < 1e-4);
-            let n30 = (0.030 * rate as f32).round() as usize;
-            assert!(s.len() <= n30 + 1);
-            assert!(s.iter().skip(n30.saturating_sub(1)).all(|v| v.abs() < 0.01));
-        }
+        let s = c.samples();
+        let peak = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!((peak - 0.5).abs() < 1e-4);
+        let n30 = (0.030 * rate as f32).round() as usize;
+        assert!(s.len() <= n30 + 1);
+        assert!(s.iter().skip(n30.saturating_sub(1)).all(|v| v.abs() < 0.01));
     }
 
     #[test]
-    fn accent_and_normal_differ_in_frequency() {
+    fn click_is_the_one_lower_tone() {
         let rate = 22050;
-        let c = Click::new(rate);
-        let (a, n) = (c.samples(true), c.samples(false));
-        assert!(goertzel(a, 2000.0, rate) > 3.0 * goertzel(a, 1500.0, rate));
-        assert!(goertzel(n, 1500.0, rate) > 3.0 * goertzel(n, 2000.0, rate));
+        let s = Click::new(rate).samples().to_vec();
+        assert!(goertzel(&s, 1500.0, rate) > 3.0 * goertzel(&s, 2000.0, rate));
     }
 
     #[test]

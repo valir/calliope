@@ -255,7 +255,7 @@ loops: [ {id: "loop-1", start: {tick: 64}, end: {tick: 192}, repeat: true, count
   So a tick is sample-aligned with the music whatever the device latency. The output is hard-clipped at full scale,
   like the Editor mix.
 - **Sound** (`metronome::Click`): our own synthesis, no samples from anywhere.
-  - A 2 kHz sine on the first beat of a bar (accent), 1.5 kHz on the other beats.
+  - A 2 kHz sine on the first beat of a bar (accent), 1.5 kHz on the other beats. **Changed 2026-10-14 (owner): one 1.5 kHz click on every beat, no accent tone.**
   - Exponential decay over 30 ms, peak 0.5 (-6 dBFS). No volume control in this feature.
   - Rendered into a pre-allocated buffer at the output rate when a session opens.
 - **Metronome On** (needs BPM mode): a click on every beat of the grid (`tempo_map::beats_in`) inside the played

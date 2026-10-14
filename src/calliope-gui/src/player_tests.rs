@@ -424,9 +424,9 @@ fn close(got: &[f32], want: &[f32]) {
     }
 }
 
-fn add_click(v: &mut [f32], frame: usize, accent: bool) {
+fn add_click(v: &mut [f32], frame: usize) {
     let c = Click::new(RATE as u32);
-    for (k, x) in c.samples(accent).iter().enumerate() {
+    for (k, x) in c.samples().iter().enumerate() {
         if frame + k < v.len() / 2 {
             for ch in 0..2 {
                 let s = &mut v[2 * (frame + k) + ch];
@@ -484,7 +484,7 @@ fn pos_ms(m: &PlayerManager, id: &str) -> u64 {
 }
 
 #[test]
-fn metronome_clicks_at_exact_frames_with_accent() {
+fn metronome_clicks_at_exact_frames_in_one_tone() {
     let (_t, spec, mut m, b, _e, pcm) = with_tempo();
     let t0 = Instant::now();
     let snap = m.set_metronome(&spec.id, true, false, t0).unwrap();
@@ -496,8 +496,8 @@ fn metronome_clicks_at_exact_frames_with_accent() {
     let mut want = expected(&pcm, 0, total);
     fade_in(&mut want, 0);
     // beats every 500 ms from 0 (beat 4 of bar 0); the bar starts at 500 and 2500
-    for (k, ms) in [0usize, 500, 1000, 1500, 2000, 2500].iter().enumerate() {
-        add_click(&mut want, ms * RATE / 1000, k == 1 || k == 5);
+    for ms in [0usize, 500, 1000, 1500, 2000, 2500] {
+        add_click(&mut want, ms * RATE / 1000);
     }
     close(&got, &want);
 }
@@ -526,8 +526,8 @@ fn count_in_before_main_play() {
     assert!(st.counting_in && st.playing);
     let got = b.pull(33075 + 2000);
     let mut want = vec![0.0f32; (33075 + 2000) * 2];
-    for (f, a) in [(0usize, true), (11025, false), (22050, false)] {
-        add_click(&mut want, f, a);
+    for f in [0usize, 11025, 22050] {
+        add_click(&mut want, f);
     }
     let src = expected(&pcm, 0, 2000);
     for (k, x) in src.iter().enumerate() {
@@ -605,8 +605,8 @@ fn loop_with_count_in_plays_it_before_the_first_pass_and_every_repeat() {
     let total = first + (end - start) + 14700 * 3 + 500;
     let got = b.pull(total);
     let mut want = vec![0.0f32; total * 2];
-    for (f, a) in [(0usize, true), (14700, false), (29400, false)] {
-        add_click(&mut want, f, a);
+    for f in [0usize, 14700, 29400] {
+        add_click(&mut want, f);
     }
     let pass = expected(&pcm, start, end - start);
     let n = fade_frames();
@@ -619,8 +619,8 @@ fn loop_with_count_in_plays_it_before_the_first_pass_and_every_repeat() {
         want[(first + k) * 2 + 1] = pass[2 * k + 1] * g;
     }
     let again = first + (end - start);
-    for (f, a) in [(0usize, true), (14700, false), (29400, false)] {
-        add_click(&mut want, again + f, a);
+    for f in [0usize, 14700, 29400] {
+        add_click(&mut want, again + f);
     }
     let src = expected(&pcm, start, 500);
     for (k, x) in src.iter().enumerate() {
@@ -781,13 +781,9 @@ fn tempo_change_keeps_loops_in_time_and_resets_speed() {
     let got = b.pull(20000);
     let mut want = expected(&pcm, 3000 * RATE / 1000, 20000);
     fade_in(&mut want, 0);
-    add_click(&mut want, 0, false);
-    add_click(&mut want, 13230, false);
-    // bar position decides the accents; only compare where no click sits
-    let beat = 13230usize;
-    let quiet = |v: &[f32]| v[2 * 2000..2 * beat].to_vec();
-    close(&quiet(&got), &quiet(&want));
-    assert!(peak(&got[2 * beat..2 * beat + 200]) > 0.0);
+    add_click(&mut want, 0);
+    add_click(&mut want, 13230);
+    close(&got, &want);
 }
 
 #[test]

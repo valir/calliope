@@ -35,7 +35,7 @@ pub(crate) const LOOP_INCOMPLETE: &str = "Set the loop end first";
 
 // ---------------------------------------------------------------------- engine
 
-/// A beat of the grid: (source frame, accent).
+/// A beat of the grid: (source frame, first beat of a bar). Every beat clicks in the same tone.
 pub(crate) type Beat = (u64, bool);
 
 /// The current complete loop, in source frames.
@@ -95,7 +95,6 @@ struct CountState {
 /// A click being mixed in.
 #[derive(Clone, Copy)]
 struct Voice {
-    accent: bool,
     at: usize,
 }
 
@@ -240,11 +239,11 @@ impl Engine {
     /// Adds the running click voice to frame `i` of `out`.
     fn mix_voice(&mut self, out: &mut [f32], i: usize) {
         if let Some(v) = self.voice {
-            let s = self.click.samples(v.accent);
+            let s = self.click.samples();
             if let Some(&x) = s.get(v.at) {
                 out[2 * i] += x;
                 out[2 * i + 1] += x;
-                self.voice = Some(Voice { at: v.at + 1, ..v });
+                self.voice = Some(Voice { at: v.at + 1 });
             } else {
                 self.voice = None;
             }
@@ -268,8 +267,8 @@ impl Engine {
                     self.voice = None;
                     continue;
                 }
-                if let Some(k) = c.plan.clicks.iter().position(|&f| f == c.at) {
-                    self.voice = Some(Voice { accent: k == 0, at: 0 });
+                if c.plan.clicks.contains(&c.at) {
+                    self.voice = Some(Voice { at: 0 });
                 }
                 c.at += 1;
                 self.mix_voice(out, i);
@@ -284,12 +283,12 @@ impl Engine {
                     self.beat_idx = self.grid.partition_point(|b| b.0 < self.pos);
                     self.beat_dirty = false;
                 }
-                while let Some(&(f, accent)) = self.grid.get(self.beat_idx) {
+                while let Some(&(f, _)) = self.grid.get(self.beat_idx) {
                     if f > self.pos {
                         break;
                     }
                     if f == self.pos {
-                        self.voice = Some(Voice { accent, at: 0 });
+                        self.voice = Some(Voice { at: 0 });
                     }
                     self.beat_idx += 1;
                 }
