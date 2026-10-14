@@ -1546,3 +1546,236 @@ fn hostile_loops_without_a_valid_current_loop_stay_reachable() {
         );
     }
 }
+
+// =========================================================================================
+// tempo sections (gui-player-tempo-sections)
+// =========================================================================================
+
+const TS_FIXTURE: &str = r#"{"schema_version":2,"tempo":{"beats_per_bar":4,"segments":[
+    {"start_ms":500,"bpm":120},{"start_ms":8500,"bpm":93,"detected_ms":8500}]}}"#;
+
+/// Like `rig`, with `player.json` written into the temp copy before `open`.
+fn rig_with(title: &str, player_json: &str) -> Rig {
+    let (t, spec) = spec_of(title);
+    std::fs::write(spec.dir.join("player.json"), player_json).unwrap();
+    let (mut m, b, e) = manager();
+    m.open(&spec).unwrap();
+    Rig { _t: t, spec, m, b, e, t0: Instant::now() }
+}
+
+fn ts_rig() -> Rig {
+    rig_with(PRACTICE, TS_FIXTURE)
+}
+
+fn frames_of(ms: f64) -> usize {
+    (ms * RATE as f64 / 1000.0).round() as usize
+}
+
+fn ms_of_frame(f: usize) -> f64 {
+    f as f64 * 1000.0 / RATE as f64
+}
+
+impl Rig {
+    fn sections(&self) -> Vec<(f64, f64)> {
+        self.snap().tempo.segments.iter().map(|s| (s.start_ms, s.bpm)).collect()
+    }
+    fn edit(&mut self, e: SectionEdit) -> PlayerSnapshot {
+        self.m.edit_sections(&self.spec.id, e, self.t0).unwrap()
+    }
+    fn map(&self) -> tempo_map::TempoMap {
+        let t = self.snap().tempo;
+        tempo_map::TempoMap { beats_per_bar: t.beats_per_bar, segments: t.segments }
+    }
+    fn metronome_on(&mut self) {
+        self.m.set_metronome(&self.spec.id, true, false, self.t0).unwrap();
+    }
+    /// Pulls `ms` of audio from the current position and returns the click times (absolute ms) found
+    /// against the source, and the raw output.
+    fn pull_clicks(&mut self, ms: f64) -> (Vec<f64>, Vec<f32>) {
+        let start = frames_of(self.pos() as f64);
+        let n = frames_of(ms);
+        let got = self.b.pull(n);
+        let want = expected(&self.pcm(), start, n);
+        let c = clicks(&got, &want, 200).into_iter().map(|f| ms_of_frame(start + f)).collect();
+        (c, got)
+    }
+}
+
+fn gaps(c: &[f64]) -> Vec<f64> {
+    c.windows(2).map(|w| w[1] - w[0]).collect()
+}
+
+fn near_all(v: &[f64], want: f64) {
+    let tol = 2.0 * 1000.0 / RATE as f64 + 0.5;
+    assert!(!v.is_empty());
+    for d in v {
+        assert!((d - want).abs() < tol, "{d} vs {want} in {v:?}");
+    }
+}
+
+#[test]
+fn ts1_drag_moves_in_fine_steps_and_stops_at_4_beats() {
+    let mut r = ts_rig();
+    let fine = 500.0 / 64.0;
+    for (steps, applied) in [(1, 1), (19, 19), (256, 256)] {
+        let at = r.sections()[1].0;
+        let s = r.edit(SectionEdit::Move { index: 1, at, steps });
+        let seg = &s.tempo.segments[1];
+        assert_eq!(seg.start_ms, 8500.0 + applied as f64 * fine, "steps {steps}");
+        assert_eq!(seg.detected_ms, Some(8500.0));
+    }
+    assert_eq!(r.sections()[1].0, 10500.0);
+    // past 4 beats the backend refuses (the drag clamps to 256 in the frontend); nothing changes
+    let err = r.m.edit_sections(&r.id(), SectionEdit::Move { index: 1, at: 10500.0, steps: 400 }, r.t0).unwrap_err();
+    assert!(err.contains("at most 256"), "{err}");
+    assert_eq!(r.sections()[1].0, 10500.0);
+    assert_eq!(8500.0 + 19.0 * fine, 8648.4375);
+    // a stale position is refused and changes nothing
+    let err = r.m.edit_sections(&r.id(), SectionEdit::Move { index: 1, at: 8500.0, steps: 1 }, r.t0).unwrap_err();
+    assert!(err.contains("changed"), "{err}");
+    assert_eq!(r.sections()[1].0, 10500.0);
+}
+
+#[test]
+fn ts2_section_bpm_changes_only_that_section_and_metronome_follows() {
+    let mut r = ts_rig();
+    r.edit(SectionEdit::Bpm { index: 0, at: 500.0, bpm: 110.0 });
+    assert_eq!(r.sections(), vec![(500.0, 110.0), (8500.0, 93.0)]);
+    assert_eq!(r.snap().tempo.segments[1].detected_ms, Some(8500.0));
+    r.metronome_on();
+    r.seek(2000);
+    r.play();
+    let (c, _) = r.pull_clicks(8000.0 + 4000.0 - 2000.0);
+    let before: Vec<f64> = c.iter().copied().filter(|&t| t < 8136.5 + 50.0).collect();
+    let after: Vec<f64> = c.iter().copied().filter(|&t| t >= 8500.0 - 50.0).collect();
+    assert!(before.len() >= 10, "{c:?}");
+    near_all(&gaps(&before), 60000.0 / 110.0);
+    // the last beat of the 110 section is stretched up to the change at 8500
+    assert!(after.len() >= 4, "{c:?}");
+    assert!((after[0] - 8500.0).abs() < 1.0, "{after:?}");
+    near_all(&gaps(&after), 60000.0 / 93.0);
+}
+
+#[test]
+fn ts3_add_splits_at_nearest_fine_step_with_typed_bpm() {
+    let mut r = ts_rig();
+    let s = r.edit(SectionEdit::Add { position: 15010.0, bpm: 140.0 });
+    assert_eq!(s.tempo.segments.len(), 3);
+    let seg = s.tempo.segments[2].clone();
+    let fine: f64 = 60000.0 / (93.0 * 64.0);
+    let k = ((15010.0 - 8500.0) / fine).round();
+    assert!((seg.start_ms - (8500.0 + k * fine)).abs() < 1e-6, "{}", seg.start_ms);
+    assert!(seg.on_beat && seg.bpm == 140.0 && seg.detected_ms.is_none());
+    r.metronome_on();
+    r.seek(14000);
+    r.play();
+    let (c, _) = r.pull_clicks(3000.0);
+    let i = c.iter().position(|&t| (t - seg.start_ms).abs() < 1.0).unwrap_or_else(|| panic!("no click at {} in {c:?}", seg.start_ms));
+    assert!(c.len() >= i + 4, "{c:?}");
+    near_all(&gaps(&c[i..]), 60000.0 / 140.0);
+}
+
+#[test]
+fn ts4_remove_joins_previous() {
+    let mut r = ts_rig();
+    let s = r.edit(SectionEdit::Remove { index: 1, at: 8500.0 });
+    assert_eq!(s.tempo.segments.len(), 1);
+    assert_eq!(r.sections(), vec![(500.0, 120.0)]);
+    r.metronome_on();
+    r.seek(9100);
+    r.play();
+    let (c, _) = r.pull_clicks(4000.0);
+    assert!(c.len() >= 7, "{c:?}");
+    near_all(&gaps(&c), 500.0);
+}
+
+#[test]
+fn ts5_double_93_gives_186_and_ticks_at_186() {
+    let mut r = ts_rig();
+    r.edit(SectionEdit::Scale { index: 1, at: 8500.0, factor: tempo_map::Scale::Double });
+    assert_eq!(r.sections(), vec![(500.0, 120.0), (8500.0, 186.0)]);
+    r.seek(12000);
+    assert_eq!(r.snap().transport.bpm, 186.0);
+    r.metronome_on();
+    r.seek(8600);
+    r.play();
+    let (c, _) = r.pull_clicks(4000.0);
+    assert!(c.len() >= 8, "{c:?}");
+    near_all(&gaps(&c), 60000.0 / 186.0);
+}
+
+/// Every kind of edit, made while playing from 9000 ms after 0.5 s of audio.
+#[test]
+fn ts6_edits_while_playing_continue_and_follow_from_next_beat() {
+    type Make = fn(&Rig) -> SectionEdit;
+    let kinds: [(&str, Make); 5] = [
+        ("bpm", |_| SectionEdit::Bpm { index: 1, at: 8500.0, bpm: 110.0 }),
+        ("scale", |_| SectionEdit::Scale { index: 1, at: 8500.0, factor: tempo_map::Scale::Double }),
+        ("add", |_| SectionEdit::Add { position: 10010.0, bpm: 140.0 }),
+        ("remove", |_| SectionEdit::Remove { index: 1, at: 8500.0 }),
+        ("move", |_| SectionEdit::Move { index: 1, at: 8500.0, steps: 256 }),
+    ];
+    for (name, make) in kinds {
+        let mut r = ts_rig();
+        r.metronome_on();
+        r.seek(9000);
+        r.play();
+        let old = r.map();
+        let n0 = frames_of(500.0);
+        let got0 = r.b.pull(n0);
+        let edit_at = ms_of_frame(frames_of(9000.0) + n0);
+        let e = make(&r);
+        let s = r.edit(e);
+        assert!(s.transport.playing, "{name}: still playing");
+        let new = r.map();
+        assert_ne!(old, new, "{name}");
+        let n1 = frames_of(1500.0);
+        let got1 = r.b.pull(n1);
+        // the audio is the source, sample by sample, except where a click sounds
+        let pcm = r.pcm();
+        let mut got = got0;
+        got.extend(got1);
+        let want = expected(&pcm, frames_of(9000.0), n0 + n1);
+        let found: Vec<f64> = clicks(&got, &want, 200).into_iter().map(|f| 9000.0 + ms_of_frame(f)).collect();
+        let mut exp: Vec<f64> = old.beats_in(9000.0, edit_at).iter().map(|b| b.0).collect();
+        exp.extend(new.beats_in(edit_at, 11000.0).iter().map(|b| b.0));
+        assert_eq!(found.len(), exp.len(), "{name}: {found:?} vs {exp:?}");
+        for (f, x) in found.iter().zip(&exp) {
+            assert!((f - x).abs() < 2.0 * 1000.0 / RATE as f64 + 0.5, "{name}: click {f} vs beat {x}");
+        }
+        let covered = |fr: usize| exp.iter().any(|&b| fr >= frames_of(b - 9000.0).saturating_sub(2) && fr < frames_of(b - 9000.0) + 800);
+        for fr in 200..n0 + n1 {
+            if !covered(fr) {
+                assert!((got[2 * fr] - want[2 * fr]).abs() < 1e-6 && (got[2 * fr + 1] - want[2 * fr + 1]).abs() < 1e-6, "{name}: audio differs at frame {fr}");
+            }
+        }
+        let eps = (r.pos() as f64 - 11000.0).abs();
+        assert!(eps < 3.0, "{name}: position {}", r.pos());
+    }
+}
+
+#[test]
+fn ts7_edits_survive_close_and_reopen() {
+    let mut r = ts_rig();
+    r.edit(SectionEdit::Move { index: 1, at: 8500.0, steps: 19 });
+    r.edit(SectionEdit::Bpm { index: 0, at: 500.0, bpm: 110.0 });
+    r.edit(SectionEdit::Scale { index: 1, at: r.sections()[1].0, factor: tempo_map::Scale::Double });
+    r.edit(SectionEdit::Add { position: 15010.0, bpm: 140.0 });
+    let at = r.sections()[2].0;
+    r.edit(SectionEdit::Remove { index: 2, at });
+    r.edit(SectionEdit::Add { position: 15010.0, bpm: 140.0 });
+    let want = r.snap().tempo.segments;
+    assert_eq!(want.len(), 3);
+    r.m.close();
+    assert_eq!(r.disk().unwrap()["schema_version"], 3);
+    r.reopen();
+    let back = r.snap().tempo.segments;
+    assert_eq!(back.len(), want.len());
+    for (a, b) in back.iter().zip(&want) {
+        // JSON text may differ from the f64 in the last bit
+        assert!((a.start_ms - b.start_ms).abs() < 1e-6 && a.bpm == b.bpm, "{a:?} vs {b:?}");
+        assert_eq!((a.detected_ms, a.on_beat), (b.detected_ms, b.on_beat));
+    }
+    assert_eq!(want[1].detected_ms, Some(8500.0));
+    assert!(want[2].on_beat);
+}
