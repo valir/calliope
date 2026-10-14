@@ -14,3 +14,5 @@ task 11 | GUI end-to-end, visual review, docs | implementer | done
 tester | all criteria PASS; 21 qa tests, QD1 (low) ignored | tester | done
 reviewer | CHANGES REQUIRED: M1 exact at-guard vs serde_json float parse; m1 queued move after add/remove; m2 sectionError after cancel | reviewer | done
 fix round 1 | M1 float_roundtrip + tolerant at-guard; m1 queued move keeps its at; m2 cancel clears error; QD1 non-finite add refused | implementer | done
+reviewer (fix round 1) | APPROVED; 3 non-blocking minors | reviewer | done
+tester (fix round 1) | M1, m1, m2, QD1 PASS; no new defects | tester | done

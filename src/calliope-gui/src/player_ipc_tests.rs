@@ -226,3 +226,41 @@ fn tempo_store_flushes_on_load_and_releases_on_replace() {
     assert_eq!(st.position_ms, 5000);
     assert_eq!(st.tempo, map);
 }
+
+/// QA: M1 at the IPC boundary. A start that went out in the JSON snapshot comes back in a JSON
+/// `TempoAction` and must be accepted by every section action, at non-dyadic positions.
+#[test]
+fn qa_json_roundtrip_starts_are_accepted_by_every_section_action() {
+    let e = env();
+    open(&e, PRACTICE).unwrap();
+    do_player_tempo(&e.host, PRACTICE, TempoAction::SetBpm { bpm: 93.0 }).unwrap();
+    let act = |j: String| serde_json::from_str::<TempoAction>(&j).unwrap();
+    for n in 0..12 {
+        let pos = 1777.3 + n as f64 * 1234.567 + 60000.0 / 93.0 * 0.123;
+        let s = do_player_tempo(&e.host, PRACTICE, TempoAction::AddChange { position: pos, bpm: 100.0 }).unwrap();
+        // what the front end sees: the snapshot as JSON text
+        let text = serde_json::to_string(&s).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let segs = v["tempo"]["segments"].as_array().unwrap();
+        let index = segs.iter().position(|g| (g["start_ms"].as_f64().unwrap() - pos).abs() < 40.0).unwrap();
+        assert!(index >= 1);
+        // the raw number text, as the browser would echo it back
+        let raw = segs[index]["start_ms"].to_string();
+        let a = |kind: &str, extra: &str| act(format!(r#"{{"kind":"{kind}","index":{index},"at":{raw}{extra}}}"#));
+        let ok = |t: TempoAction, what: &str| {
+            do_player_tempo(&e.host, PRACTICE, t).unwrap_or_else(|er| panic!("{what} at {raw} (n={n}): {er}"))
+        };
+        ok(a("section-bpm", r#","bpm":110"#), "section-bpm");
+        ok(a("scale-section", r#","factor":"double""#), "scale-section");
+        ok(a("scale-section", r#","factor":"halve""#), "scale-section halve");
+        ok(a("move-change", r#","steps":1"#), "move-change");
+        // the move changed the start; re-read it from JSON again, then remove
+        let v: serde_json::Value = serde_json::to_value(e.host.with(|m| m.snapshot(PRACTICE)).unwrap()).unwrap();
+        let segs = v["tempo"]["segments"].as_array().unwrap();
+        let moved = segs.iter().position(|g| g["start_ms"].as_f64().unwrap() > pos + 1.0 && g["bpm"].as_f64() != Some(93.0)).unwrap_or(index);
+        let raw2 = segs[moved]["start_ms"].to_string();
+        let t = act(format!(r#"{{"kind":"remove-change","index":{moved},"at":{raw2}}}"#));
+        let after = ok(t, "remove-change");
+        assert_eq!(after.tempo.segments.len(), segs.len() - 1);
+    }
+}
