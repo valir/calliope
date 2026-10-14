@@ -72,4 +72,18 @@ describe('player ipc wrappers', () => {
     expect(PLAYER_FIXTURE_TRACKS[0].backings).toHaveLength(1);
     expect(PLAYER_FIXTURE_TRACKS[2].audio).toBe('backing.mp3');
   });
+
+  it('player_tempo passes the section actions unchanged', async () => {
+    const seen: unknown[] = [];
+    mockIPC((cmd, args) => {
+      seen.push([cmd, args]);
+      return null;
+    });
+    await playerTempo('t1', { kind: 'move-change', index: 1, at: 8500, steps: -3 });
+    await playerTempo('t1', { kind: 'scale-section', index: 0, at: 500, factor: 'double' });
+    expect(seen).toEqual([
+      ['player_tempo', { id: 't1', action: { kind: 'move-change', index: 1, at: 8500, steps: -3 } }],
+      ['player_tempo', { id: 't1', action: { kind: 'scale-section', index: 0, at: 500, factor: 'double' } }],
+    ]);
+  });
 });

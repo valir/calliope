@@ -206,6 +206,8 @@ export interface TempoSegment {
   bpm: number;
   /** set on changes found by beat detection */
   detected_ms?: number | null;
+  /** set on changes added or moved in the Player: the section starts on a beat */
+  on_beat?: boolean;
 }
 export interface TempoSnap {
   beats_per_bar: number;
@@ -333,7 +335,12 @@ export type PlayerEvent =
 export type TempoAction =
   | { kind: 'set-bpm'; bpm: number }
   | { kind: 'speed-step'; steps: number }
-  | { kind: 'speed-reset' };
+  | { kind: 'speed-reset' }
+  | { kind: 'section-bpm'; index: number; at: number; bpm: number }
+  | { kind: 'scale-section'; index: number; at: number; factor: 'double' | 'halve' }
+  | { kind: 'add-change'; position: number; bpm: number }
+  | { kind: 'remove-change'; index: number; at: number }
+  | { kind: 'move-change'; index: number; at: number; steps: number };
 export type LoopAction =
   | { kind: 'add' }
   | { kind: 'remove' }
