@@ -843,6 +843,33 @@ fn section_edits_reach_the_engine_loops_and_disk() {
 }
 
 #[test]
+fn section_guard_accepts_starts_that_went_through_json() {
+    use crate::player_ipc::TempoAction;
+    let (_t, spec, mut m, _b, _e, _pcm) = with_tempo();
+    let t0 = Instant::now();
+    m.edit_sections(&spec.id, SectionEdit::Bpm { index: 0, at: 500.0, bpm: 93.0 }, t0).unwrap();
+    for n in 0..60 {
+        let pos = 1500.0 + n as f64 * 97.3;
+        let s = m.edit_sections(&spec.id, SectionEdit::Add { position: pos, bpm: 100.0 }, t0).unwrap();
+        let seg = s.tempo.segments.iter().find(|g| (g.start_ms - pos).abs() < 40.0).unwrap();
+        let text = serde_json::to_string(seg).unwrap();
+        let back: crate::tempo_map::Segment = serde_json::from_str(&text).unwrap();
+        let index = s.tempo.segments.iter().position(|g| g.start_ms == seg.start_ms).unwrap();
+        let json = format!(r#"{{"kind":"section-bpm","index":{index},"at":{},"bpm":110}}"#, back.start_ms);
+        let TempoAction::SectionBpm { index, at, bpm } = serde_json::from_str(&json).unwrap() else { panic!() };
+        assert_eq!(at, seg.start_ms, "{json}");
+        let s = m.edit_sections(&spec.id, SectionEdit::Bpm { index, at, bpm }, t0).unwrap();
+        // a one-ulp difference is still the same section, a real difference is not
+        let at1 = s.tempo.segments[index].start_ms;
+        let e = SectionEdit::Bpm { index, at: f64::from_bits(at1.to_bits() + 1), bpm: 100.0 };
+        assert!(m.edit_sections(&spec.id, e, t0).is_ok(), "one ulp off at index {index}");
+        let e = SectionEdit::Bpm { index, at: at1 + 1e-3, bpm: 100.0 };
+        assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), "The tempo sections changed; try again");
+        m.edit_sections(&spec.id, SectionEdit::Remove { index, at }, t0).unwrap();
+    }
+}
+
+#[test]
 fn stale_or_refused_section_edits_change_nothing() {
     let (_t, spec, mut m, _b, _e, _pcm) = with_tempo();
     let t0 = Instant::now();

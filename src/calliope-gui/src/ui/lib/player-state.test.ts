@@ -262,6 +262,33 @@ describe('player sections', () => {
     ]);
   });
 
+  it('a queued move keeps the at it was requested with when a remove lands in between', async () => {
+    await open();
+    let release: (v: unknown) => void = () => {};
+    let n = 0;
+    handlers.player_tempo = (a) => {
+      if (n++ === 0) return new Promise((r) => { release = r; });
+      return withSegs(a.id as string, three);
+    };
+    moveChange(2, 1);
+    moveChange(1, 5); // other section: captured now, at 2000
+    await flush();
+    release(withSegs(practice.id, [seg(0, 100), seg(5000, 90)])); // a remove landed: section 1 is now the old 2
+    await flush();
+    expect(tempoCalls()).toEqual([
+      { kind: 'move-change', index: 2, at: 5000, steps: 1 },
+      { kind: 'move-change', index: 1, at: 2000, steps: 5 },
+    ]);
+  });
+
+  it('cancelling the BPM overlay clears the section error', async () => {
+    await open();
+    pl.sectionError = 'Enter a BPM between 20 and 300';
+    editSectionBpm(1);
+    cancelSectionBpm();
+    expect(pl.sectionError).toBe('');
+  });
+
   it('a refusal sets sectionError only, and the next success clears it', async () => {
     await open();
     selectSection(1);

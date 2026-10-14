@@ -72,8 +72,9 @@ The count-in of a main Play is computed at Play time from the current map (`plan
   shows the Player's edits.
 
 **Stale indexes.** Every action that names a section also sends that section's current `start_ms` (`at`). Rust
-refuses with "The tempo sections changed; try again" when it doesn't match exactly. JSON numbers round-trip `f64`
-exactly, so equality is safe. A quick double Remove therefore never removes the wrong change.
+refuses with "The tempo sections changed; try again" when it doesn't match within 1e-6 ms (far below one fine step).
+serde_json's default float parsing can be one ulp off for some shortest-repr values, so calliope-gui enables its
+`float_roundtrip` feature and the guard still compares with the tolerance. A quick double Remove therefore never removes the wrong change.
 
 ### 2.3 Three kinds of changes; `on_beat` and `player.json` schema 3
 

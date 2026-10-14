@@ -463,6 +463,7 @@ export function editSectionBpm(index: number): void {
 
 export function cancelSectionBpm(): void {
   pl.bpmEdit = null;
+  pl.sectionError = '';
 }
 
 /** Opens the overlay for a new change at the playhead (captured now). */
@@ -508,24 +509,30 @@ export async function scaleSection(factor: 2 | 0.5): Promise<void> {
   );
 }
 
-// Move coalescing: one call in flight; while it runs only the latest target is kept.
-let movePending: { index: number; steps: number } | null = null;
-let moveRunning = false;
+// Move coalescing: one call in flight; while it runs only the latest target is kept. `at` is captured when
+// the move is requested, so an Add/Remove landing in between makes the queued move stale (the backend refuses
+// it) instead of hitting another section. Only a queued move of the section whose move is in flight takes its
+// `at` from the snapshot answering that move (null until then).
+let movePending: { index: number; steps: number; at: number | null } | null = null;
+let moveRunning: { index: number } | null = null;
 
 async function drainMoves(): Promise<void> {
   if (moveRunning) return;
-  moveRunning = true;
   const gen = generation;
   try {
     while (movePending !== null && gen === generation) {
-      const { index, steps } = movePending;
+      const { index, steps, at } = movePending;
       movePending = null;
-      const at = startOf(index);
       if (at === null) continue;
-      await sectionCall('move', index, (id) => playerTempo(id, { kind: 'move-change', index, at, steps }));
+      moveRunning = { index };
+      const ok = await sectionCall('move', index, (id) => playerTempo(id, { kind: 'move-change', index, at, steps }));
+      moveRunning = null;
+      if (ok && movePending !== null && (movePending as { index: number; at: number | null }).index === index) {
+        (movePending as { at: number | null }).at ??= startOf(index);
+      }
     }
   } finally {
-    moveRunning = false;
+    moveRunning = null;
     if (movePending !== null && gen === generation) void drainMoves();
   }
 }
@@ -533,6 +540,8 @@ async function drainMoves(): Promise<void> {
 /** Moves change `index` to `steps` 1/64 beats from its reference; calls are coalesced. */
 export function moveChange(index: number, steps: number): void {
   if (pl.status !== 'active') return;
-  movePending = { index, steps };
+  const same = moveRunning !== null && moveRunning.index === index;
+  const at = movePending !== null && movePending.index === index ? movePending.at : same ? null : startOf(index);
+  movePending = { index, steps, at };
   void drainMoves();
 }

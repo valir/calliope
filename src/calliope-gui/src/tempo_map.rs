@@ -278,7 +278,7 @@ impl TempoMap {
         let mut lim = i64::MAX;
         if seg.detected_ms.is_some() {
             let cur = ((seg.start_ms - reference) / fine).round() as i64;
-            lim = MAX_OFFSET_STEPS.max(cur.abs());
+            lim = MAX_OFFSET_STEPS.max(cur.unsigned_abs() as i64);
             if steps.unsigned_abs() > lim as u64 {
                 return Err(format!(
                     "A tempo change can move at most {MAX_OFFSET_STEPS} steps from its detected position"
@@ -348,6 +348,9 @@ impl TempoMap {
             return Err("Enter a BPM first".to_string());
         }
         let bpm = section_bpm(bpm)?;
+        if !position_ms.is_finite() {
+            return Err("Add tempo changes inside the track".to_string());
+        }
         if position_ms < self.segments[0].start_ms {
             return Err("Add tempo changes after the start of the first tempo".to_string());
         }

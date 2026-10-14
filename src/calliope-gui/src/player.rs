@@ -1233,7 +1233,10 @@ impl PlayerManager {
         let end_ms = s.pcm.frames as f64 * 1000.0 / f64::from(s.pcm.rate.max(1));
         let old = &s.state.tempo;
         let guard = |index: usize, at: f64| match old.segments.get(index) {
-            Some(g) if g.start_ms == at => Ok(()),
+            // `at` travelled through JSON. serde_json is built with `float_roundtrip`, so it is exact, but the
+            // tolerance keeps a stale-guard refusal impossible for a one-ulp difference. 1e-6 ms is far below
+            // one fine step (`fine_ms` is about 0.65 ms at 300 BPM) so a different section never matches.
+            Some(g) if (g.start_ms - at).abs() < 1e-6 => Ok(()),
             _ => Err("The tempo sections changed; try again".to_string()),
         };
         let (kind, index, map, extra) = match edit {

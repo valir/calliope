@@ -1773,7 +1773,7 @@ fn ts7_edits_survive_close_and_reopen() {
     assert_eq!(back.len(), want.len());
     for (a, b) in back.iter().zip(&want) {
         // JSON text may differ from the f64 in the last bit
-        assert!((a.start_ms - b.start_ms).abs() < 1e-6 && a.bpm == b.bpm, "{a:?} vs {b:?}");
+        assert!(a.start_ms == b.start_ms && a.bpm == b.bpm, "{a:?} vs {b:?}");
         assert_eq!((a.detected_ms, a.on_beat), (b.detected_ms, b.on_beat));
     }
     assert_eq!(want[1].detected_ms, Some(8500.0));
@@ -2091,7 +2091,6 @@ fn qa_add_boundaries() {
 }
 
 #[test]
-#[ignore = "QD1: TempoMap::add_change accepts a NaN position and inserts a segment with start_ms NaN (not reachable through JSON IPC)"]
 fn qa_add_rejects_non_finite_positions() {
     let m = TempoMap {
         beats_per_bar: 4,
