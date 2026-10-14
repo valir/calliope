@@ -39,7 +39,12 @@
 
   function plainKey(e: KeyboardEvent): void {
     const t = e.target;
-    if (t instanceof Element && t.closest(OWN_KEYS)) return;
+    if (t instanceof Element) {
+      const own = t.closest(OWN_KEYS);
+      // The waveform keeps the arrows, but Space, b, e and l/L keep their Player meaning.
+      const passes = own?.hasAttribute('data-player-keys') && (e.code === 'Space' || ['b', 'e', 'l', 'L'].includes(e.key));
+      if (own && !passes) return;
+    }
     // Auto-repeat of a held key must not toggle or mark again.
     if (e.repeat && (e.code === 'Space' || ['b', 'e', 'l', 'L'].includes(e.key))) {
       if (e.code === 'Space') e.preventDefault();

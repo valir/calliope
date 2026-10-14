@@ -7,7 +7,7 @@ import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import type { Channel } from '@tauri-apps/api/core';
 import PlayerView from './views/PlayerView.svelte';
 import App from './App.svelte';
-import { pl, resetPlayer } from '$lib/player-state.svelte';
+import { pl, resetPlayer, selectSection } from '$lib/player-state.svelte';
 import { lib, resetLibrary, selectTrack } from '$lib/library-state.svelte';
 import { ui } from '$lib/app-state.svelte';
 import { FIXTURE_TRACKS, PLAYER_FIXTURE_TRACKS } from '$lib/fixture-tracks';
@@ -299,6 +299,30 @@ describe('keys and focus', () => {
     await flush();
     expect(of('player_play')).toHaveLength(1);
     expect(of('player_loop').map((c) => (c.action as { kind: string }).kind)).toEqual(['mark', 'mark', 'select']);
+  });
+
+  it('on the focused waveform Space plays and the left arrow moves the change, not the loop; elsewhere the arrows select loops', async () => {
+    snap = {
+      ...bpmSnap(),
+      tempo: { beats_per_bar: 4, multi: true, segments: [{ start_ms: 500, bpm: 120 }, { start_ms: 8000, bpm: 93, on_beat: true }] },
+      transport: { ...idle, bpm: 93, tempo_index: 1 },
+    };
+    render(PlayerView);
+    await openTrack(snap);
+    selectSection(1);
+    await flush();
+    const wf = screen.getByTestId('player-waveform');
+    wf.focus();
+    await fireEvent.keyDown(wf, { code: 'Space', key: ' ' });
+    await fireEvent.keyDown(wf, { key: 'ArrowLeft' });
+    await flush();
+    expect(of('player_play')).toHaveLength(1);
+    expect(of('player_loop')).toHaveLength(0);
+    expect(of('player_tempo').map((c) => (c.action as { kind: string }).kind)).toEqual(['move-change']);
+    (document.activeElement as HTMLElement)?.blur();
+    await fireEvent.keyDown(document.body, { key: 'ArrowLeft' });
+    await flush();
+    expect(of('player_loop').map((c) => (c.action as { kind: string }).kind)).toEqual(['select']);
   });
 
   it('with Ctrl or Alt held the plain keys do nothing', async () => {

@@ -1,11 +1,14 @@
 <script lang="ts">
   import { selectedTrack } from '$lib/library-state.svelte';
-  import { pl, selectSource } from '$lib/player-state.svelte';
+  import {
+    pl, selectSource, targetSection, selectSection, editSectionBpm, commitSectionBpm, cancelSectionBpm, startAdd, removeChange, moveChange,
+  } from '$lib/player-state.svelte';
   import BpmSection from './BpmSection.svelte';
   import LoopsSection from './LoopsSection.svelte';
   import MetronomeSection from './MetronomeSection.svelte';
   import PlaybackSection from './PlaybackSection.svelte';
   import WaveformView from './WaveformView.svelte';
+  import SectionsSection from './SectionsSection.svelte';
   import SourceSelect from './SourceSelect.svelte';
 
   const track = $derived(selectedTrack());
@@ -50,9 +53,21 @@
     {loops}
     currentLoop={pl.snap?.current_loop ?? null}
     segments={pl.snap?.tempo.segments ?? []}
+    freeMove
+    selected={targetSection()}
+    onselect={selectSection}
+    onmove={moveChange}
+    onlabel={editSectionBpm}
+    onremove={(i) => { if (i > 0) void removeChange(); }}
+    onadd={startAdd}
+    bpmEdit={pl.bpmEdit}
+    oncommitbpm={(b) => void commitSectionBpm(b)}
+    oncancelbpm={cancelSectionBpm}
+    oninvalidbpm={(m) => (pl.sectionError = m)}
   />
   <div class="flex shrink-0 flex-wrap gap-2" data-testid="player-controls">
     <BpmSection />
+    <SectionsSection />
     <MetronomeSection />
     <PlaybackSection />
     <LoopsSection />

@@ -220,3 +220,90 @@ describe('player.json problems', () => {
     expect(b.getAttribute('aria-pressed')).toBe('false');
   });
 });
+
+describe('Sections group', () => {
+  const three = (bpms = [120, 93, 160], idx = 1): PlayerSnapshot => ({
+    ...withTempo(),
+    tempo: { beats_per_bar: 4, multi: true, segments: bpms.map((bpm, i) => ({ start_ms: i * 6000, bpm, on_beat: i > 0 })) },
+    transport: { ...idle, bpm: bpms[idx], tempo_index: idx },
+  });
+  const wf = () => screen.getByTestId('player-waveform');
+
+  it('shows the target and enables Add, Remove, x2 and /2', async () => {
+    await open(three());
+    expect(screen.getByTestId('section-status').textContent).toBe('Section 2 of 3 · 93 BPM');
+    for (const n of ['Add a tempo change at the playhead', 'Remove the tempo change', "Double the section's BPM", "Halve the section's BPM"]) {
+      expect(btn('Sections', n).disabled).toBe(false);
+    }
+  });
+
+  it('BPM 0 disables the group with a reason', async () => {
+    await open(timestamps());
+    expect(screen.getByTestId('section-status').textContent).toBe('No tempo');
+    const add = btn('Sections', 'Add a tempo change at the playhead');
+    expect(add.disabled).toBe(true);
+    expect(add.title).toBe('Type a BPM first');
+    expect(btn('Sections', 'Remove the tempo change').disabled).toBe(true);
+    expect(screen.getByTestId('section-message').textContent).toBe('Type a BPM first');
+  });
+
+  it('section 1 has no Remove, by button or by key', async () => {
+    await open(three([120, 93, 160], 0));
+    const rm = btn('Sections', 'Remove the tempo change');
+    expect(rm.disabled).toBe(true);
+    expect(rm.title).not.toBe('');
+    wf().focus();
+    await fireEvent.keyDown(wf(), { key: 'Delete' });
+    await fireEvent.keyDown(wf(), { key: 'Backspace' });
+    await flush();
+    expect(of('player_tempo')).toHaveLength(0);
+  });
+
+  it('x2 is disabled at 160 BPM and /2 at 25 BPM, each with its reason; 93 allows both', async () => {
+    await open(three([120, 93, 160], 2));
+    const x2 = btn('Sections', "Double the section's BPM");
+    expect(x2.disabled).toBe(true);
+    expect(x2.title).toMatch(/300/);
+    expect(btn('Sections', "Halve the section's BPM").disabled).toBe(false);
+    pl.section = 1;
+    await flush();
+    expect(btn('Sections', "Double the section's BPM").disabled).toBe(false);
+    expect(btn('Sections', "Halve the section's BPM").disabled).toBe(false);
+    pl.section = 2;
+    pl.snap!.tempo.segments[2].bpm = 25;
+    await flush();
+    const half = btn('Sections', "Halve the section's BPM");
+    expect(half.disabled).toBe(true);
+    expect(half.title).toMatch(/20/);
+  });
+
+  it('the buttons send the matching player_tempo actions', async () => {
+    await open(three());
+    await fireEvent.click(btn('Sections', "Double the section's BPM"));
+    await fireEvent.click(btn('Sections', "Halve the section's BPM"));
+    await fireEvent.click(btn('Sections', 'Remove the tempo change'));
+    await flush();
+    expect(of('player_tempo').map((c) => c.action)).toEqual([
+      { kind: 'scale-section', index: 1, at: 6000, factor: 'double' },
+      { kind: 'scale-section', index: 1, at: 6000, factor: 'halve' },
+      { kind: 'remove-change', index: 1, at: 6000 },
+    ]);
+  });
+
+  it('Add captures the playhead for the overlay (the overlay itself is tested with the waveform)', async () => {
+    await open(three());
+    pl.transport.position_ms = 7300;
+    await fireEvent.click(btn('Sections', 'Add a tempo change at the playhead'));
+    expect(pl.bpmEdit).toEqual({ addAt: 7300 });
+  });
+
+  it('the message slot keeps its height when empty or filled', async () => {
+    await open(three());
+    const slot = screen.getByTestId('section-message');
+    expect(slot.className).toContain('min-h-5');
+    pl.sectionError = 'Too close to the neighbour';
+    await flush();
+    expect(slot.textContent).toBe('Too close to the neighbour');
+    expect(slot.className).toContain('min-h-5');
+  });
+});

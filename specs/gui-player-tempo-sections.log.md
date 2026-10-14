@@ -9,3 +9,4 @@ task 6 | scaleBpm | local | done (gemma4 correct on first try; extra trailing bl
 task 7 | Waveform geometry for free moves | implementer | done
 task 8 | Player frontend state for sections | implementer | done
 task 9 | Editable Player waveform and the BPM overlay | implementer | done
+task 10 | Sections group, pane wiring, Player keys | implementer | done
