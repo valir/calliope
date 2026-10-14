@@ -10,3 +10,9 @@ export function parseBpm(text: string): number | null {
   if (v === 0 || (v >= 20 && v <= 300)) return v;
   return null;
 }
+
+/** Doubles or halves a BPM, rounded to one decimal; null when the result is outside 20..300. Mirrors Rust `scale_section`. */
+export function scaleBpm(bpm: number, factor: 2 | 0.5): number | null {
+  const v = Math.round(bpm * factor * 10) / 10;
+  return v >= 20 && v <= 300 ? v : null;
+}

@@ -5,3 +5,4 @@ task 2 | player.json schema 3 | implementer | done
 task 3 | Player session: edit_sections and the IPC actions | implementer | done
 task 4 | Backend acceptance tests for the spec's criteria | implementer | done
 task 5 | TS IPC types for the section actions | local | done (gemma4 edits correct; hit max turns, missing final newline restored by orchestrator)
+task 6 | scaleBpm | local | done (gemma4 correct on first try; extra trailing blank line trimmed)
