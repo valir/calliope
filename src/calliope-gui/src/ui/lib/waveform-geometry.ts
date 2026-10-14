@@ -69,17 +69,17 @@ function roundHalfAway(v: number): number {
 
 /**
  * The offset (fine steps from `detectedMs`) for a pointer at `pointerMs`: rounded, clamped to
- * +-MAX_OFFSET_STEPS and so the change stays within [minMs, maxMs] (one beat from its
+ * +-`limit` (default MAX_OFFSET_STEPS, Infinity allowed) and so the change stays within [minMs, maxMs] (one beat from its
  * neighbours; use +-Infinity for none). Mirrors `TempoMap::set_change_offset`; 0 if no room.
  */
-export function dragSteps(detectedMs: number, pointerMs: number, leftBpm: number, minMs: number, maxMs: number): number {
+export function dragSteps(detectedMs: number, pointerMs: number, leftBpm: number, minMs: number, maxMs: number, limit = MAX_OFFSET_STEPS): number {
   const fine = fineMs(leftBpm);
   const at = (n: number) => detectedMs + n * fine;
-  let min = Math.max(-MAX_OFFSET_STEPS, Math.ceil(Math.max((minMs - detectedMs) / fine, -1e9)));
+  let min = Math.max(-limit, Math.ceil(Math.max((minMs - detectedMs) / fine, -1e9)));
   while (at(min) < minMs) {
     min++;
   }
-  let max = MAX_OFFSET_STEPS;
+  let max = limit;
   if (Number.isFinite(maxMs)) {
     max = Math.min(max, Math.floor(Math.min((maxMs - detectedMs) / fine, 1e9)));
     while (at(max) > maxMs) {
@@ -96,4 +96,20 @@ export function dragSteps(detectedMs: number, pointerMs: number, leftBpm: number
 /** The absolute offset in fine steps of a change at `startMs` from `detectedMs`. */
 export function offsetSteps(startMs: number, detectedMs: number, leftBpm: number): number {
   return roundHalfAway((startMs - detectedMs) / fineMs(leftBpm));
+}
+
+type MoveSeg = { start_ms: number; bpm: number; detected_ms?: number | null };
+
+/** The point a change's offset is measured from: `detected_ms`, else the left section's start. Needs i >= 1. */
+export function moveRefMs(segs: MoveSeg[], i: number): number {
+  return segs[i].detected_ms ?? segs[i - 1].start_ms;
+}
+
+/** Largest |offset| in fine steps: detected changes keep max(256, current offset); others are free. */
+export function moveLimit(segs: MoveSeg[], i: number): number {
+  const d = segs[i].detected_ms;
+  if (d == null) {
+    return Infinity;
+  }
+  return Math.max(MAX_OFFSET_STEPS, Math.abs(offsetSteps(segs[i].start_ms, d, segs[i - 1].bpm)));
 }

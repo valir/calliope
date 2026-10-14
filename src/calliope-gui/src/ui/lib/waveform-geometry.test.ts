@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { columns, xOf, loopMarks, fineMs, sectionMarks, labelFits, dragSteps, offsetSteps } from './waveform-geometry';
+import { columns, xOf, loopMarks, fineMs, sectionMarks, labelFits, dragSteps, offsetSteps, moveRefMs, moveLimit } from './waveform-geometry';
 
 describe('columns', () => {
   it('should handle empty peaks', () => {
@@ -97,5 +97,43 @@ describe('offsetSteps', () => {
     for (const s of [0, 1, 3, -5, 256]) {
       expect(offsetSteps(10300 + s * 7.8125, 10300, 120)).toBe(s);
     }
+  });
+});
+
+describe('free moves', () => {
+  it('should reference the detected point or the left start', () => {
+    const segs = [
+      { start_ms: 0, bpm: 120 },
+      { start_ms: 4000, bpm: 90 },
+      { start_ms: 9000, bpm: 100, detected_ms: 8800 },
+    ];
+    expect(moveRefMs(segs, 1)).toBe(0);
+    expect(moveRefMs(segs, 2)).toBe(8800);
+  });
+  it('should limit only detected changes, widened to the current offset', () => {
+    const f = 60000 / (120 * 64);
+    const segs = [
+      { start_ms: 500, bpm: 120 },
+      { start_ms: 5000, bpm: 90 },
+      { start_ms: 10000 + 400 * f, bpm: 100, detected_ms: 10000 },
+      { start_ms: 20000 + 100 * f, bpm: 100, detected_ms: 20000 },
+    ];
+    expect(moveLimit(segs, 1)).toBe(Infinity);
+    expect(moveLimit(segs, 3)).toBe(256);
+    const wide = [segs[0], { ...segs[1], bpm: 120 }, segs[2]];
+    expect(moveLimit(wide, 2)).toBe(400);
+  });
+  it('should move a placed change freely on the left grid', () => {
+    const f = 60000 / (120 * 64);
+    expect(dragSteps(500, 500 + 1000 * f, 120, 0, Infinity, Infinity)).toBe(1000);
+    expect(dragSteps(500, 500 - 30 * f, 120, 0, Infinity, Infinity)).toBe(-30);
+    expect(dragSteps(500, -1e9, 120, 0, Infinity, Infinity)).toBe(-64);
+    expect(dragSteps(500, 1e9, 120, 0, 500 + 5000 * f, Infinity)).toBe(5000);
+  });
+  it('should accept 400 and refuse 401 for a detected change widened to 400', () => {
+    const f = 60000 / (120 * 64);
+    expect(dragSteps(10000, 10000 + 399 * f, 120, 0, 1e9, 400)).toBe(399);
+    expect(dragSteps(10000, 10000 + 400 * f, 120, 0, 1e9, 400)).toBe(400);
+    expect(dragSteps(10000, 10000 + 401 * f, 120, 0, 1e9, 400)).toBe(400);
   });
 });
