@@ -339,7 +339,7 @@ fn mix_waveform_and_autodetect() {
     settle();
     shot("editor-mix-nothing-checked");
 
-    // Autodetect with the stems checked: phases, two tempo sections, player.json schema 2.
+    // Autodetect with the stems checked: phases, two tempo sections, player.json schema 3.
     for y in [LANE_Y[0], LANE_Y[1]] {
         app.click(&wid, CHECK_X, y);
     }
@@ -358,7 +358,7 @@ fn mix_waveform_and_autodetect() {
         .collect();
     assert!(phases.len() >= 2 && phases.contains(&"detecting".to_string()), "phases {phases:?}");
     let v: serde_json::Value = serde_json::from_slice(&std::fs::read(dirs.player_json(ED_FOUR)).unwrap()).unwrap();
-    assert_eq!(v["schema_version"], 2, "{v}");
+    assert_eq!(v["schema_version"], 3, "{v}");
     let segs = wait_segments(&dirs, ED_FOUR, |s| s.len() == 2);
     assert_eq!(start_ms(&segs[1]), CHANGE_MS, "{segs:?}");
     assert_eq!(segs[1]["detected_ms"].as_f64(), Some(CHANGE_MS), "{segs:?}");
