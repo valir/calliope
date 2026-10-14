@@ -16,3 +16,4 @@ reviewer | CHANGES REQUIRED: M1 exact at-guard vs serde_json float parse; m1 que
 fix round 1 | M1 float_roundtrip + tolerant at-guard; m1 queued move keeps its at; m2 cancel clears error; QD1 non-finite add refused | implementer | done
 reviewer (fix round 1) | APPROVED; 3 non-blocking minors | reviewer | done
 tester (fix round 1) | M1, m1, m2, QD1 PASS; no new defects | tester | done
+report | written | orchestrator | done
