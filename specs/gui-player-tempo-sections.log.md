@@ -11,3 +11,5 @@ task 8 | Player frontend state for sections | implementer | done
 task 9 | Editable Player waveform and the BPM overlay | implementer | done
 task 10 | Sections group, pane wiring, Player keys | implementer | done
 task 11 | GUI end-to-end, visual review, docs | implementer | done
+tester | all criteria PASS; 21 qa tests, QD1 (low) ignored | tester | done
+reviewer | CHANGES REQUIRED: M1 exact at-guard vs serde_json float parse; m1 queued move after add/remove; m2 sectionError after cancel | reviewer | done

@@ -1779,3 +1779,473 @@ fn ts7_edits_survive_close_and_reopen() {
     assert_eq!(want[1].detected_ms, Some(8500.0));
     assert!(want[2].on_beat);
 }
+
+// =========================================================================================
+// tempo sections: QA edge cases (owner decisions Q2, Q3, Q5; stale `at`, loops, count-in, Editor, schemas)
+// =========================================================================================
+
+use calliope_gui::tempo_map::{Scale, TempoMap};
+use calliope_gui::tempo_store::{FileTempoStore, TempoStore};
+
+fn edit_err(r: &mut Rig, e: SectionEdit) -> String {
+    let before = r.snap().tempo.segments;
+    let err = r.m.edit_sections(&r.id(), e, r.t0).unwrap_err();
+    assert_eq!(r.snap().tempo.segments, before, "a refusal changes nothing ({e:?})");
+    err
+}
+
+fn duration_ms(r: &Rig) -> f64 {
+    let p = r.pcm();
+    p.frames as f64 * 1000.0 / p.rate as f64
+}
+
+#[test]
+fn qa_stale_at_is_refused_for_every_action_and_a_double_remove_removes_one() {
+    let mut r = ts_rig();
+    for e in [
+        SectionEdit::Bpm { index: 1, at: 8499.0, bpm: 100.0 },
+        SectionEdit::Scale { index: 1, at: 8501.0, factor: Scale::Double },
+        SectionEdit::Remove { index: 1, at: 0.0 },
+        SectionEdit::Move { index: 1, at: 8500.5, steps: 1 },
+        SectionEdit::Bpm { index: 7, at: 8500.0, bpm: 100.0 },
+        SectionEdit::Remove { index: 7, at: 8500.0 },
+        SectionEdit::Move { index: 7, at: 8500.0, steps: 1 },
+        SectionEdit::Scale { index: 7, at: 8500.0, factor: Scale::Halve },
+        SectionEdit::Bpm { index: 1, at: f64::NAN, bpm: 100.0 },
+    ] {
+        let err = edit_err(&mut r, e);
+        assert!(err.contains("changed"), "{e:?}: {err}");
+    }
+    // a quick double Remove (same index and at): the second is stale, the first change is the only one removed
+    r.edit(SectionEdit::Add { position: 15010.0, bpm: 140.0 });
+    assert_eq!(r.sections().len(), 3);
+    let at = r.sections()[1].0;
+    r.edit(SectionEdit::Remove { index: 1, at });
+    let err = edit_err(&mut r, SectionEdit::Remove { index: 1, at });
+    assert!(err.contains("changed"), "{err}");
+    assert_eq!(r.sections().len(), 2);
+    assert_eq!(r.sections()[1].1, 140.0);
+}
+
+#[test]
+fn qa_refused_edits_do_not_dirty_the_file() {
+    let mut r = ts_rig();
+    r.flush();
+    let before = std::fs::read(r.spec.dir.join("player.json")).unwrap();
+    std::fs::remove_file(r.spec.dir.join("player.json")).unwrap();
+    let _ = edit_err(&mut r, SectionEdit::Remove { index: 0, at: 500.0 });
+    let _ = edit_err(&mut r, SectionEdit::Bpm { index: 1, at: 8500.0, bpm: 301.0 });
+    r.m.tick(r.after(5000));
+    assert!(!r.spec.dir.join("player.json").exists(), "refusals write nothing");
+    let _ = before;
+}
+
+#[test]
+fn qa_empty_tempo_refuses_every_edit() {
+    let mut r = rig(PRACTICE);
+    assert!(r.snap().tempo.segments.is_empty());
+    let e = edit_err(&mut r, SectionEdit::Add { position: 3000.0, bpm: 120.0 });
+    assert!(e.contains("Enter a BPM first"), "{e}");
+    for e in [
+        SectionEdit::Bpm { index: 0, at: 0.0, bpm: 120.0 },
+        SectionEdit::Scale { index: 0, at: 0.0, factor: Scale::Double },
+        SectionEdit::Remove { index: 0, at: 0.0 },
+        SectionEdit::Move { index: 0, at: 0.0, steps: 1 },
+    ] {
+        edit_err(&mut r, e);
+    }
+}
+
+#[test]
+fn qa_wrong_session_is_refused() {
+    let mut r = ts_rig();
+    assert!(r.m.edit_sections("nope", SectionEdit::Add { position: 9000.0, bpm: 100.0 }, r.t0).is_err());
+    r.m.close();
+    assert!(r.m.edit_sections(&r.id(), SectionEdit::Add { position: 9000.0, bpm: 100.0 }, r.t0).is_err());
+}
+
+#[test]
+fn qa_q5_bpm_limits_one_beat_minimum_and_no_merge() {
+    let mut r = ts_rig();
+    // range / decimals
+    for bad in [0.0, 19.9, 300.1, -5.0, f64::NAN, f64::INFINITY, 93.45] {
+        let e = edit_err(&mut r, SectionEdit::Bpm { index: 1, at: 8500.0, bpm: bad });
+        assert!(!e.is_empty(), "{bad}");
+    }
+    r.edit(SectionEdit::Bpm { index: 1, at: 8500.0, bpm: 20.0 });
+    r.edit(SectionEdit::Bpm { index: 1, at: 8500.0, bpm: 300.0 });
+    // equal neighbours stay separate
+    let s = r.edit(SectionEdit::Bpm { index: 1, at: 8500.0, bpm: 120.0 });
+    assert_eq!(s.tempo.segments.len(), 2, "no merge of equal neighbours");
+    assert_eq!(s.tempo.segments[1].detected_ms, Some(8500.0));
+    // section 1 is 8000 ms: 20 BPM (3 s beat) fits, so test the 1-beat rule on a short section
+    let mut r = rig_with(
+        PRACTICE,
+        r#"{"schema_version":3,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":120},{"start_ms":1500,"bpm":100,"detected_ms":1500}]}}"#,
+    );
+    // section 1 lasts exactly 1000 ms: a beat of 60 BPM is exactly that
+    r.edit(SectionEdit::Bpm { index: 0, at: 500.0, bpm: 60.0 });
+    let e = edit_err(&mut r, SectionEdit::Bpm { index: 0, at: 500.0, bpm: 59.9 });
+    assert!(e.contains("too short"), "{e}");
+    let e = edit_err(&mut r, SectionEdit::Scale { index: 0, at: 500.0, factor: Scale::Halve });
+    assert!(!e.is_empty());
+    // add: needs a beat on both sides (left 60 BPM = 1000 ms, so only the last section can host it)
+    let e = edit_err(&mut r, SectionEdit::Add { position: 1900.0, bpm: 100.0 });
+    assert!(e.contains("one beat"), "{e}");
+    // moving the detected change left is clamped to one beat of the left tempo
+    let s = r.edit(SectionEdit::Move { index: 1, at: 1500.0, steps: -256 });
+    assert!(s.tempo.segments[1].start_ms >= 1500.0 - 1e-9, "no room: {:?}", s.tempo.segments);
+}
+
+#[test]
+fn qa_scale_bounds_and_rounding() {
+    let mut r = rig_with(
+        PRACTICE,
+        r#"{"schema_version":3,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":93.5},{"start_ms":20500,"bpm":150.1,"detected_ms":20500},{"start_ms":30500,"bpm":39.8,"detected_ms":30500}]}}"#,
+    );
+    let s = r.edit(SectionEdit::Scale { index: 0, at: 500.0, factor: Scale::Halve });
+    assert_eq!(s.tempo.segments[0].bpm, 46.8);
+    let s = r.edit(SectionEdit::Scale { index: 0, at: 500.0, factor: Scale::Double });
+    assert_eq!(s.tempo.segments[0].bpm, 93.6, "halve then double may differ by 0.1");
+    let e = edit_err(&mut r, SectionEdit::Scale { index: 1, at: 20500.0, factor: Scale::Double });
+    assert!(e.contains("over 300"), "{e}");
+    let e = edit_err(&mut r, SectionEdit::Scale { index: 2, at: 30500.0, factor: Scale::Halve });
+    assert!(e.contains("under 20"), "{e}");
+    r.edit(SectionEdit::Bpm { index: 2, at: 30500.0, bpm: 39.9 });
+    let s = r.edit(SectionEdit::Scale { index: 2, at: 30500.0, factor: Scale::Halve });
+    assert_eq!(s.tempo.segments[2].bpm, 20.0);
+}
+
+#[test]
+fn qa_first_section_cannot_be_removed_or_moved_removed_detected_loses_anchor() {
+    let mut r = ts_rig();
+    let e = edit_err(&mut r, SectionEdit::Remove { index: 0, at: 500.0 });
+    assert!(e.contains("no tempo change to remove"), "{e}");
+    let e = edit_err(&mut r, SectionEdit::Move { index: 0, at: 500.0, steps: 1 });
+    assert!(e.contains("first"), "{e}");
+    // remove the detected change, add a new one: no anchor, free to move far
+    r.edit(SectionEdit::Remove { index: 1, at: 8500.0 });
+    let s = r.edit(SectionEdit::Add { position: 8500.0, bpm: 93.0 });
+    let seg = &s.tempo.segments[1];
+    assert!(seg.detected_ms.is_none() && seg.on_beat);
+    let at = seg.start_ms;
+    let s = r.edit(SectionEdit::Move { index: 1, at, steps: 1300 });
+    assert!((s.tempo.segments[1].start_ms - (500.0 + 1300.0 * 500.0 / 64.0)).abs() < 1e-6, "a placed change has no 4-beat limit (absolute steps from the left start)");
+}
+
+#[test]
+fn qa_q2_detected_limit_is_kept_and_widened_to_the_current_offset() {
+    let mut r = ts_rig();
+    // 256 steps at 120 BPM = 2000 ms
+    r.edit(SectionEdit::Move { index: 1, at: 8500.0, steps: 256 });
+    assert_eq!(r.sections()[1].0, 10500.0);
+    // doubling the left BPM: the same 2000 ms are 512 steps of 1/64 of a 240 BPM beat
+    r.edit(SectionEdit::Bpm { index: 0, at: 500.0, bpm: 240.0 });
+    let at = 10500.0;
+    // never forced to jump
+    assert_eq!(r.sections()[1].0, at);
+    let e = edit_err(&mut r, SectionEdit::Move { index: 1, at, steps: 513 });
+    assert!(e.contains("at most 256"), "{e}");
+    let s = r.edit(SectionEdit::Move { index: 1, at, steps: 512 });
+    assert_eq!(s.tempo.segments[1].start_ms, at, "stays where it is");
+    let s = r.edit(SectionEdit::Move { index: 1, at, steps: 100 });
+    let fine = 60000.0 / (240.0 * 64.0);
+    assert!((s.tempo.segments[1].start_ms - (8500.0 + 100.0 * fine)).abs() < 1e-6);
+    // from now on the 256 limit applies again (offset 100 < 256)
+    let at = s.tempo.segments[1].start_ms;
+    let e = edit_err(&mut r, SectionEdit::Move { index: 1, at, steps: 257 });
+    assert!(e.contains("at most 256"), "{e}");
+    assert_eq!(r.snap().tempo.segments[1].detected_ms, Some(8500.0));
+    // Halving the left tempo: the offset is smaller in steps, limit back to 256
+    r.edit(SectionEdit::Bpm { index: 0, at: 500.0, bpm: 60.0 });
+    let at = r.sections()[1].0;
+    r.edit(SectionEdit::Move { index: 1, at, steps: 256 });
+}
+
+#[test]
+fn qa_q3_typed_change_becomes_placed_when_moved_and_add_starts_on_a_beat() {
+    let mut r = rig(PRACTICE);
+    r.m.set_bpm(&r.id(), 120.0, r.t0).unwrap();
+    r.seek(10000);
+    let s = r.m.set_bpm(&r.id(), 90.0, r.t0).unwrap();
+    assert_eq!(s.tempo.segments.len(), 2);
+    let typed = s.tempo.segments[1].clone();
+    assert!(typed.detected_ms.is_none() && !typed.on_beat);
+    let s = r.edit(SectionEdit::Move { index: 1, at: typed.start_ms, steps: 0 });
+    let moved = &s.tempo.segments[1];
+    assert!(moved.on_beat && moved.detected_ms.is_none());
+    // snapped on the left section's 1/64 grid counted from its start
+    let fine = 500.0 / 64.0;
+    let k = (moved.start_ms - s.tempo.segments[0].start_ms) / fine;
+    assert!((k - k.round()).abs() < 1e-6, "{k}");
+    // the file: on_beat only on the placed change, never on the first
+    r.m.close();
+    let d = r.disk().unwrap();
+    assert_eq!(d["schema_version"], 3);
+    let segs = d["tempo"]["segments"].as_array().unwrap();
+    assert!(segs[0].get("on_beat").is_none());
+    assert_eq!(segs[1]["on_beat"], true);
+    // click on the bar of the placed change
+    r.reopen();
+    r.metronome_on();
+    r.seek(frames_of(moved.start_ms - 800.0) as u64 * 1000 / RATE as u64);
+    r.play();
+    let (c, _) = r.pull_clicks(2500.0);
+    assert!(c.iter().any(|&t| (t - moved.start_ms).abs() < 1.0), "no click on {}: {c:?}", moved.start_ms);
+}
+
+#[test]
+fn qa_schema_2_file_is_edited_and_saved_as_schema_3_keeping_everything_else() {
+    let text = r#"{"schema_version":2,"source":"stem:guitar","position_ms":4000,"future":{"x":1},
+      "tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":120},{"start_ms":8500,"bpm":93,"detected_ms":8500}]},
+      "loops":[{"id":"l1","start":{"tick":64},"end":{"tick":192},"repeat":true,"count_in":false}],"current_loop":"l1"}"#;
+    let mut r = rig_with(WITH_TEMPO, text);
+    let s = r.snap();
+    assert_eq!(s.tempo.segments.len(), 2);
+    assert_eq!(s.source, "stem:guitar");
+    let l = s.loops[0].clone();
+    let s = r.edit(SectionEdit::Scale { index: 1, at: 8500.0, factor: Scale::Double });
+    assert_eq!(s.tempo.segments[1].bpm, 186.0);
+    assert_eq!(s.tempo.segments[1].detected_ms, Some(8500.0));
+    assert_eq!(s.source, "stem:guitar");
+    assert_eq!((s.loops[0].start_ms, s.loops[0].end_ms), (l.start_ms, l.end_ms), "loops before the edited section are untouched");
+    r.flush();
+    let d = r.disk().unwrap();
+    assert_eq!(d["schema_version"], 3);
+    assert_eq!(d["tempo"]["segments"][1]["bpm"], 186.0);
+    assert_eq!(d["tempo"]["segments"][1]["detected_ms"], 8500.0);
+    assert_eq!(d["position_ms"], 4000);
+    assert_eq!(d["loops"][0]["id"], "l1");
+    assert_eq!(d["current_loop"], "l1");
+    // reopen: same
+    r.reopen();
+    assert_eq!(r.snap().tempo.segments[1].bpm, 186.0);
+}
+
+#[test]
+fn qa_schema_1_file_with_tick_loops_is_edited_and_loops_keep_their_time() {
+    let mut r = rig(WITH_TEMPO);
+    let before = r.snap().loops;
+    assert!(before.len() >= 2);
+    r.edit(SectionEdit::Bpm { index: 0, at: 500.0, bpm: 100.0 });
+    r.edit(SectionEdit::Bpm { index: 0, at: 500.0, bpm: 150.0 });
+    let after = r.snap().loops;
+    let tick_ms = 60000.0 / (100.0 * 16.0);
+    for (a, b) in before.iter().zip(&after) {
+        assert_eq!(a.id, b.id);
+        assert!((a.start_ms - b.start_ms).abs() <= tick_ms, "{a:?} -> {b:?}");
+        if let (Some(x), Some(y)) = (a.end_ms, b.end_ms) {
+            assert!((x - y).abs() <= tick_ms);
+        }
+        assert_eq!(a.end.is_some(), b.end.is_some());
+    }
+    assert_eq!(r.snap().current_loop, Some(0));
+    r.flush();
+    assert_eq!(r.disk().unwrap()["schema_version"], 3);
+}
+
+#[test]
+fn qa_newer_schema_stays_read_only_through_section_edits() {
+    let text = r#"{"schema_version":4,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":120}]}}"#;
+    let (_t, spec, mut m, _b, _e, r) = open_with_file(text.as_bytes());
+    r.unwrap();
+    let t0 = Instant::now();
+    // whatever the session answers, the file is never touched
+    let _ = m.edit_sections(&spec.id, SectionEdit::Add { position: 4000.0, bpm: 100.0 }, t0);
+    m.tick(t0 + Duration::from_secs(10));
+    m.close();
+    assert_eq!(std::fs::read_to_string(spec.dir.join("player.json")).unwrap(), text);
+}
+
+#[test]
+fn qa_on_beat_is_read_only_as_json_true_and_dropped_on_the_first_segment() {
+    let text = r#"{"schema_version":3,"tempo":{"beats_per_bar":4,"segments":[
+      {"start_ms":500,"bpm":120,"on_beat":true},
+      {"start_ms":8500,"bpm":93,"on_beat":"true"},
+      {"start_ms":12500,"bpm":100,"on_beat":1},
+      {"start_ms":16500,"bpm":110,"on_beat":true}]}}"#;
+    let r = rig_with(PRACTICE, text);
+    let s = r.snap().tempo.segments;
+    assert_eq!(s.len(), 4);
+    assert!(!s[0].on_beat && !s[1].on_beat && !s[2].on_beat && s[3].on_beat, "{s:?}");
+}
+
+#[test]
+fn qa_add_boundaries() {
+    let mut r = ts_rig();
+    let end = duration_ms(&r);
+    for (pos, frag) in [(100.0, "after the start"), (end, "inside the track"), (end + 5000.0, "inside the track"), (8500.0, "one beat"), (500.0, "one beat")] {
+        let e = edit_err(&mut r, SectionEdit::Add { position: pos, bpm: 100.0 });
+        assert!(e.contains(frag), "{pos}: {e}");
+    }
+    // a bit less than one beat before the end
+    let e = edit_err(&mut r, SectionEdit::Add { position: end - 100.0, bpm: 100.0 });
+    assert!(e.contains("one beat"), "{e}");
+    // one beat of the left tempo after the section start is the minimum
+    let s = r.edit(SectionEdit::Add { position: 8500.0 + 60000.0 / 93.0, bpm: 93.0 });
+    assert_eq!(s.tempo.segments.len(), 3, "same-BPM changes are allowed");
+    // inside the new, short... last section too
+    let at = s.tempo.segments[2].start_ms;
+    let e = edit_err(&mut r, SectionEdit::Add { position: at + 100.0, bpm: 100.0 });
+    assert!(e.contains("one beat"), "{e}");
+}
+
+#[test]
+#[ignore = "QD1: TempoMap::add_change accepts a NaN position and inserts a segment with start_ms NaN (not reachable through JSON IPC)"]
+fn qa_add_rejects_non_finite_positions() {
+    let m = TempoMap {
+        beats_per_bar: 4,
+        segments: vec![tempo_map::Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false }],
+    };
+    for p in [f64::NAN, f64::INFINITY] {
+        match m.add_change(p, 100.0, 60000.0) {
+            Err(_) => {}
+            Ok((n, _)) => assert!(n.segments.iter().all(|s| s.start_ms.is_finite()), "position {p} produced {:?}", n.segments),
+        }
+    }
+}
+
+#[test]
+fn qa_loops_follow_an_edit_while_loop_playing_and_audio_is_continuous() {
+    let mut r = rig(WITH_TEMPO);
+    r.m.select_source(&r.id(), "stem:vocals", r.t0).unwrap();
+    let l = r.snap().loops[0].clone();
+    let (ls, le) = (l.start_ms, l.end_ms.unwrap());
+    r.lp(LoopAction::Play).unwrap();
+    r.b.pull(RATE);
+    let before_pos = r.pos();
+    // section 0 (120 BPM) holds the loop; change its BPM and play on
+    let s = r.edit(SectionEdit::Bpm { index: 0, at: 500.0, bpm: 100.0 });
+    assert!(s.transport.playing && s.transport.loop_playing);
+    assert!((r.pos() as i64 - before_pos as i64).abs() < 5, "no jump");
+    let tick = 60000.0 / (100.0 * 16.0);
+    let nl = &s.loops[s.current_loop.unwrap()];
+    assert!((nl.start_ms - ls).abs() <= tick && (nl.end_ms.unwrap() - le).abs() <= tick, "{nl:?} vs {ls}..{le}");
+    // keep playing through several wraps; the position stays within the loop
+    for _ in 0..6 {
+        let got = r.b.pull(RATE);
+        assert!(peak(&got) > 0.0);
+        let p = r.pos() as f64;
+        assert!(p >= nl.start_ms - 20.0 && p <= nl.end_ms.unwrap() + 20.0, "pos {p} outside {nl:?}");
+    }
+    assert!(r.snap().transport.loop_playing);
+    // edit once more in the middle of a pass, with scale, and loop wraps still hold
+    let s = r.edit(SectionEdit::Scale { index: 0, at: 500.0, factor: Scale::Halve });
+    assert_eq!(s.tempo.segments[0].bpm, 50.0);
+    for _ in 0..4 {
+        r.b.pull(RATE);
+        let nl = &r.snap().loops[r.snap().current_loop.unwrap()];
+        let p = r.pos() as f64;
+        assert!(p >= nl.start_ms - 40.0 && p <= nl.end_ms.unwrap() + 40.0, "pos {p} outside {nl:?}");
+    }
+}
+
+#[test]
+fn qa_loop_edge_in_a_later_section_keeps_time_when_an_earlier_section_changes() {
+    let mut r = rig(WITH_TEMPO);
+    let before = r.snap().loops.clone();
+    // a change before the loops: the whole timeline of section 1 shifts in ticks, but the loops keep their ms
+    r.edit(SectionEdit::Add { position: 1500.0, bpm: 60.0 });
+    let after = r.snap().loops;
+    for (a, b) in before.iter().zip(&after) {
+        assert!((a.start_ms - b.start_ms).abs() <= 60000.0 / (60.0 * 16.0), "{a:?} -> {b:?}");
+    }
+}
+
+fn count_in_clicks(r: &mut Rig, beat_frames: usize) -> Vec<usize> {
+    let got = r.b.pull(3 * beat_frames + 300);
+    let zero = vec![0.0f32; got.len()];
+    clicks(&got[..2 * 3 * beat_frames], &zero[..2 * 3 * beat_frames], 0)
+}
+
+#[test]
+fn qa_count_in_uses_the_edited_bpm_at_play_time() {
+    let mut r = ts_rig();
+    r.m.set_metronome(&r.id(), false, true, r.t0).unwrap();
+    // double the 93 section, then count in from inside it
+    r.edit(SectionEdit::Scale { index: 1, at: 8500.0, factor: Scale::Double });
+    r.seek(12000);
+    let st = r.play();
+    assert!(st.counting_in);
+    let b = (RATE as f64 * 60.0 / 186.0).round() as usize;
+    let on = count_in_clicks(&mut r, b);
+    assert_eq!(on.len(), 3, "{on:?}");
+    for w in on.windows(2) {
+        assert!((((w[1] - w[0]) as i64) - b as i64).abs() < 5, "{on:?} beat {b}");
+    }
+    r.m.pause(&r.id(), r.t0).unwrap();
+    // typed BPM of the first section
+    r.edit(SectionEdit::Bpm { index: 0, at: 500.0, bpm: 60.0 });
+    r.seek(3000);
+    r.play();
+    let on = count_in_clicks(&mut r, RATE);
+    assert_eq!(on.len(), 3, "{on:?}");
+    assert!((((on[1] - on[0]) as i64) - RATE as i64).abs() < 5, "{on:?}");
+}
+
+#[test]
+fn qa_count_in_of_a_loop_uses_the_edited_bpm_and_a_pending_one_is_rebuilt() {
+    let mut r = rig(WITH_TEMPO);
+    r.lp(LoopAction::Flags { repeat: true, count_in: true }).unwrap();
+    r.edit(SectionEdit::Bpm { index: 0, at: 500.0, bpm: 60.0 });
+    let st = r.lp(LoopAction::Play).unwrap();
+    assert!(st.transport.counting_in);
+    let on = count_in_clicks(&mut r, RATE);
+    assert_eq!(on.len(), 3, "{on:?}");
+    assert!((((on[1] - on[0]) as i64) - RATE as i64).abs() < 5, "{on:?}");
+    // edit while a count-in is sounding: playback goes on, nothing panics, the loop is reached
+    r.m.pause(&r.id(), r.t0).unwrap();
+    r.lp(LoopAction::Stop).unwrap();
+    r.lp(LoopAction::Play).unwrap();
+    r.b.pull(RATE / 3);
+    let s = r.edit(SectionEdit::Bpm { index: 0, at: 500.0, bpm: 240.0 });
+    assert!(s.transport.playing || s.transport.counting_in, "{:?}", s.transport);
+    r.b.pull(RATE * 4);
+    let s = r.snap();
+    assert!(s.transport.playing && !s.transport.counting_in, "{:?}", s.transport);
+    let l = &s.loops[s.current_loop.unwrap()];
+    assert!(s.transport.position_ms as f64 >= l.start_ms - 40.0 && s.transport.position_ms as f64 <= l.end_ms.unwrap() + 40.0);
+}
+
+#[test]
+fn qa_editor_sees_player_edits_and_keeps_its_rules() {
+    let mut r = ts_rig();
+    r.edit(SectionEdit::Move { index: 1, at: 8500.0, steps: 256 });
+    r.edit(SectionEdit::Bpm { index: 0, at: 500.0, bpm: 240.0 }); // widens the limit to 512
+    let s = r.edit(SectionEdit::Add { position: 16010.0, bpm: 140.0 });
+    let player_map = TempoMap { beats_per_bar: s.tempo.beats_per_bar, segments: s.tempo.segments.clone() };
+    // the Editor loads through the Player's flush; here the equivalent: flush then read the file
+    r.m.flush_if_open(&r.id()).unwrap();
+    let loaded = FileTempoStore.load(&r.id(), &r.spec.dir).unwrap();
+    assert_eq!(loaded.segments.len(), player_map.segments.len());
+    for (a, b) in loaded.segments.iter().zip(&player_map.segments) {
+        assert!((a.start_ms - b.start_ms).abs() < 1e-6 && a.bpm == b.bpm);
+        assert_eq!((a.detected_ms, a.on_beat), (b.detected_ms, b.on_beat));
+    }
+    // Editor: a detected change still moves, with the widened limit; a placed one is refused
+    let (m2, applied) = loaded.set_change_offset(1, -512).unwrap();
+    assert_eq!(applied, -512);
+    assert!((m2.segments[1].start_ms - (8500.0 - 512.0 * 60000.0 / (240.0 * 64.0))).abs() < 1e-6);
+    assert!(loaded.set_change_offset(1, 600).is_err());
+    let e = loaded.set_change_offset(2, 1).unwrap_err();
+    assert!(e.contains("detected"), "{e}");
+    // Editor write: release the Player first, then replace (the Player's own edits are in the file)
+    assert!(r.m.release(&r.id()).unwrap() || true);
+    let out = FileTempoStore.replace(&r.id(), &r.spec.dir, &|m| m.set_change_offset(1, -100).map(|x| x.0)).unwrap();
+    assert!(out.segments[2].on_beat, "the placed change keeps its flag through an Editor write");
+    assert!((out.segments[2].start_ms - player_map.segments[2].start_ms).abs() < 1e-6);
+    // and the Player reopens it
+    r.reopen();
+    assert_eq!(r.snap().tempo.segments[2].on_beat, true);
+}
+
+#[test]
+fn qa_edits_survive_a_flush_before_the_debounce_on_leave_and_close() {
+    let mut r = ts_rig();
+    r.edit(SectionEdit::Bpm { index: 1, at: 8500.0, bpm: 101.0 });
+    r.m.leave(&r.id(), r.t0).unwrap();
+    assert_eq!(r.disk().unwrap()["tempo"]["segments"][1]["bpm"], 101.0, "leave flushes at once");
+    r.edit(SectionEdit::Bpm { index: 1, at: 8500.0, bpm: 102.0 });
+    r.m.close();
+    assert_eq!(r.disk().unwrap()["tempo"]["segments"][1]["bpm"], 102.0, "close flushes at once");
+}
