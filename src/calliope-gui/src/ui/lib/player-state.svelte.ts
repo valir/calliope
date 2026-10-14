@@ -21,6 +21,7 @@ import {
   type TrackRecord,
 } from './ipc';
 import { selectTrack } from './library-state.svelte';
+import { scaleBpm } from './bpm-format';
 
 export type PlayerStatus = 'inactive' | 'loading' | 'active' | 'error';
 
@@ -45,6 +46,12 @@ export const pl = $state({
   audioError: '',
   /** player.json could not be written. */
   stateError: '',
+  /** The section the user selected (index into the tempo segments), else the one at the playhead. */
+  section: null as number | null,
+  /** The BPM overlay: edit section `index`, or add a change at `addAt` ms. */
+  bpmEdit: null as { index: number } | { addAt: number } | null,
+  /** Refusal of the last section edit; the next successful edit clears it. */
+  sectionError: '',
   treeCollapsed: false,
   /** Bumped when the backend closed the session (the Editor took the track); the view reopens. */
   reopen: 0,
@@ -67,6 +74,10 @@ function resetFields(): void {
   pl.actionError = '';
   pl.audioError = '';
   pl.stateError = '';
+  pl.section = null;
+  pl.bpmEdit = null;
+  pl.sectionError = '';
+  movePending = null;
   seekPending = null;
   seekGuard = null;
 }
@@ -149,6 +160,15 @@ function logActive(s: PlayerSnapshot): void {
     `player active id=${s.id} source=${s.source} sources=${s.sources.length} mode=${s.mode} ` +
       `loops=${s.loops.length} position=${s.transport.position_ms}`,
   );
+  logSections(s);
+}
+
+function logSections(s: { tempo: { segments: { bpm: number; start_ms: number }[] } }): void {
+  const g = s.tempo.segments;
+  log(
+    `player sections segments=${g.length} bpm=${g.map((x) => x.bpm).join(',')} ` +
+      `starts=${g.map((x) => x.start_ms).join(',')}`,
+  );
 }
 
 function applySnapshot(s: PlayerSnapshot): void {
@@ -164,6 +184,8 @@ function applySnapshot(s: PlayerSnapshot): void {
     metronome: { ...rest.metronome },
   };
   pl.transport = { ...transport };
+  const n = s.tempo.segments.length;
+  if (pl.section !== null && pl.section >= n) pl.section = n === 0 ? null : n - 1;
 }
 
 /** Re-attaches to an open backend session after a webview reload (nothing is selected yet then). */
@@ -385,4 +407,132 @@ export function seek(positionMs: number): void {
   seekPending = p;
   seekGuard = { target: p, until: Date.now() + SEEK_GUARD_MS };
   void drainSeek();
+}
+
+// ---- sections ----
+
+/** The section the actions apply to: the selection, else the one at the playhead. */
+export function targetSection(): number | null {
+  const n = pl.snap?.tempo.segments.length ?? 0;
+  if (n === 0) return null;
+  const i = pl.section ?? pl.transport.tempo_index;
+  return i === null || i < 0 ? null : Math.min(i, n - 1);
+}
+
+export function selectSection(index: number | null): void {
+  const n = pl.snap?.tempo.segments.length ?? 0;
+  pl.section = index === null || n === 0 ? null : Math.min(Math.max(0, index), n - 1);
+}
+
+/** Runs a section edit; `after` sees the old and the new segment starts. Returns true when it was applied. */
+async function sectionCall(
+  kind: 'bpm' | 'scale' | 'add' | 'remove' | 'move',
+  index: number,
+  action: (id: string) => Promise<PlayerSnapshot>,
+  after?: (oldStarts: number[], s: PlayerSnapshot) => void,
+): Promise<boolean> {
+  const id = pl.trackId;
+  if (pl.status !== 'active' || !id) return false;
+  const gen = generation;
+  const oldStarts = (pl.snap?.tempo.segments ?? []).map((g) => g.start_ms);
+  try {
+    const s = await action(id);
+    if (gen !== generation) return false;
+    applySnapshot(s);
+    after?.(oldStarts, s);
+    pl.sectionError = '';
+    pl.stateError = '';
+    log(`player section ${kind} index=${index}`);
+    logSections(s);
+    return true;
+  } catch (err) {
+    if (gen !== generation) return false;
+    pl.sectionError = clean(err);
+    fail('player_tempo', err);
+    return false;
+  }
+}
+
+const startOf = (i: number): number | null => pl.snap?.tempo.segments[i]?.start_ms ?? null;
+
+export function editSectionBpm(index: number): void {
+  if (startOf(index) === null) return;
+  pl.section = index;
+  pl.bpmEdit = { index };
+}
+
+export function cancelSectionBpm(): void {
+  pl.bpmEdit = null;
+}
+
+/** Opens the overlay for a new change at the playhead (captured now). */
+export function startAdd(): void {
+  if (pl.status !== 'active' || !pl.snap || pl.snap.tempo.segments.length === 0) return;
+  pl.bpmEdit = { addAt: pl.transport.position_ms };
+}
+
+export async function commitSectionBpm(bpm: number): Promise<void> {
+  const edit = pl.bpmEdit;
+  if (!edit) return;
+  pl.bpmEdit = null;
+  if ('addAt' in edit) {
+    await sectionCall('add', -1, (id) => playerTempo(id, { kind: 'add-change', position: edit.addAt, bpm }), (old, s) => {
+      const now = s.tempo.segments;
+      let i = 0;
+      while (i < old.length && i < now.length && old[i] === now[i].start_ms) i++;
+      pl.section = Math.min(i, now.length - 1);
+    });
+    return;
+  }
+  const at = startOf(edit.index);
+  if (at === null) return;
+  await sectionCall('bpm', edit.index, (id) => playerTempo(id, { kind: 'section-bpm', index: edit.index, at, bpm }));
+}
+
+export async function removeChange(): Promise<void> {
+  const index = targetSection();
+  const at = index === null ? null : startOf(index);
+  if (index === null || at === null) return;
+  await sectionCall('remove', index, (id) => playerTempo(id, { kind: 'remove-change', index, at }), () => {
+    pl.section = Math.max(0, index - 1);
+  });
+}
+
+export async function scaleSection(factor: 2 | 0.5): Promise<void> {
+  const index = targetSection();
+  const seg = index === null ? undefined : pl.snap?.tempo.segments[index];
+  if (index === null || !seg || scaleBpm(seg.bpm, factor) === null) return;
+  const at = seg.start_ms;
+  await sectionCall('scale', index, (id) =>
+    playerTempo(id, { kind: 'scale-section', index, at, factor: factor === 2 ? 'double' : 'halve' }),
+  );
+}
+
+// Move coalescing: one call in flight; while it runs only the latest target is kept.
+let movePending: { index: number; steps: number } | null = null;
+let moveRunning = false;
+
+async function drainMoves(): Promise<void> {
+  if (moveRunning) return;
+  moveRunning = true;
+  const gen = generation;
+  try {
+    while (movePending !== null && gen === generation) {
+      const { index, steps } = movePending;
+      movePending = null;
+      const at = startOf(index);
+      if (at === null) continue;
+      await sectionCall('move', index, (id) => playerTempo(id, { kind: 'move-change', index, at, steps }));
+    }
+  } finally {
+    moveRunning = false;
+    if (movePending !== null && gen === generation) void drainMoves();
+  }
+}
+
+/** Moves change `index` to `steps` 1/64 beats from its reference; calls are coalesced. */
+export function moveChange(index: number, steps: number): void {
+  if (pl.status !== 'active') return;
+  movePending = { index, steps };
+  void drainMoves();
 }

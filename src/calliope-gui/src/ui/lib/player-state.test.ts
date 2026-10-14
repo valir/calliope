@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import type { Channel } from '@tauri-apps/api/core';
-import { leavePlayer, pl, playLabel, resetPlayer, seek, selectSource, syncSelection, togglePlay } from './player-state.svelte';
+import {
+  cancelSectionBpm, commitSectionBpm, editSectionBpm, leavePlayer, moveChange, pl, removeChange, scaleSection,
+  selectSection, startAdd, targetSection, playLabel, resetPlayer, seek, selectSource, syncSelection, togglePlay } from './player-state.svelte';
 import { resetLibrary } from './library-state.svelte';
 import { PLAYER_FIXTURE_TRACKS } from './fixture-tracks';
 import type { PlayerEvent, PlayerSnapshot, PlayerTransport } from './ipc';
@@ -164,5 +166,129 @@ describe('player state', () => {
     expect(peak).toBeLessThanOrEqual(2);
     expect(seeks.length).toBeLessThan(20);
     expect(seeks[seeks.length - 1][1].position).toBe(2000);
+  });
+});
+
+describe('player sections', () => {
+  const seg = (start_ms: number, bpm: number) => ({ start_ms, bpm, detected_ms: null, on_beat: true });
+  const withSegs = (id: string, segs: ReturnType<typeof seg>[]): PlayerSnapshot => {
+    const s = snapshot(id);
+    s.tempo = { beats_per_bar: 4, segments: segs, multi: segs.length > 1 };
+    return s;
+  };
+  const three = [seg(0, 100), seg(2000, 120), seg(5000, 90)];
+  const tempoCalls = () => calls.filter((c) => c[0] === 'player_tempo').map((c) => c[1].action);
+
+  async function open(segs = three): Promise<void> {
+    handlers.open_player = (a) => withSegs(a.id as string, segs);
+    syncSelection(practice);
+    await flush();
+  }
+
+  it('sends the exact arguments, with at from the snapshot, to the selection else tempo_index', async () => {
+    await open();
+    pl.transport.tempo_index = 2;
+    expect(targetSection()).toBe(2);
+    handlers.player_tempo = (a) => withSegs(a.id as string, three);
+    await scaleSection(2);
+    selectSection(1);
+    expect(targetSection()).toBe(1);
+    await scaleSection(0.5);
+    editSectionBpm(1);
+    await commitSectionBpm(77);
+    await removeChange();
+    expect(tempoCalls()).toEqual([
+      { kind: 'scale-section', index: 2, at: 5000, factor: 'double' },
+      { kind: 'scale-section', index: 1, at: 2000, factor: 'halve' },
+      { kind: 'section-bpm', index: 1, at: 2000, bpm: 77 },
+      { kind: 'remove-change', index: 1, at: 2000 },
+    ]);
+    expect(logs()).toContain('player section remove index=1');
+    expect(logs()).toContain('player sections segments=3 bpm=100,120,90 starts=0,2000,5000');
+  });
+
+  it('add captures the playhead, selects the new section; remove selects the joined one', async () => {
+    await open();
+    pl.transport.position_ms = 3000;
+    startAdd();
+    pl.transport.position_ms = 4000;
+    expect(pl.bpmEdit).toEqual({ addAt: 3000 });
+    handlers.player_tempo = (a) =>
+      withSegs(a.id as string, [seg(0, 100), seg(2000, 120), seg(3008, 80), seg(5000, 90)]);
+    await commitSectionBpm(80);
+    expect(tempoCalls()).toEqual([{ kind: 'add-change', position: 3000, bpm: 80 }]);
+    expect(pl.section).toBe(2);
+    expect(pl.bpmEdit).toBeNull();
+    handlers.player_tempo = (a) => withSegs(a.id as string, three);
+    await removeChange();
+    expect(pl.section).toBe(1);
+  });
+
+  it('selection is cleared on track change and clamped after a shorter snapshot', async () => {
+    await open();
+    selectSection(2);
+    handlers.player_tempo = (a) => withSegs(a.id as string, [seg(0, 100), seg(2000, 120)]);
+    selectSection(1);
+    await scaleSection(2);
+    expect(pl.section).toBe(1);
+    pl.section = 2;
+    await scaleSection(2);
+    expect(pl.section).toBe(1);
+    startAdd();
+    syncSelection(stemsOnly);
+    expect(pl.section).toBeNull();
+    expect(pl.bpmEdit).toBeNull();
+    cancelSectionBpm();
+  });
+
+  it('three moves while one is pending make exactly two calls, the second with the latest steps and new at', async () => {
+    await open();
+    let release: (v: unknown) => void = () => {};
+    let n = 0;
+    handlers.player_tempo = (a) => {
+      if (n++ === 0) return new Promise((r) => { release = r; });
+      return withSegs(a.id as string, three);
+    };
+    moveChange(1, 1);
+    moveChange(1, 2);
+    moveChange(1, 3);
+    await flush();
+    expect(tempoCalls()).toHaveLength(1);
+    release(withSegs(practice.id, [seg(0, 100), seg(2010, 120), seg(5000, 90)]));
+    await flush();
+    expect(tempoCalls()).toEqual([
+      { kind: 'move-change', index: 1, at: 2000, steps: 1 },
+      { kind: 'move-change', index: 1, at: 2010, steps: 3 },
+    ]);
+  });
+
+  it('a refusal sets sectionError only, and the next success clears it', async () => {
+    await open();
+    selectSection(1);
+    handlers.player_tempo = () => Promise.reject('Section 2 is too short');
+    await scaleSection(2);
+    expect(pl.sectionError).toBe('Section 2 is too short');
+    expect(pl.actionError).toBe('');
+    expect(pl.snap?.tempo.segments).toHaveLength(3);
+    expect(pl.section).toBe(1);
+    handlers.player_tempo = (a) => withSegs(a.id as string, three);
+    await scaleSection(2);
+    expect(pl.sectionError).toBe('');
+  });
+
+  it('a stale answer after a track change is dropped', async () => {
+    await open();
+    selectSection(1);
+    let release: (v: unknown) => void = () => {};
+    handlers.player_tempo = () => new Promise((r) => { release = r; });
+    handlers.open_player = (a) => snapshot(a.id as string);
+    const p = scaleSection(2);
+    syncSelection(stemsOnly);
+    await flush();
+    release(withSegs(practice.id, [seg(0, 1)]));
+    await p;
+    expect(pl.trackId).toBe(stemsOnly.id);
+    expect(pl.snap?.tempo.segments).toHaveLength(0);
+    expect(logs().some((l) => l.startsWith('player section scale'))).toBe(false);
   });
 });
