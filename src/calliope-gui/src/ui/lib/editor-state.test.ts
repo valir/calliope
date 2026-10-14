@@ -393,13 +393,10 @@ describe('waveform, tempo and detection', () => {
     await open();
     expect(canDetect()).toBe(true);
     expect(detectHint()).toBe('');
-    ed.stems[0].gain_db = null;
-    expect(canDetect()).toBe(false);
-    expect(detectHint()).toBe('Check a stem to detect its BPM');
-    ed.stems[0].gain_db = 0;
-    ed.stems[0].unmuted = false;
-    expect(canDetect()).toBe(false);
-    ed.stems[0].unmuted = true;
+    // the checked stems and volumes do not matter
+    ed.stems = ed.stems.map((l) => ({ ...l, unmuted: false, gain_db: null }));
+    expect(canDetect()).toBe(true);
+    expect(detectHint()).toBe('');
     ui.edgeAi = 'unreachable';
     expect(canDetect()).toBe(true);
     ui.edgeAi = 'not-configured';

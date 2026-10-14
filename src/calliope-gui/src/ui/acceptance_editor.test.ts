@@ -214,9 +214,10 @@ describe('through the whole app', () => {
     await openEditorOn(stemA);
     await waitFor(() => expect(ed.status).toBe('active'));
     expect(screen.getByTestId('mix-waveform')).toBeTruthy();
+    ui.edgeAi = 'not-configured';
+    await tick();
     expect(btn('Autodetect BPM').disabled).toBe(true);
     ui.edgeAi = 'connected';
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Unmute Drums' }));
     await waitFor(() => expect(btn('Autodetect BPM').disabled).toBe(false));
     await fireEvent.click(btn('Autodetect BPM'));
     await waitFor(() => expect(names()).toContain('editor_detect'));
@@ -225,17 +226,20 @@ describe('through the whole app', () => {
 });
 
 describe('beat autodetect (QA)', () => {
-  it('A4: checked stems at Off keep Autodetect BPM disabled with a hint; above Off enables it; no server disables it', async () => {
+  it('A4: Autodetect BPM does not depend on the checked stems; no server disables it with a hint', async () => {
     await openEditorOn(stemA);
     await waitFor(() => expect(ed.status).toBe('active'));
-    ui.edgeAi = 'connected';
-    expect(btn('Autodetect BPM').disabled).toBe(true);
-    // checked but Off (gain -60 slider -> null)
-    ed.stems = ed.stems.map((l) => ({ ...l, unmuted: true, gain_db: null }));
+    ui.edgeAi = 'not-configured';
     await tick();
     expect(btn('Autodetect BPM').disabled).toBe(true);
-    expect(screen.getByTestId('detect-hint').textContent).toMatch(/Check a stem/);
-    ed.stems = ed.stems.map((l, i) => (i === 0 ? { ...l, gain_db: -12 } : l));
+    ui.edgeAi = 'connected';
+    await tick();
+    expect(btn('Autodetect BPM').disabled).toBe(false);
+    // checked but Off (gain -60 slider -> null): still enabled
+    ed.stems = ed.stems.map((l) => ({ ...l, unmuted: true, gain_db: null }));
+    await tick();
+    expect(btn('Autodetect BPM').disabled).toBe(false);
+    ed.stems = ed.stems.map((l) => ({ ...l, unmuted: false }));
     await tick();
     expect(btn('Autodetect BPM').disabled).toBe(false);
     ui.edgeAi = 'not-configured';

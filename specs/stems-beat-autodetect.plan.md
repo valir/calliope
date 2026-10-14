@@ -20,7 +20,7 @@ The owner's answers to revision 1's questions are applied (section 8). Changes f
 - It is recomputed in Rust, on a worker thread, 0.3 s after the last change. A new change restarts the wait.
 
 **Autodetect BPM.**
-- The button renders the mix and sends it to `calliope-stems` on archserver. There, "Beat This!" (CPJKU, MIT code and
+- The button renders the drums, bass and guitar stems (unity gain, not the editor mix) and sends them to `calliope-stems` on archserver. There, "Beat This!" (CPJKU, MIT code and
   weights) finds the beats and downbeats.
 - It is reached through a new additive `/v1/beats` endpoint and a "beat tracker" adapter command.
 - The app turns the beats into tempo sections, as short as one bar. Each change sits on the 1/64-beat grid of the
@@ -202,14 +202,17 @@ loop snapping stay as they are.
 | Typing 0 at a position | the segment in effect there is removed with its anchor; if the first segment is removed, the new first segment drops its `detected_ms` |
 | Equal neighbouring BPMs merging (existing `dedup`) | the later segment, and its anchor, disappear |
 
-### 2.4 What is analysed (owner: the current Editor mix)
+### 2.4 What is analysed (owner change 1, 2026-10-14: drums + bass + guitar; first the current Editor mix)
 
-- **What:** the checked stems at their volumes, with solo ignored. This is the mix Save would write (`render_flac`
-  re-reads the stems at full precision).
+- **What:** the stems named `drums`, `bass` and `guitar`, each at unity gain (0 dB), whatever their checked state,
+  volume or solo in the Editor. If the track has no `guitar` stem (4-stem models put the guitar in `other`), `other`
+  is used instead. If none of drums/bass/guitar/other exists, all stems are used at unity gain. (`editor::
+  detect_stem_indices`.) The first version analysed the checked-stem mix; with the guitar muted the tracker heard the
+  bass gallop and the drum fills as beats (Deja-Vu: 36 sections). The Mix lane waveform stays the editor mix.
 - **Where it goes:** rendered to `<track>/.calliope-beats-<uuid>.part`, a dot name the scans ignore (like
   `.calliope-backing-*.part`). It is removed after the upload, on failure, on cancel and on exit.
 - **Format and size:** stereo at the stems' rate, ≤ about 100 MB for 15 minutes.
-- **Too long:** a mix over `MAX_DURATION_S` (900 s) is refused before rendering, with "Tracks longer than 15
+- **Too long:** an input over `MAX_DURATION_S` (900 s) is refused before rendering, with "Tracks longer than 15
   minutes can't be analysed".
 
 ### 2.5 Detection: Beat This! on archserver (owner: accepted, including the training-data note)
@@ -293,8 +296,7 @@ Constants:
 
 1. **Clean the input.**
    - Drop non-finite and negative values, sort, and drop duplicates within 1 ms.
-   - Fewer than `MIN_BEATS` beats → `Err("No steady beat was found in this mix; check more stems (the drums help)
-     and try again")`.
+   - Fewer than `MIN_BEATS` beats → `Err("No steady beat was found in this track; set the tempo by hand")`.
    - Repair **isolated** tracker glitches only. An interval is a glitch when it is ≈ k × the median of the 3
      intervals on each side (k = 2 or 3, within 15 %: a missed beat, so k-1 interpolated beats are inserted), or
      ≈ 0.5 × (an extra beat, which is removed). In both cases those 6 neighbours must agree within 15 %.
@@ -313,9 +315,35 @@ Constants:
    - **So a change is reported when the tempo differs by more than 4 % for at least one bar.** For a 1-bar section,
      the 4-interval fit has to stand out from the jitter.
    - A 1-bar section 4-5 % off is found when the jitter is ≤ about 10 ms (typical for a clean beat track). Larger
-     changes, such as half-time or double-time endings, are found at any realistic jitter.
+     changes at a non-octave tempo are found at any realistic jitter (octave changes: step 4b).
    - Single fills and missed beats don't create sections (step 1, plus `P`).
    - Above `MAX_SECTIONS`, the closest pairs are merged.
+4a. **Absorb glitch sections** (owner change 1; real data: Beat This! emits bursts of extra beats during fills, and
+   the 4-interval minimum covers a burst in 0.5-1 s). A run of up to 4 consecutive sections, each shorter than 2 bars
+   (measured at the left neighbour's tempo), between neighbours that agree (within `CHANGE`, or an octave apart within
+   `2 · CHANGE`, which step 4b folds next) is a glitch when its beats fit the left neighbour's grid. The grid is the
+   neighbour's period and the phase of its last two bars, extended through the run. Fit means:
+   - extra beats: at least as many detected as 1.5 x the grid beats, and at least 75 % of the grid beats have a
+     detected beat within the tolerance; or
+   - missing beats: at most 0.67 x as many detected as grid beats, at least 75 % of them on the grid; or
+   - a lone section whose rms fit residual is above 1.75 sigma (irregular; the neighbours may differ by up to
+     `2 · CHANGE`, the drift then moves to the section's right edge).
+   - The tolerance is 20 % of the neighbour's beat period, capped at 70 ms: the tracker wobbles by up to a fifth of a
+     beat around bursts, and the cap keeps slow songs strict. A genuine 1-bar change of 4-5 % (26 to 105 ms off the
+     grid at 120 BPM, as many beats as the grid) stays outside the shares, as does 100 BPM inside 120.
+   - The last section only needs its left neighbour (a burst on the final hit).
+   - The run is replaced by beats on the left grid, so the next segmentation merges it into its neighbours.
+4b. **Fold octave errors:** a section whose tempo is about 2x or 0.5x (within `2 · CHANGE`: subdivision runs wobble)
+   the tempo of its left neighbour (for the first section: its right neighbour) gets its beats re-spaced at the
+   neighbour's period (added or dropped) and so merges with it. Any length and position, including the last
+   section, but only into a neighbour at least as long. **Consequence (accepted by the owner):** a half-time ending
+   is no longer a separate section; the metronome still lands on its beats.
+4c. Rules 4a and 4b are applied one change at a time with a re-segmentation after each, until nothing changes (at
+   most 200 rounds). Finally each change is moved back over lead-in beats that already sit on the right section's grid
+   (within 2 sigma), keeping one interval for the left section.
+   - Deja-Vu (4/4, 110 BPM bars 18-19, 186 BPM from about 32.5 s): drums + bass + guitar gives 8 sections (five
+     of them in the intro where the tracker is lost, the change at 32.77 s at 187.3 BPM, two drifts); the guitar-
+     muted input 36 sections before and 12 after (all 188 +/- 9 BPM from 38.6 s).
 5. **BPM per section:**
    - `bpm = round(600 / T) / 10`, from the fitted period T;
    - folded into 20..300 by doubling or halving;
@@ -365,7 +393,7 @@ starts_ms=<..>`.
 `EditorManager::start_detect(id, DetectParams { url, store: Arc<dyn TempoStore>, poll, stall })`.
 
 **Refusals:**
-- "Check a stem first": no checked stem above Off (owner 7);
+- (no "Check a stem first": detection does not depend on the checked stems, owner change 1);
 - "Beat detection is already running": one detection per app;
 - "Set the edge-AI server in Settings first": no URL.
 
@@ -405,7 +433,7 @@ job (best effort), and the part file is removed. A cancel during `applying` is t
 **Editor Mix lane, top to bottom:**
 1. The waveform: full width, about 4 rem; the visual review sets the final height.
 2. Mix cell, Play/Pause, Stop, and **Autodetect BPM** right-aligned. While a detection runs the button reads
-   **Cancel**, and the phase text shows ("Preparing the mix 40%", "Uploading 70%", "Waiting for the edge-AI
+   **Cancel**, and the phase text shows ("Preparing the audio 40%", "Uploading 70%", "Waiting for the edge-AI
    server", "Detecting beats", "Saving the tempo").
 3. Position slider and time field.
 4. Save and "Save as".
@@ -425,7 +453,7 @@ edge-AI URL is set, and no detection runs.
 - labels sit at the bottom of the lane, clear of the loop marks' top bar in the Player. A label reads "120 BPM" if
   it fits before the next bar, else "120", else it is omitted;
 - the `aria-label` lists every tempo ("… tempo 120 BPM from the start, 90 BPM from 0:06.5");
-- BPM 0: no labels. No checked stem: a flat line.
+- BPM 0: no labels. No checked stem: a flat line (the waveform only; Autodetect stays enabled).
 - In the Editor, typed changes (no `detected_ms`) are drawn at 55 % opacity and can't be moved (their tooltip
   explains why). In the Player every bar is drawn the same.
 
@@ -558,7 +586,8 @@ DISPLAY=:1 cargo test -p calliope-gui --features e2e-hooks --test <file> -- --ig
       120-BPM beat time to D. For the 16 s "Six Lanes" stems: 12 beats at 0.5..6.0 s, then 15 beats at
       6.5..15.83 s.
     - `steady`: 120 BPM from 0.5 s to D.
-    - `bar-end`: 120 BPM from 0.5 s, with the last full bar before D at 60 BPM (a 1-bar half-time ending).
+    - `bar-end`: 120 BPM from 0.5 s, with the last full bar before D at 60 BPM (a 1-bar half-time ending; since
+      owner change 1 it folds into 120, one section).
     - `few`: 3 beats.
     - `fail`: stderr message, exit 3.
     - `slow`: 1 s before each progress line.
@@ -685,7 +714,12 @@ DISPLAY=:1 cargo test -p calliope-gui --features e2e-hooks --test <file> -- --ig
   - 120 → 90 → 140 → three segments, each change on the left section's fine grid (an integer number of
     `fine_ms(left)` from the left start, within 1e-6);
   - **1-bar sections:** 120 with one bar at 100 in the middle → three sections (120, 100, 120); 120 with a final
-    1-bar half-time ending (the stub's `bar-end`) → two sections, the last at 60; with ±10 ms jitter both still hold;
+    1-bar ending at 90 → two sections, the last at 90; with ±10 ms jitter both still hold;
+  - **owner change 1:** 120 with a final 1-bar half-time ending (the stub's `bar-end`) → one section at 120 (octave
+    fold); 186 with a 1 s burst of extra beats, 186 / 93 for 8 bars / 186, and 93 / 186 for 8 bars / 93 → one section,
+    also with ±10 ms jitter; the real Deja-Vu Beat This! outputs (fixtures `testdata/dejavu-*.beats.json`): drums +
+    bass + guitar has a change within ±0.6 s of 32.5 s at 183-190 BPM, nothing outside 175-200 BPM from 33 s and at
+    most 8 sections; guitar muted has nothing outside 175-200 BPM after 52 s and at most 12 sections (36 before);
   - a 1-bar section only 3 % off → no section (the 4 % rule);
   - a 4-beat fill made of jitter → nothing; an isolated missed beat and an isolated double beat are repaired with no
     section; a 4-interval half-time run is **not** repaired;
@@ -759,12 +793,13 @@ DISPLAY=:1 cargo test -p calliope-gui --features e2e-hooks --test <file> -- --ig
   shared `#[cfg(test)]` helper module):
   - `ok` on Six Lanes → `Detected`, and `player.json` (schema 2) has `[(500,120),(6500,90,detected 6500)]`; no
     `.calliope-beats-*` left; phases in order;
-  - `steady` → one segment; `bar-end` → the last segment at 60;
+  - `steady` → one segment; `bar-end` → one segment at 120 (the half-time ending folds);
   - `few`/`fail`/`bad-output` → exact messages, `player.json` unchanged;
   - without `--beat-tracker` → the "cannot detect beats" message; nothing listening → "Cannot reach…";
   - `hang` + cancel → `DetectCancelled`, server job 404, stub process gone, part file gone;
   - `slow` + close → cancelled;
-  - a second start refused; no checked stem refused.
+  - a second start refused; no checked stem is NOT a refusal (owner change 1); the job input is `drums`, `bass`,
+    `guitar` (or `other`, or all stems) at unity gain (`editor::tests::detection_input_is_drums_bass_guitar_with_fallbacks`).
 - **done when:** `cargo build -p calliope-stems && cargo test -p calliope-gui --lib beat_detect` passes in under 30 s.
 - **routine:** no
 
@@ -989,7 +1024,7 @@ The new app reads and writes `player.json` schema 2, so older app builds open su
 - **M3:** Song with a tempo change:
   1. An amber bar near the change, with the new BPM, in both the Editor and the Player.
   2. In the Player, V is checked and the metronome follows the change.
-- **M4:** A song that ends with a 1-bar change (e.g. a half-time last bar): a separate section is shown for it.
+- **M4:** A song that ends with a 1-bar change at a non-octave tempo: a separate section is shown for it. (A half-time last bar folds into the main tempo: no separate section, the metronome still lands on its beats.)
 - **M5:** Fine adjustment:
   1. Drag a change bar: it moves, and stops 4 beats from where it was detected, also across several drags.
   2. Click the waveform: ←/→ moves one 1/64 beat, Shift+←/→ one beat.
@@ -1010,8 +1045,8 @@ The new app reads and writes `player.json` schema 2, so older app builds open su
 | A1 | Given an active stem track in the Editor, then the Mix lane shows a full-width waveform of the current mix (checked stems at their volumes) with a playhead | req 1 | 10, 17, 19 | editor_tests, EditorPane.test, gui |
 | A2 | Given a stem's checkbox or volume changes, when 0.3 s pass without another change, then the waveform is recomputed once and redrawn; meanwhile Play/Pause, seeking and the other lanes respond at once and the audio does not stop | S1 | 9, 10, 20 | mix_waveform, editor_tests (barrier), gui |
 | A3 | Given a change, when another change comes within 0.3 s, then the wait restarts from the last change and only one recomputation happens | S2 | 9, 10 | editor_tests, gui |
-| A4 | Given no stem is checked (or all checked stems are Off), then the waveform is flat and Autodetect BPM is disabled with a hint; given at least one checked stem above Off and an edge-AI server set, then it is enabled | S3, req 2 | 18, 19 | editor-state, EditorPane.test, gui |
-| A5 | Given Autodetect BPM is clicked, then the current mix is rendered and sent to calliope-stems (`POST /v1/beats`); phases and Cancel are shown; playback keeps working | S4 | 1, 3, 12, 19 | conformance, beat_detect_tests, gui |
+| A4 | Given no stem is checked (or all checked stems are Off), then the waveform is flat; Autodetect BPM is enabled whatever is checked once an edge-AI server is set, and disabled with a hint without one (owner change 1) | S3, req 2 | 18, 19 | editor-state, EditorPane.test, gui |
+| A5 | Given Autodetect BPM is clicked, then the drums, bass and guitar stems (other when no guitar; all stems when none exists) at unity gain are rendered and sent to calliope-stems (`POST /v1/beats`); phases and Cancel are shown; playback keeps working | S4 | 1, 3, 12, 19 | conformance, beat_detect_tests, gui |
 | A6 | Given a detection is running, when Cancel is pressed (or the track is switched, or the app closes), then the server job is deleted, no file changes, and the button is available again | | 12, 13, 19 | beat_detect_tests, gui |
 | A7 | Given the server is unreachable, has no beat detection, fails, or finds fewer than 8 beats, then an inline message says so and the tempo map is unchanged | | 12, 18 | beat_detect_tests, editor-state, gui |
 | A8 | Given a steady song, when detection succeeds, then the track has one tempo starting at the first downbeat, and the waveform shows "N BPM" at the left edge with no bar | req 3 | 8, 12, 17 | tempo_detect, beat_detect_tests, WaveformView.test |
@@ -1028,7 +1063,7 @@ The new app reads and writes `player.json` schema 2, so older app builds open su
 ## 8. Owner decisions (2026-10-11; no open questions)
 
 1. **Storage:** the tempo map is in `player.json` (2.2).
-2. **What is analysed:** the current Editor mix (2.4).
+2. **What is analysed:** the current Editor mix (2.4); changed 2026-10-14, see the last line of this section.
 3. **Method:** Beat This! on archserver; the training-data note is accepted (2.5).
 4. **Step:** 1/64 of a beat (4 beats = 256 steps). Changes are stored in ms with a detected position; detected
    changes start their section on a beat, with a stretched last beat; the loop grid is unchanged; `player.json`
@@ -1037,7 +1072,7 @@ The new app reads and writes `player.json` schema 2, so older app builds open su
 5. **Limit:** ±4 beats from the detected position, in total. The detected positions are stored, with the rules for
    typed BPMs and re-detection in 2.3.
 6. **Shortest section:** 1 bar; optimal segmentation with the 4 % rule (2.6).
-7. **Autodetect enabled:** at least one checked stem above Off, plus a server set in Settings.
+7. **Autodetect enabled:** a server set in Settings (until 2026-10-14: also at least one checked stem above Off).
 8. **Player:**
    - (a) its session is flushed and closed when the Editor writes the tempo, and it reloads later (2.2);
    - (b) a shared props-driven WaveformView;
@@ -1045,3 +1080,4 @@ The new app reads and writes `player.json` schema 2, so older app builds open su
 9. **Replacing a map:** no dialog, the result line says so, no undo.
 10. **Tabs and labels:** the "BPM & sections" tab is removed; "120 BPM" labels and amber bars.
 11. **Criteria:** A1-A15 accepted; A10, A11, A13 and A15 adjusted; A16 and A17 added.
+12. **2026-10-14:** Owner change after trying Deja-Vu: detection analyses drums + bass + guitar (other when there is no guitar) at unity gain instead of the editor mix; glitch sections between agreeing neighbours are absorbed; 2x/0.5x sections fold into the neighbour's tempo.

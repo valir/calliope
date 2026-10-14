@@ -476,13 +476,14 @@ fn a5_a8_a9_a10_detection_stores_schema_2_and_replaces_the_old_map() {
 }
 
 #[test]
-fn a5_a6_a8_a10_final_one_bar_section_and_steady_song() {
+fn a5_a6_a8_a10_half_time_ending_folds_and_steady_song() {
     let server = real_server(Some("bar-end"));
     let mut r = Rig::new();
     assert!(matches!(r.run(&server.url), EditorEvent::Detected { .. }));
     let segs = r.player_json().unwrap()["tempo"]["segments"].clone();
-    assert_eq!(segs.as_array().unwrap().len(), 2, "{segs}");
-    assert_eq!(segs[1]["bpm"], 60.0);
+    // owner change 1: the half-time last bar folds into the main tempo
+    assert_eq!(segs.as_array().unwrap().len(), 1, "{segs}");
+    assert_eq!(segs[0]["bpm"], 120.0);
     let server = real_server(Some("steady"));
     let mut r = Rig::new();
     assert!(matches!(r.run(&server.url), EditorEvent::Detected { .. }));

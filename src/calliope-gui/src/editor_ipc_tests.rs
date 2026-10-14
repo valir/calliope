@@ -440,8 +440,7 @@ fn editor_detect_refusals() {
     let url = "http://127.0.0.1:9".to_string();
     assert!(do_editor_detect(&e.st, store.clone(), url.clone(), FOUR).unwrap_err().contains("no editor session"));
     do_open_editor(&e.st, &e.repo, &FileTempoStore, FOUR, Arc::new(|_| {})).unwrap();
-    assert_eq!(do_editor_detect(&e.st, store.clone(), url.clone(), FOUR).unwrap_err(), "Check a stem first");
-    e.st.with(|m| m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())).unwrap();
+    // No stem is checked: that is not a refusal any more (detection ignores the checks).
     assert!(do_editor_detect(&e.st, store, String::new(), FOUR).unwrap_err().contains("Settings"));
     assert!(e.st.with(|m| m.current()).unwrap().detect.is_none());
 }

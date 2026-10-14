@@ -163,15 +163,12 @@ describe('autodetect', () => {
   afterEach(() => { ui.edgeAi = 'not-configured'; });
   const detectBtn = () => btn('Autodetect BPM');
 
-  it('has the waveform and hints: no URL, then no stem, then enabled', async () => {
+  it('has the waveform and the hint: no URL, then enabled whatever is checked', async () => {
     await active();
     expect(screen.getByTestId('mix-waveform')).toBeTruthy();
     expect(detectBtn().disabled).toBe(true);
     expect(screen.getByTestId('detect-hint').textContent).toBe('Set the edge-AI server in Settings to detect the BPM');
     ui.edgeAi = 'connected';
-    await waitFor(() =>
-      expect(screen.getByTestId('detect-hint').textContent).toBe('Check a stem to detect its BPM'));
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Unmute Drums' }));
     await waitFor(() => expect(detectBtn().disabled).toBe(false));
     expect(screen.queryByTestId('detect-hint')).toBeNull();
   });
@@ -185,7 +182,7 @@ describe('autodetect', () => {
     await fireEvent.click(detectBtn());
     expect(names()).toContain('editor_detect');
     send({ kind: 'detect', id: stemTrack.id, phase: 'mixing', progress: 0.4 });
-    await waitFor(() => expect(screen.getByTestId('detect-status').textContent).toBe('Preparing the mix 40%'));
+    await waitFor(() => expect(screen.getByTestId('detect-status').textContent).toBe('Preparing the audio 40%'));
     expect(screen.queryByRole('button', { name: 'Autodetect BPM' })).toBeNull();
     send({ kind: 'detect', id: stemTrack.id, phase: 'waiting', progress: null });
     await waitFor(() =>

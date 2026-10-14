@@ -876,3 +876,17 @@ fn the_snapshot_carries_the_tempo_and_set_tempo_replaces_it() {
     assert_eq!(m.snapshot(FOUR).unwrap().tempo, snap.tempo);
     assert!(m.set_tempo("nope", map).is_err());
 }
+
+#[test]
+fn detection_input_is_drums_bass_guitar_with_fallbacks() {
+    use crate::editor::detect_stem_indices as pick;
+    // 6 stems: vocals, drums, bass, guitar, keys, other -> drums, bass, guitar (not other)
+    assert_eq!(pick(&["vocals", "drums", "bass", "guitar", "piano", "other"]), vec![1, 2, 3]);
+    // 4 stems: the guitar lives in other
+    assert_eq!(pick(&["vocals", "drums", "bass", "other"]), vec![1, 2, 3]);
+    // a missing drums or bass is just left out
+    assert_eq!(pick(&["vocals", "bass", "guitar"]), vec![1, 2]);
+    // none of them: every stem
+    assert_eq!(pick(&["vocals", "piano"]), vec![0, 1]);
+    assert!(pick(&[]).is_empty());
+}

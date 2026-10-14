@@ -338,17 +338,14 @@ export const stopEnabled = (): boolean =>
 export const saveEnabled = (): boolean =>
   ed.status === 'active' && ed.saving === null && ed.stems.some((s) => s.unmuted);
 
-/** A stem is checked with its volume above Off. */
-export const hasAudibleStem = (): boolean => ed.stems.some((s) => s.unmuted && s.gain_db !== null);
 /** The edge-AI address is set (the footer status is 'not-configured' exactly then). */
 export const edgeAiSet = (): boolean => ui.edgeAi !== 'not-configured';
-export const canDetect = (): boolean =>
-  ed.status === 'active' && ed.detect === null && hasAudibleStem() && edgeAiSet();
-/** Why Autodetect BPM is disabled, or '' (the URL hint comes first). */
+/** Detection analyses the drums, bass and guitar stems, whatever is checked in the Editor. */
+export const canDetect = (): boolean => ed.status === 'active' && ed.detect === null && edgeAiSet();
+/** Why Autodetect BPM is disabled, or ''. */
 export const detectHint = (): string => {
   if (ed.status !== 'active' || ed.detect !== null) return '';
   if (!edgeAiSet()) return 'Set the edge-AI server in Settings to detect the BPM';
-  if (!hasAudibleStem()) return 'Check a stem to detect its BPM';
   return '';
 };
 

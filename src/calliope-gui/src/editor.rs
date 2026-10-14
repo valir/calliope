@@ -455,6 +455,16 @@ struct DetectRun {
     handle: JoinHandle<()>,
 }
 
+/// Indices of the stems that feed the beat detection: `drums`, `bass` and `guitar` (`other`
+/// when there is no `guitar`, as 4-stem models put the guitar there); all stems when none of
+/// them exists.
+pub(crate) fn detect_stem_indices(names: &[&str]) -> Vec<usize> {
+    let find = |n: &str| names.iter().position(|x| *x == n);
+    let guitar = find("guitar").or_else(|| find("other"));
+    let picked: Vec<usize> = [find("drums"), find("bass"), guitar].into_iter().flatten().collect();
+    if picked.is_empty() { (0..names.len()).collect() } else { picked }
+}
+
 impl EditorManager {
     pub fn new(backend: Arc<dyn OutputBackend>, sink: EventSink) -> Self {
         Self {
@@ -764,16 +774,14 @@ impl EditorManager {
         }
     }
 
-    /// Starts the beat detection of the checked-stem mix (plan 2.8). The job runs on its own
-    /// thread; `tick` emits the one final event.
+    /// Starts the beat detection (plan 2.8). Its input is the drums, bass and guitar stems at
+    /// unity gain whatever the Editor's checks, volumes and solo say (see `detect_stem_indices`).
+    /// The job runs on its own thread; `tick` emits the one final event.
     pub fn start_detect(&mut self, id: &str, params: DetectParams) -> Result<EditorSnapshot, String> {
         self.reap_detect();
         let sink = self.sink.clone();
         let busy = self.detect.is_some();
         let s = self.session(id)?;
-        if !s.lanes.iter().any(|l| l.unmuted && l.gain_db.is_some()) {
-            return Err("Check a stem first".into());
-        }
         if busy {
             return Err("Beat detection is already running".into());
         }
@@ -784,12 +792,10 @@ impl EditorManager {
         if duration_s > calliope_lib::stems_api::MAX_DURATION_S as f64 {
             return Err(beat_detect::TOO_LONG.into());
         }
-        let stems = s
-            .lanes
-            .iter()
-            .zip(&s.stems)
-            .filter(|(l, _)| l.unmuted)
-            .map(|(l, e)| RenderStem { path: s.dir.join(&e.file), gain: mixer::gain_factor(l.gain_db, l.unmuted) })
+        let names: Vec<&str> = s.lanes.iter().map(|l| l.name.as_str()).collect();
+        let stems = detect_stem_indices(&names)
+            .into_iter()
+            .map(|i| RenderStem { path: s.dir.join(&s.stems[i].file), gain: 1.0 })
             .collect();
         let job = DetectJob {
             id: s.id.clone(),

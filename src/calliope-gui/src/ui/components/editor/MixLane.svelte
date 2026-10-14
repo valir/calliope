@@ -18,7 +18,7 @@
 
   const PHASE_TEXT: Record<string, string> = {
     checking: 'Checking the edge-AI server',
-    mixing: 'Preparing the mix',
+    mixing: 'Preparing the audio',
     uploading: 'Uploading',
     waiting: 'Waiting for the edge-AI server',
     detecting: 'Detecting beats',

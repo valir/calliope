@@ -2,9 +2,20 @@
 //!
 //! `detect` cleans the tracker's beats (isolated glitches only), cuts them into sections with an
 //! optimal least-squares segmentation (dynamic programming with PELT-style pruning; sections are
-//! at least one bar of 4 intervals (3 for the last one, which no beat follows) and share their change beat), merges neighbours that differ by
+//! at least one bar of 4 intervals (3 for the last one, which no beat follows) and share their
+//! change beat), merges neighbours that differ by
 //! no more than `CHANGE`, and turns the sections into a `TempoMap`: the first segment is the
 //! anchor, every later one a detected change snapped to 1/64 beat of the left section's tempo.
+//!
+//! Two rules clean the segmentation (owner change 1, after trying a real song), applied one change
+//! at a time with a re-segmentation after each until nothing changes:
+//! 1. glitch sections: a run of short sections (< 2 bars) between agreeing neighbours whose beats
+//!    fit the left neighbour's beat grid (extra beats = subdivisions, or missing beats), or a lone
+//!    one whose beats are noise, is replaced by grid beats and so merges into its neighbours;
+//! 2. octave errors: a section at about 2x or 0.5x the tempo of its left neighbour (the right one
+//!    for the first section) gets its beats re-spaced at the neighbour's tempo.
+//!
+//! Finally each change is moved back over lead-in beats that already sit on the right grid.
 //!
 //! Final `PENALTY` = 30 (the plan's start value; all tests of this module pass with it).
 
@@ -18,9 +29,13 @@ const CHANGE: f64 = 0.04;
 const PENALTY: f64 = 30.0;
 const MAX_SECTIONS: usize = 64;
 const GLITCH_TOL: f64 = 0.15;
+/// An octave error is a tempo of 2x or 0.5x within this much. Twice `CHANGE`: the tracker's
+/// subdivision runs wobble (a 5 s run at 176.7 x 2 BPM next to 185 BPM is 5 % off an exact octave).
+const OCTAVE_TOL: f64 = 2.0 * CHANGE;
+const MAX_RULE_ROUNDS: usize = 200;
 
 pub(crate) const NO_BEAT_ERROR: &str =
-    "No steady beat was found in this mix; check more stems (the drums help) and try again";
+    "No steady beat was found in this track; set the tempo by hand";
 
 /// One detected section, for the waveform labels and the log.
 #[derive(Debug, Clone, PartialEq)]
@@ -262,13 +277,169 @@ fn bar_length(t: &[f64], down: &[f64]) -> usize {
     counts.into_iter().max_by_key(|&(len, c)| (c, std::cmp::Reverse(len))).map_or(0, |(len, _)| len)
 }
 
+/// Largest ratio between two periods, minus 1.
+fn ratio_diff(a: f64, b: f64) -> f64 {
+    (a / b).max(b / a) - 1.0
+}
+
+/// Neighbouring tempos agree: equal within `CHANGE`, or (the right one being an octave error that
+/// rule 2 folds next) an octave apart within `OCTAVE_TOL`.
+fn agree(left: f64, right: f64) -> bool {
+    ratio_diff(left, right) <= CHANGE || ratio_diff(left, 2.0 * right) <= OCTAVE_TOL || ratio_diff(left, right / 2.0) <= OCTAVE_TOL
+}
+
+/// Sections shorter than this many bars are candidates for the glitch rule.
+const GLITCH_BARS: f64 = 2.0;
+/// Share of the grid beats that must have a detected beat nearby (extra beats) for a section to
+/// be a glitch.
+/// Longest run of consecutive short sections absorbed together.
+const MAX_RUN: usize = 4;
+const GLITCH_SHARE: f64 = 0.75;
+/// A section whose rms fit residual is this many sigma is too irregular to be a real tempo
+/// (a steady section sits near 0.8 sigma; the Deja-Vu fill bursts at 1.7 to 2.9).
+const IRREGULAR_SIGMA: f64 = 1.75;
+
+/// Rule 1: a short section between agreeing neighbours that fits the left neighbour's beat grid
+/// (or has no regular beats of its own) is replaced by grid beats, so the next segmentation
+/// merges it into its neighbours. Returns true when `t` was changed.
+fn absorb_glitch(t: &mut Vec<f64>, bounds: &[usize], sigma: f64, beats_per_bar: f64) -> bool {
+    let m = bounds.len() - 1;
+    // A run of up to MAX_RUN short sections between agreeing neighbours (a fill burst is often cut
+    // into several pieces); the run at the very end only needs the left neighbour.
+    for k in 1..m {
+        let (al, a) = (bounds[k - 1], bounds[k]);
+        let pl = slope(t, al, a);
+        for run in 1..=MAX_RUN.min(m - k) {
+            let b = bounds[k + run];
+            if t[b] - t[bounds[k + run - 1]] >= GLITCH_BARS * beats_per_bar * pl {
+                break; // this piece is long: no run reaching it can be a glitch
+            }
+            let agrees = bounds.get(k + run + 1).is_none_or(|&br| agree(pl, slope(t, b, br)));
+            let fit = Fit::new(&t[a..=b], slope(t, a, b));
+            // A lone section whose beats are noise may sit between neighbours that drifted apart
+            // (up to 2 x CHANGE); the drift then moves to the section's right edge.
+            let drift = bounds.get(k + run + 1).is_some_and(|&br| ratio_diff(pl, slope(t, b, br)) <= OCTAVE_TOL);
+            let irregular = run == 1 && (agrees || drift) && (fit.cost(0, b - a) / (b - a + 1) as f64).sqrt() > IRREGULAR_SIGMA * sigma;
+            if !agrees && !irregular {
+                continue;
+            }
+            // Differing neighbours: space the beats evenly at the tempo between them.
+            let pr = bounds.get(k + run + 1).map_or(pl, |&br| slope(t, b, br));
+            // The left grid: its fitted period and phase, extended through the section. The
+            // tolerance is 20 % of a beat (the tracker wobbles by up to a fifth of a beat around
+            // bursts), capped at 70 ms so slow songs do not accept clearly shifted beats; a real
+            // 5 % change in one bar of 120 BPM (26 to 105 ms off the grid) stays outside the share.
+            let tol = (0.2 * pl).min(70.0);
+            // Phase from the last two bars only: a long section's tempo wanders, so its mean phase
+            // can be off by more than the tolerance at its end.
+            let from = al.max(a.saturating_sub(2 * beats_per_bar as usize));
+            let c = (from..=a).map(|i| t[i] - pl * (i as f64 - a as f64)).sum::<f64>() / (a - from + 1) as f64;
+            let near = |x: f64, set: &[f64]| set.iter().any(|&y| (x - y).abs() <= tol);
+            let inner = &t[a + 1..b];
+            let end = if b == t.len() - 1 { t[b] + tol } else { t[b] - tol };
+            let mut grid = Vec::new();
+            let mut g = c + (((t[a] + tol - c) / pl).floor() + 1.0) * pl;
+            while g < end {
+                grid.push(g);
+                g += pl;
+            }
+            let share = |hit: usize, all: usize| all > 0 && hit as f64 >= GLITCH_SHARE * all as f64;
+            // Extra beats: at least half as many detected beats as grid beats again, and nearly all
+            // grid beats among them. Missing beats: fewer detected beats than grid beats, nearly
+            // all on the grid. A real change of a few percent has as many beats as the grid.
+            let (n_in, n_grid) = (inner.len() as f64, grid.len() as f64);
+            let extra = n_in >= 1.5 * n_grid && share(grid.iter().filter(|&&g| near(g, &t[a + 1..=b])).count(), grid.len());
+            let missing = n_in <= 0.67 * n_grid && share(inner.iter().filter(|&&x| near(x, &grid)).count(), inner.len());
+            if extra || missing || irregular {
+                let period = if agrees { pl } else { (pl + pr) / 2.0 };
+                if regrid(t, a, b, period, if agrees { Spacing::Start } else { Spacing::Even }) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Spacing {
+    /// Exactly one period apart, counted from the section's first beat.
+    Start,
+    /// Exactly one period apart, counted back from the section's last beat.
+    End,
+    /// Evenly spaced, as close to one period as the span allows.
+    Even,
+}
+
+/// Replace the beats strictly inside a..b by ones one `period` apart, so the section carries that
+/// tempo (with `Start` / `End` the left-over gap at the other end is one odd interval, which the
+/// segmentation absorbs into the neighbour). Returns false when nothing changed.
+fn regrid(t: &mut Vec<f64>, a: usize, b: usize, period: f64, spacing: Spacing) -> bool {
+    let n = (((t[b] - t[a]) / period).round() as usize).max(1);
+    let (ta, tb) = (t[a], t[b]);
+    let mut fill: Vec<f64> = (1..n)
+        .map(|i| match spacing {
+            Spacing::Start => ta + period * i as f64,
+            Spacing::End => tb - period * (n - i) as f64,
+            Spacing::Even => ta + (tb - ta) * i as f64 / n as f64,
+        })
+        .collect();
+    fill.retain(|&x| x > ta + 1.0 && x < tb - 1.0);
+    let same = fill.len() == b - a - 1 && fill.iter().zip(&t[a + 1..b]).all(|(x, y)| (x - y).abs() < 0.5);
+    t.splice(a + 1..b, fill);
+    !same
+}
+
+/// Move each change back over the beats before it that already sit on the right section's grid
+/// (within 2 sigma), keeping at least one interval for the left section. The segmentation can
+/// leave a wobbly lead-in beat or two on the wrong side of the change.
+fn refine_changes(t: &[f64], bounds: &mut [usize], sigma: f64) {
+    for k in 1..bounds.len() - 1 {
+        let (b, e) = (bounds[k], bounds[k + 1]);
+        let p = slope(t, b, e);
+        let to = e.min(b + 8);
+        let c = (b..=to).map(|i| t[i] - p * (i - b) as f64).sum::<f64>() / (to - b + 1) as f64;
+        while bounds[k] > bounds[k - 1] + 1 {
+            let i = bounds[k] - 1;
+            if (t[i] - (c + p * (i as f64 - b as f64))).abs() > 2.0 * sigma {
+                break;
+            }
+            bounds[k] = i;
+        }
+    }
+}
+
+/// Rule 2: a section at about 2x or 0.5x the tempo of its left neighbour (the right one for the
+/// first section) gets its beats re-spaced at the neighbour's period (added for half time,
+/// dropped for double time), so it carries the neighbour's tempo. Returns true when `t` changed.
+fn fold_octave(t: &mut Vec<f64>, bounds: &[usize]) -> bool {
+    let m = bounds.len() - 1;
+    if m < 2 {
+        return false;
+    }
+    for k in 0..m {
+        let nb = if k == 0 { 1 } else { k - 1 };
+        let (p, pn) = (slope(t, bounds[k], bounds[k + 1]), slope(t, bounds[nb], bounds[nb + 1]));
+        // Only into a neighbour at least as long: the longer one is the song's tempo, not a glitch.
+        let len = |i: usize| t[bounds[i + 1]] - t[bounds[i]];
+        if len(k) > len(nb) {
+            continue;
+        }
+        let octave = ratio_diff(p, 2.0 * pn) <= OCTAVE_TOL || ratio_diff(p, pn / 2.0) <= OCTAVE_TOL;
+        if octave && regrid(t, bounds[k], bounds[k + 1], pn, if k == 0 { Spacing::End } else { Spacing::Start }) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Beats and downbeats in seconds to a tempo map and its sections.
 pub(crate) fn detect(beats_s: &[f64], downbeats_s: &[f64], _beats_per_bar: u32) -> Result<Detected, String> {
     let raw = clean(beats_s);
     if raw.len() < MIN_BEATS {
         return Err(NO_BEAT_ERROR.to_string());
     }
-    let t = repair(&raw);
+    let mut t = repair(&raw);
     if t.len() < MIN_BEATS {
         return Err(NO_BEAT_ERROR.to_string());
     }
@@ -277,8 +448,20 @@ pub(crate) fn detect(beats_s: &[f64], downbeats_s: &[f64], _beats_per_bar: u32) 
     let dd: Vec<f64> = ibi.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
     let sigma = (1.4826 * median(&dd) / 2f64.sqrt()).max(5.0);
 
-    let mut bounds = segment(&t, sigma);
-    merge_close(&t, &mut bounds);
+    // Apply the glitch and octave rules one change at a time, re-segmenting after each, until
+    // nothing changes (bounded).
+    let bpb = DEFAULT_BEATS_PER_BAR as f64;
+    let mut round = 0;
+    let mut bounds = loop {
+        let mut bounds = segment(&t, sigma);
+        merge_close(&t, &mut bounds);
+        round += 1;
+        if round > MAX_RULE_ROUNDS || !(absorb_glitch(&mut t, &bounds, sigma, bpb) || fold_octave(&mut t, &bounds)) {
+            break bounds;
+        }
+    };
+
+    refine_changes(&t, &mut bounds, sigma);
 
     // Quantise, then merge neighbours with the same rounded BPM.
     let quant = |bounds: &[usize]| -> Vec<(f64, f64)> {

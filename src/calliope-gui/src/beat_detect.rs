@@ -1,6 +1,8 @@
-//! The beat detection job of the Editor (plan 2.8): renders the checked-stem mix into a
-//! `.calliope-beats-*.part` file, uploads it to the edge-AI server, waits for the tracker,
-//! turns the beats into a tempo map and stores it through the `TempoStore`.
+//! The beat detection job of the Editor (plan 2.8): renders the job's input (the drums, bass and
+//! guitar stems at unity gain, whatever the Editor's checks, volumes and solo say; `other` when
+//! there is no guitar; all stems when none of them exists; see
+//! `editor::detect_stem_indices`) into a `.calliope-beats-*.part` file, uploads it to the edge-AI
+//! server, waits for the tracker, turns the beats into a tempo map and stores it through the `TempoStore`.
 //! The job runs on its own thread and never touches the manager; it leaves its outcome in
 //! `DetectShared`, from which `EditorManager::tick` emits the one final event.
 

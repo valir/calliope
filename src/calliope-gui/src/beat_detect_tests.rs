@@ -162,14 +162,14 @@ fn ok_detects_two_sections_and_stores_them() {
 }
 
 #[test]
-fn steady_gives_one_segment_and_bar_end_a_last_segment_at_60() {
+fn steady_and_a_half_time_bar_end_give_one_segment() {
     let mut r = Rig::new(TestServer::start_beats("steady", &[]));
     assert!(matches!(r.run(), EditorEvent::Detected { .. }));
     assert_eq!(r.segments(), vec![(500.0, 120.0, None)]);
     let mut r = Rig::new(TestServer::start_beats("bar-end", &[]));
     assert!(matches!(r.run(), EditorEvent::Detected { .. }));
-    let segs = r.segments();
-    assert_eq!(segs, vec![(500.0, 120.0, None), (12500.0, 60.0, Some(12500.0))]);
+    // The half-time last bar folds into the main tempo (owner change 1).
+    assert_eq!(r.segments(), vec![(500.0, 120.0, None)]);
     assert!(r.leftovers().is_empty());
 }
 
@@ -209,10 +209,9 @@ fn refusals() {
     let mut r = Rig::new(TestServer::start_beats("hang", &["--beat-timeout-ms", "20000"]));
     assert_eq!(r.m.start_detect(SIX, Rig::params("  ")).unwrap_err(), "Set the edge-AI server in Settings first");
     let now = Instant::now();
+    // Detection does not depend on the checked stems: it starts with every stem unchecked or off.
     r.m.set_stem(SIX, "vocals", Some(0.0), false, now).unwrap();
     r.m.set_stem(SIX, "drums", None, true, now).unwrap();
-    assert_eq!(r.start().unwrap_err(), "Check a stem first");
-    r.m.set_stem(SIX, "drums", Some(0.0), true, now).unwrap();
     assert!(r.start().unwrap().detect.is_some());
     assert_eq!(r.start().unwrap_err(), "Beat detection is already running");
     r.m.cancel_detect(SIX).unwrap();

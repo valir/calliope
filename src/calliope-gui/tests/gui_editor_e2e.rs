@@ -330,7 +330,7 @@ fn mix_waveform_and_autodetect() {
     app.click(&wid, MIX_PLAY.0, MIX_PLAY.1);
     app.wait_line(|l| l.contains("editor pause"), secs(10));
 
-    // Nothing checked: a flat waveform, and nothing to detect.
+    // Nothing checked: a flat waveform (Autodetect does not depend on the checked stems).
     for y in [LANE_Y[0], LANE_Y[2]] {
         app.click(&wid, CHECK_X, y);
     }
@@ -338,9 +338,6 @@ fn mix_waveform_and_autodetect() {
     assert_eq!(field(&l, "max"), "0.00", "{l}");
     settle();
     shot("editor-mix-nothing-checked");
-    app.click(&wid, AUTODETECT.0, AUTODETECT.1);
-    std::thread::sleep(Duration::from_millis(700));
-    assert_eq!(app.count("editor detect start"), 0, "Autodetect must be disabled with nothing checked");
 
     // Autodetect with the stems checked: phases, two tempo sections, player.json schema 2.
     for y in [LANE_Y[0], LANE_Y[1]] {
