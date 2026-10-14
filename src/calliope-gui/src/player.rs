@@ -15,7 +15,7 @@ use crate::audio_out::{OutputBackend, OutputHandle};
 use crate::metronome::{count_in_plan, Click, CountIn};
 use crate::player_source::{self, Pcm, Source, PEAK_BUCKETS};
 use crate::player_state::{self, LoopRec, Mark, PlayerState};
-use crate::tempo_map::{Boundary, Segment, TempoMap};
+use crate::tempo_map::{Boundary, Scale, Segment, TempoMap};
 use crate::transport::Transport;
 
 pub const SUPERSEDED: &str = "superseded";
@@ -859,6 +859,16 @@ pub enum LoopAction {
     Stop,
 }
 
+/// One edit of the tempo sections (the Player's Sections group and waveform).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SectionEdit {
+    Bpm { index: usize, at: f64, bpm: f64 },
+    Scale { index: usize, at: f64, factor: Scale },
+    Add { position: f64, bpm: f64 },
+    Remove { index: usize, at: f64 },
+    Move { index: usize, at: f64, steps: i64 },
+}
+
 pub struct PlayerManager {
     backend: Arc<dyn OutputBackend>,
     sink: EventSink,
@@ -1212,6 +1222,54 @@ impl PlayerManager {
         s.sync_loop();
         s.mark_dirty(now);
         eprintln!("calliope: player bpm value={bpm} position_ms={}", s.ms_of(s.pos()));
+        Ok(s.snapshot())
+    }
+
+    /// Edits the tempo sections of the open session without pausing or moving the playback:
+    /// loops keep their time, the engine gets the new grid and the file is saved after the debounce.
+    /// A refusal changes nothing.
+    pub fn edit_sections(&mut self, id: &str, edit: SectionEdit, now: Instant) -> Result<PlayerSnapshot, String> {
+        let s = self.session(id)?;
+        let end_ms = s.pcm.frames as f64 * 1000.0 / f64::from(s.pcm.rate.max(1));
+        let old = &s.state.tempo;
+        let guard = |index: usize, at: f64| match old.segments.get(index) {
+            Some(g) if g.start_ms == at => Ok(()),
+            _ => Err("The tempo sections changed; try again".to_string()),
+        };
+        let (kind, index, map, extra) = match edit {
+            SectionEdit::Bpm { index, at, bpm } => {
+                guard(index, at)?;
+                ("bpm", index, old.set_section_bpm(index, bpm)?, String::new())
+            }
+            SectionEdit::Scale { index, at, factor } => {
+                guard(index, at)?;
+                ("scale", index, old.scale_section(index, factor)?, String::new())
+            }
+            SectionEdit::Add { position, bpm } => {
+                let (map, index) = old.add_change(position, bpm, end_ms)?;
+                ("add", index, map, String::new())
+            }
+            SectionEdit::Remove { index, at } => {
+                guard(index, at)?;
+                ("remove", index, old.remove_change(index)?, String::new())
+            }
+            SectionEdit::Move { index, at, steps } => {
+                guard(index, at)?;
+                let (map, applied) = old.move_change(index, steps, end_ms)?;
+                ("move", index, map, format!(" steps={steps} applied={applied}"))
+            }
+        };
+        s.state.apply_tempo_change(map);
+        s.loop_message = None;
+        s.sync_grid();
+        s.sync_loop();
+        s.mark_dirty(now);
+        let bpms: Vec<String> = s.state.tempo.segments.iter().map(|g| g.bpm.to_string()).collect();
+        eprintln!(
+            "calliope: player section {kind} id={id} index={index} segments={} bpm={}{extra}",
+            bpms.len(),
+            bpms.join(",")
+        );
         Ok(s.snapshot())
     }
 

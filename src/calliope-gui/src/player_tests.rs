@@ -786,6 +786,89 @@ fn tempo_change_keeps_loops_in_time_and_resets_speed() {
     close(&got, &want);
 }
 
+fn starts(s: &PlayerSnapshot) -> Vec<f64> {
+    s.tempo.segments.iter().map(|g| g.start_ms).collect()
+}
+
+#[test]
+fn section_edits_reach_the_engine_loops_and_disk() {
+    let (_t, spec, mut m, b, _e, pcm) = with_tempo();
+    let t0 = Instant::now();
+    let before = m.snapshot(&spec.id).unwrap();
+    let s = m.edit_sections(&spec.id, SectionEdit::Add { position: 3000.0, bpm: 100.0 }, t0).unwrap();
+    assert_eq!(starts(&s), vec![500.0, 3000.0, 10500.0]);
+    assert!(s.tempo.segments[1].on_beat);
+    assert_eq!(s.speed, 1.0);
+    for (a, b) in before.loops.iter().zip(&s.loops) {
+        assert!((a.start_ms - b.start_ms).abs() <= 21.0, "{} vs {}", a.start_ms, b.start_ms);
+    }
+    let fixture = disk(&spec).unwrap();
+    m.tick(t0 + ms(499));
+    assert_eq!(disk(&spec).unwrap(), fixture, "not before the debounce");
+    m.tick(t0 + ms(500));
+    assert!(disk(&spec).unwrap()["tempo"]["segments"].to_string().contains("on_beat"));
+
+    // the new grid is live: 100 BPM beats from the placed change
+    m.set_metronome(&spec.id, true, false, t0).unwrap();
+    m.seek(&spec.id, 3000, t0).unwrap();
+    m.play(&spec.id, t0).unwrap();
+    let got = b.pull(20000);
+    let mut want = expected(&pcm, 3000 * RATE / 1000, 20000);
+    fade_in(&mut want, 0);
+    add_click(&mut want, 0);
+    add_click(&mut want, 13230);
+    close(&got, &want);
+
+    // the other edits: each marks dirty (written 500 ms later, not before) and keeps the loops in time
+    let edits = [
+        (SectionEdit::Bpm { index: 1, at: 3000.0 , bpm: 110.0 }, 1, 110.0),
+        (SectionEdit::Scale { index: 1, at: 3000.0, factor: Scale::Halve }, 1, 55.0),
+        (SectionEdit::Move { index: 1, at: 3000.0, steps: 384 }, 1, 55.0),
+        (SectionEdit::Remove { index: 1, at: 3500.0 }, 0, 120.0),
+    ];
+    for (k, (e, i, want_bpm)) in edits.into_iter().enumerate() {
+        let t = t0 + ms(1000 * (k as u64 + 1));
+        let on_disk = disk(&spec).unwrap()["tempo"]["segments"].clone();
+        let s = m.edit_sections(&spec.id, e, t).unwrap();
+        assert_eq!(s.tempo.segments[i].bpm, want_bpm, "{e:?}");
+        for (a, b) in before.loops.iter().zip(&s.loops) {
+            assert!((a.start_ms - b.start_ms).abs() <= 21.0);
+        }
+        m.tick(t + ms(499));
+        assert_eq!(disk(&spec).unwrap()["tempo"]["segments"], on_disk, "{e:?}");
+        m.tick(t + ms(500));
+        assert_ne!(disk(&spec).unwrap()["tempo"]["segments"], on_disk, "{e:?}");
+    }
+    assert_eq!(starts(&m.snapshot(&spec.id).unwrap()), vec![500.0, 10500.0]);
+}
+
+#[test]
+fn stale_or_refused_section_edits_change_nothing() {
+    let (_t, spec, mut m, _b, _e, _pcm) = with_tempo();
+    let t0 = Instant::now();
+    let before = m.snapshot(&spec.id).unwrap();
+    let fixture = disk(&spec).unwrap();
+    let stale = "The tempo sections changed; try again";
+    let e = SectionEdit::Remove { index: 1, at: 10499.0 };
+    assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), stale);
+    let e = SectionEdit::Move { index: 7, at: 0.0, steps: 1 };
+    assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), stale);
+    let e = SectionEdit::Bpm { index: 1, at: 10500.0, bpm: 0.0 };
+    assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), "Enter a BPM between 20 and 300");
+    let e = SectionEdit::Remove { index: 0, at: 500.0 };
+    assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), "The first section has no tempo change to remove");
+    let e = SectionEdit::Add { position: 100.0, bpm: 100.0 };
+    assert!(m.edit_sections(&spec.id, e, t0).is_err());
+    let after = m.snapshot(&spec.id).unwrap();
+    assert_eq!(starts(&after), starts(&before));
+    assert_eq!(after.loops.len(), before.loops.len());
+    for (a, b) in before.loops.iter().zip(&after.loops) {
+        assert_eq!((a.start_ms, a.end_ms), (b.start_ms, b.end_ms));
+    }
+    m.tick(t0 + ms(5000));
+    assert_eq!(disk(&spec).unwrap(), fixture, "refusals write nothing");
+}
+
 #[test]
 fn removing_the_tempo_clears_the_grid_and_count_in() {
     let (_t, spec) = spec_of(WITH_TEMPO);

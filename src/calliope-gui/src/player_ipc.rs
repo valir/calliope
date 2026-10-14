@@ -12,12 +12,12 @@ use crate::audio_out::OutputBackend;
 use crate::ipc::{EditorState, RepoState};
 use crate::player::{
     self, EventSink, LoopAction, OpenSpec, OutputRequest, PlayerEvent, PlayerManager, PlayerSnapshot,
-    PlayerTransport,
+    PlayerTransport, SectionEdit,
 };
 use crate::player_source;
 use crate::player_state::Mark;
 use crate::repository::Repository;
-use crate::tempo_map::{Boundary, TempoMap};
+use crate::tempo_map::{Boundary, Scale, TempoMap};
 use crate::tempo_store::{FileTempoStore, TempoStore};
 
 /// Managed app state of the Player: the session manager plus the slot holding the webview's
@@ -239,6 +239,18 @@ pub(crate) enum TempoAction {
     SetBpm { bpm: f64 },
     SpeedStep { steps: i32 },
     SpeedReset,
+    SectionBpm { index: usize, at: f64, bpm: f64 },
+    ScaleSection { index: usize, at: f64, factor: Factor },
+    AddChange { position: f64, bpm: f64 },
+    RemoveChange { index: usize, at: f64 },
+    MoveChange { index: usize, at: f64, steps: i64 },
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Factor {
+    Double,
+    Halve,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
@@ -269,10 +281,22 @@ impl From<LoopCmd> for LoopAction {
     }
 }
 
+fn edit(host: &PlayerHost, id: &str, e: SectionEdit) -> Result<PlayerSnapshot, String> {
+    host.with(|m| m.edit_sections(id, e, Instant::now()))
+}
+
 pub(crate) fn do_player_tempo(host: &PlayerHost, id: &str, action: TempoAction) -> Result<PlayerSnapshot, String> {
     match action {
         TempoAction::SetBpm { bpm } => host.with(|m| m.set_bpm(id, bpm, Instant::now())),
         TempoAction::SpeedStep { .. } | TempoAction::SpeedReset => host.with(|m| m.speed_action(id)),
+        TempoAction::SectionBpm { index, at, bpm } => edit(host, id, SectionEdit::Bpm { index, at, bpm }),
+        TempoAction::ScaleSection { index, at, factor } => {
+            let factor = if factor == Factor::Double { Scale::Double } else { Scale::Halve };
+            edit(host, id, SectionEdit::Scale { index, at, factor })
+        }
+        TempoAction::AddChange { position, bpm } => edit(host, id, SectionEdit::Add { position, bpm }),
+        TempoAction::RemoveChange { index, at } => edit(host, id, SectionEdit::Remove { index, at }),
+        TempoAction::MoveChange { index, at, steps } => edit(host, id, SectionEdit::Move { index, at, steps }),
     }
 }
 
