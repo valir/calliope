@@ -25,3 +25,4 @@ task 15 | The click list (section_clicks) | implementer | done
 task 16 | Player session: click grid, flags, names, jumps, IPC | implementer | done
 task 17 | Backend acceptance tests ts11-ts17 | implementer | done
 task 18 | TS IPC types for phase 2 | local | done (gemma4 edits correct but it committed on its own and reused an existing test title; orchestrator renamed the test and amended the commit)
+task 19 | section-meta.ts helpers | local | done (gemma4 content exact; orchestrator fixed trailing newlines)
