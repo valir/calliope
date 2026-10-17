@@ -9,6 +9,9 @@ Revision 1. Base `0bd82c3`, branch `spec/gui-player-tempo-sections`. Builds on:
 The design below follows the recommended answers of section 8. Where an answer would change a task, the question
 says which.
 
+**Revision 2 (phase 2).** The owner extended the spec in `22bc967` (requirements 8-11 and one criterion). Sections 1-8
+and tasks 1-11 are built and unchanged; phase 2 is appended as sections 9-16, with tasks 12-22.
+
 ## 1. Summary
 
 The Player's waveform becomes an editor for the tempo sections. You can:
@@ -720,3 +723,750 @@ It plays with defaults and never overwrites them, so don't mix builds on the sam
    - removing a detected change loses its detected position (Autodetect again restores it);
    - section edits don't touch the speed. `-`/`+`/`Reset` are still disabled (speed comes later); when speed exists,
      the labels show the section's own BPM, not the speed-scaled one.
+
+---
+
+# Phase 2: per-section metronome, count-in, names and jumps
+
+Spec requirements 8-11 and the new criterion (commit `22bc967`). Base: the finished phase 1 (tasks 1-11, fix round 1).
+The design follows the recommended answers of section 16; where an answer would change a task, the question says which.
+
+## 9. Summary (phase 2)
+
+Each tempo section gets three settings: a **name**, **metronome on/off** and **count-in**. They are stored in the
+section's segment in `player.json`, which becomes schema 4.
+- The metronome clicks only in sections whose metronome is on. The existing Metronome On/Off stays as the master switch.
+- A section with count-in gets three clicks at its own tempo just before it, replacing the previous section's last
+  clicks, so you hear the new tempo before it starts.
+- The Metronome buttons move into the Sections group. The group also gets the name box next to "Section 6 of 8 · 93
+  BPM", the two section toggles, and Start / End buttons that jump the playhead within the section.
+
+## 10. Design (phase 2)
+
+### 10.1 What is reused, what is new
+
+Reused unchanged:
+- the engine (`Engine`, `Cmd`, `render`): it already plays any sorted list of click frames (`Cmd::SetGrid`) when its
+  metronome flag is on (`Cmd::SetMetronome`). Phase 2 only changes **which** frames the manager sends;
+- the live edit path of 2.2 (`edit_sections` → `apply_tempo_change` → `sync_grid` → `sync_loop` → `mark_dirty`) and its
+  stale `at` guard;
+- the Play and loop count-in (the pre-roll before the audio starts, `plan_at`, `Count In` and the loop's `Count-In`);
+- loop Prev/Next's instant jump (`Cmd::Jump`), for Start / End;
+- `player_tempo` (only new action kinds: no new commands, no ACL edits), the selection / target rule of 2.6.
+
+| Where | What | Pure? |
+|---|---|---|
+| `src/calliope-gui/src/tempo_map.rs` | `SectionMeta {name, metronome, count_in}` flattened into `Segment`; carry rules in `add_change`, `remove_change`, `set_bpm_at`; `set_section_flags`, `set_section_name`, `section_jump_ms` | yes |
+| `src/calliope-gui/src/player_state.rs` | schema 4: reads the three keys; reads 1-4; 5+ read-only | yes |
+| `src/calliope-gui/src/metronome.rs` | `section_clicks(map, dur_ms, wrap)`: the click list with section flags and count-ins | yes |
+| `src/calliope-gui/src/player.rs`, `player_ipc.rs` | the grid comes from `section_clicks`; it is re-sent when the repeating loop changes; `SectionEdit::Flags`, `SectionEdit::Name`; `jump_section`; three new `TempoAction` kinds | Player internals |
+| `src/ui/lib/ipc.ts` | `TempoSegment.name/metronome/count_in`, the new `TempoAction` kinds | types |
+| `src/ui/lib/section-meta.ts` (new) | `sectionClicks`, `sectionCountIn`, `cleanSectionName`, `MAX_SECTION_NAME` | yes |
+| `src/ui/lib/player-state.svelte.ts` | `setSectionFlags`, the name edit (`pl.nameEdit`), `jumpSection`, log lines | frontend |
+| `src/ui/components/player/SectionsSection.svelte` | name box, the Metronome sub-group (moved in), the "This section" toggles, Start / End | component |
+| `src/ui/components/player/MetronomeSection.svelte` | deleted (its two buttons move into the Sections group) | component |
+| `src/ui/components/player/PlayerPane.svelte`, `src/ui/views/PlayerView.svelte` | no Metronome group; Home / End keys | frontend |
+
+### 10.2 Data model and `player.json` schema 4
+
+```rust
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SectionMeta {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,                // "" = no name; trimmed, no control characters, at most 40 characters
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub metronome: bool,             // default true: older maps click everywhere, as today
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub count_in: bool,              // never on the first segment
+}
+// impl Default for SectionMeta: name "", metronome true, count_in false
+pub struct Segment { start_ms, bpm, detected_ms, on_beat, #[serde(flatten)] pub meta: SectionMeta }
+```
+
+- **On disk**: `{"start_ms": 8500, "bpm": 93, "detected_ms": 8500, "name": "Verse", "metronome": false, "count_in": true}`.
+  Defaults are not written, so a map with no names and default flags is written exactly as in schema 3.
+- **In the snapshot** the same keys appear (missing = default); the frontend reads them only through `section-meta.ts`.
+- The top-level `"metronome": {"on", "count_in"}` stays: `on` is the master switch, `count_in` the Play count-in.
+- **Why one flattened struct:** the three settings travel with their segment through every operation, and the 32
+  existing `Segment { .. }` literals gain one field (`meta: SectionMeta::default()`), not three.
+- **Why schema 4:** the schema-3 parser rebuilds each segment from the four known keys and drops the rest. A schema-3
+  build would open a phase-2 file, lose the names and flags, and write it back. With 4, the existing mechanism applies:
+  older builds see "written by a newer version" and never overwrite it.
+- **Upgrade of v1-v3:** read as before. Every section gets metronome on, no count-in and no name, so the clicks are
+  exactly as before. The file is written as 4 on the next save.
+- **Lenient read** (`parse_tempo`):
+  - `name` only if it is a JSON string: control characters removed, trimmed, cut to 40 characters;
+  - `metronome` is false only for JSON `false`;
+  - `count_in` is true only for JSON `true`, and is cleared on the first segment (like `detected_ms` and `on_beat`).
+
+### 10.3 Section settings through the edits
+
+| Edit | Name, metronome, count-in |
+|---|---|
+| move a change (Player or Editor), section BPM, ×2 / ÷2 | kept: the segment is the same |
+| Add (splits section k) | section k keeps its own; the new section gets **section k's metronome flag**, no name and no count-in (so the clicks you hear don't change until you change them) |
+| Remove change i (section i joins i-1) | section i-1 keeps its own; section i's name and flags are lost |
+| BPM field: a new typed change | as Add (copies the metronome flag of the section it splits) |
+| BPM field: equal neighbours merged, or BPM 0 removing a segment | as Remove; when the first segment goes, the new first one loses its count-in |
+| Editor Autodetect | the whole map is replaced (decided for detection), so names and flags are lost (Q8) |
+
+A count-in belongs to the change at the start of its section, so it moves with that change. When the section before it
+changes (after a Remove), the count-in now replaces that section's last clicks instead.
+
+### 10.4 The click list (`metronome::section_clicks`, pure)
+
+The engine's grid becomes the list of clicks to sound, computed off the audio thread by the manager:
+
+```text
+section_clicks(map, dur_ms, wrap: Option<(loop_start_ms, loop_end_ms)>) -> Vec<f64>   // sorted ms
+  1. clicks = the beats of map.beats_in(0, dur_ms) whose section (segment_at, else 0) has meta.metronome
+  2. for each section k >= 1 with meta.count_in, in ascending order:
+       b  = 60000 / bpm_k
+       F  = the first beat of section k (beats_in from start_k - 1e-6), = start_k for detected and placed changes
+       if F >= dur_ms: skip
+       if wrap = (ls, le) and F - 3.5*b < le <= F + 1e-6: skip      // a repeating loop ends before F (10.6)
+       remove every click t with F - 3.5*b < t < F - 1e-6
+       add F - 3b, F - 2b, F - b (those >= 0)
+  3. sort
+```
+
+The manager turns the result into frames (rounded), removes duplicate frames and sends it with `Cmd::SetGrid`.
+`SetMetronome(master on && tempo)` is unchanged.
+
+**What "count-in for a section" means while playing through.** It is the same pattern as the Play count-in
+(gui-play-backing-track req. 15: three clicks, the music starts on the silent fourth beat), placed just before the
+section:
+- three clicks one beat apart **at the next section's tempo**, the last one a beat before the section's first beat;
+- the section's first beat is the fourth beat. It clicks only if that section's metronome is on, just as after a Play
+  count-in.
+
+**How the previous section is adjusted** (the new criterion). The previous section's own clicks in that span are
+removed, so its last bar becomes the count-in. The removal starts half a beat before the first count-in click, so no
+two clicks ever sound closer than half a beat.
+- Example (TS11), sections 120 BPM from 500 and 93 BPM from 8500 with count-in:
+  - the 120-BPM clicks at 6500, 7000, 7500 and 8000 are replaced by clicks at 6564.52, 7209.68 and 7854.84;
+  - then 8500 and every 645.16 ms.
+
+**Edge cases** (recommended answers Q2, Q3):
+- **The previous section's metronome is off:** the three count-in clicks still play over the silent section. This
+  follows the existing rule that a count-in plays even with the metronome off.
+- **The previous section is shorter than the count-in:** the count-in still gives its three clicks. It reaches back
+  over the earlier section(s), replacing their clicks too, and never goes before 0 ms.
+- **Two count-ins overlap** (a short section with count-in followed by another with count-in): the later one wins.
+  It is processed last and removes the earlier clicks inside its span.
+- **The first section** has no section before it: its count-in is refused and its button disabled. Use Count In
+  (Play) for the start of the song.
+- Count-in clicks are part of the click list, so they follow the same speed rule as all clicks (speed is 1.0 until
+  speed change exists).
+
+### 10.5 The master switch and the Play count-in (recommended answers Q4, Q5)
+
+| Control | Where | Effect |
+|---|---|---|
+| Metronome On/Off (master, top-level `metronome.on`) | Sections group, "Metronome" sub-group | Off: no clicks at all while the song plays, including section count-ins. On: the click list of 10.4 sounds |
+| Count In (top-level `metronome.count_in`) | same sub-group | unchanged: the pre-roll before Play and before loop Play |
+| Click (this section's `meta.metronome`) | Sections group, "This section" sub-group | whether this section's beats click |
+| Count In (this section's `meta.count_in`) | same sub-group | the count-in of 10.4 before this section; disabled on section 1 |
+
+- A section's count-in only affects playing **through** its start. Starting Play inside or at that section, or a loop
+  starting there, keeps today's rule: the pre-roll comes from Count In or the loop's Count-In.
+- **Why keep the master:** one press silences everything while playing. Without it, the user would have to turn every
+  section off, and the existing "Metronome On/Off" tests, keys and `player.json` meaning stay valid.
+- **Why compute clicks in the manager:** the engine and its real-time rules are untouched, and the click list is a pure
+  function that is easy to test exactly. Each edit or toggle is one `SetGrid`. The engine's `beat_dirty` re-finds the
+  next click at the current position, so changes are heard from the next beat, as for phase-1 edits. The cost is a
+  `beats_in` over the whole track (3 000 beats for 10 min at 300 BPM) per change: negligible.
+
+### 10.6 Loops spanning sections (recommended answer Q6)
+
+The click list is per source frame, so a loop that crosses a section start plays that start's count-in on every pass.
+
+The exception is a **repeating loop** (the current, complete loop with Loop On) that **ends at or just before** a
+section start with count-in, with its end inside the count-in span. There the count-in would lead nowhere: playback
+jumps back to the loop start, at the old tempo. A common case is a loop over exactly one section.
+- That count-in is skipped (the `wrap` argument), and the section's own clicks stay.
+- The manager keeps the `wrap` it last used (`Session::grid_wrap`). `sync_loop` re-sends the grid when the current
+  repeating loop or its ends change, e.g. Loop On toggled, loop selected, marks moved.
+- A loop played once with loop Play (no Loop On) keeps the count-in: playback stops at its end anyway.
+
+### 10.7 Start / End (spec req. 10)
+
+- **Target:** the section of 2.6 (the selection, else the section at the playhead).
+- **Start** jumps to the section's start: its `start_ms`, or 0 ms for section 1 (the waveform draws section 1 from the
+  left edge).
+- **End** jumps to the **start of the section's last bar** (recommended answer Q7): the 4th beat (`beats_per_bar`) before
+  the next change, or before the track end for the last section, but never before the section start.
+  - The exact end is the next section's first beat, so jumping there would make the playhead (and the target) the
+    next section.
+  - From the last bar you hear the transition, and the count-in if there is one.
+  - Example: 120 BPM from 500 to 8500 → End = 6500.
+- **While playing:** an instant jump, as loop Prev/Next (`Cmd::Jump`: 3 ms fade-in, no scrub silence, playback goes
+  on, a pre-roll count-in in progress is cancelled). **While paused:** the playhead moves, and the next Play applies the
+  normal count-in rule.
+- The selection is not changed. Pressing Start again restarts the same section, which is handy for practice.
+- **Rust:** `PlayerManager::jump_section(id, index, at, edge, now)`:
+  - the stale guard;
+  - `TempoMap::section_jump_ms(index, edge, end_ms)`;
+  - `set_pos` + `Cmd::Jump` + `mark_dirty` + `publish`;
+  - log `calliope: player section jump id=… index=… edge=start|end position_ms=…`.
+- **Keys:** Home = Start and End = End, as Player keys. They work wherever the Player keys work today (not while a
+  field, button or other control that keeps its keys has the focus), and also on the focused waveform (`PlayerView`
+  lets them through from `[data-player-keys]`, like Space).
+  - `preventDefault`, so the pane does not scroll.
+  - Auto-repeat is ignored.
+
+### 10.8 Names (spec req. 11)
+
+- **The name box** is a text input right after the status line ("Section 6 of 8 · 93 BPM").
+  - Placeholder "Name this section", accessible name "Section name", `maxlength` 40.
+  - It shows the target section's name.
+- **The section is captured on focus:** `pl.nameEdit = {index, at, draft}`. While the box has the focus, the box, the
+  status line and the section toggles show the captured section, so a playhead crossing into the next section can't
+  move the edit.
+- **Commit:** Enter or blur sends `section-name` with the captured `index`/`at` and `cleanSectionName(draft)`. Nothing
+  is sent when the name is unchanged. An empty name clears it.
+- **Escape** restores the old name and blurs.
+- **A refusal** (stale, or invalid in Rust) shows in the Sections message line.
+- **Keys:** typed keys never reach the Player keys (inputs keep their keys, `OWN_KEYS`). So Space, b, e and Home type
+  as usual.
+- **Rust:** `set_section_name(index, name)`:
+  - trims the name;
+  - refuses control characters ("Section names can't contain control characters");
+  - refuses more than 40 characters ("Section names can have at most 40 characters").
+
+  The frontend cleans first, so users never see these messages.
+- **The waveform:** labels stay "93 BPM" (no layout risk on the canvas). The waveform's `aria-valuetext` gains the name:
+  "Section 2 of 3, Verse, from 0:08.500, 93 BPM, …".
+
+### 10.9 IPC (phase 2)
+
+```ts
+interface TempoSegment { start_ms: number; bpm: number; detected_ms?: number | null; on_beat?: boolean;
+                         name?: string; metronome?: boolean; count_in?: boolean }   // missing = '', true, false
+type TempoAction = /* phase 1 kinds */
+  | { kind: 'section-flags'; index: number; at: number; metronome: boolean; count_in: boolean }
+  | { kind: 'section-name'; index: number; at: number; name: string }
+  | { kind: 'jump-section'; index: number; at: number; edge: 'start' | 'end' };
+```
+
+**Rust:**
+- `player_ipc::TempoAction` gains `SectionFlags`, `SectionName { name: String }` and `JumpSection { edge: Edge }`.
+  `Edge` is the loops' existing kebab-case enum. `TempoAction` and `SectionEdit` lose `Copy`.
+- `section-flags` and `section-name` become `SectionEdit::Flags` and `SectionEdit::Name` in `edit_sections` (the same
+  path: guard, new map, `sync_grid`, `sync_loop`, `mark_dirty`). `jump-section` calls `jump_section`.
+
+**Log lines:**
+- **Rust:** `calliope: player section <flags|name> id=… index=… segments=<k> bpm=<..> metronome=<1|0,..>
+  count_in=<1|0,..>`. The two new fields are appended to every `player section` line.
+- **Frontend:**
+  - `calliope-ui: player sections …` gains ` metronome=<1|0,..> count_in=<1|0,..> named=<n>`;
+  - `player section flags index=<i> metronome=<b> count_in=<b>`;
+  - `player section name index=<i> length=<n>` (the name itself is not logged);
+  - `player section jump index=<i> edge=<start|end> position=<ms>`.
+
+### 10.10 The Sections group and the control bar layout
+
+The Metronome group disappears. Its two buttons move into the Sections group as a nested `role="group"
+aria-label="Metronome"`, so the existing tests that find "On/Off" and "Count In" in the Metronome group keep working.
+
+```text
+┌ Sections ─ Section 2 of 3 · 93 BPM  [Verse_____________] ───────────────────────────┐
+│ [Add] [Remove] [×2] [÷2]   [|◀ Start] [End ▶|]                                       │
+│ Metronome [On/Off] [Count In]     This section [Click] [Count In]                    │
+│ <message line, reserved>                                                             │
+└──────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Buttons:** 3.25 rem high, toggles filled amber when on (as today).
+  - The section toggles are "Click" (accessible name "Metronome in this section") and "Count In" ("Count-in into this
+    section").
+  - Start is "Jump to the start of the section", End is "Jump to the last bar of the section".
+  - Disabled ones have a `title` saying why: BPM 0 → "Type a BPM first"; section 1 Count In → "The first section has
+    no section before it".
+- **Space:** at 1280x800 with the tree folded, phase 1 left BPM, Sections and Metronome in the first row and the pane
+  scrolling by about 14 px. The title and the status now share one line, and the Metronome group's border, padding and
+  title are gone; that pays for most of the new button row.
+- **The target:** the pane scrolls no more than in phase 1 at 1280x800 with the tree folded (the visual review compares
+  it with the phase-1 `player-sections` screenshot). With the tree shown or at 1024x640 the groups wrap and the pane
+  scrolls, as before.
+  - If the target can't be met, the visual review may put the Start / End buttons on the status line (the name box
+    narrows to 10 rem). It reports which layout it chose.
+- The GUI tests' fixed click positions are re-measured from screenshots (Task 22).
+
+### 10.11 The Editor
+
+No Editor view change: it shows sections and their BPMs as today, without names.
+- It keeps names and flags when it moves a detected change: `set_change_offset` keeps the segment, and
+  `TempoStore::replace` writes the segments with their meta.
+- Autodetect replaces the map (Q8).
+- The `TempoSegment` type is shared, and the Editor ignores the new keys.
+
+## 11. Tasks (phase 2)
+
+Same rules as section 3: Rust tasks end with `cargo clippy --workspace --all-targets -- -D warnings` clean, frontend
+tasks with `npm run check` clean (both in `src/calliope-gui/`).
+
+### Task 12: Tempo map: `SectionMeta`, carry rules, flags, names, jump positions
+- **files:** `src/calliope-gui/src/tempo_map.rs`. Compiler-driven `meta: SectionMeta::default()` additions to the
+  `Segment { .. }` literals in:
+  - `src/editor_tests.rs`, `src/player_ipc_tests.rs`, `src/player_state.rs`, `src/player_tests.rs`;
+  - `src/tempo_detect.rs`, `src/tempo_detect_tests.rs`, `src/tempo_store.rs`;
+  - `tests/acceptance_beat_autodetect.rs`, `tests/acceptance_player_backend.rs`.
+- **does:**
+  - `SectionMeta` and the `meta` field (10.2), with `fn yes()` and `fn is_true()` next to `is_false`.
+  - The carry rules (10.3) in `add_change`, `remove_change` (nothing to do but a test) and `set_bpm_at` (insert: copy the
+    split section's `metronome`; first segment removed: clear the new first's `count_in`).
+  - `set_section_flags(index, metronome, count_in) -> Result<TempoMap, String>`: index out of range → "There is no such
+    section"; `count_in` on index 0 → "The first section has no section before it".
+  - `set_section_name(index, name) -> Result<TempoMap, String>` (10.8).
+  - `section_jump_ms(index, edge: Edge, end_ms) -> Result<f64, String>` (10.7). Define `pub enum Edge { Start, End }` in
+    `tempo_map.rs`; `player_ipc` maps its own `Edge` to it.
+- **tests** (in `tempo_map.rs`):
+  - Serde: a default meta adds no keys, so a schema-3 map serialises byte-identically; `name`, `metronome: false` and
+    `count_in: true` round-trip.
+  - Add copies the split section's `metronome` (on and off) and gives no name or count-in. Remove keeps the left
+    section's meta. Move, section BPM and scale keep the meta. `set_bpm_at` (insert, merge, BPM 0 on the first) follows
+    10.3.
+  - Flags and name refusals, with the exact messages. A 40-character name is accepted, 41 refused; "  Verse " → "Verse".
+  - `section_jump_ms` on `[(500,120),(8500,93)]` with end 20000:
+    - Start 0 → 0, Start 1 → 8500;
+    - End 0 → 6500;
+    - End 1 → the 4th beat before 20000 on the 93-BPM grid from 8500;
+    - a 2-beat section → End = its start.
+- **done when:** `cargo test -p calliope-gui --lib tempo_map` and `cargo test --workspace --no-run` pass; clippy clean.
+- **routine:** no
+
+### Task 13: `player.json` schema 4 (code and its own tests)
+- **files:** `src/calliope-gui/src/player_state.rs`, `src/calliope-gui/src/tempo_store.rs`
+- **does:**
+  - `SCHEMA = 4`.
+  - `parse_tempo` reads `name`, `metronome` and `count_in` as in 10.2 and clears `count_in` on the first segment.
+  - Reads 1-4; 5+ read-only.
+  - In these two files only:
+    - "written as 3" asserts become 4 (`player_state.rs`: `back["schema_version"], 3`, the `v["schema_version"] =
+      json!(3)` that follows it, and `v["schema_version"], 3` near line 503);
+    - "newer schema" fixtures `4` become `5` (`player_state.rs` near line 563, `tempo_store.rs:100`).
+
+    Fixtures that read schema 3 stay 3.
+- **new tests** (`player_state.rs`):
+  - A v3 file with `on_beat` and `detected_ms` loads with every section metronome on, no count-in and no name. It is
+    written as 4 with the same segments.
+  - A v4 segment with all three keys round-trips.
+  - `count_in` on the first segment is dropped.
+  - Bad values are ignored and the segment is kept: `"name": 5`, `"metronome": "no"`, `"count_in": 1`.
+  - A name with a tab and 50 characters is read cleaned and cut to 40.
+- **done when:** `cargo test -p calliope-gui --lib player_state` and `cargo test -p calliope-gui --lib tempo_store`
+  pass; clippy clean.
+- **routine:** no
+
+### Task 14: Schema-number literals in the other tests
+- **files:** `src/calliope-gui/src/beat_detect_tests.rs`, `src/calliope-gui/tests/acceptance_beat_autodetect.rs`,
+  `src/calliope-gui/tests/acceptance_player_backend.rs`, `src/calliope-gui/tests/gui_editor_e2e.rs`,
+  `src/calliope-gui/tests/gui_player_e2e.rs`
+- **does:** exact edits. Change only the lines listed; line numbers are from base `22bc967` and may be a few lines off,
+  so find each by its text:
+  1. "written as 3" becomes "written as 4": replace `3` with `4` in each of these lines:
+     - `beat_detect_tests.rs:146`: `assert_eq!(r.player_json().unwrap()["schema_version"], 3);`
+     - `acceptance_beat_autodetect.rs:460` and `:713`: `assert_eq!(v["schema_version"], 3);`
+     - `acceptance_player_backend.rs:1196`: `assert_eq!(v["schema_version"], 3);`
+     - `acceptance_player_backend.rs:1770` and `:2044`: `assert_eq!(r.disk().unwrap()["schema_version"], 3);`
+     - `acceptance_player_backend.rs:1984` and `:2014`: `assert_eq!(d["schema_version"], 3);`
+     - `gui_editor_e2e.rs:361`, `gui_player_e2e.rs:356` and `:425`: `assert_eq!(v["schema_version"], 3, "{v}");`
+  2. "newer schema" fixtures: replace `"schema_version":4` with `"schema_version":5` in:
+     - `acceptance_beat_autodetect.rs:611` (`let newer = r#"{"schema_version":4,…`);
+     - `acceptance_player_backend.rs:1259` (`let text = r#"{"schema_version":4,"source":…`);
+     - `acceptance_player_backend.rs:2049` (`let text = r#"{"schema_version":4,"tempo":…`).
+  3. Leave every other `schema_version` alone (fixtures that read schema 1, 2 or 3; `track.json` literals;
+     `gui_player_acceptance_e2e.rs`' schema 7).
+- **done when:** `cd src/calliope-gui && cargo test -p calliope-gui --lib beat_detect && cargo test -p calliope-gui
+  --test acceptance_player_backend --test acceptance_beat_autodetect && cargo test -p calliope-gui --features e2e-hooks
+  --test gui_editor_e2e --test gui_player_e2e --no-run` passes. Run it once, then stop.
+- **routine:** yes
+
+### Task 15: The click list
+- **files:** `src/calliope-gui/src/metronome.rs`
+- **does:** `pub(crate) fn section_clicks(map: &TempoMap, dur_ms: f64, wrap: Option<(f64, f64)>) -> Vec<f64>` exactly
+  as 10.4. Empty map → empty.
+- **tests** (in `metronome.rs`), within 1e-6 ms:
+  - Default meta: equal to `beats_in(0, dur)`'s times, so phase 1 is unchanged.
+  - Section metronome off: no clicks in that section, the others unchanged; the beats before the first start belong to
+    section 0.
+  - TS11 numbers: `[(500,120),(8500,93 detected, count_in)]` → …6000, 6564.516, 7209.677, 7854.839, 8500, 9145.161…;
+    no click in (6241.94, 8500) other than those three.
+  - Previous section off: the same three clicks, nothing else before 8500 after 0.
+  - Typed (tick-rule) change with count-in: anchored on its first beat, not on `start_ms`.
+  - Short previous section: `[(0,120),(4000,120 on_beat),(5000,60 on_beat, count_in)]` → clicks 2000, 3000, 4000, then
+    5000; 1500 is kept and 2500, 3500 and 4500 are gone.
+  - Two overlapping count-ins: the later one wins.
+  - `wrap = Some((500, 8500))` → no count-in for 8500, and the 120-BPM clicks stay. `wrap = Some((500, 6000))` (ends
+    before the span) → the count-in is kept.
+  - Count-in clicks before 0 ms are dropped. A section starting at or after `dur_ms` is ignored.
+  - Always sorted and strictly increasing.
+- **done when:** `cargo test -p calliope-gui --lib metronome` passes; clippy clean.
+- **routine:** no
+
+### Task 16: Player session: click grid, flags, names, jumps, IPC
+- **files:** `src/calliope-gui/src/player.rs`, `src/calliope-gui/src/player_tests.rs`,
+  `src/calliope-gui/src/player_ipc.rs`, `src/calliope-gui/src/player_ipc_tests.rs`
+- **does:**
+  - **The grid:**
+    - `Session::grid()` uses `section_clicks(&tempo, dur_ms, self.wrap_ms())`, rounds to frames and drops duplicate
+      frames (accent `false`);
+    - `wrap_ms()` = the current complete loop's (start, end) ms when its `repeat` is on, else `None`;
+    - `Session::grid_wrap` holds the value last sent;
+    - `sync_loop` becomes `&mut self` and calls `sync_grid` when `wrap_ms()` differs from `grid_wrap` (10.6).
+  - **`SectionEdit`:** gains `Flags { index, at, metronome, count_in }` and `Name { index, at, name: String }` (drop
+    `Copy`), handled in `edit_sections` with the guard. Log kinds `flags` and `name`. Every `player section` line gets
+    ` metronome=… count_in=…` (10.9).
+  - **`jump_section`** (10.7).
+  - **`player_ipc`:** the three `TempoAction` variants (drop `Copy`), mapped in `do_player_tempo`.
+- **tests:**
+  - **`player_tests.rs`** (ManualBackend; reuse the phase-1 helpers):
+    - toggling a section's metronome off while playing → no click from the next beat on in that section; on again →
+      clicks from the next beat;
+    - flags and name are on disk after `tick(t0+500ms)` and not at `t0+499`;
+    - stale `at` → the exact message, nothing changes;
+    - Loop On toggled on a loop ending at a count-in section start → the next pass has no count-in clicks; Loop On off
+      → they are back;
+    - master Off → no clicks, including count-ins; Play's pre-roll with Count In still plays (unchanged);
+    - `jump_section` while playing → no pause or seek event, the position is at the target frame and the following
+      audio equals the source from there (after the 3 ms fade); while paused → the position moves and nothing sounds;
+    - jump during a pre-roll count-in → the count-in is cancelled, as for loop Next.
+  - **`player_ipc_tests.rs`:** the JSON of each new action deserialises (`{"kind":"section-name","index":1,"at":8500.0,
+    "name":"Verse"}`, `{"kind":"jump-section","index":0,"at":500.0,"edge":"end"}` …); an unknown edge is rejected.
+- **done when:** `cargo test -p calliope-gui --lib player` passes; clippy clean.
+- **routine:** no
+
+### Task 17: Backend acceptance tests for phase 2
+- **files:** `src/calliope-gui/tests/acceptance_player_backend.rs`
+- **does:**
+  - A new section "section metronome (gui-player-tempo-sections phase 2)". Reuse `rig_with`, `clicks`, `onsets` and the
+    TS fixture, written as schema 4 with the needed keys.
+  - **Tests:**
+    - `ts11_count_in_replaces_the_previous_sections_last_clicks`: section 1 `count_in: true`, master on, play from
+      5000 → onsets 5000, 5500, 6000, 6564.52, 7209.68, 7854.84, 8500, 9145.16 (±1 frame), nothing else in between.
+    - `ts12_section_metronome_off_is_silent_and_follows_while_playing`: section 0 `metronome: false` → no click before
+      8500, clicks at 93 after; `section-flags` on while playing → clicks from the next 120-BPM beat; master Off →
+      silence.
+    - `ts13_count_in_with_previous_off_short_previous_and_loops`:
+      - previous section off → the three clicks only;
+      - a short previous section (fixture as Task 15) → the count-in reaches back;
+      - a Loop On loop 500..8500 → no count-in at its end, and the 120-BPM clicks play.
+    - `ts14_jump_to_section_start_and_last_bar`: playing → `jump-section` start 1 → position 8500, playback continues
+      and the audio equals the source; end 0 → 6500; paused → the position moves only.
+    - `ts15_names_and_flags_survive_close_and_reopen`: name, flags and the phase-1 edits; `close`; reopen → the same
+      segments with their meta; schema 4.
+    - `ts16_older_schemas_upgrade`: v1, v2 and v3 files → all metronome on, no count-in, no name, the clicks as before;
+      written as 4; a schema-5 file is never overwritten through flags, name or jump.
+    - `ts17_edits_carry_the_section_settings`: Add copies the metronome flag; Remove drops the joined section's name;
+      move, BPM and scale keep everything; the Editor's `set_change_offset` + `TempoStore::replace` path keeps names
+      and flags in the file.
+- **done when:** `cargo test -p calliope-gui --test acceptance_player_backend ts1` passes (it runs ts1 and ts11-ts17) in
+  under 20 s.
+- **routine:** no
+
+### Task 18: TS IPC types for phase 2
+- **files:** `src/calliope-gui/src/ui/lib/ipc.ts`, `src/calliope-gui/src/ui/lib/ipc-player.test.ts`
+- **does:** exact edits:
+  1. In `ipc.ts`, in `interface TempoSegment`, directly after the two lines
+     ```ts
+       /** set on changes added or moved in the Player: the section starts on a beat */
+       on_beat?: boolean;
+     ```
+     add
+     ```ts
+       /** the section's name; missing = no name */
+       name?: string;
+       /** the section's metronome; missing = on */
+       metronome?: boolean;
+       /** a count-in before this section while playing through its start; missing = off */
+       count_in?: boolean;
+     ```
+  2. In `ipc.ts` replace the line
+     ```ts
+       | { kind: 'move-change'; index: number; at: number; steps: number };
+     ```
+     with
+     ```ts
+       | { kind: 'move-change'; index: number; at: number; steps: number }
+       | { kind: 'section-flags'; index: number; at: number; metronome: boolean; count_in: boolean }
+       | { kind: 'section-name'; index: number; at: number; name: string }
+       | { kind: 'jump-section'; index: number; at: number; edge: 'start' | 'end' };
+     ```
+  3. In `ipc-player.test.ts`, insert directly before the file's last line (the `});` closing `describe('player ipc
+     wrappers', …)`):
+     ```ts
+       it('player_tempo passes the phase-2 section actions unchanged', async () => {
+         const seen: unknown[] = [];
+         mockIPC((cmd, args) => {
+           seen.push([cmd, args]);
+           return null;
+         });
+         await playerTempo('t1', { kind: 'section-flags', index: 1, at: 8500, metronome: false, count_in: true });
+         await playerTempo('t1', { kind: 'section-name', index: 1, at: 8500, name: 'Verse' });
+         await playerTempo('t1', { kind: 'jump-section', index: 0, at: 500, edge: 'end' });
+         expect(seen).toEqual([
+           ['player_tempo', { id: 't1', action: { kind: 'section-flags', index: 1, at: 8500, metronome: false, count_in: true } }],
+           ['player_tempo', { id: 't1', action: { kind: 'section-name', index: 1, at: 8500, name: 'Verse' } }],
+           ['player_tempo', { id: 't1', action: { kind: 'jump-section', index: 0, at: 500, edge: 'end' } }],
+         ]);
+       });
+     ```
+     Nothing else changes; the file must still end with a newline.
+- **done when:** `cd src/calliope-gui && npx vitest run src/ui/lib/ipc-player.test.ts && npm run check` passes. Run it
+  once, then stop.
+- **routine:** yes
+
+### Task 19: `section-meta.ts`
+- **files:** `src/calliope-gui/src/ui/lib/section-meta.ts` (new), `src/calliope-gui/src/ui/lib/section-meta.test.ts` (new)
+- **does:** create the two files with exactly this content.
+  `section-meta.ts`:
+  ```ts
+  import type { TempoSegment } from './ipc';
+
+  /** Mirrors the Rust limit in `set_section_name` (characters, not bytes). */
+  export const MAX_SECTION_NAME = 40;
+
+  /** The section's metronome; a missing key means on (files older than schema 4). */
+  export function sectionClicks(seg: TempoSegment): boolean {
+    return seg.metronome !== false;
+  }
+
+  /** The section's count-in; a missing key means off. */
+  export function sectionCountIn(seg: TempoSegment): boolean {
+    return seg.count_in === true;
+  }
+
+  /** The name as Rust accepts it: control characters removed, trimmed, at most MAX_SECTION_NAME characters. */
+  export function cleanSectionName(raw: string): string {
+    const kept = Array.from(raw).filter((c) => {
+      const n = c.codePointAt(0) ?? 0;
+      return n >= 0x20 && !(n >= 0x7f && n <= 0x9f);
+    });
+    return Array.from(kept.join('').trim()).slice(0, MAX_SECTION_NAME).join('').trim();
+  }
+  ```
+  `section-meta.test.ts`:
+  ```ts
+  import { describe, expect, it } from 'vitest';
+  import { cleanSectionName, MAX_SECTION_NAME, sectionClicks, sectionCountIn } from './section-meta';
+
+  describe('section meta', () => {
+    it('reads the flags with their defaults', () => {
+      expect(sectionClicks({ start_ms: 0, bpm: 120 })).toBe(true);
+      expect(sectionClicks({ start_ms: 0, bpm: 120, metronome: false })).toBe(false);
+      expect(sectionCountIn({ start_ms: 0, bpm: 120 })).toBe(false);
+      expect(sectionCountIn({ start_ms: 0, bpm: 120, count_in: true })).toBe(true);
+    });
+    it('cleans names like Rust does', () => {
+      expect(cleanSectionName('  Verse ')).toBe('Verse');
+      expect(cleanSectionName('Ch\torus\n')).toBe('Chorus');
+      expect(cleanSectionName('')).toBe('');
+      expect(cleanSectionName('x'.repeat(50))).toHaveLength(MAX_SECTION_NAME);
+      expect(cleanSectionName('é'.repeat(41))).toBe('é'.repeat(40));
+    });
+  });
+  ```
+- **done when:** `cd src/calliope-gui && npx vitest run src/ui/lib/section-meta.test.ts && npm run check` passes. Run
+  it once, then stop.
+- **routine:** yes
+
+### Task 20: Player frontend state for flags, names and jumps
+- **files:** `src/calliope-gui/src/ui/lib/player-state.svelte.ts`, `src/calliope-gui/src/ui/lib/player-state.test.ts`
+- **does:**
+  - **`setSectionFlags(metronome, countIn)`** on the target (or the captured name-edit section), sending `at` as in
+    phase 1.
+  - **The name edit:** `pl.nameEdit: {index, at, draft} | null`; `beginNameEdit()` (on focus), `commitSectionName()`,
+    `cancelSectionName()` (10.8). Cleared on track change, like the selection.
+  - **`jumpSection(edge)`** on the target.
+  - **Errors** go to `pl.sectionError`, and success clears it.
+  - **Log lines** (10.9).
+- **tests** (mockIPC):
+  - each action's exact `player_tempo` arguments;
+  - the name edit keeps its section when `transport.tempo_index` changes during the edit;
+  - unchanged → no call; Escape → no call and the old name; a stale refusal → `sectionError`;
+  - `jumpSection` uses the selection, else `tempo_index`;
+  - the `player sections` log line has the new fields.
+- **done when:** `npx vitest run src/ui/lib/player-state.test.ts` passes; `npm run check` is clean.
+- **routine:** no
+
+### Task 21: Sections group with the Metronome controls, name box, toggles, Start / End, keys
+- **files:**
+  - `src/calliope-gui/src/ui/components/player/SectionsSection.svelte`;
+  - `src/calliope-gui/src/ui/components/player/MetronomeSection.svelte` (delete);
+  - `src/calliope-gui/src/ui/components/player/PlayerPane.svelte`, `src/calliope-gui/src/ui/views/PlayerView.svelte`;
+  - `src/calliope-gui/src/ui/components/player/WaveformView.svelte` (only the `aria-valuetext` name);
+  - `src/calliope-gui/src/ui/components/player/ControlBar.test.ts`, `src/calliope-gui/src/ui/acceptance_player.test.ts`.
+- **does:**
+  - The group of 10.10, wired to player-state. The master buttons keep their names inside the nested "Metronome" group.
+  - `PlayerPane` drops `MetronomeSection`.
+  - `PlayerView`: Home / End (10.7), let through from `[data-player-keys]`.
+  - The waveform's `aria-valuetext` includes the name.
+- **tests:**
+  - **`ControlBar.test.ts`:**
+    - the toggles' pressed state comes from the target's meta;
+    - section 1 → Count In disabled with its title;
+    - clicks → the right `section-flags`;
+    - the name box shows the target's name, and Enter / blur / Escape behave as in 10.8;
+    - Start / End → `jump-section`;
+    - the master buttons work as before;
+    - the message line keeps its height.
+  - **`acceptance_player.test.ts`:**
+    - the existing Metronome tests pass unchanged (the nested group);
+    - Home / End jump with the focus on the page and on the waveform, and type normally in the name box;
+    - Space in the name box types a space and does not play.
+- **done when:** `npx vitest run src/ui/components/player/ src/ui/acceptance_player.test.ts src/ui/views/` passes;
+  `npm run check` is clean.
+- **routine:** no
+
+### Task 22: GUI end-to-end, layout review, docs
+- **files:** `src/calliope-gui/tests/gui_player_e2e.rs` (and any other Player GUI test with fixed click positions, e.g.
+  `tests/gui_player_acceptance_e2e.rs`), `docs/ui.md`, `src/calliope-gui/README.md`
+- **does:**
+  - **Positions:** re-measure the fixed click positions (`METRO`, `METRO_COUNT_IN`, `SEC_*`, `PLAY`, `LOOP_*` …) at
+    1280x800 with the tree folded, from screenshots, and add `SEC_NAME`, `SEC_CLICK`, `SEC_COUNT_IN`, `SEC_START` and
+    `SEC_END`.
+  - **New test `player_section_metronome`.** Capture as in `tempo_metronome_count_in`. Before start, write the TS
+    fixture `player.json` (schema 2). Steps:
+    1. pick the track → `player sections segments=2 … metronome=1,1 count_in=0,0`; screenshot `player-sections-p2`;
+    2. click section 1 on the waveform, then Count In (section) → `player section flags index=1 metronome=true
+       count_in=true`;
+    3. Metronome On, seek 5.0 s, Play, about 4.5 s, Pause → capture onsets 6000, 6564.5, 7209.7, 7854.8, 8500 (±5 ms)
+       and none in between;
+    4. click section 0 on the waveform, then Click → `metronome=false`; seek 5.0 s, Play, Pause → no onset before
+       6564.5, the three count-in onsets, then 8500;
+    5. select section 1, type "Verse" in the name box, Enter → `player section name index=1 length=5`; screenshot
+       `player-section-name`;
+    6. End → `player section jump index=1 edge=end position=<the last-bar start>`; click `BLANK` (so no button has
+       the focus), then the Home key → `edge=start position=8500` (section 1 is still selected);
+    7. after 0.6 s, `player.json` is schema 4, with `segments[1]` `name` "Verse" and `count_in` true, and
+       `segments[0].metronome` false;
+    8. restart the app on the same dirs and pick the track → `… metronome=0,1 count_in=0,1 named=1`, and the name box
+       shows "Verse" with section 1 selected.
+  - **`visual_review`** gains "section toggles on + name typed" (both themes; 1280x800 and 1024x640; tree shown and
+    folded). Review:
+    - the scroll target of 10.10 against the phase-1 `player-sections` shot;
+    - legibility of the name box and the two "Count In" buttons, which must be clearly told apart by their sub-group
+      captions;
+    - nothing moves when the message line fills.
+  - **Docs:**
+    - `docs/ui.md` "Decided by the team": the merged group, the toggles, the name box rules, Start / End and Home /
+      End; update the layout paragraphs that list a Metronome group;
+    - README usage.
+- **done when:**
+  - `cd src/calliope-gui && npm run test:gui -- player_section_metronome` passes (private display);
+  - the screenshots in `target/gui-shots/` were reviewed and the layout choice is reported;
+  - `npm test` and `npm run test:gui` pass.
+- **routine:** no
+
+**Order (phase 2):**
+- Rust: 12 → 13 → 14; 12 → 15 → 16 → 17 (14 before 17).
+- Frontend: 18 and 19 any time; 18 → 20 → 21.
+- Last: 22.
+
+## 12. Test strategy (phase 2 additions)
+
+- **Pure Rust:**
+  - `SectionMeta` serde and the carry rules, flags, names, `section_jump_ms` (Task 12);
+  - schema 4 read/write and upgrade (Task 13);
+  - `section_clicks` with every edge case of 10.4 and 10.6 (Task 15). This is where the count-in rule is pinned
+    exactly.
+- **Player session** (`player_tests`, ManualBackend, injected `Instant`s): grid re-upload on flags and on loop changes,
+  next-beat behaviour, master switch, jumps, stale guard, debounced writes (Task 16).
+- **Audio behaviour** (`acceptance_player_backend`, ManualBackend): click onsets at exact frames for TS11-TS13, jump
+  continuity and source equality for TS14, reopen from disk for TS15-TS17 (Task 17). No real device: `CpalBackend` is
+  never constructed in tests.
+- **Frontend:** vitest + mockIPC for the helpers, the state, the group and the keys (Tasks 18-21); `svelte-check`.
+- **GUI:** `player_section_metronome` on a private display with `CALLIOPE_E2E_AUDIO=capture:` onset analysis, plus the
+  screenshots and the layout review (Task 22).
+- **Not involved:** calliope-stems, the network, archserver, other hosts and any real gear.
+- **Whole suite (unchanged):** `cd src/calliope-gui && npm test`, then `npm run test:gui`.
+
+## 13. Deployment (phase 2)
+
+Laptop only, as in section 5: `cd src/calliope-gui && npm run build:app` and install.
+
+**Note:** this build writes `player.json` as schema 4. The phase-1 build (schema 3) opens such files read-only. It plays
+with defaults and never overwrites them, so don't mix builds on the same repository.
+
+## 14. Manual checks (phase 2, owner: laptop with real audio)
+
+- **M8: Count-in into a section.**
+  1. On Deja-Vu, select the section after the intro and turn its Count In on. Metronome On, Play from a few bars
+     before it.
+  2. The last bar before the change counts "1, 2, 3" at the new tempo, and the new section starts on the next beat.
+  3. It sounds right musically. If it doesn't, answer Q1 again.
+- **M9: Sections without clicks.**
+  1. Turn Click off for the intro: the intro is silent, and the clicks start with the next section.
+  2. With the intro's Click off and the next section's Count In on, the count-in still plays over the intro.
+  3. Metronome On/Off silences everything.
+- **M10: Practising one section.**
+  1. Make a loop over exactly one section whose next section has Count In, and turn Loop On.
+  2. No count-in plays at the loop end. Played through without the loop, it does.
+- **M11: Start / End.** While playing, press End (or the End key): playback jumps to the section's last bar without a
+  gap. Start (Home) jumps back to its first beat. Paused, they only move the playhead.
+- **M12: Names.**
+  1. Name three sections ("Intro", "Verse", "Chorus"). While playing, the name box shows the section under the
+     playhead, and it doesn't jump while you type.
+  2. Quit and restart: names and toggles are back.
+  3. The Editor shows the sections as before, with no names.
+- **M13: Layout.** At your usual window size the Sections group is readable at 1-2 m, the two Count In buttons are easy
+  to tell apart, and Play is still where your hand expects it.
+
+## 15. Acceptance mapping (phase 2)
+
+| # | Criterion | Spec | Tasks | Tests |
+|---|---|---|---|---|
+| TS11 | Given a section's count-in is enabled, when a previous section is present and has its metronome active, then that previous section's last clicks are replaced by the count-in: three clicks at the next section's tempo, the last one a beat before its first beat | new criterion, req 9 | 12, 15, 16, 17, 22 | metronome (`section_clicks`), `ts11_*`, gui `player_section_metronome` step 3 |
+| TS12 (added) | Given a section with its metronome off, then no click sounds in it and the other sections are unchanged; a toggle while playing takes effect from the next beat; Metronome On/Off silences all clicks | req 8 | 12, 15, 16, 17, 21, 22 | metronome, player_tests, `ts12_*`, ControlBar.test, gui step 4 |
+| TS13 (added) | Given a section with count-in, then the count-in also plays when the previous section's metronome is off, reaches back when the previous section is shorter, is skipped at the end of a repeating loop that ends at that section, and the Metronome controls are in the Sections group | req 9 | 15, 16, 17, 21 | metronome, player_tests, `ts13_*`, acceptance_player.test (Metronome group nested) |
+| TS14 (added) | Given a target section, when the user presses Start or End (or Home / End), then the playhead jumps to its start or its last bar; while playing, playback continues without a pause | req 10 | 12, 16, 17, 20, 21, 22 | tempo_map (`section_jump_ms`), player_tests, `ts14_*`, ControlBar.test, acceptance_player.test, gui step 6 |
+| TS15 (added) | Given a section, when the user types a name in the box next to "Section n of m · BPM", then it is saved, and names and metronome settings are restored from player.json after close and reopen | req 11 | 12, 13, 16, 17, 20, 21, 22 | player_state, `ts15_*`, player-state.test, ControlBar.test, gui steps 5, 7, 8 |
+| TS16 (added) | Given a `player.json` of schema 1-3, then it loads with every section clicking, no count-in and no names, and is written as 4; a schema-5 file is never overwritten | 10.2 | 13, 14 | player_state, `ts16_*`, existing schema tests |
+| TS17 (added) | Given Add, Remove, move, BPM or ×2/÷2, then names and flags follow 10.3; the Editor's view is unchanged and its move keeps them | 10.3, 10.11 | 12, 17 | tempo_map, `ts17_*`, editor suites kept green |
+
+## 16. Owner decisions (phase 2; 2026-10-17: all recommended answers, Q1-Q10)
+
+The owner kept every recommended answer below; the design above assumes them.
+
+1. **What is a section's count-in while playing through its start?**
+   - (a) The Play count-in pattern: three clicks one beat apart at the new section's tempo, the last one a beat before
+     its first beat, which is the "silent 4th" and clicks only if that section's metronome is on. The previous
+     section's clicks in that span are replaced.
+   - (b) A full bar: four clicks at the new tempo before the change.
+   - (c) No tempo preview: keep the old clicks and just accent the bar before.
+
+   **Recommended: (a)**, the same feel as the existing count-in. (b) changes only Task 15's constants and tests.
+2. **The previous section's metronome is off.** (a) The count-in still plays (a count-in already plays with the
+   metronome off). (b) It plays only if the previous section clicks (the literal reading of the criterion).
+   **Recommended: (a).**
+3. **The previous section is shorter than the count-in.** (a) The count-in still gives three clicks, reaching back over
+   earlier sections. (b) Only the clicks that fit inside the previous section. **Recommended: (a).**
+4. **Does the global Metronome On/Off stay?** (a) Yes, as a master switch: Off silences everything that clicks during
+   the song, section count-ins included. Count In stays the Play / loop pre-roll. (b) Remove it: only per-section
+   toggles. (c) Keep it, but let section count-ins play even when it is Off. **Recommended: (a).** (c) needs an engine
+   change.
+5. **Does a section's count-in also apply when Play starts inside or at that section, or when a loop starts there?**
+   (a) No: it is only for playing through the section start; pre-rolls stay with Count In and the loop's Count-In.
+   (b) Yes: Play at a section with count-in plays the pre-roll too. **Recommended: (a)**: two clear controls instead of
+   one with two meanings. The first section's count-in is disabled (it has no section before it).
+6. **A repeating loop that ends at a section with count-in.** (a) No count-in at the loop end (it would lead back to
+   the old tempo). (b) Play it anyway (simpler: no loop-dependent grid). **Recommended: (a).** (b) removes the `wrap`
+   argument and the `grid_wrap` re-send from Tasks 15-16.
+7. **Where does End jump?** (a) The start of the section's last bar. (b) The exact end, which is the next section's
+   first beat, so the target becomes the next section. (c) Two beats before the end. **Recommended: (a).**
+8. **The Editor** ("Changes to the Editor view need confirmation first"). Nothing in the Editor view changes, and names
+   are not shown there. One data effect: Autodetect in the Editor replaces the whole map, so names and section toggles
+   are lost, as the Player's BPM edits already are. (a) Accept. (b) Carry each old section's settings to the new section
+   whose start is nearest, within 4 beats (Rust only, no view change). **Recommended: (a)** for now. Also confirm that
+   showing names on the Editor's waveform is not wanted yet.
+9. **A section created by Add (or by typing a BPM).** (a) It copies the split section's metronome on/off, with no name
+   and no count-in. (b) It always starts with the metronome on. **Recommended: (a)**: nothing you hear changes until you
+   change it.
+10. **Smaller rules applied unless you say otherwise:**
+    - names are at most 40 characters, trimmed, without control characters, and an empty box clears the name;
+    - names are not drawn on the waveform labels (the box shows them; the labels stay "93 BPM");
+    - Start on section 1 goes to 0:00;
+    - the control bar's Metronome group merges into the Sections group (nested "Metronome" and "This section"
+      sub-groups);
+    - `player.json` becomes schema 4, which the phase-1 build opens read-only.
