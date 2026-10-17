@@ -1,8 +1,8 @@
 # Report: Player tempo sections editing
 
-**Status: DONE.** All 7 criteria and the 3 the plan added pass. The reviewer approved after one fix round, and the tester re-verified the fixes with no new defects.
+**Status: DONE WITH ISSUES.** Phase 1 (requirements 1–7) and phase 2 (requirements 8–11, added in `22bc967`) are both built. Every criterion passes and the reviewer approved both phases. The one open issue is layout: the Player pane now scrolls 36 px at 1280×800, against a ~14 px target. See "Phase 2" below.
 
-- Branch `spec/gui-player-tempo-sections`, base `0bd82c3`. Not pushed or merged.
+- Branch `spec/gui-player-tempo-sections`, base `0bd82c3`; phase 2 starts at `3529ee8`. Not pushed or merged.
 - Spec: `specs/gui-player-tempo-sections.md`. Plan: `specs/gui-player-tempo-sections.plan.md`. Log: `specs/gui-player-tempo-sections.log.md`.
 
 ## What you get
@@ -97,6 +97,85 @@
 - A clearer selected-section marker; the 4 px bar is visible but subtle.
 - Truncating very long backend errors in the Sections message line.
 
+## Phase 2: section metronome, count-in, names, Start / End
+
+**What you get.** The Sections group now holds:
+- the master **Metronome** controls (On/Off and Count In, as before);
+- a **name box** next to "Section N of M · BPM";
+- **This section: Click** turns the metronome on or off for that section only;
+- **This section: Count In** gives a count-in into that section while playing through its start;
+- **Start / End** (also Home / End) jump to the section's first beat or its last bar.
+
+Names and toggles are saved in `player.json`, which is now schema 4.
+
+**Rules (your answers to the phase-2 questions).**
+- **Count-in:** three clicks at the new section's tempo, the last one a beat before the section. They replace the previous section's clicks in that span.
+  - They also play when the previous section's Click is off.
+  - When the previous section is shorter than the count-in, they reach back into earlier sections.
+  - The section's own first beat clicks only if its Click is on.
+- **When it plays:** only when playing through the section start, not when Play or a loop starts there. It is skipped at the end of a repeating loop that ends at that section.
+- **Master switch:** Metronome On/Off silences everything, count-ins included.
+- **What edits do with the settings:**
+  - Add copies Click and gives no name or count-in.
+  - Remove drops the removed section's settings.
+  - Move, BPM and ×2/÷2 keep them.
+  - Editor Autodetect replaces them. The Editor is unchanged.
+
+### Acceptance criteria (phase 2)
+
+| # | Criterion | Tests | Result |
+|---|---|---|---|
+| TS11 | Count-in into a section: the previous section's clicks make room for it (the new spec criterion) | `ts11_*`, `metronome::clicks_ts11_count_in`, `qa_p2_count_in_into_a_section_whose_own_metronome_is_off_*`, `qa_p2_overlapping_count_ins_*`, GUI `player_section_metronome` | PASS |
+| TS12 | Per-section Click; toggling while playing is heard from the next beat; master Off silences all | `ts12_*`, `qa_p2_master_off_*`, `qa_p2_typed_change_copies_*`, ControlBar.test, GUI step 4 | PASS |
+| TS13 | Count-in with the previous section off or short, at loop ends; Metronome controls in Sections | `ts13_*`, `qa_p2_loop_end_*`, acceptance_player.test | PASS |
+| TS14 | Start / End and Home / End while playing, paused and in a pre-roll | `ts14_*`, `qa_p2_jump_*`, acceptance_player.test, GUI | PASS |
+| TS15 | Names and flags survive close and reopen; name cleaning; name box | `ts15_*`, `qa_p2_names_*`, `qa_p2_flags_*`, section-meta.test, GUI step 8 | PASS |
+| TS16 | Schema 1–3 upgrade to 4; schema 5 read-only | `ts16_*`, `qa_p2_schema_4_read_*`, player_state | PASS |
+| TS17 | Add / Remove / Move / BPM / merge carry the settings as agreed | `ts17_*`, `qa_p2_edits_split_join_move_and_merge_*`, tempo_map | PASS |
+
+**Suites.** `npm test` passes: 1060 Rust tests and 594 vitest tests. In the full GUI suite every test passes except the known stem-extraction flake (below), which passed when re-run alone.
+
+### Task log (phase 2)
+
+| Step | By | Result |
+|---|---|---|
+| plan phase 2 | architect | tasks 12–22; you kept all recommended answers |
+| task 12: tempo map section settings, jump positions | implementer | done |
+| task 13: `player.json` schema 4 | implementer | done |
+| task 14: schema numbers in other tests | **local (gemma4)** | 11 of 14 edits correct, then out of turns; I did the last 3 |
+| task 15: click list | implementer | done |
+| task 16: Player session, IPC actions | implementer | done |
+| task 17: backend acceptance TS11–TS17 | implementer | done, no code fix needed |
+| task 18: TS IPC types | **local (gemma4)** | edits correct, but it committed by itself and reused a test title; I fixed the title and redid the commit |
+| task 19: `section-meta.ts` | **local (gemma4)** | content exact; trailing newlines fixed |
+| task 20: Player screen state | implementer | done |
+| task 21: Sections group UI, Home / End | implementer | done |
+| task 22: GUI test, click positions, layout, docs | implementer | done; layout target missed (36 px) |
+| tester | tester | all PASS, 15 extra `qa_p2_*` tests, no defects |
+| reviewer | reviewer | APPROVED; 2 minors, 3 nits |
+
+**The local model.** It did 3 tasks. All needed small fixes from me, and it once ignored "do not commit". My notes for future builds now tell it never to commit, and I check `git log` after each run.
+
+### Review notes (non-blocking, not fixed)
+- **Minor: merge loses settings.** Typing a section's BPM equal to its left neighbour's merges the two, and the right section's name and toggles are lost, the same as Remove. Keeping them would need a rule from you.
+- **Minor: click list cost.** `section_clicks` builds every beat to the track end for each count-in section to find one beat. This runs off the audio thread, so playback is unaffected. It could cause a short hitch on very long tracks with many count-ins.
+- **Nits:**
+  - the per-beat Click lookup has no float tolerance, unlike the count-in code;
+  - JS and Rust trim slightly different invisible characters in names;
+  - the GUI tests assert on log wording.
+
+### Open issue: layout
+The Sections group is now three rows: the title and name box, then Add … End, then the Metronome and This-section toggles.
+- **Measured:** at 1280×800 with the tree folded, the Player pane scrolls by 36 px. That puts the bottom row of the Loops group (Play / Loop On / Count-In) just below the fold.
+- **Already done:** the implementer moved the message line into the group's padding (54 → 36 px).
+- **Your options:**
+  - accept 36 px;
+  - make the section toggles and Start / End buttons smaller than 3.25 rem;
+  - drop the reserved message strip;
+  - tighten the Playback or Loops groups.
+
+Screenshots: `target/gui-shots/player-*-section-selected.png` and `player-*-scrolled.png` (`CALLIOPE_GUI_SHOTS=1 npm run test:gui -- visual_review`).
+
 ## How to try it
 
 From `src/calliope-gui/`:
@@ -108,7 +187,7 @@ From `src/calliope-gui/`:
 
 Laptop only. Nothing changes on archserver.
 
-**Note:** this build writes `player.json` as schema 3. An older build opens those files read-only: it plays with defaults and never overwrites them. Don't mix builds on the same repository.
+**Note:** this build writes `player.json` as schema 4. Older builds (including the phase-1 build, schema 3) open those files read-only: they play with defaults and never overwrite them. Don't mix builds on the same repository.
 
 ## Manual checks (laptop with real audio)
 
@@ -129,5 +208,25 @@ Laptop only. Nothing changes on archserver.
   - Quit and restart: the sections are as you left them.
   - The Editor shows the same sections: Player-added changes are dimmed there, and detected ones can still be dragged.
 - [ ] **M7, keys.** With the waveform focused, Space plays and pauses, and `b`/`e` mark the loop.
+
+- [ ] **M8, count-in into a section.**
+  - On Deja-Vu, turn Count In on for the section after the intro. With the Metronome On, play from a few bars before it.
+  - The last bar counts "1, 2, 3" at the new tempo, and the new section starts on the next beat.
+  - If it doesn't sound right musically, we revisit the count-in rule.
+- [ ] **M9, sections without clicks.**
+  - Turn Click off for the intro: it is silent, and clicks start with the next section.
+  - With the next section's Count In on, the count-in still plays over the silent intro.
+  - Metronome On/Off silences everything.
+- [ ] **M10, practising one section.** Loop exactly one section whose next section has Count In, with Loop On. No count-in at the loop end; without the loop it plays.
+- [ ] **M11, Start / End.**
+  - While playing, End (or the End key) jumps to the section's last bar without a gap, and Start (Home) jumps back.
+  - Paused, they only move the playhead.
+- [ ] **M12, names.**
+  - Name three sections. While playing, the name box follows the playhead, but not while you type.
+  - Quit and restart: the names and toggles are back.
+  - The Editor shows no names.
+- [ ] **M13, layout.**
+  - At your usual window size the Sections group is readable from 1–2 m, and the two Count In buttons are easy to tell apart.
+  - Decide on the 36 px scroll (see "Open issue: layout").
 
 Once you've verified it, tick `gui-player-tempo-sections.md` in the roadmap of `specs/overview.md`.

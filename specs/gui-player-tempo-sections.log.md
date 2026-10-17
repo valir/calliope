@@ -31,3 +31,4 @@ task 21 | Sections group with the Metronome controls, name box, toggles, Start /
 task 22 | GUI end-to-end player_section_metronome, re-measured click positions, layout review, docs | implementer | done (pane scrolls 36 px at 1280x800 vs ~14 px target; reported)
 tester (phase 2) | all criteria TS11-TS17 PASS; 11 Rust + 4 vitest qa_p2 tests; no defects | tester | done
 reviewer (phase 2) | APPROVED; 2 minors (typed-BPM merge drops the later section name/flags; section_clicks builds all beats per count-in section), 3 nits | reviewer | done
+report | phase 2 added (DONE WITH ISSUES: layout 36 px) | orchestrator | done
