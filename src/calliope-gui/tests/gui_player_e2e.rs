@@ -353,7 +353,7 @@ fn player_tempo_sections() {
     let l = moved(&mut app);
     assert_eq!(field(&l, "applied"), "256", "{l}");
     let v = wait_json(&dirs, PL_PRACTICE, |v| change_start(v, 1) == 10500.0);
-    assert_eq!(v["schema_version"], 3, "{v}");
+    assert_eq!(v["schema_version"], 4, "{v}");
     assert_eq!(v["tempo"]["segments"][1]["detected_ms"].as_f64(), Some(8500.0), "{v}");
 
     // 3. The waveform has the focus: Left moves it one step back.
@@ -422,7 +422,7 @@ fn player_tempo_sections() {
     app.close_gracefully(&wid);
     app.wait_exit(secs(5));
     let v = serde_json::from_slice::<Value>(&std::fs::read(dirs.player_json(PL_PRACTICE)).unwrap()).unwrap();
-    assert_eq!(v["schema_version"], 3, "{v}");
+    assert_eq!(v["schema_version"], 4, "{v}");
     let (mut app, wid) = start_player(&dirs);
     let mut collapsed = false;
     pick(&mut app, &wid, &mut collapsed, "practice song", PL_PRACTICE);

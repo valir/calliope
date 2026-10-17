@@ -20,3 +20,4 @@ report | written | orchestrator | done
 plan phase 2 | architect; owner: Q1-Q10 recommended | architect | done
 task 12 | Tempo map: SectionMeta, carry rules, flags, names, jump positions | implementer | done
 task 13 | player.json schema 4 | implementer | done (other tests expecting schema 3 fixed in task 14)
+task 14 | Schema-number literals in the other tests | local | done (gemma4 did 11 of 14 edits correctly, hit max turns; orchestrator did the 3 GUI-test lines)
