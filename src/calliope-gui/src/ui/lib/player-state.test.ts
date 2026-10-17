@@ -2,11 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import type { Channel } from '@tauri-apps/api/core';
 import {
-  cancelSectionBpm, commitSectionBpm, editSectionBpm, leavePlayer, moveChange, pl, removeChange, scaleSection,
+  beginNameEdit, cancelSectionBpm, cancelSectionName, commitSectionBpm, commitSectionName, jumpSection, setSectionFlags, editSectionBpm, leavePlayer, moveChange, pl, removeChange, scaleSection,
   selectSection, startAdd, targetSection, playLabel, resetPlayer, seek, selectSource, syncSelection, togglePlay } from './player-state.svelte';
 import { resetLibrary } from './library-state.svelte';
 import { PLAYER_FIXTURE_TRACKS } from './fixture-tracks';
-import type { PlayerEvent, PlayerSnapshot, PlayerTransport } from './ipc';
+import type { PlayerEvent, PlayerSnapshot, PlayerTransport, TempoSegment } from './ipc';
 
 const [practice, stemsOnly] = PLAYER_FIXTURE_TRACKS;
 const noAudio = { ...PLAYER_FIXTURE_TRACKS[2], audio: null };
@@ -170,8 +170,8 @@ describe('player state', () => {
 });
 
 describe('player sections', () => {
-  const seg = (start_ms: number, bpm: number) => ({ start_ms, bpm, detected_ms: null, on_beat: true });
-  const withSegs = (id: string, segs: ReturnType<typeof seg>[]): PlayerSnapshot => {
+  const seg = (start_ms: number, bpm: number): TempoSegment => ({ start_ms, bpm, detected_ms: null, on_beat: true });
+  const withSegs = (id: string, segs: TempoSegment[]): PlayerSnapshot => {
     const s = snapshot(id);
     s.tempo = { beats_per_bar: 4, segments: segs, multi: segs.length > 1 };
     return s;
@@ -204,7 +204,7 @@ describe('player sections', () => {
       { kind: 'remove-change', index: 1, at: 2000 },
     ]);
     expect(logs()).toContain('player section remove index=1');
-    expect(logs()).toContain('player sections segments=3 bpm=100,120,90 starts=0,2000,5000');
+    expect(logs()).toContain('player sections segments=3 bpm=100,120,90 starts=0,2000,5000 metronome=1,1,1 count_in=0,0,0 named=0');
   });
 
   it('add captures the playhead, selects the new section; remove selects the joined one', async () => {
@@ -317,5 +317,63 @@ describe('player sections', () => {
     expect(pl.trackId).toBe(stemsOnly.id);
     expect(pl.snap?.tempo.segments).toHaveLength(0);
     expect(logs().some((l) => l.startsWith('player section scale'))).toBe(false);
+  });
+
+  it('flags, name and jump send exact arguments and log; the name edit keeps its section', async () => {
+    await open();
+    const named = [seg(0, 100), { ...seg(2000, 120), name: 'Verse', metronome: false, count_in: true }, seg(5000, 90)];
+    handlers.player_tempo = (a) => {
+      const s = withSegs(a.id as string, named);
+      s.transport.position_ms = 4500;
+      return s;
+    };
+    pl.transport.tempo_index = 1;
+    await setSectionFlags(false, true);
+    pl.transport.tempo_index = 2;
+    await jumpSection('end');
+    pl.transport.tempo_index = 1;
+    beginNameEdit();
+    expect(pl.nameEdit).toEqual({ index: 1, at: 2000, draft: 'Verse' });
+    pl.transport.tempo_index = 2;
+    beginNameEdit();
+    expect(pl.nameEdit?.index).toBe(1);
+    pl.nameEdit!.draft = ' Chorus\t';
+    await setSectionFlags(true, false);
+    await commitSectionName();
+    expect(pl.nameEdit).toBeNull();
+    expect(tempoCalls()).toEqual([
+      { kind: 'section-flags', index: 1, at: 2000, metronome: false, count_in: true },
+      { kind: 'jump-section', index: 2, at: 5000, edge: 'end' },
+      { kind: 'section-flags', index: 1, at: 2000, metronome: true, count_in: false },
+      { kind: 'section-name', index: 1, at: 2000, name: 'Chorus' },
+    ]);
+    expect(logs()).toContain('player section flags index=1 metronome=false count_in=true');
+    expect(logs()).toContain('player section jump index=2 edge=end position=4500');
+    expect(logs()).toContain('player section name index=1 length=6');
+    expect(logs()).toContain('player sections segments=3 bpm=100,120,90 starts=0,2000,5000 metronome=1,0,1 count_in=0,1,0 named=1');
+  });
+
+  it('an unchanged or cancelled name sends nothing; a stale refusal shows in sectionError', async () => {
+    await open([seg(0, 100), { ...seg(2000, 120), name: 'Verse' }]);
+    pl.transport.tempo_index = 1;
+    beginNameEdit();
+    pl.nameEdit!.draft = '  Verse ';
+    await commitSectionName();
+    beginNameEdit();
+    pl.nameEdit!.draft = 'Other';
+    cancelSectionName();
+    await commitSectionName();
+    expect(pl.nameEdit).toBeNull();
+    expect(pl.snap?.tempo.segments[1].name).toBe('Verse');
+    expect(tempoCalls()).toEqual([]);
+    beginNameEdit();
+    pl.nameEdit!.draft = 'Bridge';
+    handlers.player_tempo = () => Promise.reject('The sections changed; try again');
+    await commitSectionName();
+    expect(pl.sectionError).toBe('The sections changed; try again');
+    expect(pl.actionError).toBe('');
+    syncSelection(stemsOnly);
+    await flush();
+    expect(pl.nameEdit).toBeNull();
   });
 });

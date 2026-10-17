@@ -18,10 +18,12 @@ import {
   type PlayerEvent,
   type PlayerSnapshot,
   type PlayerTransport,
+  type TempoSegment,
   type TrackRecord,
 } from './ipc';
 import { selectTrack } from './library-state.svelte';
 import { scaleBpm } from './bpm-format';
+import { cleanSectionName, sectionClicks, sectionCountIn } from './section-meta';
 
 export type PlayerStatus = 'inactive' | 'loading' | 'active' | 'error';
 
@@ -52,6 +54,8 @@ export const pl = $state({
   bpmEdit: null as { index: number } | { addAt: number } | null,
   /** Refusal of the last section edit; the next successful edit clears it. */
   sectionError: '',
+  /** The section whose name is being edited, captured on focus so the playhead can't move the edit. */
+  nameEdit: null as { index: number; at: number; draft: string } | null,
   treeCollapsed: false,
   /** Bumped when the backend closed the session (the Editor took the track); the view reopens. */
   reopen: 0,
@@ -77,6 +81,7 @@ function resetFields(): void {
   pl.section = null;
   pl.bpmEdit = null;
   pl.sectionError = '';
+  pl.nameEdit = null;
   movePending = null;
   seekPending = null;
   seekGuard = null;
@@ -163,11 +168,14 @@ function logActive(s: PlayerSnapshot): void {
   logSections(s);
 }
 
-function logSections(s: { tempo: { segments: { bpm: number; start_ms: number }[] } }): void {
+function logSections(s: { tempo: { segments: TempoSegment[] } }): void {
   const g = s.tempo.segments;
   log(
     `player sections segments=${g.length} bpm=${g.map((x) => x.bpm).join(',')} ` +
-      `starts=${g.map((x) => x.start_ms).join(',')}`,
+      `starts=${g.map((x) => x.start_ms).join(',')} ` +
+      `metronome=${g.map((x) => (sectionClicks(x) ? 1 : 0)).join(',')} ` +
+      `count_in=${g.map((x) => (sectionCountIn(x) ? 1 : 0)).join(',')} ` +
+      `named=${g.filter((x) => (x.name ?? '') !== '').length}`,
   );
 }
 
@@ -426,10 +434,11 @@ export function selectSection(index: number | null): void {
 
 /** Runs a section edit; `after` sees the old and the new segment starts. Returns true when it was applied. */
 async function sectionCall(
-  kind: 'bpm' | 'scale' | 'add' | 'remove' | 'move',
+  kind: 'bpm' | 'scale' | 'add' | 'remove' | 'move' | 'flags' | 'name' | 'jump',
   index: number,
   action: (id: string) => Promise<PlayerSnapshot>,
   after?: (oldStarts: number[], s: PlayerSnapshot) => void,
+  detail?: (s: PlayerSnapshot) => string,
 ): Promise<boolean> {
   const id = pl.trackId;
   if (pl.status !== 'active' || !id) return false;
@@ -442,7 +451,7 @@ async function sectionCall(
     after?.(oldStarts, s);
     pl.sectionError = '';
     pl.stateError = '';
-    log(`player section ${kind} index=${index}`);
+    log(`player section ${kind} index=${index}${detail ? ' ' + detail(s) : ''}`);
     logSections(s);
     return true;
   } catch (err) {
@@ -544,4 +553,66 @@ export function moveChange(index: number, steps: number): void {
   const at = movePending !== null && movePending.index === index ? movePending.at : same ? null : startOf(index);
   movePending = { index, steps, at };
   void drainMoves();
+}
+
+// ---- flags, names, jumps ----
+
+/** Sets the metronome and count-in of the captured name-edit section, else the target section. */
+export async function setSectionFlags(metronome: boolean, countIn: boolean): Promise<void> {
+  const edit = pl.nameEdit;
+  const index = edit ? edit.index : targetSection();
+  const at = edit ? edit.at : index === null ? null : startOf(index);
+  if (index === null || at === null) return;
+  await sectionCall(
+    'flags',
+    index,
+    (id) => playerTempo(id, { kind: 'section-flags', index, at, metronome, count_in: countIn }),
+    undefined,
+    () => `metronome=${metronome} count_in=${countIn}`,
+  );
+}
+
+/** Captures the target section for a name edit (on focus). */
+export function beginNameEdit(): void {
+  if (pl.nameEdit || pl.status !== 'active') return;
+  const index = targetSection();
+  const seg = index === null ? undefined : pl.snap?.tempo.segments[index];
+  if (index === null || !seg) return;
+  pl.nameEdit = { index, at: seg.start_ms, draft: seg.name ?? '' };
+}
+
+/** Sends the cleaned draft; nothing is sent when the name is unchanged. */
+export async function commitSectionName(): Promise<void> {
+  const edit = pl.nameEdit;
+  if (!edit) return;
+  pl.nameEdit = null;
+  const seg = pl.snap?.tempo.segments[edit.index];
+  const name = cleanSectionName(edit.draft);
+  if (!seg || seg.start_ms !== edit.at || name === (seg.name ?? '')) return;
+  await sectionCall(
+    'name',
+    edit.index,
+    (id) => playerTempo(id, { kind: 'section-name', index: edit.index, at: edit.at, name }),
+    undefined,
+    () => `length=${Array.from(name).length}`,
+  );
+}
+
+/** Drops the edit; the box shows the stored name again. */
+export function cancelSectionName(): void {
+  pl.nameEdit = null;
+}
+
+/** Jumps to the start or the last bar of the target section. */
+export async function jumpSection(edge: 'start' | 'end'): Promise<void> {
+  const index = targetSection();
+  const at = index === null ? null : startOf(index);
+  if (index === null || at === null) return;
+  await sectionCall(
+    'jump',
+    index,
+    (id) => playerTempo(id, { kind: 'jump-section', index, at, edge }),
+    undefined,
+    (s) => `edge=${edge} position=${s.transport.position_ms}`,
+  );
 }
