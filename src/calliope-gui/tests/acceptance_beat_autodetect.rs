@@ -8,7 +8,7 @@
 use calliope_gui::beat_detect::{DetectParams, NO_BEATS_TASK};
 use calliope_gui::editor::{EditorEvent, EditorManager, EventSink, OpenSpec};
 use calliope_gui::audio_out::ManualBackend;
-use calliope_gui::tempo_map::{Segment, TempoMap};
+use calliope_gui::tempo_map::{SectionMeta, Segment, TempoMap};
 use calliope_gui::tempo_store::{FileTempoStore, NEWER};
 use calliope_gui::track_meta::StemEntry;
 use serde_json::{json, Value};
@@ -24,10 +24,10 @@ const SIX: &str = "0199c0a0-0000-7000-8000-000000000204";
 // ================================================================ tempo map (pure)
 
 fn det(start: f64, bpm: f64) -> Segment {
-    Segment { start_ms: start, bpm, detected_ms: Some(start), on_beat: false }
+    Segment { start_ms: start, bpm, detected_ms: Some(start), on_beat: false, meta: SectionMeta::default() }
 }
 fn typed(start: f64, bpm: f64) -> Segment {
-    Segment { start_ms: start, bpm, detected_ms: None, on_beat: false }
+    Segment { start_ms: start, bpm, detected_ms: None, on_beat: false, meta: SectionMeta::default() }
 }
 fn map(segs: Vec<Segment>) -> TempoMap {
     TempoMap { beats_per_bar: 4, segments: segs }

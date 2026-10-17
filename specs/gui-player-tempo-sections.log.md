@@ -18,3 +18,4 @@ reviewer (fix round 1) | APPROVED; 3 non-blocking minors | reviewer | done
 tester (fix round 1) | M1, m1, m2, QD1 PASS; no new defects | tester | done
 report | written | orchestrator | done
 plan phase 2 | architect; owner: Q1-Q10 recommended | architect | done
+task 12 | Tempo map: SectionMeta, carry rules, flags, names, jump positions | implementer | done

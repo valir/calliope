@@ -860,14 +860,14 @@ fn closing_cancels_the_waveform_worker() {
 
 #[test]
 fn the_snapshot_carries_the_tempo_and_set_tempo_replaces_it() {
-    use crate::tempo_map::{Segment, TempoMap};
+    use crate::tempo_map::{Segment, SectionMeta, TempoMap};
     let (_t, _spec, mut m, _b, _ev) = open_four();
     assert!(m.snapshot(FOUR).unwrap().tempo.segments.is_empty());
     let map = TempoMap {
         beats_per_bar: 4,
         segments: vec![
-            Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false },
-            Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6500.0), on_beat: false },
+            Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false, meta: SectionMeta::default() },
+            Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6500.0), on_beat: false, meta: SectionMeta::default() },
         ],
     };
     let snap = m.set_tempo(FOUR, map.clone()).unwrap();

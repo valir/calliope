@@ -54,11 +54,11 @@ impl TempoStore for FileTempoStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tempo_map::{Boundary, Segment};
+    use crate::tempo_map::{Boundary, SectionMeta, Segment};
     use serde_json::json;
 
     fn map(bpm: f64) -> TempoMap {
-        TempoMap { beats_per_bar: 4, segments: vec![Segment { start_ms: 500.0, bpm, detected_ms: None, on_beat: false }] }
+        TempoMap { beats_per_bar: 4, segments: vec![Segment { start_ms: 500.0, bpm, detected_ms: None, on_beat: false, meta: SectionMeta::default() }] }
     }
 
     fn write(dir: &Path, v: serde_json::Value) {

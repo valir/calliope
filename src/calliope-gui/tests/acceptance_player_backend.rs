@@ -2094,7 +2094,7 @@ fn qa_add_boundaries() {
 fn qa_add_rejects_non_finite_positions() {
     let m = TempoMap {
         beats_per_bar: 4,
-        segments: vec![tempo_map::Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false }],
+        segments: vec![tempo_map::Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false, meta: Default::default() }],
     };
     for p in [f64::NAN, f64::INFINITY] {
         match m.add_change(p, 100.0, 60000.0) {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::tempo_map::fine_ms;
+use crate::tempo_map::{fine_ms, SectionMeta};
 
 struct Lcg(u64);
 impl Lcg {
@@ -74,8 +74,8 @@ fn stub_ok_pattern_is_exact() {
     assert_eq!(
         d.map.segments,
         vec![
-            Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false },
-            Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6500.0), on_beat: false },
+            Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false, meta: SectionMeta::default() },
+            Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6500.0), on_beat: false, meta: SectionMeta::default() },
         ]
     );
 }

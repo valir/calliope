@@ -3,7 +3,7 @@
 //! newer schema is read-only. Writing never creates the track folder.
 
 use crate::fsutil;
-use crate::tempo_map::{self, Boundary, Segment, TempoMap, MAX_BPM, MIN_BPM};
+use crate::tempo_map::{self, Boundary, SectionMeta, Segment, TempoMap, MAX_BPM, MIN_BPM};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::path::Path;
@@ -123,7 +123,7 @@ fn parse_tempo(v: Option<&Value>) -> TempoMap {
             let detected_ms = s.get("detected_ms").and_then(Value::as_f64).filter(|m| m.is_finite() && m.abs() <= MAX_SEGMENT_MS);
             if let (Some(start_ms), Some(bpm)) = (start_ms, bpm) {
                 let on_beat = s.get("on_beat") == Some(&Value::Bool(true));
-                map.segments.push(Segment { start_ms, bpm, detected_ms, on_beat });
+                map.segments.push(Segment { start_ms, bpm, detected_ms, on_beat, meta: SectionMeta::default() });
             }
         }
         map.segments.sort_by(|a, b| a.start_ms.total_cmp(&b.start_ms));
@@ -437,7 +437,7 @@ mod tests {
     }
 
     fn bpm_state() -> PlayerState {
-        let tempo = TempoMap { beats_per_bar: 4, segments: vec![Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false }] };
+        let tempo = TempoMap { beats_per_bar: 4, segments: vec![Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false, meta: SectionMeta::default() }] };
         PlayerState { tempo, ..PlayerState::default() }
     }
 
@@ -497,7 +497,7 @@ mod tests {
         );
         let (st, note, w) = load(d.path());
         assert!(note.is_none() && w);
-        assert_eq!(st.tempo.segments[1], Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6400.0), on_beat: false });
+        assert_eq!(st.tempo.segments[1], Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6400.0), on_beat: false, meta: SectionMeta::default() });
         save(d.path(), &st).unwrap();
         let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
         assert_eq!(v["schema_version"], 3);
@@ -550,7 +550,7 @@ mod tests {
         assert!(note.is_none());
         assert_eq!(st.speed, MAX_SPEED);
         assert_eq!(st.position_ms, 0);
-        assert_eq!(st.tempo.segments, vec![Segment { start_ms: 10.0, bpm: 100.0, detected_ms: None, on_beat: false }]);
+        assert_eq!(st.tempo.segments, vec![Segment { start_ms: 10.0, bpm: 100.0, detected_ms: None, on_beat: false, meta: SectionMeta::default() }]);
         assert_eq!(st.tempo.beats_per_bar, 3);
         let ids: Vec<_> = st.loops.iter().map(|l| l.id.as_str()).collect();
         assert_eq!(ids, ["c", "a"]);

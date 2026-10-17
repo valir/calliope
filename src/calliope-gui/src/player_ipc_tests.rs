@@ -204,7 +204,7 @@ fn tick_runs_without_a_session_and_with_one() {
 
 #[test]
 fn tempo_store_flushes_on_load_and_releases_on_replace() {
-    use crate::tempo_map::{Segment, TempoMap};
+    use crate::tempo_map::{Segment, SectionMeta, TempoMap};
     use crate::tempo_store::TempoStore;
     let e = env();
     let host = Arc::new(PlayerHost::new(Arc::new(e.player_audio.clone()), None));
@@ -219,7 +219,7 @@ fn tempo_store_flushes_on_load_and_releases_on_replace() {
     assert!(host.with(|m| m.is_open(PRACTICE)), "and left it open");
 
     host.with(|m| m.seek(PRACTICE, 5000, Instant::now())).unwrap();
-    let map = TempoMap { beats_per_bar: 4, segments: vec![Segment { start_ms: 0.0, bpm: 90.0, detected_ms: None, on_beat: false }] };
+    let map = TempoMap { beats_per_bar: 4, segments: vec![Segment { start_ms: 0.0, bpm: 90.0, detected_ms: None, on_beat: false, meta: SectionMeta::default() }] };
     store.replace(PRACTICE, &dir, &|_| Ok(map.clone())).unwrap();
     assert!(!host.with(|m| m.is_open(PRACTICE)));
     let st = player_state::load(&dir).0;
