@@ -208,6 +208,12 @@ export interface TempoSegment {
   detected_ms?: number | null;
   /** set on changes added or moved in the Player: the section starts on a beat */
   on_beat?: boolean;
+  /** the section's name; missing = no name */
+  name?: string;
+  /** the section's metronome; missing = on */
+  metronome?: boolean;
+  /** a count-in before this section while playing through its start; missing = off */
+  count_in?: boolean;
 }
 export interface TempoSnap {
   beats_per_bar: number;
@@ -340,7 +346,10 @@ export type TempoAction =
   | { kind: 'scale-section'; index: number; at: number; factor: 'double' | 'halve' }
   | { kind: 'add-change'; position: number; bpm: number }
   | { kind: 'remove-change'; index: number; at: number }
-  | { kind: 'move-change'; index: number; at: number; steps: number };
+  | { kind: 'move-change'; index: number; at: number; steps: number }
+  | { kind: 'section-flags'; index: number; at: number; metronome: boolean; count_in: boolean }
+  | { kind: 'section-name'; index: number; at: number; name: string }
+  | { kind: 'jump-section'; index: number; at: number; edge: 'start' | 'end' };
 export type LoopAction =
   | { kind: 'add' }
   | { kind: 'remove' }

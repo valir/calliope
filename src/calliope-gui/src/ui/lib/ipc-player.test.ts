@@ -86,4 +86,19 @@ describe('player ipc wrappers', () => {
       ['player_tempo', { id: 't1', action: { kind: 'scale-section', index: 0, at: 500, factor: 'double' } }],
     ]);
   });
+  it('player_tempo passes the phase-2 section actions unchanged', async () => {
+    const seen: unknown[] = [];
+    mockIPC((cmd, args) => {
+      seen.push([cmd, args]);
+      return null;
+    });
+    await playerTempo('t1', { kind: 'section-flags', index: 1, at: 8500, metronome: false, count_in: true });
+    await playerTempo('t1', { kind: 'section-name', index: 1, at: 8500, name: 'Verse' });
+    await playerTempo('t1', { kind: 'jump-section', index: 0, at: 500, edge: 'end' });
+    expect(seen).toEqual([
+      ['player_tempo', { id: 't1', action: { kind: 'section-flags', index: 1, at: 8500, metronome: false, count_in: true } }],
+      ['player_tempo', { id: 't1', action: { kind: 'section-name', index: 1, at: 8500, name: 'Verse' } }],
+      ['player_tempo', { id: 't1', action: { kind: 'jump-section', index: 0, at: 500, edge: 'end' } }],
+    ]);
+  });
 });
