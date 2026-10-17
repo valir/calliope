@@ -3,7 +3,7 @@
   import TrackBrowser from '../components/library/TrackBrowser.svelte';
   import PlayerPane from '../components/player/PlayerPane.svelte';
   import { load, lib, selectedTrack } from '$lib/library-state.svelte';
-  import { attachPlayer, syncSelection, togglePlay, loop, pl } from '$lib/player-state.svelte';
+  import { attachPlayer, syncSelection, togglePlay, loop, jumpSection, pl } from '$lib/player-state.svelte';
   import { frontendLog } from '$lib/ipc';
 
   let searchRef = $state<HTMLInputElement | null>(null);
@@ -42,12 +42,13 @@
     if (t instanceof Element) {
       const own = t.closest(OWN_KEYS);
       // The waveform keeps the arrows, but Space, b, e and l/L keep their Player meaning.
-      const passes = own?.hasAttribute('data-player-keys') && (e.code === 'Space' || ['b', 'e', 'l', 'L'].includes(e.key));
+      const passes =
+        own?.hasAttribute('data-player-keys') && (e.code === 'Space' || ['b', 'e', 'l', 'L', 'Home', 'End'].includes(e.key));
       if (own && !passes) return;
     }
     // Auto-repeat of a held key must not toggle or mark again.
-    if (e.repeat && (e.code === 'Space' || ['b', 'e', 'l', 'L'].includes(e.key))) {
-      if (e.code === 'Space') e.preventDefault();
+    if (e.repeat && (e.code === 'Space' || ['b', 'e', 'l', 'L', 'Home', 'End'].includes(e.key))) {
+      if (e.code === 'Space' || e.key === 'Home' || e.key === 'End') e.preventDefault();
       return;
     }
     const snap = pl.snap;
@@ -55,6 +56,9 @@
     if (e.code === 'Space' && !e.shiftKey) {
       e.preventDefault();
       void togglePlay();
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      void jumpSection(e.key === 'Home' ? 'start' : 'end');
     } else if (e.shiftKey) {
       if (e.key !== 'L') return;
       e.preventDefault();

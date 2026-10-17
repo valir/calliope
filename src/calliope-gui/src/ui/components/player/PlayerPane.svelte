@@ -5,7 +5,6 @@
   } from '$lib/player-state.svelte';
   import BpmSection from './BpmSection.svelte';
   import LoopsSection from './LoopsSection.svelte';
-  import MetronomeSection from './MetronomeSection.svelte';
   import PlaybackSection from './PlaybackSection.svelte';
   import WaveformView from './WaveformView.svelte';
   import SectionsSection from './SectionsSection.svelte';
@@ -68,7 +67,6 @@
   <div class="flex shrink-0 flex-wrap gap-2" data-testid="player-controls">
     <BpmSection />
     <SectionsSection />
-    <MetronomeSection />
     <PlaybackSection />
     <LoopsSection />
   </div>

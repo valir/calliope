@@ -325,6 +325,31 @@ describe('keys and focus', () => {
     expect(of('player_loop').map((c) => (c.action as { kind: string }).kind)).toEqual(['select']);
   });
 
+  it('Home and End jump in the target section from the page and the waveform, and type in the name box', async () => {
+    snap = bpmSnap();
+    render(PlayerView);
+    await openTrack(snap);
+    const edges = () => of('player_tempo').map((c) => (c.action as { kind: string; edge?: string }).edge);
+    await fireEvent.keyDown(document.body, { key: 'Home' });
+    await fireEvent.keyDown(document.body, { key: 'End' });
+    await fireEvent.keyDown(document.body, { key: 'End', repeat: true });
+    await flush();
+    expect(edges()).toEqual(['start', 'end']);
+    const wf = screen.getByTestId('player-waveform');
+    wf.focus();
+    await fireEvent.keyDown(wf, { key: 'Home' });
+    await flush();
+    expect(edges()).toEqual(['start', 'end', 'start']);
+    const box = input('Section name');
+    box.focus();
+    await fireEvent.keyDown(box, { key: 'Home' });
+    await fireEvent.keyDown(box, { key: 'End' });
+    await fireEvent.keyDown(box, { code: 'Space', key: ' ' });
+    await flush();
+    expect(edges()).toHaveLength(3);
+    expect(of('player_play')).toHaveLength(0);
+  });
+
   it('with Ctrl or Alt held the plain keys do nothing', async () => {
     snap = bpmSnap();
     render(PlayerView);

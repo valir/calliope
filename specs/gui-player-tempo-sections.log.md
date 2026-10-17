@@ -27,3 +27,4 @@ task 17 | Backend acceptance tests ts11-ts17 | implementer | done
 task 18 | TS IPC types for phase 2 | local | done (gemma4 edits correct but it committed on its own and reused an existing test title; orchestrator renamed the test and amended the commit)
 task 19 | section-meta.ts helpers | local | done (gemma4 content exact; orchestrator fixed trailing newlines)
 task 20 | Player frontend state for flags, names and jumps | implementer | done
+task 21 | Sections group with the Metronome controls, name box, toggles, Start / End, keys | implementer | done (GUI click positions re-measured in task 22)

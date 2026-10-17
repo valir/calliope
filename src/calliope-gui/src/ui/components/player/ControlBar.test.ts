@@ -297,6 +297,92 @@ describe('Sections group', () => {
     expect(pl.bpmEdit).toEqual({ addAt: 7300 });
   });
 
+  describe('metronome, name and jumps', () => {
+    const meta = (idx = 1): PlayerSnapshot => {
+      const t = three([120, 93, 160], idx);
+      t.tempo.segments[1] = { ...t.tempo.segments[1], name: 'Verse', metronome: false, count_in: true };
+      return t;
+    };
+    const tempoActions = () => of('player_tempo').map((c) => c.action);
+
+    it('the toggles show the target meta; section 1 has no Count In', async () => {
+      await open(meta());
+      expect(btn('Sections', 'Metronome in this section').getAttribute('aria-pressed')).toBe('false');
+      expect(btn('Sections', 'Count-in into this section').getAttribute('aria-pressed')).toBe('true');
+      pl.section = 0;
+      await flush();
+      expect(btn('Sections', 'Metronome in this section').getAttribute('aria-pressed')).toBe('true');
+      const ci = btn('Sections', 'Count-in into this section');
+      expect(ci.disabled).toBe(true);
+      expect(ci.title).toBe('The first section has no section before it');
+    });
+
+    it('clicks send section-flags', async () => {
+      await open(meta());
+      await fireEvent.click(btn('Sections', 'Metronome in this section'));
+      await fireEvent.click(btn('Sections', 'Count-in into this section'));
+      await flush();
+      expect(tempoActions()).toEqual([
+        { kind: 'section-flags', index: 1, at: 6000, metronome: true, count_in: true },
+        { kind: 'section-flags', index: 1, at: 6000, metronome: false, count_in: false },
+      ]);
+    });
+
+    it('Start and End send jump-section', async () => {
+      await open(meta());
+      await fireEvent.click(btn('Sections', 'Jump to the start of the section'));
+      await fireEvent.click(btn('Sections', 'Jump to the last bar of the section'));
+      await flush();
+      expect(tempoActions()).toEqual([
+        { kind: 'jump-section', index: 1, at: 6000, edge: 'start' },
+        { kind: 'jump-section', index: 1, at: 6000, edge: 'end' },
+      ]);
+    });
+
+    it('the name box shows the name; Enter commits, Escape restores, unchanged sends nothing', async () => {
+      await open(meta());
+      const box = input('Section name');
+      expect(box.value).toBe('Verse');
+      expect(box.placeholder).toBe('Name this section');
+      expect(box.maxLength).toBe(40);
+      box.focus();
+      await fireEvent.input(box, { target: { value: ' Chorus ' } });
+      await fireEvent.keyDown(box, { key: 'Enter' });
+      await flush();
+      expect(tempoActions()).toEqual([{ kind: 'section-name', index: 1, at: 6000, name: 'Chorus' }]);
+      box.focus();
+      await fireEvent.input(box, { target: { value: 'Other' } });
+      await fireEvent.keyDown(box, { key: 'Escape' });
+      await flush();
+      expect(tempoActions()).toHaveLength(1);
+      expect(box.value).toBe('Verse');
+      box.focus();
+      await fireEvent.blur(box);
+      await flush();
+      expect(tempoActions()).toHaveLength(1);
+    });
+
+    it('blur commits, and the box keeps its section when the playhead moves on', async () => {
+      await open(meta());
+      const box = input('Section name');
+      box.focus();
+      await fireEvent.input(box, { target: { value: 'Bridge' } });
+      channel.onmessage({ kind: 'transport', id: practice.id, ...idle, bpm: 160, tempo_index: 2 });
+      await flush();
+      expect(screen.getByTestId('section-status').textContent).toBe('Section 2 of 3 · 93 BPM');
+      await fireEvent.blur(box);
+      await flush();
+      expect(tempoActions()).toEqual([{ kind: 'section-name', index: 1, at: 6000, name: 'Bridge' }]);
+    });
+
+    it('the master buttons still work in the nested Metronome group', async () => {
+      await open(meta());
+      await fireEvent.click(btn('Metronome', 'On/Off'));
+      await flush();
+      expect(of('player_metronome')).toHaveLength(1);
+    });
+  });
+
   it('the message slot keeps its height when empty or filled', async () => {
     await open(three());
     const slot = screen.getByTestId('section-message');

@@ -105,7 +105,8 @@
     if (!active || sel === null) return undefined;
     if (freeMove) {
       const s = segments[sel];
-      const head = `Section ${sel + 1} of ${segments.length} ${sel === 0 ? 'from the start' : `from ${fmt(s.start_ms, 3)}`}, ${bpmText(s.bpm)} BPM`;
+      const nm = s.name ? `, ${s.name},` : '';
+      const head = `Section ${sel + 1} of ${segments.length}${nm} ${sel === 0 ? 'from the start' : `from ${fmt(s.start_ms, 3)}`}, ${bpmText(s.bpm)} BPM`;
       if (sel === 0) return head;
       const kind = s.detected_ms != null ? 'detected' : s.on_beat ? 'placed' : 'typed';
       return kind === 'typed' ? `${head}, typed` : `${head}, ${kind}, ${signed(offsetOf(sel))}/64 beat`;
