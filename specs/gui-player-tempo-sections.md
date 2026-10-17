@@ -33,6 +33,14 @@ they hear the metronome against the song, without going back to the Editor.
    double tempo mistakes left by the detection
 7. every edit takes effect at once for the metronome, the count-in and the
    loops, and is saved in player.json like the other Player settings
+8. For each tempo section user can select metronome on or off
+9. For each tempo section user can enable count-in; so the Metronome section
+   will actually be available inside the Sections pane
+10. Also in the Sections pane, user will be able to jump the player position
+    to the beginning or the end of the current section
+11. Each section can be given a name and that name is presented in an editable
+    text box next to the current "Section 6 of 8 * BPM"; these names will also
+    e persisted, along with the metronome status for that section
 
 ## Constraints
 <!-- Language/framework, libraries allowed or forbidden, performance, platforms,
@@ -62,6 +70,10 @@ beyond what already exists. Changes to the Editor view need confirmation first.
   metronome follows the new map from the next beat
 - [ ] Given any of these edits, when the Player is closed and reopened, then
   the edited sections are restored from player.json
+- [ ] Given a section metronome count-in is enabled, when a previous section
+  is present and has metronom active, then that section's metronome will
+  effectively be adjusted to correctly play the next section's count-in
+  correctly.
 
 ## Open questions
 <!-- Things you haven't decided yet. The architect will ask about anything else it finds. -->
