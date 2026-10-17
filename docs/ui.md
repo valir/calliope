@@ -161,28 +161,39 @@
   small field over the label (for Add: at the playhead), prefilled and selected. Enter commits (20 to
   300; otherwise "Enter a BPM between 20 and 300" shows in the group's message line and the field stays),
   Escape or clicking away cancels, so nothing is added by accident.
-- The Sections group sits in the control bar after BPM: a title, a status line ("Section 2 of 3 · 93
-  BPM", or "No tempo"), the buttons Add, Remove, x2 and /2 (3.25 rem high; each disabled one has a
-  title that says why) and a reserved message line, so nothing moves. At 1280x800 with the tree
-  folded, BPM, Sections and Metronome share the first row, Playback has the second and Loops the
-  third; the pane scrolls by a few pixels. With the tree shown or at 1024x640 the groups wrap into
-  one column or two and the pane scrolls.
-- The Player has no Detect button any more. At 1280x800 with the tree folded to the rail, BPM, Metronome
-  and Playback share one row and the Loops group fills the row below; with the tree shown, Playback
-  wraps to its own row (the pane scrolls). The groups are as tall as the tallest in their row.
+- The Sections group sits in the control bar after BPM (gui-player-tempo-sections, phase 2). Top line: the
+  title, the status ("Section 2 of 3 · 93 BPM", or "No tempo") and the section's name box. Then the buttons Add,
+  Remove, x2, /2, "|< Start" and "End >|" (3.25 rem high; each disabled one has a title that says why), then
+  a line with the nested "Metronome" group (On/Off, Count In, as before) and the "This section" group (Click,
+  Count In). The two Count In buttons are told apart by their captions. The message line is absolutely
+  placed in the group's bottom padding (single line, truncated with the full text as tooltip), so it needs no
+  row and nothing moves.
+- Section toggles: Click ("Metronome in this section") and Count In ("Count-in into this section") are filled
+  amber when on. Count In is disabled for the first section ("The first section has no section before it"),
+  and both when there is no BPM ("Type a BPM first"). On/Off of the Metronome group silences every click.
+- Name box: text up to 40 characters, trimmed. Enter or leaving the box saves, Escape drops the edit. While it
+  has the focus it keeps the section it was focused for (the playhead moving does not change it). An empty
+  name removes the name. The Player's letter keys and Space type normally in it.
+- Start / End (and the Home / End keys, which also work with the focus on the waveform or the page): jump to
+  the section's first beat or to the start of its last bar; while playing, playback continues without a gap.
+- Layout: at 1280x800 with the tree folded, BPM and Sections share the first row, Playback has the second and
+  Loops the third; the pane scrolls by about 36 px (measured; the phase-1 Sections group scrolled by about
+  14 px). With the tree shown or at 1024x640 the groups wrap into one column or two and the pane scrolls.
+- The Player has no Detect button any more. (The Metronome group has since moved into the Sections group.) Groups
+  are as tall as the tallest in their row.
 - (gui-play-backing-track, task 17) Player layout. Left the shared track tree (20 rem, Ctrl+L folds it to
   a rail), right the pane: source row ("Play:" dropdown 15 rem wide, then the title), the dashed
   tablature placeholder (one line, it gives way first), the waveform (5 rem), then the control bar:
   BPM, Metronome, Playback and Loops (and, since gui-player-tempo-sections, Sections after BPM) as
   bordered groups in a wrapping row. With the tree folded at 1280x800 (before the Sections group)
-  everything fit without scrolling (BPM + Metronome, Playback, Loops in two rows); with the
+  everything fit without scrolling (BPM + Metronome, Playback, Loops in two rows; the Metronome group is in Sections now); with the
   tree shown, or at 1024x640, the pane scrolls vertically (never sideways: the groups wrap inside
   themselves). Nothing moves when state changes (every message has a reserved line).
 - Toggle buttons that are on (Metronome On/Off and Count In, Loop On, loop Count-In) are filled amber
   with dark text in both themes. The `bg-amber-500!` form is needed because the outline button variant
   sets its own dark-theme fill. Waveform marks use `--primary` (amber); the current loop is solid, the
   others 55% opacity, a loop without an end is a start line only; the playhead is a 1 px foreground line.
-- Player keys: Space, b, e, Left, Right, l / Shift+L, Ctrl+L, Ctrl+F; they are ignored while a form
+- Player keys: Space, b, e, Left, Right, l / Shift+L, Home / End, Ctrl+L, Ctrl+F; they are ignored while a form
   control or the select has the focus, so Space still presses a focused button. The waveform is the
   exception: focused, it keeps Space, b, e, l and Shift+L, and uses the section keys above (Left and
   Right move the selected change there, not the loop).

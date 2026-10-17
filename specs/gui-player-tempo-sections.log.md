@@ -28,3 +28,4 @@ task 18 | TS IPC types for phase 2 | local | done (gemma4 edits correct but it c
 task 19 | section-meta.ts helpers | local | done (gemma4 content exact; orchestrator fixed trailing newlines)
 task 20 | Player frontend state for flags, names and jumps | implementer | done
 task 21 | Sections group with the Metronome controls, name box, toggles, Start / End, keys | implementer | done (GUI click positions re-measured in task 22)
+task 22 | GUI end-to-end player_section_metronome, re-measured click positions, layout review, docs | implementer | done (pane scrolls 36 px at 1280x800 vs ~14 px target; reported)

@@ -54,7 +54,8 @@ Starts the Vite dev server with hot reload plus the debug app. It uses a dev-onl
 * Ctrl+B: collapse navigation
 * Player (Alt+5): Space play/pause, b / e mark the loop start / end, Left / Right previous / next loop,
   l or Shift+L loop on/off, Ctrl+L collapse the track tree, Ctrl+F search. The letter keys do nothing
-  while a field, button or the source dropdown has the focus.
+  while a field, button or the source dropdown has the focus. Home / End jump to the start / the last bar of
+  the selected section (also with the waveform focused, not while typing in the name box).
 * Player waveform (click it or Tab to it): Up / Down select a tempo section, Left / Right move the selected
   change by 1/64 beat, Shift+Left / Shift+Right by one beat (limit 4 beats from where it was detected or
   added), Enter edits its BPM, Delete or Backspace removes the change, `a` adds one at the playhead.
@@ -122,6 +123,14 @@ Ctrl+L folds it to a narrow rail).
   BPM), Remove (joins the section to the previous one), x2 and /2 (for a half- or double-time detection).
   The metronome follows every edit from the next beat, also while playing. The sections are saved in
   `player.json` and shown in the Editor.
+* Per section (Sections group, for the selected section): the name box next to "Section 2 of 3 - 93 BPM"
+  (Enter or leaving the box saves it, Escape drops the edit; it is shown in the box and spoken by the waveform; the Editor does
+  not show names), "This section" Click (the section's metronome clicks; off makes the section silent)
+  and Count In (three clicks at this section's tempo just before it, replacing the end of the section
+  before; refused for the first section, and skipped where a repeating loop ends at the section), and Start
+  / End (jump to the section's first beat / the start of its last bar; playing continues without a pause).
+  The Metronome group (On/Off, Count In for Play) is part of the Sections group; On/Off silences every
+  click, also the section count-ins.
 * Playback: Rew / FF jump 5 s, the time field takes a time (the mouse wheel nudges by 100 ms), the
   slider seeks.
 * Loops: "+" starts a loop at the position (it has no end until you press "<"), ">" and "<" set the
@@ -209,7 +218,8 @@ driver) per test binary from display `:90` up, runs each binary with `--ignored
 
 GUI test screenshots go to `target/gui-shots/` at the repository root. The player's visual
 review sweep (dark and light, 1280x800 and 1024x640, tree shown and collapsed, inactive, active
-counting in, section selected and BPM overlay open: 38 screenshots) only runs with `CALLIOPE_GUI_SHOTS=1`, e.g.
+counting in, section selected with its toggles and name, BPM overlay open, and the pane scrolled: 46
+screenshots) only runs with `CALLIOPE_GUI_SHOTS=1`, e.g.
 `CALLIOPE_GUI_SHOTS=1 npm run test:gui`; by default it takes one screenshot.
 
 ## Layout of this crate

@@ -31,7 +31,7 @@
   const message = $derived(pl.sectionError || (segs.length === 0 && pl.status === 'active' ? NEED_BPM : ''));
 </script>
 
-<div class="flex flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Sections">
+<div class="relative flex flex-col gap-1 rounded-lg border-2 border-border bg-card px-3 pt-2 pb-6" role="group" aria-label="Sections">
   <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
     <span class="text-lg font-semibold">Sections</span>
     <span class="text-base tabular-nums" data-testid="section-status">{status}</span>
@@ -143,5 +143,6 @@
       >Count In</Button>
     </div>
   </div>
-  <span class="min-h-5 text-sm {pl.sectionError ? 'text-destructive' : 'text-muted-foreground'}" role={pl.sectionError ? 'alert' : undefined} data-testid="section-message">{message}</span>
+  <!-- Absolutely placed in the group's bottom padding: it reserves its line without a row of its own. -->
+  <span class="absolute inset-x-3 bottom-0.5 min-h-5 truncate text-sm {pl.sectionError ? 'text-destructive' : 'text-muted-foreground'}" role={pl.sectionError ? 'alert' : undefined} title={message || undefined} data-testid="section-message">{message}</span>
 </div>
