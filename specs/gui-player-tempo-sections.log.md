@@ -19,3 +19,4 @@ tester (fix round 1) | M1, m1, m2, QD1 PASS; no new defects | tester | done
 report | written | orchestrator | done
 plan phase 2 | architect; owner: Q1-Q10 recommended | architect | done
 task 12 | Tempo map: SectionMeta, carry rules, flags, names, jump positions | implementer | done
+task 13 | player.json schema 4 | implementer | done (other tests expecting schema 3 fixed in task 14)

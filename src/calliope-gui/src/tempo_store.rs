@@ -97,7 +97,7 @@ mod tests {
     #[test]
     fn newer_schema_is_refused_and_the_file_is_unchanged() {
         let d = tempfile::tempdir().unwrap();
-        write(d.path(), json!({"schema_version": 4, "x": 1}));
+        write(d.path(), json!({"schema_version": 5, "x": 1}));
         let bytes = std::fs::read(d.path().join("player.json")).unwrap();
         assert_eq!(FileTempoStore.replace("t", d.path(), &|_| Ok(map(100.0))).unwrap_err(), NEWER);
         assert_eq!(std::fs::read(d.path().join("player.json")).unwrap(), bytes);

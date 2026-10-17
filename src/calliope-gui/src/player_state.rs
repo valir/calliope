@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 use std::path::Path;
 
 pub(crate) const PLAYER_FILE: &str = "player.json";
-pub(crate) const SCHEMA: u32 = 3;
+pub(crate) const SCHEMA: u32 = 4;
 pub(crate) const MAX_LOOPS: usize = 99;
 pub(crate) const MIN_SPEED: f64 = 0.5;
 pub(crate) const MAX_SPEED: f64 = 1.5;
@@ -123,7 +123,13 @@ fn parse_tempo(v: Option<&Value>) -> TempoMap {
             let detected_ms = s.get("detected_ms").and_then(Value::as_f64).filter(|m| m.is_finite() && m.abs() <= MAX_SEGMENT_MS);
             if let (Some(start_ms), Some(bpm)) = (start_ms, bpm) {
                 let on_beat = s.get("on_beat") == Some(&Value::Bool(true));
-                map.segments.push(Segment { start_ms, bpm, detected_ms, on_beat, meta: SectionMeta::default() });
+                let name = s.get("name").and_then(Value::as_str).map_or_else(String::new, clean_name);
+                let meta = SectionMeta {
+                    name,
+                    metronome: s.get("metronome") != Some(&Value::Bool(false)),
+                    count_in: s.get("count_in") == Some(&Value::Bool(true)),
+                };
+                map.segments.push(Segment { start_ms, bpm, detected_ms, on_beat, meta });
             }
         }
         map.segments.sort_by(|a, b| a.start_ms.total_cmp(&b.start_ms));
@@ -131,9 +137,16 @@ fn parse_tempo(v: Option<&Value>) -> TempoMap {
         if let Some(first) = map.segments.first_mut() {
             first.detected_ms = None;
             first.on_beat = false;
+            first.meta.count_in = false;
         }
     }
     map
+}
+
+/// A stored section name: control characters removed, trimmed, cut to `MAX_SECTION_NAME` characters.
+fn clean_name(s: &str) -> String {
+    let no_ctl: String = s.chars().filter(|c| !c.is_control()).collect();
+    no_ctl.trim().chars().take(tempo_map::MAX_SECTION_NAME).collect::<String>().trim().to_string()
 }
 
 /// Builds a state from a parsed value, dropping bad parts. Never fails.
@@ -456,9 +469,9 @@ mod tests {
         assert_eq!(st.current_loop.as_deref(), Some("loop-1"));
         save(d.path(), &st).unwrap();
         let back: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
-        // the v1 fixture reads with the same map and loops and is written back as schema 3
-        assert_eq!(back["schema_version"], 3);
-        v["schema_version"] = json!(3);
+        // the v1 fixture reads with the same map and loops and is written back as schema 4
+        assert_eq!(back["schema_version"], 4);
+        v["schema_version"] = json!(4);
         assert_eq!(back, v);
         assert!(back["loops"][2]["end"].is_null());
         assert_eq!(back["position_ms"], 4000);
@@ -489,7 +502,7 @@ mod tests {
 
     #[test]
     fn on_beat_round_trips_and_v2_files_are_upgraded() {
-        // a v2 file with a detected change loads unchanged and is written as 3
+        // a v2 file with a detected change loads unchanged and is written as 4
         let d = dir_with(
             &json!({"schema_version": 2, "tempo": {"segments": [
                 {"start_ms": 0.0, "bpm": 120.0}, {"start_ms": 6500.0, "bpm": 90.0, "detected_ms": 6400.0}]}})
@@ -500,7 +513,7 @@ mod tests {
         assert_eq!(st.tempo.segments[1], Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6400.0), on_beat: false, meta: SectionMeta::default() });
         save(d.path(), &st).unwrap();
         let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
-        assert_eq!(v["schema_version"], 3);
+        assert_eq!(v["schema_version"], 4);
         assert_eq!(v["tempo"]["segments"][1]["detected_ms"], 6400.0);
         assert!(v["tempo"]["segments"][1].get("on_beat").is_none());
 
@@ -523,6 +536,69 @@ mod tests {
         let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
         assert_eq!(v["tempo"]["segments"][1]["on_beat"], true);
         assert!(v["tempo"]["segments"][0].get("on_beat").is_none());
+    }
+
+    #[test]
+    fn section_meta_reads_defaults_round_trips_and_ignores_bad_values() {
+        // a v3 file reads with every section clicking, no count-in, no name; written as 4, same segments
+        let d = dir_with(
+            &json!({"schema_version": 3, "tempo": {"segments": [
+                {"start_ms": 0.0, "bpm": 120.0},
+                {"start_ms": 6500.0, "bpm": 90.0, "detected_ms": 6400.0, "on_beat": true}]}})
+            .to_string(),
+        );
+        let (st, note, _) = load(d.path());
+        assert!(note.is_none());
+        assert!(st.tempo.segments.iter().all(|s| s.meta == SectionMeta::default()));
+        save(d.path(), &st).unwrap();
+        let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        assert_eq!(v["schema_version"], 4);
+        assert_eq!(
+            v["tempo"]["segments"],
+            json!([{"start_ms": 0.0, "bpm": 120.0}, {"start_ms": 6500.0, "bpm": 90.0, "detected_ms": 6400.0, "on_beat": true}])
+        );
+
+        // a v4 segment with all three keys round-trips; count_in on the first segment is dropped
+        let d = dir_with(
+            &json!({"schema_version": 4, "tempo": {"segments": [
+                {"start_ms": 0.0, "bpm": 120.0, "name": "Intro", "metronome": false, "count_in": true},
+                {"start_ms": 8500.0, "bpm": 93.0, "name": "Verse", "metronome": false, "count_in": true}]}})
+            .to_string(),
+        );
+        let (st, _, _) = load(d.path());
+        let m: Vec<_> = st.tempo.segments.iter().map(|s| (s.meta.name.as_str(), s.meta.metronome, s.meta.count_in)).collect();
+        assert_eq!(m, [("Intro", false, false), ("Verse", false, true)]);
+        save(d.path(), &st).unwrap();
+        let (back, _, _) = load(d.path());
+        assert_eq!(back.tempo, st.tempo);
+        let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        assert_eq!(v["tempo"]["segments"][1]["name"], "Verse");
+        assert_eq!(v["tempo"]["segments"][1]["metronome"], false);
+        assert_eq!(v["tempo"]["segments"][1]["count_in"], true);
+        assert!(v["tempo"]["segments"][0].get("count_in").is_none());
+
+        // bad values are ignored and the segment is kept
+        let d = dir_with(
+            &json!({"schema_version": 4, "tempo": {"segments": [
+                {"start_ms": 0.0, "bpm": 120.0},
+                {"start_ms": 4000.0, "bpm": 90.0, "name": 5, "metronome": "no", "count_in": 1}]}})
+            .to_string(),
+        );
+        let (st, _, _) = load(d.path());
+        assert_eq!(st.tempo.segments.len(), 2);
+        assert_eq!(st.tempo.segments[1].meta, SectionMeta::default());
+
+        // a name with a tab and 50 characters is read cleaned and cut to 40
+        let long = format!(" \tab{}", "x".repeat(50));
+        let d = dir_with(
+            &json!({"schema_version": 4, "tempo": {"segments": [
+                {"start_ms": 0.0, "bpm": 120.0, "name": long}]}})
+            .to_string(),
+        );
+        let (st, _, _) = load(d.path());
+        let name = &st.tempo.segments[0].meta.name;
+        assert_eq!(name.chars().count(), 40);
+        assert!(name.starts_with("abx") && !name.contains('\t'));
     }
 
     #[test]
@@ -560,7 +636,7 @@ mod tests {
 
     #[test]
     fn newer_schema_is_read_only_and_folders_are_not_created() {
-        let text = r#"{"schema_version": 4, "source": "audio"}"#;
+        let text = r#"{"schema_version": 5, "source": "audio"}"#;
         let d = dir_with(text);
         let (st, note, w) = load(d.path());
         assert!(!w && note.is_some() && st.read_only);
