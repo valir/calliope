@@ -2475,3 +2475,253 @@ fn ts17_edits_carry_the_section_settings() {
     assert_eq!(d["tempo"]["segments"][1]["metronome"], false);
     assert_eq!(d["tempo"]["segments"][1]["count_in"], true);
 }
+
+// =========================================================================================
+// QA phase 2 (gui-player-tempo-sections, requirements 8-11, TS11-TS17): edge cases
+// =========================================================================================
+
+fn segs3(a: &str, b: &str, c: &str) -> String {
+    format!(
+        r#"{{"schema_version":4,"metronome":{{"on":true,"count_in":false}},"tempo":{{"beats_per_bar":4,"segments":[
+        {{"start_ms":0,"bpm":120{a}}},{{"start_ms":4000,"bpm":120,"on_beat":true{b}}},{{"start_ms":5000,"bpm":60,"on_beat":true{c}}}]}}}}"#
+    )
+}
+
+fn meta_of(r: &Rig, i: usize) -> (String, bool, bool) {
+    let m = &r.snap().tempo.segments[i].meta;
+    (m.name.clone(), m.metronome, m.count_in)
+}
+
+#[test]
+fn qa_p2_master_off_silences_count_ins_and_back_on_while_playing_restores_them() {
+    let mut r = rig_with(PRACTICE, &ts4_json(r#","count_in":true"#, false, ""));
+    let c = clicks_from(&mut r, 4900, 4500.0);
+    assert!(c.is_empty(), "master off: {c:?}");
+    // On again while playing at ~9400 ms: nothing but the 93 BPM clicks follow
+    r.seek(5000);
+    r.play();
+    let (c, _) = r.pull_clicks(500.0);
+    assert!(c.is_empty());
+    r.metronome_on();
+    let (c, _) = r.pull_clicks(3500.0);
+    // the count-in (6564.52 ...) is ahead of the playhead (5500+) and sounds
+    assert!(c.iter().any(|t| (t - 6564.52).abs() < 1.0), "{c:?}");
+    assert!(c.iter().any(|t| (t - 8500.0).abs() < 1.0), "{c:?}");
+}
+
+#[test]
+fn qa_p2_count_in_into_a_section_whose_own_metronome_is_off_has_no_fourth_click() {
+    let mut r = rig_with(PRACTICE, &ts4_json(r#","metronome":false,"count_in":true"#, true, ""));
+    let c = clicks_from(&mut r, 4900, 6000.0);
+    assert_clicks(&c, &[5000.0, 5500.0, 6000.0, 6564.52, 7209.68, 7854.84]);
+}
+
+#[test]
+fn qa_p2_overlapping_count_ins_with_a_silent_middle_section() {
+    let mut r = rig_with(PRACTICE, &segs3("", r#","metronome":false,"count_in":true"#, r#","count_in":true"#));
+    let c: Vec<f64> = clicks_from(&mut r, 0, 7400.0).into_iter().filter(|&t| t > 100.0).collect();
+    // section 3 (60 BPM) wins: 2000, 3000, 4000 then its own beats; section 2 is silent from 4000
+    assert_clicks(&c, &[500.0, 1000.0, 1500.0, 2000.0, 3000.0, 4000.0, 5000.0, 6000.0, 7000.0]);
+}
+
+#[test]
+fn qa_p2_loop_end_inside_or_after_the_count_in_span() {
+    let lp = |end: u32| format!(r#"{{"id":"loop-1","start":{{"ms":500}},"end":{{"ms":{end}}},"repeat":true,"count_in":false}}"#);
+    let with = |end: u32| ts4_json(r#","count_in":true"#, true, &lp(end)).replace(r#""loops""#, r#""current_loop":"loop-1","loops""#);
+    // loop ends at 7000, inside the count-in span (6241.9 .. 8500): the count-in would lead nowhere, skipped
+    let mut r = rig_with(PRACTICE, &with(7000));
+    r.lp(LoopAction::Play).unwrap();
+    let (c, _) = r.pull_clicks(6400.0);
+    let c: Vec<f64> = c.into_iter().filter(|&t| t > 600.0).collect(); // not the loop start's fade-in
+    assert!(c.len() >= 10 && c.iter().all(|t| ((t - 500.0) % 500.0).abs() < 1.0), "{c:?}");
+    // loop ends at 9000, after the section start: the loop plays the count-in on every pass
+    let mut r = rig_with(PRACTICE, &with(9000));
+    r.lp(LoopAction::Play).unwrap();
+    let (c, _) = r.pull_clicks(8000.0);
+    assert!(c.iter().any(|t| (t - 6564.52).abs() < 1.0), "{c:?}");
+    // toggling Loop On / Off while playing re-sends the grid: from the next beat the count-in disappears and returns
+    let mut r = rig_with(PRACTICE, &with(8500));
+    r.lp(LoopAction::Flags { repeat: false, count_in: false }).unwrap();
+    r.lp(LoopAction::Play).unwrap();
+    r.pull_clicks(4700.0); // ... to about 5200
+    r.lp(LoopAction::Flags { repeat: true, count_in: false }).unwrap();
+    let (c, _) = r.pull_clicks(1000.0); // ... to about 6200: no count-in is ahead
+    assert!(c.iter().all(|t| ((t - 500.0) % 500.0).abs() < 12.0), "{c:?}");
+    r.lp(LoopAction::Flags { repeat: false, count_in: false }).unwrap();
+    let (c, _) = r.pull_clicks(1400.0);
+    assert!(c.iter().any(|t| (t - 6564.52).abs() < 1.0), "the count-in is back: {c:?}");
+}
+
+#[test]
+fn qa_p2_edits_split_join_move_and_merge_with_names_and_flags() {
+    let named = |n: &str| format!(r#","name":"{n}""#);
+    let mut r = rig_with(PRACTICE, &segs3(&named("A"), &format!(r#"{}"#, named("B") + r#","metronome":false"#), &(named("C") + r#","count_in":true"#)));
+    // Remove the middle one: A and C stay as they were, B is gone with its flags
+    r.edit(SectionEdit::Remove { index: 1, at: 4000.0 });
+    assert_eq!(meta_of(&r, 0), ("A".into(), true, false));
+    assert_eq!(meta_of(&r, 1), ("C".into(), true, true));
+    // C's count-in now replaces the last clicks of A (before it, 60 BPM beat = 1000)
+    r.metronome_on();
+    // Add inside A (metronome on, named A): the new section is unnamed, clicking, no count-in; A and C keep theirs
+    r.edit(SectionEdit::Add { position: 2000.0, bpm: 90.0 });
+    assert_eq!(meta_of(&r, 0), ("A".into(), true, false));
+    assert_eq!(meta_of(&r, 1), (String::new(), true, false));
+    assert_eq!(meta_of(&r, 2), ("C".into(), true, true));
+    // move C: the count-in moves with it
+    let c_at = r.sections()[2].0;
+    // a placed change counts its steps from the left section's start
+    let steps = ((c_at + 100.0 - 2000.0) / (60000.0 / 90.0 / 64.0)).round() as i64;
+    let s = r.edit(SectionEdit::Move { index: 2, at: c_at, steps });
+    assert_eq!(s.tempo.segments[2].meta.name, "C");
+    assert!(s.tempo.segments[2].meta.count_in);
+    let new_at = s.tempo.segments[2].start_ms;
+    assert!(new_at != c_at);
+    // typed BPM equal to the neighbour on the left merges: the left one keeps its settings, C's are lost
+    let mid = (r.sections()[1].0 + new_at) / 2.0;
+    r.m.seek(&r.id(), mid as u64, r.t0).unwrap();
+    let sa = r.snap().tempo.segments.clone();
+    let left_bpm = sa[1].bpm;
+    let s = r.m.set_bpm(&r.id(), left_bpm, r.t0).unwrap();
+    assert_eq!(s.tempo.segments.len(), 3, "typing the section's own BPM changes nothing");
+    // typing the BPM of section 1 (90) into section 2's position merges 1 and 2
+    r.m.seek(&r.id(), new_at.round() as u64, r.t0).unwrap();
+    let s = r.m.set_bpm(&r.id(), 90.0, r.t0).unwrap();
+    assert_eq!(s.tempo.segments.len(), 2);
+    assert_eq!(meta_of(&r, 1), (String::new(), true, false), "the section kept is the left one, with its settings");
+    // BPM 0 on the first section: the new first section never keeps a count-in
+    let mut r = rig_with(PRACTICE, &segs3("", "", r#","count_in":true"#));
+    r.m.seek(&r.id(), 100, r.t0).unwrap();
+    let s = r.m.set_bpm(&r.id(), 0.0, r.t0).unwrap();
+    assert_eq!(s.tempo.segments.len(), 2);
+    assert!(!s.tempo.segments[0].meta.count_in);
+    assert!(s.tempo.segments[1].meta.count_in);
+}
+
+#[test]
+fn qa_p2_typed_change_copies_the_split_sections_metronome_flag() {
+    let mut r = rig_with(PRACTICE, &segs3(r#","metronome":false"#, "", ""));
+    r.m.seek(&r.id(), 1900, r.t0).unwrap();
+    let s = r.m.set_bpm(&r.id(), 77.0, r.t0).unwrap();
+    assert_eq!(s.tempo.segments.len(), 4);
+    assert_eq!(meta_of(&r, 1), (String::new(), false, false));
+}
+
+#[test]
+fn qa_p2_names_are_cleaned_refused_and_saved_exactly() {
+    let mut r = ts_rig();
+    let name = |r: &mut Rig, index: usize, n: &str| {
+        let at = r.sections()[index].0;
+        r.m.edit_sections(&r.id(), SectionEdit::Name { index, at, name: n.into() }, r.t0)
+    };
+    // trimmed; an empty or blank name clears
+    name(&mut r, 0, "  Verse  ").unwrap();
+    assert_eq!(meta_of(&r, 0).0, "Verse");
+    name(&mut r, 0, " \t ").unwrap();
+    assert_eq!(meta_of(&r, 0).0, "");
+    // exactly 40 characters (multi-byte) pass, 41 are refused
+    let ok = "é".repeat(40);
+    name(&mut r, 1, &ok).unwrap();
+    assert_eq!(meta_of(&r, 1).0, ok);
+    let before = r.snap().tempo;
+    assert!(name(&mut r, 1, &"é".repeat(41)).unwrap_err().contains("at most 40"));
+    // control characters inside are refused, nothing changes
+    for bad in ["a\nb", "a\u{0}b", "a\tb", "a\u{7f}b"] {
+        assert!(name(&mut r, 1, bad).unwrap_err().contains("control"), "{bad:?}");
+    }
+    assert_eq!(r.snap().tempo, before);
+    // names with quotes and JSON-ish content survive the file
+    let odd = r#"He said "hi" \ {"x":1} <b>"#;
+    name(&mut r, 0, odd).unwrap();
+    r.m.close();
+    let d = r.disk().unwrap();
+    assert_eq!(d["tempo"]["segments"][0]["name"], odd);
+    assert_eq!(d["tempo"]["segments"][1]["name"], ok);
+    r.reopen();
+    assert_eq!(meta_of(&r, 0).0, odd);
+    // no meta keys at all for a section with defaults
+    name(&mut r, 0, "").unwrap();
+    r.flush();
+    let d = r.disk().unwrap();
+    for k in ["metronome", "count_in"] {
+        assert!(d["tempo"]["segments"][0].get(k).is_none(), "{k}");
+    }
+    assert!(d["tempo"]["segments"][0].get("name").is_none());
+}
+
+#[test]
+fn qa_p2_flags_first_section_count_in_and_out_of_range_are_refused() {
+    let mut r = ts_rig();
+    assert!(flags(&mut r, 0, true, true).unwrap_err().contains("first section"));
+    assert!(flags(&mut r, 0, false, false).is_ok());
+    let e = r.m.edit_sections(&r.id(), SectionEdit::Flags { index: 5, at: 8500.0, metronome: true, count_in: false }, r.t0);
+    assert!(e.is_err());
+    // a stale `at`, NaN and an index that moved after an Add are all refused, and nothing is dirtied
+    r.edit(SectionEdit::Add { position: 4000.0, bpm: 100.0 });
+    let before = r.snap().tempo;
+    for (index, at) in [(1, 8500.0), (2, 8000.0), (1, f64::NAN), (9, 0.0), (2, f64::INFINITY)] {
+        for e in [
+            SectionEdit::Flags { index, at, metronome: false, count_in: true },
+            SectionEdit::Name { index, at, name: "x".into() },
+        ] {
+            assert!(r.m.edit_sections(&r.id(), e.clone(), r.t0).unwrap_err().contains("changed") , "{e:?}");
+        }
+        assert!(r.m.jump_section(&r.id(), index, at, tempo_map::Edge::End, r.t0).is_err());
+    }
+    assert_eq!(r.snap().tempo, before);
+}
+
+#[test]
+fn qa_p2_jump_edges_short_section_last_section_and_empty_map() {
+    // section 2 is only 2 beats long: End is its start; the last section's End uses the track end
+    let mut r = rig_with(PRACTICE, r#"{"schema_version":4,"tempo":{"beats_per_bar":4,"segments":[
+        {"start_ms":500,"bpm":120},{"start_ms":3000,"bpm":120,"on_beat":true,"name":"short"},{"start_ms":4000,"bpm":60,"on_beat":true}]}}"#);
+    let dur = duration_ms(&r);
+    let to = |r: &mut Rig, i: usize, e: tempo_map::Edge| {
+        let at = r.sections()[i].0;
+        r.m.jump_section(&r.id(), i, at, e, r.t0).map(|s| s.transport.position_ms)
+    };
+    assert_eq!(to(&mut r, 0, tempo_map::Edge::Start), Ok(0), "section 1 starts at 0:00");
+    assert_eq!(to(&mut r, 1, tempo_map::Edge::End), Ok(3000), "shorter than a bar: its start");
+    assert_eq!(to(&mut r, 1, tempo_map::Edge::Start), Ok(3000));
+    let last = to(&mut r, 2, tempo_map::Edge::End).unwrap() as f64;
+    assert!((last - (dur - 4000.0)).abs() < 1500.0 && last >= 4000.0, "{last} of {dur}");
+    // a section keeps the same target after the jump: the selection is the caller's, the position is just moved
+    let mut e = rig(STEMS_ONLY);
+    let err = e.m.jump_section(&e.id(), 0, 0.0, tempo_map::Edge::Start, e.t0).unwrap_err();
+    assert!(!err.is_empty());
+}
+
+#[test]
+fn qa_p2_jump_then_play_uses_the_normal_count_in_rule_and_a_jump_during_a_pre_roll_goes_on_playing() {
+    let mut r = ts_rig();
+    r.m.set_metronome(&r.id(), true, true, r.t0).unwrap();
+    // paused jump to the section start, then Play: the pre-roll comes from the master Count In
+    r.m.jump_section(&r.id(), 1, 8500.0, tempo_map::Edge::Start, r.t0).unwrap();
+    let st = r.play();
+    assert!(st.counting_in, "Play after a paused jump counts in");
+    // a jump while that pre-roll sounds cancels it and plays the source from the target
+    r.b.pull(2000);
+    let s = r.m.jump_section(&r.id(), 0, 500.0, tempo_map::Edge::End, r.t0).unwrap();
+    assert!(s.transport.playing, "{:?}", s.transport);
+    assert_eq!(s.transport.position_ms, 6500);
+    let n = frames_of(1000.0);
+    let got = r.b.pull(n);
+    assert!(!r.snap().transport.counting_in, "{:?}", r.snap().transport);
+    // the source plays on from the target; only the 120 BPM clicks (6500, 7000, 7500) differ from it
+    let want = expected(&r.pcm(), frames_of(6500.0), n);
+    let c = clicks(&got, &want, 200);
+    assert!(c.len() <= 3, "{c:?}");
+}
+
+#[test]
+fn qa_p2_schema_4_read_is_lenient_with_bad_names_and_flags() {
+    let text = r#"{"schema_version":4,"tempo":{"beats_per_bar":4,"segments":[
+        {"start_ms":0,"bpm":120,"count_in":true,"name":"\u0007bell\n"},
+        {"start_ms":8500,"bpm":93,"name":["x"],"metronome":null,"count_in":"yes"},
+        {"start_ms":9500,"bpm":93,"name":"   ","metronome":false}]}}"#;
+    let r = rig_with(PRACTICE, text);
+    let s = r.snap().tempo.segments;
+    assert_eq!((s[0].meta.name.as_str(), s[0].meta.count_in), ("bell", false));
+    assert_eq!((s[1].meta.metronome, s[1].meta.count_in, s[1].meta.name.as_str()), (true, false, ""));
+    assert_eq!((s[2].meta.metronome, s[2].meta.name.as_str()), (false, ""));
+}

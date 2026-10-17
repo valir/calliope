@@ -392,3 +392,72 @@ describe('AC28: settings file problems are shown to the user', () => {
     expect(btn('Playback', 'Play')).toBeTruthy();
   });
 });
+
+describe('QA phase 2: section name box, Home / End and the section toggles (gui-player-tempo-sections)', () => {
+  const kinds = () => of('player_tempo').map((c) => c.action as { kind: string; name?: string; edge?: string });
+
+  it('qa_p2: Home / End do nothing without sections, and with a focused button or a modifier-free field', async () => {
+    snap = base(); // no tempo
+    render(PlayerView);
+    await openTrack(snap);
+    await fireEvent.keyDown(document.body, { key: 'Home' });
+    await fireEvent.keyDown(document.body, { key: 'End' });
+    await flush();
+    expect(of('player_tempo')).toHaveLength(0);
+    expect(btn('Sections', 'Jump to the start of the section').disabled).toBe(true);
+    expect(input('Section name').disabled).toBe(true);
+    expect(btn('Sections', 'Metronome in this section').disabled).toBe(true);
+    expect(btn('Sections', 'Count-in into this section').disabled).toBe(true);
+    // the master buttons keep working-state rules of phase 1 (not usable without a tempo map is their old behaviour)
+  });
+
+  it('qa_p2: Home / End on a focused button are left to the button', async () => {
+    snap = bpmSnap();
+    render(PlayerView);
+    await openTrack(snap);
+    const b = btn('Sections', 'Jump to the last bar of the section');
+    b.focus();
+    await fireEvent.keyDown(b, { key: 'End' });
+    await fireEvent.keyDown(b, { key: 'Home' });
+    await flush();
+    expect(kinds()).toHaveLength(0);
+  });
+
+  it('qa_p2: a name typed with control characters or beyond 40 characters is sent cleaned; an emptied name clears', async () => {
+    snap = bpmSnap();
+    snap.tempo.segments[0] = { ...snap.tempo.segments[0], name: 'Old' };
+    render(PlayerView);
+    await openTrack(snap);
+    const box = input('Section name');
+    expect(box.value).toBe('Old');
+    box.focus();
+    await fireEvent.input(box, { target: { value: ' \tA\u0007' + 'é'.repeat(60) + ' ' } });
+    await fireEvent.keyDown(box, { key: 'Enter' });
+    await flush();
+    expect(kinds()).toEqual([{ kind: 'section-name', index: 0, at: 500, name: 'A' + 'é'.repeat(39), } as never]);
+    box.focus();
+    await fireEvent.input(box, { target: { value: '   ' } });
+    await fireEvent.keyDown(box, { key: 'Enter' });
+    await flush();
+    expect(kinds().map((k) => k.name)).toEqual(['A' + 'é'.repeat(39), '']);
+  });
+
+  it('qa_p2: while the name box has the focus its section stays even if the playhead moves on, and Escape sends nothing', async () => {
+    snap = bpmSnap();
+    snap.tempo.segments.push({ start_ms: 6000, bpm: 90 });
+    snap.tempo.segments[1] = { ...snap.tempo.segments[1], name: 'Two' };
+    render(PlayerView);
+    await openTrack(snap);
+    const box = input('Section name');
+    box.focus();
+    channel!.onmessage({ kind: 'transport', id: practice.id, ...idle, bpm: 90, tempo_index: 1 });
+    await flush();
+    expect(screen.getByTestId('section-status').textContent).toBe('Section 1 of 2 · 120 BPM');
+    expect(box.value).toBe('');
+    await fireEvent.input(box, { target: { value: 'zzz' } });
+    await fireEvent.keyDown(box, { key: 'Escape' });
+    await flush();
+    expect(kinds()).toHaveLength(0);
+    expect(box.value).toBe('Two'); // the box follows the playhead again
+  });
+});
