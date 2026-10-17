@@ -80,7 +80,6 @@ pub(crate) fn place(
 /// The clicks to sound, in ms, sorted: the beats of sections whose metronome is on, with each section's
 /// count-in (three clicks at its tempo before its first beat) replacing the clicks before it. `wrap` is a
 /// repeating loop (start, end) in ms: a count-in whose span the loop ends in is skipped.
-#[allow(dead_code)] // used by the Player session in task 16
 pub(crate) fn section_clicks(map: &TempoMap, dur_ms: f64, wrap: Option<(f64, f64)>) -> Vec<f64> {
     const EPS: f64 = 1e-6;
     let mut clicks: Vec<f64> = map

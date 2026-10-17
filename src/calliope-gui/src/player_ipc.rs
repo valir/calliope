@@ -233,7 +233,7 @@ impl From<Edge> for Mark {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub(crate) enum TempoAction {
     SetBpm { bpm: f64 },
@@ -244,6 +244,9 @@ pub(crate) enum TempoAction {
     AddChange { position: f64, bpm: f64 },
     RemoveChange { index: usize, at: f64 },
     MoveChange { index: usize, at: f64, steps: i64 },
+    SectionFlags { index: usize, at: f64, metronome: bool, count_in: bool },
+    SectionName { index: usize, at: f64, name: String },
+    JumpSection { index: usize, at: f64, edge: Edge },
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
@@ -297,6 +300,14 @@ pub(crate) fn do_player_tempo(host: &PlayerHost, id: &str, action: TempoAction) 
         TempoAction::AddChange { position, bpm } => edit(host, id, SectionEdit::Add { position, bpm }),
         TempoAction::RemoveChange { index, at } => edit(host, id, SectionEdit::Remove { index, at }),
         TempoAction::MoveChange { index, at, steps } => edit(host, id, SectionEdit::Move { index, at, steps }),
+        TempoAction::SectionFlags { index, at, metronome, count_in } => {
+            edit(host, id, SectionEdit::Flags { index, at, metronome, count_in })
+        }
+        TempoAction::SectionName { index, at, name } => edit(host, id, SectionEdit::Name { index, at, name }),
+        TempoAction::JumpSection { index, at, edge } => {
+            let edge = if edge == Edge::Start { crate::tempo_map::Edge::Start } else { crate::tempo_map::Edge::End };
+            host.with(|m| m.jump_section(id, index, at, edge, Instant::now()))
+        }
     }
 }
 

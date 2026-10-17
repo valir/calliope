@@ -1789,7 +1789,7 @@ use calliope_gui::tempo_store::{FileTempoStore, TempoStore};
 
 fn edit_err(r: &mut Rig, e: SectionEdit) -> String {
     let before = r.snap().tempo.segments;
-    let err = r.m.edit_sections(&r.id(), e, r.t0).unwrap_err();
+    let err = r.m.edit_sections(&r.id(), e.clone(), r.t0).unwrap_err();
     assert_eq!(r.snap().tempo.segments, before, "a refusal changes nothing ({e:?})");
     err
 }
@@ -1813,7 +1813,7 @@ fn qa_stale_at_is_refused_for_every_action_and_a_double_remove_removes_one() {
         SectionEdit::Scale { index: 7, at: 8500.0, factor: Scale::Halve },
         SectionEdit::Bpm { index: 1, at: f64::NAN, bpm: 100.0 },
     ] {
-        let err = edit_err(&mut r, e);
+        let err = edit_err(&mut r, e.clone());
         assert!(err.contains("changed"), "{e:?}: {err}");
     }
     // a quick double Remove (same index and at): the second is stale, the first change is the only one removed

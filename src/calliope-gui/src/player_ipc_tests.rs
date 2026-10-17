@@ -140,6 +140,19 @@ fn action_json_matches_the_typescript_types() {
     assert_eq!(sec(r#"{"kind":"add-change","position":4000.0,"bpm":100}"#).unwrap(), TempoAction::AddChange { position: 4000.0, bpm: 100.0 });
     assert_eq!(sec(r#"{"kind":"remove-change","index":1,"at":8500.0}"#).unwrap(), TempoAction::RemoveChange { index: 1, at: 8500.0 });
     assert_eq!(sec(r#"{"kind":"move-change","index":1,"at":8500.0,"steps":-3}"#).unwrap(), TempoAction::MoveChange { index: 1, at: 8500.0, steps: -3 });
+    assert_eq!(
+        sec(r#"{"kind":"section-flags","index":1,"at":8500.0,"metronome":false,"count_in":true}"#).unwrap(),
+        TempoAction::SectionFlags { index: 1, at: 8500.0, metronome: false, count_in: true }
+    );
+    assert_eq!(
+        sec(r#"{"kind":"section-name","index":1,"at":8500.0,"name":"Verse"}"#).unwrap(),
+        TempoAction::SectionName { index: 1, at: 8500.0, name: "Verse".into() }
+    );
+    assert_eq!(
+        sec(r#"{"kind":"jump-section","index":0,"at":500.0,"edge":"end"}"#).unwrap(),
+        TempoAction::JumpSection { index: 0, at: 500.0, edge: Edge::End }
+    );
+    assert!(sec(r#"{"kind":"jump-section","index":0,"at":500.0,"edge":"middle"}"#).is_err());
     let cases = [
         (r#"{"kind":"add"}"#, LoopCmd::Add),
         (r#"{"kind":"remove"}"#, LoopCmd::Remove),

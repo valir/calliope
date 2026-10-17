@@ -12,10 +12,10 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::audio_out::{OutputBackend, OutputHandle};
-use crate::metronome::{count_in_plan, Click, CountIn};
+use crate::metronome::{count_in_plan, section_clicks, Click, CountIn};
 use crate::player_source::{self, Pcm, Source, PEAK_BUCKETS};
 use crate::player_state::{self, LoopRec, Mark, PlayerState};
-use crate::tempo_map::{Boundary, Scale, Segment, TempoMap};
+use crate::tempo_map::{Boundary, Edge, Scale, Segment, TempoMap};
 use crate::transport::Transport;
 
 pub const SUPERSEDED: &str = "superseded";
@@ -605,6 +605,8 @@ struct Session {
     /// Refusal of the last `<`/`>`, shown by the Loops section.
     loop_message: Option<String>,
     last_wraps: u64,
+    /// The loop (start, end) in ms the click grid was last computed for (10.6).
+    grid_wrap: Option<(f64, f64)>,
 }
 
 impl Session {
@@ -663,8 +665,20 @@ impl Session {
     fn grid(&self) -> Arc<Vec<Beat>> {
         let rate = f64::from(self.pcm.rate);
         let dur_ms = self.pcm.frames as f64 * 1000.0 / rate;
-        let beats = self.state.tempo.beats_in(0.0, dur_ms);
-        Arc::new(beats.into_iter().map(|(ms, a)| ((ms * rate / 1000.0).round() as u64, a)).collect())
+        let clicks = section_clicks(&self.state.tempo, dur_ms, self.wrap_ms());
+        let mut frames: Vec<u64> = clicks.into_iter().map(|ms| (ms * rate / 1000.0).round() as u64).collect();
+        frames.dedup();
+        Arc::new(frames.into_iter().map(|f| (f, false)).collect())
+    }
+
+    /// The current complete loop (start, end) in ms when it repeats; the click list skips a count-in it ends in.
+    fn wrap_ms(&self) -> Option<(f64, f64)> {
+        let l = self.state.current()?;
+        if !l.repeat {
+            return None;
+        }
+        let (start, end) = (self.boundary_ms(l.start), self.boundary_ms(l.end?));
+        (end > start).then_some((start, end))
     }
 
     /// The current loop as the engine plays it; none when absent or incomplete.
@@ -679,11 +693,15 @@ impl Session {
         Some(LoopSpec { start, end, repeat: l.repeat, count_in })
     }
 
-    fn sync_loop(&self) {
+    fn sync_loop(&mut self) {
         self.send(Cmd::SetLoop(self.loop_spec()));
+        if self.wrap_ms() != self.grid_wrap {
+            self.sync_grid();
+        }
     }
 
-    fn sync_grid(&self) {
+    fn sync_grid(&mut self) {
+        self.grid_wrap = self.wrap_ms();
         self.send(Cmd::SetGrid(self.grid()));
         self.send(Cmd::SetMetronome(self.state.metronome.on && !self.state.tempo.is_empty()));
     }
@@ -860,13 +878,15 @@ pub enum LoopAction {
 }
 
 /// One edit of the tempo sections (the Player's Sections group and waveform).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SectionEdit {
     Bpm { index: usize, at: f64, bpm: f64 },
     Scale { index: usize, at: f64, factor: Scale },
     Add { position: f64, bpm: f64 },
     Remove { index: usize, at: f64 },
     Move { index: usize, at: f64, steps: i64 },
+    Flags { index: usize, at: f64, metronome: bool, count_in: bool },
+    Name { index: usize, at: f64, name: String },
 }
 
 pub struct PlayerManager {
@@ -975,6 +995,7 @@ impl PlayerManager {
             last_emit: None,
             loop_message: None,
             last_wraps: 0,
+            grid_wrap: None,
         };
         session.state.position_ms = session.ms_of(frames); // what is on disk or equal to it
         let snap = session.snapshot();
@@ -1261,17 +1282,52 @@ impl PlayerManager {
                 let (map, applied) = old.move_change(index, steps, end_ms)?;
                 ("move", index, map, format!(" steps={steps} applied={applied}"))
             }
+            SectionEdit::Flags { index, at, metronome, count_in } => {
+                guard(index, at)?;
+                ("flags", index, old.set_section_flags(index, metronome, count_in)?, String::new())
+            }
+            SectionEdit::Name { index, at, name } => {
+                guard(index, at)?;
+                ("name", index, old.set_section_name(index, &name)?, String::new())
+            }
         };
         s.state.apply_tempo_change(map);
         s.loop_message = None;
         s.sync_grid();
         s.sync_loop();
         s.mark_dirty(now);
-        let bpms: Vec<String> = s.state.tempo.segments.iter().map(|g| g.bpm.to_string()).collect();
+        let segs = &s.state.tempo.segments;
+        let bpms: Vec<String> = segs.iter().map(|g| g.bpm.to_string()).collect();
+        let flag = |f: fn(&Segment) -> bool| segs.iter().map(|g| if f(g) { "1" } else { "0" }).collect::<Vec<_>>().join(",");
         eprintln!(
-            "calliope: player section {kind} id={id} index={index} segments={} bpm={}{extra}",
+            "calliope: player section {kind} id={id} index={index} segments={} bpm={}{extra} metronome={} count_in={}",
             bpms.len(),
-            bpms.join(",")
+            bpms.join(","),
+            flag(|g| g.meta.metronome),
+            flag(|g| g.meta.count_in)
+        );
+        Ok(s.snapshot())
+    }
+
+    /// Start / End of a section: an instant jump like loop Prev/Next; playback goes on, a pre-roll is cancelled.
+    pub fn jump_section(&mut self, id: &str, index: usize, at: f64, edge: Edge, now: Instant) -> Result<PlayerSnapshot, String> {
+        let sink = self.sink.clone();
+        let s = self.session(id)?;
+        match s.state.tempo.segments.get(index) {
+            Some(g) if (g.start_ms - at).abs() < 1e-6 => {}
+            _ => return Err("The tempo sections changed; try again".to_string()),
+        }
+        let end_ms = s.pcm.frames as f64 * 1000.0 / f64::from(s.pcm.rate.max(1));
+        let ms = s.state.tempo.section_jump_ms(index, edge, end_ms)?;
+        let f = s.frame_of_ms_f(ms);
+        s.set_pos(f);
+        s.send(Cmd::Jump(f));
+        s.mark_dirty(now);
+        publish(&sink, s, now);
+        eprintln!(
+            "calliope: player section jump id={id} index={index} edge={} position_ms={}",
+            if edge == Edge::Start { "start" } else { "end" },
+            s.ms_of(f)
         );
         Ok(s.snapshot())
     }

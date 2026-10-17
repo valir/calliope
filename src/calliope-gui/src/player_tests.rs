@@ -829,7 +829,7 @@ fn section_edits_reach_the_engine_loops_and_disk() {
     for (k, (e, i, want_bpm)) in edits.into_iter().enumerate() {
         let t = t0 + ms(1000 * (k as u64 + 1));
         let on_disk = disk(&spec).unwrap()["tempo"]["segments"].clone();
-        let s = m.edit_sections(&spec.id, e, t).unwrap();
+        let s = m.edit_sections(&spec.id, e.clone(), t).unwrap();
         assert_eq!(s.tempo.segments[i].bpm, want_bpm, "{e:?}");
         for (a, b) in before.loops.iter().zip(&s.loops) {
             assert!((a.start_ms - b.start_ms).abs() <= 21.0);
@@ -894,6 +894,161 @@ fn stale_or_refused_section_edits_change_nothing() {
     }
     m.tick(t0 + ms(5000));
     assert_eq!(disk(&spec).unwrap(), fixture, "refusals write nothing");
+}
+
+const STALE: &str = "The tempo sections changed; try again";
+
+#[test]
+fn section_metronome_toggle_is_heard_from_the_next_beat_and_saved() {
+    let (_t, spec, mut m, b, _e, pcm) = with_tempo();
+    let t0 = Instant::now();
+    m.set_metronome(&spec.id, true, false, t0).unwrap();
+    let e = SectionEdit::Flags { index: 1, at: 10500.0, metronome: false, count_in: false };
+    let s = m.edit_sections(&spec.id, e, t0).unwrap();
+    assert!(!s.tempo.segments[1].meta.metronome);
+    let on_disk = disk(&spec).unwrap()["tempo"]["segments"].clone();
+    m.tick(t0 + ms(499));
+    assert_eq!(disk(&spec).unwrap()["tempo"]["segments"], on_disk, "not before the debounce");
+    m.tick(t0 + ms(500));
+    assert_eq!(disk(&spec).unwrap()["tempo"]["segments"][1]["metronome"], false);
+
+    // from 10000: 120 BPM clicks at 10000 only; the 90 BPM section is silent
+    let start = 10000 * RATE / 1000;
+    m.seek(&spec.id, 10000, t0).unwrap();
+    m.play(&spec.id, t0).unwrap();
+    let first = RATE * 3 / 2;
+    let got = b.pull(first);
+    let mut want = expected(&pcm, start, first);
+    fade_in(&mut want, 0);
+    add_click(&mut want, 0);
+    close(&got, &want);
+
+    // on again at 11500 ms: the next 90 BPM beat is at 11833.33 ms
+    let e = SectionEdit::Flags { index: 1, at: 10500.0, metronome: true, count_in: false };
+    m.edit_sections(&spec.id, e, t0 + ms(1000)).unwrap();
+    let next = ((35500.0f64 / 3.0) * RATE as f64 / 1000.0).round() as usize - (start + first);
+    let got = b.pull(RATE);
+    let mut want = expected(&pcm, start + first, RATE);
+    add_click(&mut want, next);
+    close(&got, &want);
+
+    let e = SectionEdit::Name { index: 1, at: 10500.0, name: " Verse ".into() };
+    let t1 = t0 + ms(2000);
+    let s = m.edit_sections(&spec.id, e, t1).unwrap();
+    assert_eq!(s.tempo.segments[1].meta.name, "Verse");
+    m.tick(t1 + ms(499));
+    assert_ne!(disk(&spec).unwrap()["tempo"]["segments"][1]["name"], "Verse");
+    m.tick(t1 + ms(500));
+    assert_eq!(disk(&spec).unwrap()["tempo"]["segments"][1]["name"], "Verse");
+}
+
+#[test]
+fn stale_section_flags_name_and_jump_change_nothing() {
+    let (_t, spec, mut m, _b, _e, _pcm) = with_tempo();
+    let t0 = Instant::now();
+    let before = m.snapshot(&spec.id).unwrap().tempo;
+    let fixture = disk(&spec).unwrap();
+    let e = SectionEdit::Flags { index: 1, at: 10499.0, metronome: false, count_in: true };
+    assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), STALE);
+    let e = SectionEdit::Name { index: 5, at: 0.0, name: "x".into() };
+    assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), STALE);
+    assert_eq!(m.jump_section(&spec.id, 1, 10499.0, Edge::Start, t0).unwrap_err(), STALE);
+    let e = SectionEdit::Name { index: 1, at: 10500.0, name: "a".repeat(41) };
+    assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), "Section names can have at most 40 characters");
+    assert_eq!(m.snapshot(&spec.id).unwrap().tempo, before);
+    m.tick(t0 + ms(5000));
+    assert_eq!(disk(&spec).unwrap(), fixture);
+}
+
+fn grid_frames(m: &PlayerManager) -> Vec<u64> {
+    m.session.as_ref().unwrap().grid().iter().map(|b| b.0).collect()
+}
+
+#[test]
+fn a_repeating_loop_ending_at_a_count_in_section_skips_that_count_in() {
+    let (_t, spec, mut m, _b, _e, _pcm) = with_tempo();
+    let t0 = Instant::now();
+    // loop-1 repeats; make it end at the start of the 90 BPM section
+    m.loop_action(&spec.id, LoopAction::Set(Mark::End, Boundary::Tick { tick: 304 }), t0).unwrap();
+    let e = SectionEdit::Flags { index: 1, at: 10500.0, metronome: true, count_in: true };
+    m.edit_sections(&spec.id, e, t0).unwrap();
+    // 90 BPM: count-in clicks at 8500, 9166.67 and 9833.33 ms
+    let count_in = ((29500.0f64 / 3.0) * RATE as f64 / 1000.0).round() as u64;
+    assert!(!grid_frames(&m).contains(&count_in), "loop on: no count-in");
+    m.loop_action(&spec.id, LoopAction::Flags { repeat: false, count_in: false }, t0).unwrap();
+    assert!(grid_frames(&m).contains(&count_in), "loop off: back");
+    m.loop_action(&spec.id, LoopAction::Flags { repeat: true, count_in: false }, t0).unwrap();
+    assert!(!grid_frames(&m).contains(&count_in));
+}
+
+#[test]
+fn master_off_silences_section_count_ins_but_not_the_play_pre_roll() {
+    let (_t, spec, mut m, b, _e, pcm) = with_tempo();
+    let t0 = Instant::now();
+    let e = SectionEdit::Flags { index: 1, at: 10500.0, metronome: true, count_in: true };
+    m.edit_sections(&spec.id, e, t0).unwrap();
+    m.set_metronome(&spec.id, false, false, t0).unwrap();
+    let start = 8000 * RATE / 1000;
+    m.seek(&spec.id, 8000, t0).unwrap();
+    m.play(&spec.id, t0).unwrap();
+    let total = RATE * 3;
+    let mut want = expected(&pcm, start, total);
+    fade_in(&mut want, 0);
+    close(&b.pull(total), &want);
+
+    m.pause(&spec.id, t0).unwrap();
+    m.set_metronome(&spec.id, false, true, t0).unwrap();
+    m.seek(&spec.id, 8000, t0).unwrap();
+    assert!(m.play(&spec.id, t0).unwrap().counting_in);
+    assert!(peak(&b.pull(5000)) > 0.0, "the pre-roll clicks");
+}
+
+#[test]
+fn jump_section_is_instant_while_playing_and_moves_the_playhead_while_paused() {
+    let (_t, spec, mut m, b, events, pcm) = with_tempo();
+    let t0 = Instant::now();
+    m.set_metronome(&spec.id, false, false, t0).unwrap();
+    m.seek(&spec.id, 1000, t0).unwrap();
+    m.jump_section(&spec.id, 1, 10500.0, Edge::Start, t0).unwrap();
+    assert_eq!(pos_ms(&m, &spec.id), 10500);
+    assert_eq!(peak(&b.pull(500)), 0.0, "paused: nothing sounds");
+    m.tick(t0 + ms(500));
+    assert_eq!(disk(&spec).unwrap()["position_ms"], 10500);
+
+    m.play(&spec.id, t0).unwrap();
+    b.pull(100);
+    events.lock().unwrap().clear();
+    let st = m.snapshot(&spec.id).unwrap();
+    let end_ms = st.duration_ms as f64;
+    let target = m.session.as_ref().unwrap().state.tempo.section_jump_ms(1, Edge::End, end_ms).unwrap();
+    let s = m.jump_section(&spec.id, 1, 10500.0, Edge::End, t0).unwrap();
+    assert!(s.transport.playing && !s.transport.resume_pending);
+    let f = (target * RATE as f64 / 1000.0).round() as usize;
+    assert_eq!(m.session.as_ref().unwrap().pos() as usize, f);
+    let got = b.pull(2000);
+    let mut want = expected(&pcm, f, 2000);
+    fade_in(&mut want, 0);
+    close(&got, &want);
+    assert!(
+        events.lock().unwrap().iter().all(|e| !matches!(e, PlayerEvent::Transport { state, .. } if !state.playing || state.resume_pending)),
+        "no pause or seek event"
+    );
+}
+
+#[test]
+fn jump_section_cancels_a_pre_roll_count_in() {
+    let (_t, spec, mut m, b, _e, _pcm) = with_tempo();
+    let t0 = Instant::now();
+    m.set_metronome(&spec.id, false, true, t0).unwrap();
+    m.seek(&spec.id, 1000, t0).unwrap();
+    m.play(&spec.id, t0).unwrap();
+    b.pull(15000);
+    assert!(m.snapshot(&spec.id).unwrap().transport.counting_in);
+    m.jump_section(&spec.id, 1, 10500.0, Edge::Start, t0).unwrap();
+    assert!(peak(&b.pull(2000)) > 0.0);
+    let t = m.snapshot(&spec.id).unwrap().transport;
+    assert!(!t.counting_in && t.playing);
+    assert_eq!(t.position_ms, 10500 + 2000 * 1000 / RATE as u64);
 }
 
 #[test]
