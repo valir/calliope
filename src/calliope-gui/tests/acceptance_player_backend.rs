@@ -2248,3 +2248,230 @@ fn qa_edits_survive_a_flush_before_the_debounce_on_leave_and_close() {
     r.m.close();
     assert_eq!(r.disk().unwrap()["tempo"]["segments"][1]["bpm"], 102.0, "close flushes at once");
 }
+
+// =========================================================================================
+// section metronome (gui-player-tempo-sections phase 2)
+// =========================================================================================
+
+/// A schema 4 `player.json` with the TS fixture's sections plus the given section keys, master metronome and loops.
+fn ts4_json(seg1: &str, metronome: bool, loops: &str) -> String {
+    format!(
+        r#"{{"schema_version":4,"metronome":{{"on":{metronome},"count_in":false}},"loops":[{loops}],"tempo":{{"beats_per_bar":4,"segments":[
+        {{"start_ms":500,"bpm":120}},{{"start_ms":8500,"bpm":93,"detected_ms":8500{seg1}}}]}}}}"#
+    )
+}
+
+/// Plays from `from_ms` and returns the click times found over the next `ms`.
+fn clicks_from(r: &mut Rig, from_ms: u64, ms: f64) -> Vec<f64> {
+    r.seek(from_ms);
+    r.play();
+    r.pull_clicks(ms).0
+}
+
+fn assert_clicks(found: &[f64], want: &[f64]) {
+    let tol = 2.0 * 1000.0 / RATE as f64 + 0.5;
+    assert_eq!(found.len(), want.len(), "{found:?} vs {want:?}");
+    for (f, w) in found.iter().zip(want) {
+        assert!((f - w).abs() < tol, "{found:?} vs {want:?}");
+    }
+}
+
+fn flags(r: &mut Rig, index: usize, metronome: bool, count_in: bool) -> Result<PlayerSnapshot, String> {
+    let at = r.sections()[index].0;
+    r.m.edit_sections(&r.id(), SectionEdit::Flags { index, at, metronome, count_in }, r.t0)
+}
+
+#[test]
+fn ts11_count_in_replaces_the_previous_sections_last_clicks() {
+    let mut r = rig_with(PRACTICE, &ts4_json(r#","count_in":true"#, true, ""));
+    let c = clicks_from(&mut r, 4900, 4500.0);
+    let want = [5000.0, 5500.0, 6000.0, 6564.52, 7209.68, 7854.84, 8500.0, 9145.16];
+    assert_clicks(&c, &want);
+    // the count-in is three clicks one 93-BPM beat apart, the last one a beat before the section
+    near_all(&gaps(&c[3..]), 60000.0 / 93.0);
+}
+
+#[test]
+fn ts12_section_metronome_off_is_silent_and_follows_while_playing() {
+    let mut r = rig_with(PRACTICE, &ts4_json("", true, ""));
+    flags(&mut r, 0, false, false).unwrap();
+    let c = clicks_from(&mut r, 8000, 2000.0);
+    assert_clicks(&c, &[8500.0, 9145.16, 9790.32]);
+    // while playing: on again, clicks from the next 120-BPM beat
+    r.seek(4900);
+    r.play();
+    let (c, _) = r.pull_clicks(1000.0);
+    assert!(c.is_empty(), "{c:?}");
+    flags(&mut r, 0, true, false).unwrap();
+    let (c, _) = r.pull_clicks(1600.0);
+    assert_eq!(c.len(), 3, "{c:?}");
+    assert!(c[0] >= 5900.0 && c[0] < 6200.0, "{c:?}");
+    near_all(&gaps(&c), 500.0);
+    // master Off: silence
+    r.m.set_metronome(&r.id(), false, false, r.t0).unwrap();
+    let (c, _) = r.pull_clicks(1500.0);
+    assert!(c.is_empty(), "{c:?}");
+}
+
+#[test]
+fn ts13_count_in_with_previous_off_short_previous_and_loops() {
+    // previous section off: the three clicks (and the section's own first beat) only
+    let mut r = rig_with(PRACTICE, &ts4_json(r#","count_in":true"#, true, ""));
+    flags(&mut r, 0, false, false).unwrap();
+    let c = clicks_from(&mut r, 4900, 4200.0);
+    assert_clicks(&c, &[6564.52, 7209.68, 7854.84, 8500.0]);
+
+    // a short previous section: the count-in reaches back over the earlier clicks
+    let short = r#"{"schema_version":4,"metronome":{"on":true,"count_in":false},"tempo":{"beats_per_bar":4,"segments":[
+        {"start_ms":0,"bpm":120},{"start_ms":4000,"bpm":120,"on_beat":true},{"start_ms":5000,"bpm":60,"on_beat":true,"count_in":true}]}}"#;
+    let mut r = rig_with(PRACTICE, short);
+    let c: Vec<f64> = clicks_from(&mut r, 0, 5400.0).into_iter().filter(|&t| t > 100.0).collect(); // not the click at 0
+    assert_clicks(&c, &[500.0, 1000.0, 1500.0, 2000.0, 3000.0, 4000.0, 5000.0]);
+
+    // Loop On, loop 500..8500 ending where the section starts: no count-in at the loop end
+    let lp = r#"{"id":"loop-1","start":{"ms":500},"end":{"ms":8500},"repeat":true,"count_in":false}"#;
+    let json = ts4_json(r#","count_in":true"#, true, lp).replace(r#""loops""#, r#""current_loop":"loop-1","loops""#);
+    let mut r = rig_with(PRACTICE, &json);
+    r.lp(LoopAction::Play).unwrap();
+    assert_eq!(r.pos(), 500);
+    let (c, _) = r.pull_clicks(7900.0);
+    let c: Vec<f64> = c.into_iter().filter(|&t| t > 600.0).collect(); // not the click at the loop start
+    assert_eq!(c.len(), 15, "{c:?}");
+    near_all(&gaps(&c), 500.0);
+    assert!((c[14] - 8000.0).abs() < 1.0, "{c:?}");
+    // Loop Off: the count-in is back
+    r.lp(LoopAction::Stop).unwrap();
+    r.lp(LoopAction::Flags { repeat: false, count_in: false }).unwrap();
+    r.lp(LoopAction::Play).unwrap();
+    let (c, _) = r.pull_clicks(7900.0);
+    assert!(c.iter().any(|t| (t - 6564.52).abs() < 1.0), "{c:?}");
+}
+
+#[test]
+fn ts14_jump_to_section_start_and_last_bar() {
+    let mut r = rig_with(PRACTICE, &ts4_json("", false, ""));
+    r.seek(2000);
+    r.play();
+    r.b.pull(frames_of(300.0));
+    let at = r.sections()[1].0;
+    let s = r.m.jump_section(&r.id(), 1, at, tempo_map::Edge::Start, r.t0).unwrap();
+    assert!(s.transport.playing);
+    assert_eq!(s.transport.position_ms, 8500);
+    let n = frames_of(1500.0);
+    let got = r.b.pull(n);
+    let want = expected(&r.pcm(), frames_of(8500.0), n);
+    assert!(clicks(&got, &want, 200).is_empty(), "the audio is the source from the target on");
+    assert!(r.snap().transport.playing);
+    let s = r.m.jump_section(&r.id(), 0, 500.0, tempo_map::Edge::End, r.t0).unwrap();
+    assert_eq!(s.transport.position_ms, 6500);
+    assert!(s.transport.playing);
+    // paused: the position moves, nothing sounds
+    r.m.pause(&r.id(), r.t0).unwrap();
+    let s = r.m.jump_section(&r.id(), 1, at, tempo_map::Edge::Start, r.t0).unwrap();
+    assert!(!s.transport.playing);
+    assert_eq!(s.transport.position_ms, 8500);
+    assert_eq!(peak(&r.b.pull(2000)), 0.0);
+    // a stale position is refused
+    assert!(r.m.jump_section(&r.id(), 1, 8000.0, tempo_map::Edge::Start, r.t0).is_err());
+}
+
+#[test]
+fn ts15_names_and_flags_survive_close_and_reopen() {
+    let mut r = ts_rig();
+    r.edit(SectionEdit::Name { index: 1, at: 8500.0, name: "Chorus".into() });
+    flags(&mut r, 1, false, true).unwrap();
+    r.edit(SectionEdit::Name { index: 0, at: 500.0, name: "Intro".into() });
+    r.edit(SectionEdit::Bpm { index: 0, at: 500.0, bpm: 110.0 });
+    r.edit(SectionEdit::Add { position: 15010.0, bpm: 140.0 });
+    let want = r.snap().tempo.segments;
+    assert_eq!(want.len(), 3);
+    assert_eq!((want[1].meta.name.as_str(), want[1].meta.metronome, want[1].meta.count_in), ("Chorus", false, true));
+    r.m.close();
+    let d = r.disk().unwrap();
+    assert_eq!(d["schema_version"], 4);
+    assert_eq!(d["tempo"]["segments"][0]["name"], "Intro");
+    assert_eq!(d["tempo"]["segments"][1]["metronome"], false);
+    r.reopen();
+    let back = r.snap().tempo.segments;
+    assert_eq!(back.len(), want.len());
+    for (a, b) in back.iter().zip(&want) {
+        assert!(a.start_ms == b.start_ms && a.bpm == b.bpm && a.meta == b.meta, "{a:?} vs {b:?}");
+        assert_eq!((a.detected_ms, a.on_beat), (b.detected_ms, b.on_beat));
+    }
+}
+
+#[test]
+fn ts16_older_schemas_upgrade() {
+    for v in [1, 2, 3] {
+        let text = TS_FIXTURE.replace(r#""schema_version":2"#, &format!(r#""schema_version":{v}"#));
+        let mut r = rig_with(PRACTICE, &text);
+        for s in &r.snap().tempo.segments {
+            assert_eq!((s.meta.name.as_str(), s.meta.metronome, s.meta.count_in), ("", true, false), "v{v}");
+        }
+        r.metronome_on();
+        let c = clicks_from(&mut r, 4900, 4500.0);
+        let mut want = vec![5000.0, 5500.0, 6000.0, 6500.0, 7000.0, 7500.0, 8000.0, 8500.0, 9145.16];
+        want.truncate(c.len().min(want.len()));
+        assert_eq!(c.len(), 9, "v{v}: {c:?}");
+        assert_clicks(&c, &want);
+        r.edit(SectionEdit::Name { index: 0, at: 500.0, name: "A".into() });
+        r.flush();
+        assert_eq!(r.disk().unwrap()["schema_version"], 4, "v{v}");
+    }
+    // a newer file is never overwritten through flags, name or jump
+    let text = r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":120},{"start_ms":8500,"bpm":93}]}}"#;
+    let (_t, spec, mut m, _b, _e, r) = open_with_file(text.as_bytes());
+    r.unwrap();
+    let t0 = Instant::now();
+    let _ = m.edit_sections(&spec.id, SectionEdit::Flags { index: 1, at: 8500.0, metronome: false, count_in: true }, t0);
+    let _ = m.edit_sections(&spec.id, SectionEdit::Name { index: 0, at: 500.0, name: "x".into() }, t0);
+    let _ = m.jump_section(&spec.id, 1, 8500.0, tempo_map::Edge::Start, t0);
+    m.tick(t0 + Duration::from_secs(10));
+    m.close();
+    assert_eq!(std::fs::read_to_string(spec.dir.join("player.json")).unwrap(), text);
+}
+
+#[test]
+fn ts17_edits_carry_the_section_settings() {
+    let seg1 = r#","name":"Chorus","metronome":false,"count_in":true"#;
+    let meta = |r: &Rig, i: usize| {
+        let m = &r.snap().tempo.segments[i].meta;
+        (m.name.clone(), m.metronome, m.count_in)
+    };
+    let chorus = ("Chorus".to_string(), false, true);
+
+    // Add copies the metronome flag of the section it splits; no name, no count-in
+    let mut r = rig_with(PRACTICE, &ts4_json(seg1, true, ""));
+    r.edit(SectionEdit::Add { position: 15010.0, bpm: 140.0 });
+    assert_eq!(meta(&r, 2), (String::new(), false, false));
+    assert_eq!(meta(&r, 1), chorus);
+    // Remove drops the joined section's settings; the one before keeps its own
+    r.edit(SectionEdit::Name { index: 0, at: 500.0, name: "Intro".into() });
+    r.edit(SectionEdit::Remove { index: 1, at: 8500.0 });
+    assert_eq!(r.snap().tempo.segments.len(), 2);
+    assert_eq!(meta(&r, 0), ("Intro".to_string(), true, false));
+    assert_eq!(meta(&r, 1), (String::new(), false, false));
+
+    // move, BPM and scale keep everything
+    let mut r = rig_with(PRACTICE, &ts4_json(seg1, true, ""));
+    r.edit(SectionEdit::Move { index: 1, at: 8500.0, steps: 19 });
+    assert_eq!(meta(&r, 1), chorus);
+    let at = r.sections()[1].0;
+    r.edit(SectionEdit::Bpm { index: 1, at, bpm: 100.0 });
+    assert_eq!(meta(&r, 1), chorus);
+    r.edit(SectionEdit::Scale { index: 1, at, factor: Scale::Double });
+    assert_eq!(meta(&r, 1), chorus);
+    assert_eq!(r.sections()[1].1, 200.0);
+
+    // the Editor's offset move and write keep names and flags in the file
+    r.m.flush_if_open(&r.id()).unwrap();
+    let loaded = FileTempoStore.load(&r.id(), &r.spec.dir).unwrap();
+    let (m2, _) = loaded.set_change_offset(1, -3).unwrap();
+    assert_eq!((m2.segments[1].meta.name.clone(), m2.segments[1].meta.metronome, m2.segments[1].meta.count_in), chorus);
+    r.m.release(&r.id()).unwrap();
+    FileTempoStore.replace(&r.id(), &r.spec.dir, &|m| m.set_change_offset(1, -3).map(|x| x.0)).unwrap();
+    let d = r.disk().unwrap();
+    assert_eq!(d["tempo"]["segments"][1]["name"], "Chorus");
+    assert_eq!(d["tempo"]["segments"][1]["metronome"], false);
+    assert_eq!(d["tempo"]["segments"][1]["count_in"], true);
+}

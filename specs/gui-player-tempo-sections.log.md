@@ -23,3 +23,4 @@ task 13 | player.json schema 4 | implementer | done (other tests expecting schem
 task 14 | Schema-number literals in the other tests | local | done (gemma4 did 11 of 14 edits correctly, hit max turns; orchestrator did the 3 GUI-test lines)
 task 15 | The click list (section_clicks) | implementer | done
 task 16 | Player session: click grid, flags, names, jumps, IPC | implementer | done
+task 17 | Backend acceptance tests ts11-ts17 | implementer | done
