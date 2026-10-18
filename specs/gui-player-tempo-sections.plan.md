@@ -2049,3 +2049,14 @@ The owner accepted Q1-Q7 as recommended (Q1 with a clarification) and changed th
 
    At 1280x800 with the tree folded the pane scrolls at most 14 px (expected 0: ~316 px of controls against phase 2's
    ~412). Elsewhere (tree shown, 1024x640) Loops may wrap below Sections; there is never a sideways scroll. See 18.2.
+
+**Addendum (2026-10-18, after task 29).** Measured at 1280x800 with the tree folded, the Player pane is 965 px wide
+(the left navigation takes ~310 px), not ~1200 px, so Sections (~822 px) and Loops (~430 px) could not sit side by
+side (`loops_beside=0`, overflow 0). The owner chose a **compact redesign** so they fit side by side at that size with
+the navigation shown:
+- the BPM input moves into the Sections title row; the disabled -/+/Reset placeholders and "Comes in a later update"
+  are hidden until that feature exists;
+- the section buttons get compact (icon-sized) widths; Sections keeps 3 rows;
+- Loops stacks its controls in 3 short lines, about 430 px wide.
+Target unchanged: `loops_beside=1` and overflow at most 14 px at 1280x800 with the tree folded. This is done as a
+rework of task 29 ("task 29b") before task 30.

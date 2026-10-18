@@ -40,3 +40,4 @@ task 26 | Schema-number literals in the other tests | local | done (gemma4 all 7
 task 28 | Frontend: no global metronome, section-1 Count In, loop log end= | implementer | done (ran in parallel with task 27)
 task 29 | Player layout: Sections (BPM inside) + Loops row, Playback at the bottom, layout log | implementer | done (overflow 0 at 1280x800 rail, but pane is 965 px wide so Loops wraps below Sections: loops_beside=0; owner to decide)
 task 27 | Backend acceptance tests: master removed, TS19-TS24 | implementer | done
+owner | layout: compact redesign so Sections and Loops fit side by side at 1280x800 (plan 24 addendum) | owner | done
