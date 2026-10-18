@@ -42,11 +42,11 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (beat detection job) | Laptop | Renders the drums + bass + guitar stems (`other` without a guitar, else all stems) at unity gain to a part file, uploads it to `POST /v1/beats`, waits, fetches and validates the beats, derives the sections, saves them through the `TempoStore`; phases, cancel, cleanup | Rust (own std thread) | `src/beat_detect.rs` (+ `src/beat_detect_tests.rs`) |
 | calliope-gui (backing render) | Laptop | Offline render of the mix to FLAC | Rust, `flacenc` | `src/backing_render.rs` |
 | calliope-gui (tempo map) | Laptop | Tempo segments, beat grid in 1/64-note ticks (16 per beat, `beats_per_bar` default 4), ms<->tick, snapping, "set BPM at position", beats in a range, loop boundary re-snapping; detected changes (`Segment.detected_ms`) and placed changes (`Segment.on_beat`, added or moved in the Player) both start their section on a beat: beat-rounded tick base, stretched last beat. Section operations: `move_change` (1/64-beat steps of the left tempo; detected: ±256 from the detected position, widened to the current offset; others: counted from the left section's start, no limit), `set_section_bpm`, `scale_section` (×2/÷2), `add_change` (on the split section's 1/64-beat grid), `remove_change`; every section ≥ 1 beat of its own tempo; `set_change_offset` (the Editor's, detected only). Per-section settings `Segment.meta: SectionMeta {name, metronome, count_in}` (flattened; carried through edits: Add copies the split section's metronome flag, Remove drops the joined section's), `set_section_flags`, `set_section_name`, `section_jump_ms` (start, or start of the last bar) | Rust, pure | `src/tempo_map.rs` |
-| calliope-gui (player state) | Laptop | `player.json` schema 4 (reads 1-4; lenient read, strict write, newer schema read-only), loop list operations, source choice rule, load/save | Rust + serde, pure | `src/player_state.rs` |
+| calliope-gui (player state) | Laptop | `player.json` schema 5 (reads 1-5, migrating the old global metronome of 1-4; lenient read, strict write, newer schema read-only), loop list operations (a new loop ends at the next tempo section or the track end), source choice rule, load/save | Rust + serde, pure | `src/player_state.rs` |
 | calliope-gui (player sources) | Laptop | Dropdown entries of a track (backing variants, `audio`, `original`, stems), decoding one into memory (FLAC: `claxon`; other formats: external `ffmpeg` piped to memory), waveform peaks (2048) | Rust | `src/player_source.rs` |
 | calliope-gui (metronome) | Laptop | Synthesised click (own sound), count-in plan, placing clicks in an output block, `section_clicks` (the song's click list: beats of sections whose metronome is on, with each section count-in replacing the clicks before that section; skipped at the end of a repeating loop) | Rust, pure | `src/metronome.rs` |
-| calliope-gui (player engine) | Laptop | Player sessions: one decoded source, a callback-owned `Engine` (playback, count-in, loop repeats, metronome, fades) fed by a bounded command channel, transport + scrub rule, events, debounced `player.json` writes, `edit_sections(id, SectionEdit)` (Player tempo-section edits, section flags and names applied live: new click grid, loops re-snapped, debounced write; stale-index guard), `jump_section` (instant jump to a section's start or last bar), the grid sent to the engine is `section_clicks` (re-sent when the repeating loop changes; Metronome On/Off gates it as the master switch), `release(id)` (flush + close + `closed` event when the Editor writes the tempo), `finish_open` re-reads a `player.json` changed since its off-lock load | Rust (std threads) | `src/player.rs` (+ `src/player_tests.rs`) |
-| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Editor: shared track tree + stem mixer + Mix lane with the mix waveform (tempo sections, draggable changes) and Autodetect BPM; Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform (loops + editable tempo sections: drag, keys, BPM label overlay), control bar with a Sections group (status + section name box, Add, Remove, ×2, ÷2, Start, End, the nested Metronome sub-group (On/Off master, Count In) and the section's Click / Count In toggles; Home/End keys); Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
+| calliope-gui (player engine) | Laptop | Player sessions: one decoded source, a callback-owned `Engine` (playback, count-in, loop repeats, metronome, fades) fed by a bounded command channel, transport + scrub rule, events, debounced `player.json` writes, `edit_sections(id, SectionEdit)` (Player tempo-section edits, section flags and names applied live: new click grid, loops re-snapped, debounced write; stale-index guard), `jump_section` (instant jump to a section's start or last bar), the grid sent to the engine is `section_clicks` (re-sent when the repeating loop changes; the engine's metronome flag only means "has a tempo" since gui-player-tempo-sections phase 3), the Play pre-roll comes from the Count In of the section under the playhead and loop Play's from the loop's Count-In, `release(id)` (flush + close + `closed` event when the Editor writes the tempo), `finish_open` re-reads a `player.json` changed since its off-lock load | Rust (std threads) | `src/player.rs` (+ `src/player_tests.rs`) |
+| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Editor: shared track tree + stem mixer + Mix lane with the mix waveform (tempo sections, draggable changes) and Autodetect BPM; Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform (loops + editable tempo sections: drag, keys, BPM label overlay), under the waveform two full-width rows: Sections (the BPM group, then status + section name box, Add, Remove, ×2, ÷2, Start, End and the section's Click / Count In toggles; no global metronome) beside Loops (Loops wraps below in narrow windows), then Playback at the bottom; Home/End keys); Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
 | calliope-lib (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation (incl. the beats document, `check_beats`), FLAC STREAMINFO parser, FLAC audible-time scan (`flac_level`: 100 ms windows, RMS of the loudest channel above `AUDIBLE_LEVEL_DBFS = -40`, integer sum-of-squares comparison, peak for display; no 15 s decision), HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel). No Tauri/GTK | Rust; `serde`, `libc`, `claxon`, `ureq` 3 without TLS (feature) | `src/calliope-lib/` |
 | calliope-stems (edge-AI stems service) | archserver (LAN), deployed by hand as a systemd user unit | HTTP server for "calliope-stems API v1": validates FLAC uploads (≤ 15 min), queues jobs (1 running), runs a configurable separator command, measures each stem's audible time, serves the stems, cleans up; beat jobs (`POST /v1/beats`) run a configurable beat-tracker command in the same queue; `--measure FILE...` prints audible times without starting a server. No Tauri/GTK; the GUI doesn't depend on it | Rust; `tiny_http`, `calliope-lib` | `src/calliope-stems/` |
 | separator adapter | archserver | `<sep> <input.flac> <out_dir> <model>` → `<out_dir>/<stem>.flac`; the real one runs the owner's audio-separator venv with `htdemucs_6s` (frees VRAM from Ollama first) | bash | `src/calliope-stems/separators/audio-separator.sh` |
@@ -251,10 +251,12 @@ the GUI crate, `src/calliope-gui/`.
   watcher; the Library rescans each time it is shown. A configured root that doesn't exist is
   never created (it may be an unmounted disk); the default root is created on first use.
 - **Player settings file `player.json`** (gui-play-backing-track plan §2.3-2.5), next to `track.json`:
-  `{"schema_version": 4, "source": "backing:<id>"|"audio"|"original"|"stem:<name>", "position_ms": <int>, "tempo": {"beats_per_bar": 4,
-  "segments": [{"start_ms": <number>, "bpm": <20..300>[, "detected_ms": <number>][, "on_beat": true][, "name": <string>][, "metronome": false][, "count_in": true]}]}, "speed": <0.5..1.5>, "metronome": {"on", "count_in"},
+  `{"schema_version": 5, "source": "backing:<id>"|"audio"|"original"|"stem:<name>", "position_ms": <int>, "tempo": {"beats_per_bar": 4,
+  "segments": [{"start_ms": <number>, "bpm": <20..300>[, "detected_ms": <number>][, "on_beat": true][, "name": <string>][, "metronome": false][, "count_in": true]}]}, "speed": <0.5..1.5>,
   "loops": [{"id", "start": {"tick": <int>}|{"ms": <number>}, "end": <same>|null, "repeat", "count_in"}], "current_loop": <id|null>}`.
-  `end: null` = a loop created with `+` whose end is not set yet (no repeat, Play disabled, only its start mark drawn).
+  `end: null` = a loop whose end is not set (no repeat, Play disabled, only its start mark drawn). Since gui-player-tempo-sections
+  phase 3, `+` sets the end at once: the next tempo section's start tick after the loop start, else the track end (ms in
+  timestamp mode); `end` is null only when there is no room, or after `>` moved the start past the end.
   The playback position is saved per track (on pause/seek/leave/switch/exit and every 10 s while playing).
   No segments = BPM 0 = timestamp mode; loop boundaries are ticks (1/64 notes from the first segment's start) in BPM
   mode and ms in timestamp mode, re-snapped (keeping their time) whenever the tempo map changes. One state per track,
@@ -268,7 +270,7 @@ the GUI crate, `src/calliope-gui/`.
   to the nearest whole beat of the global count and the 16 ticks of the left section's last beat are spread linearly up to
   `start_ms` (a stretched beat of 1/2..3/2 beats); it moves in 1/64-beat steps of the left tempo, at most ±256 steps from
   `detected_ms`. Typed changes keep the tick rule; loops still snap to 1/64 notes. Schema 1 files are read as before
-  (they have no detected changes); writes are schema 4 since gui-player-tempo-sections phase 2 (below), so older builds treat the file as newer and never overwrite it.
+  (they have no detected changes); writes are schema 5 since gui-player-tempo-sections phase 3 (below), so older builds treat the file as newer and never overwrite it.
   Typing a BPM at a detected change's start, or anywhere inside the stretched last beat before it, replaces that change's
   BPM and keeps its position and `detected_ms` (so the tick bases stay strictly increasing; `bases()` also clamps them as a
   safety net); removing or merging a segment drops it; a new
@@ -284,9 +286,16 @@ the GUI crate, `src/calliope-gui/`.
   **Schema 4** (gui-player-tempo-sections plan §10.2): a segment may carry per-section settings, written only when not the
   default: `name` (trimmed, no control characters, ≤ 40 characters), `"metronome": false` (this section doesn't click) and
   `"count_in": true` (three clicks at this section's tempo replace the previous section's last clicks, never on the first
-  segment). The top-level `metronome.on` is the master switch for all clicks during the song; `metronome.count_in` stays
-  the Play / loop pre-roll. Schema 1-3 files read with every section clicking, no count-in and no names; this build reads
-  1-4 and writes 4; schema-3 builds treat the file as newer and never overwrite it (their parser would drop the keys).
+  segment). In schema 4 the top-level `metronome.on` was the master switch for all clicks and `metronome.count_in` the
+  Play / loop pre-roll. Schema 1-3 files read with every section clicking, no count-in and no names; schema-3 builds
+  treat schema-4 files as newer and never overwrite them (their parser would drop the keys).
+  **Schema 5** (gui-player-tempo-sections plan §18.3, owner decisions 2026-10-18): there is no global metronome;
+  the top-level `metronome` object is no longer written. A section clicks only when its `metronome` is not false, and
+  `count_in` is allowed on the first segment, where it means only the Play pre-roll. Play counts in when the section under
+  the playhead has `count_in`; loop Play only with the loop's `count_in`. Schema 1-4 files are migrated on read: master
+  `on` false (or missing) → every section `metronome: false` and `count_in: false`; master `on` true → the section flags
+  kept; then master `count_in` true → the first section's `count_in: true`. This build reads 1-5 and writes 5; schema-4
+  builds treat the file as newer and never overwrite it.
   **The track's one tempo map** (stems-beat-autodetect plan §2.2): `tempo` in `player.json` is also written by the Editor
   (Autodetect BPM, moving a detected change) through `TempoStore::replace`, entirely under the `PlayerHost` lock: if the
   Player holds the track, its pending state is flushed and its session closed (`PlayerEvent::Closed`; the Player view
@@ -390,7 +399,7 @@ src/                      ALL source (owner requirement), one folder per crate
                           editor/ = EditorPane, StemLane, MixLane, TimeField (also used by the Player);
                           player/ = PlayerPane, SourceSelect, WaveformView (shared with the Editor's Mix lane, props-driven;
                           Player mode `freeMove` edits sections), SectionBpmInput (BPM overlay), BpmSection, SectionsSection,
-                          MetronomeSection, PlaybackSection, LoopsSection;
+                          PlaybackSection, LoopsSection (row 1: Sections with BPM inside + Loops; row 2: Playback);
                           library/TrackBrowser.svelte = tree column shared by Library and Editor;
                           TrackFields.svelte shared by Library and Import),
                           views/ (one file per main view),
@@ -551,7 +560,9 @@ the server out of the GUI.
   placed changes), `player_tests` (grid upload, 500 ms write, stale guard) and `tests/acceptance_player_backend.rs` `ts*`
   (ManualBackend: click onsets at exact frames before/after an edit, source samples continuous across an edit while
   playing, reopen from disk); fixture maps with detected changes are written into the temp copy as `player.json`. The GUI
-  test `gui_player_e2e::player_tempo_sections` checks the clicks in the capture WAV.
+  test `gui_player_e2e::player_tempo_sections` checks the clicks in the capture WAV. The Player pane logs
+  `calliope-ui: player layout overflow=<px> width=<px>` after its size settles, so GUI tests assert the scroll target
+  instead of judging scrolled screenshots only.
 - Test-only server option `--separator-timeout-ms N` (hidden like `--janitor-interval-ms`, min
   100, wins over `--separator-timeout-min`) lets the acceptance test exercise the separator
   timeout in about a second.
@@ -1179,7 +1190,7 @@ changes (no schema bump, clicks off the bar), making every change beat-aligned (
 maps and their loop ticks), storing placed changes as detected ones with a "free" key (confusing data, old builds would
 silently limit them).
 
-### 2026-10-17: Per-section metronome and count-in are a click list built by the manager; Metronome On/Off is the master switch; `player.json` schema 4   (feature: gui-player-tempo-sections phase 2; plan §10.2-10.6, recommended answers to phase-2 Q1-Q9, confirmed by the owner 2026-10-17)
+### 2026-10-17: Per-section metronome and count-in are a click list built by the manager; Metronome On/Off is the master switch; `player.json` schema 4   (feature: gui-player-tempo-sections phase 2; plan §10.2-10.6, recommended answers to phase-2 Q1-Q9, confirmed by the owner 2026-10-17; the master switch and the global Count In are superseded by the 2026-10-18 entry)
 Each tempo section can be named, silenced and given a count-in that plays while the song runs into it. Choice: the three
 settings live in the section's segment (`SectionMeta`, flattened, defaults not written) so they move with their change
 through every edit; the manager turns the map into the list of click frames (`metronome::section_clicks`: beats of
@@ -1190,3 +1201,20 @@ existing `Cmd::SetGrid`. The engine and its real-time rules are unchanged, and t
 because the schema-3 parser drops unknown segment keys. Alternatives: per-beat flags evaluated in the audio callback
 (more real-time code, harder to test), settings in a separate list keyed by section index (goes out of step on every
 Add/Remove), dropping the master switch (no quick way to silence everything while playing).
+
+### 2026-10-18: No global metronome: per-section Click and Count In only, Play counts in per section; `player.json` schema 5   (feature: gui-player-tempo-sections phase 3; plan §18.3-18.6; spec requirement 14; confirmed by the owner 2026-10-18, phase-3 Q1-Q8)
+The owner removed Metronome On/Off and the global Count In: what clicks is decided per section only. Choice: the engine's
+metronome flag now only gates "has a tempo" and `section_clicks` alone decides the clicks; Play's pre-roll is taken from
+the Count In of the section under the playhead (allowed on the first section, where it means only that pre-roll); loop
+Play uses only the loop's Count-In; the `player_metronome` command and the top-level `metronome` object go. Schema 5,
+because a schema-4 build would read a missing master as Off and drop the first section's count-in. Old files are migrated
+so that they sound the same (master Off → every section silent without count-ins; master Count In → the first section's
+Count In); Play mid-song counts in through the Count In of the section under the playhead, and only the old global
+pre-roll before loop Play is not carried (loop Play uses the loop's own Count-In). Autodetect copies the old first section's Click to every new section and its Count In to the new first
+section, so a re-detection keeps a quiet track quiet. A new loop ("+") ends at the next tempo section's start tick, or
+at the track end. Alternatives: keep the top-level object as a hidden master (contradicts the spec), migrate the master
+Count In to every section (adds count-ins while playing through), leave old files unmigrated (tracks with Metronome Off
+would start clicking). Layout (owner, Q8): under the waveform two full-width rows, Sections (with the BPM group) beside
+Loops, then Playback at the bottom; the pane logs `player layout overflow=… loops_beside=…` so GUI tests check that the
+pane scrolls at most 14 px at 1280x800 with the tree folded and that Loops sits beside Sections there; narrower
+windows wrap Loops below Sections, never sideways.

@@ -32,3 +32,4 @@ task 22 | GUI end-to-end player_section_metronome, re-measured click positions, 
 tester (phase 2) | all criteria TS11-TS17 PASS; 11 Rust + 4 vitest qa_p2 tests; no defects | tester | done
 reviewer (phase 2) | APPROVED; 2 minors (typed-BPM merge drops the later section name/flags; section_clicks builds all beats per count-in section), 3 nits | reviewer | done
 report | phase 2 added (DONE WITH ISSUES: layout 36 px) | orchestrator | done
+plan phase 3 | architect; owner: Q1 (Play mid-section uses the section Count In) Q2-Q7 recommended, Q8 two-row layout | architect | done
