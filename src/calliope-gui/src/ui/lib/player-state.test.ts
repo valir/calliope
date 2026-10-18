@@ -220,6 +220,37 @@ describe('player sections', () => {
     expect(logs()).toContain('player sections segments=3 bpm=100,120,90 starts=0,2000,5000 metronome=1,1,1 count_in=0,0,0 named=0');
   });
 
+  it('playback carrying the playhead into another section hands the target to it; Start jumps there', async () => {
+    await open();
+    const ev = (position_ms: number, tempo_index: number, playing = true) =>
+      channels[0].onmessage({ kind: 'transport', id: practice.id, ...idle, playing, position_ms, tempo_index });
+    // Section 2 selected on the waveform while the playhead is there too.
+    ev(2500, 1, false);
+    selectSection(1);
+    ev(2600, 1);
+    expect(targetSection()).toBe(1);
+    ev(5200, 2);
+    expect(pl.section).toBeNull();
+    expect(targetSection()).toBe(2);
+    ev(5300, 2, false);
+    handlers.player_tempo = (a) => withSegs(a.id as string, three);
+    await jumpSection('start');
+    expect(tempoCalls()).toEqual([{ kind: 'jump-section', index: 2, at: 5000, edge: 'start' }]);
+  });
+
+  it('a selection made while paused survives play within its section and a play from elsewhere', async () => {
+    await open();
+    const ev = (position_ms: number, tempo_index: number, playing: boolean) =>
+      channels[0].onmessage({ kind: 'transport', id: practice.id, ...idle, playing, position_ms, tempo_index });
+    ev(100, 0, false);
+    selectSection(2);
+    ev(100, 0, true);
+    ev(900, 0, true);
+    expect(targetSection()).toBe(2);
+    ev(2100, 1, true);
+    expect(targetSection()).toBe(1);
+  });
+
   it('add captures the playhead, selects the new section; remove selects the joined one', async () => {
     await open();
     pl.transport.position_ms = 3000;

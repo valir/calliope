@@ -221,8 +221,15 @@ export function leavePlayer(): void {
   log('player leave pause');
   const gen = generation;
   playerLeave(id)
-    .then((tr) => { if (gen === generation) pl.transport = tr; })
+    .then((tr) => { if (gen === generation) setTransport(tr); })
     .catch((e) => fail('player_leave', e));
+}
+
+/** Takes a transport; when the playhead moved into another section the selection is dropped, so the actions follow it. */
+function setTransport(t: PlayerTransport): void {
+  const was = pl.transport.tempo_index;
+  if (pl.section !== null && t.tempo_index !== was) pl.section = null;
+  pl.transport = t;
 }
 
 function onEvent(gen: number, e: PlayerEvent): void {
@@ -241,7 +248,7 @@ function onEvent(gen: number, e: PlayerEvent): void {
         if (moved || (!seekRunning && seekPending === null && reached)) seekGuard = null;
         else t.position_ms = pl.transport.position_ms;
       }
-      pl.transport = t;
+      setTransport(t);
       break;
     }
     case 'audio-error':
@@ -280,7 +287,7 @@ async function transportCall(
   try {
     const t = await run(id);
     if (gen !== generation) return;
-    pl.transport = t;
+    setTransport(t);
     pl.audioError = '';
     pl.actionError = '';
     pl.stateError = '';
@@ -385,7 +392,7 @@ async function drainSeek(): Promise<void> {
       try {
         const t = await playerSeek(id, pos);
         if (gen !== generation) break;
-        if (seekPending === null) pl.transport = t;
+        if (seekPending === null) setTransport(t);
         log(`player seek position=${pos}`);
       } catch (err) {
         if (gen === generation) fail('player_seek', err);
@@ -409,7 +416,7 @@ export function seek(positionMs: number): void {
 
 // ---- sections ----
 
-/** The section the actions apply to: the selection, else the one at the playhead. */
+/** The section the actions apply to: the selection (until the playhead moves into another section), else the one at the playhead. */
 export function targetSection(): number | null {
   const n = pl.snap?.tempo.segments.length ?? 0;
   if (n === 0) return null;

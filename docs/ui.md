@@ -153,6 +153,8 @@
 - (gui-player-tempo-sections) Player sections are editable. Every change can be dragged (no read-only
   dimming in the Player); the waveform in the Player selects a section by a click (4 px bar, and the label
   underlined), and the selected section, else the one at the playhead, is the target of the Sections group.
+  A selection holds only until the playhead enters another section (playback crossing a boundary, a seek or a
+  jump there); from then on the section under the playhead is the target.
   A change moves in 1/64-beat steps, at most 4 beats from where it was detected or added; edits made
   while playing never stop the audio, and the clicks follow from the next beat. Keys with the waveform
   focused: Up/Down select a section, Left/Right move the change by 1/64 beat, Shift+Left/Right by a beat,

@@ -62,7 +62,7 @@ beforeEach(() => {
     if (cmd === 'open_player') { channel = a.events as Channel<PlayerEvent>; return snap; }
     if (cmd === 'player_tempo' || cmd === 'player_loop' || cmd === 'player_select_source') return snap;
     if (cmd === 'player_leave') return { ...idle };
-    if (cmd.startsWith('player_')) return { ...idle };
+    if (cmd.startsWith('player_')) return { ...idle, tempo_index: snap.transport.tempo_index };
     if (cmd === 'get_repository') return { root: '/r', is_default: false, status: 'ok' };
     if (cmd === 'list_tracks') return { root: '/r', tracks: [practice, ...FIXTURE_TRACKS.slice(0, 2)], problems: [] };
     return null;
