@@ -55,3 +55,4 @@ fix round 2 (owner manual test) | stale section selection after playback crossed
 reviewer (fix round 2) | APPROVED; 2 minor notes | reviewer | done
 report | fix round 2 added | orchestrator | done
 fix round 3 (owner manual test) | Start walked back a section per press: transport tempo_index/bpm used floored ms; now exact frame time. Selection drop also applied to snapshots (unchanged starts) | implementer | done
+report | fix round 3 added | orchestrator | done

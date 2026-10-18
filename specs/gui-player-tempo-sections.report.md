@@ -266,6 +266,17 @@ My notes now say to check the diff size first and to avoid giving it deletions i
 - **Fix (`b458859`):** the selection drops when the playhead enters another section (by playback, a seek or a jump). A section you pick while paused, or by clicking or ↑/↓ while playing, holds until then. Start/End, the toggles, the name box and the status line all act on the same section.
 - **Tests:** two vitest tests reproduce it; both fail without the fix. The reviewer approved. The full GUI suite passed, including the stem-extraction test that had failed in the earlier full runs.
 
+### Fix round 3 (from your second laptop test)
+- **Symptoms:**
+  - |◀ still went back to the previously selected section.
+  - Each further press walked back one more section; ▶| was fine.
+- **Cause (proven by a test that failed before the fix):** the backend worked out the current section from the playhead position rounded down to a whole millisecond. After a Start jump to a detected section (for example 10500.01 ms), the playhead sat at 10500.045 ms, which rounded to 10500 and counted as the previous section.
+- **Fix (`7c154f8`):**
+  - The backend now uses the exact position for the current section and its BPM.
+  - The Player screen also drops an old selection when the update comes after a jump or an edit, unless the section boundaries changed (drag, Add, Remove) or the playhead is in the selected section.
+- **Tests:** the new tests pass. The test of your exact sequence passed before and after, so the first symptom is not reproduced in a test; please re-check M20.
+- **Suites:** the full headless and GUI suites pass.
+
 ### Flaky test
 `acceptance_stem_extraction_gui::qa_malicious_server_stem_names_are_refused_in_the_ui` has now failed in every full parallel GUI run (4 times), always at about 74 s. It passes every time on its own. It is unrelated to this feature and looks like a timing assumption that breaks under parallel load. It is worth its own fix.
 
@@ -337,7 +348,7 @@ Laptop only. Nothing changes on archserver.
 - [ ] **M18, default loop end.**
   - Pause inside a section and press "+": the loop ends exactly at the next section (the waveform mark and bar2 agree). In the last section it ends at the track end.
   - Loop On repeats it, and `e` while playing still shortens it.
-- [ ] **M20, section target after playing (fix round 2).** Select section 2, play into section 4 or 5, pause and press |◀: it jumps to the start of the section the playhead is in.
+- [ ] **M20, section target after playing (fix rounds 2 and 3).** Select section 2, play into section 4 or 5, pause and press |◀: it jumps to the start of the section the playhead is in, and pressing it again stays there (like ▶|). If not, send the `player section` log lines.
 - [ ] **M19, re-detect.** Re-run Autodetect in the Editor on a track whose sections are silent and whose first section has Count In: back in the Player it is still silent, and Play from the start still counts in.
 
 Once you've verified it, tick `gui-player-tempo-sections.md` in the roadmap of `specs/overview.md`.
