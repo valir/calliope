@@ -1,8 +1,8 @@
 # Report: Player tempo sections editing
 
-**Status: DONE WITH ISSUES.** Phase 1 (requirements 1–7) and phase 2 (requirements 8–11, added in `22bc967`) are both built. Every criterion passes and the reviewer approved both phases. The one open issue is layout: the Player pane now scrolls 36 px at 1280×800, against a ~14 px target. See "Phase 2" below.
+**Status: DONE.** All three phases are built: phase 1 (requirements 1–7), phase 2 (8–11, added in `22bc967`) and phase 3 (12–16, added in `ce958d3`). Every criterion passes and the reviewer approved each phase. Phase 2's open layout issue (36 px of scroll) is gone with the phase 3 layout: 0 px at 1280×800 with the tree folded.
 
-- Branch `spec/gui-player-tempo-sections`, base `0bd82c3`; phase 2 starts at `3529ee8`. Not pushed or merged.
+- Branch `spec/gui-player-tempo-sections`, base `0bd82c3`; phase 2 starts at `3529ee8`, phase 3 at `886cc73`. Not pushed or merged.
 - Spec: `specs/gui-player-tempo-sections.md`. Plan: `specs/gui-player-tempo-sections.plan.md`. Log: `specs/gui-player-tempo-sections.log.md`.
 
 ## What you get
@@ -164,7 +164,7 @@ Names and toggles are saved in `player.json`, which is now schema 4.
   - JS and Rust trim slightly different invisible characters in names;
   - the GUI tests assert on log wording.
 
-### Open issue: layout
+### Open issue: layout (resolved in phase 3)
 The Sections group is now three rows: the title and name box, then Add … End, then the Metronome and This-section toggles.
 - **Measured:** at 1280×800 with the tree folded, the Player pane scrolls by 36 px. That puts the bottom row of the Loops group (Play / Loop On / Count-In) just below the fold.
 - **Already done:** the implementer moved the message line into the group's padding (54 → 36 px).
@@ -175,6 +175,93 @@ The Sections group is now three rows: the title and name box, then Add … End, 
   - tighten the Playback or Loops groups.
 
 Screenshots: `target/gui-shots/player-*-section-selected.png` and `player-*-scrolled.png` (`CALLIOPE_GUI_SHOTS=1 npm run test:gui -- visual_review`).
+
+## Phase 3: two-row layout, no global metronome, default loop end
+
+**What you get.**
+- **Layout (your two-row choice and the compact redesign):**
+  - Row 1 holds **Sections** and **Loops** side by side.
+    - Sections: the title, the BPM field with V, and the name box; then +, −, ×2, ÷2, |◀, ▶|; then Click, Count In and the status line.
+    - Loops: three short lines, with the "Loops" title on the third.
+  - Row 2 is **Playback**, full width.
+  - The disabled BPM −/+/Reset placeholders are hidden until that feature exists.
+- **No global metronome:** the global On/Off and Count In are gone, along with their backend command and permission. Each section's Click and Count In decide everything.
+- **Play count-in:** Play counts in when the section under the playhead has Count In on, at that section's tempo. Section 1 can have Count In too. Loop Play counts in only with the loop's own Count-In.
+- **Loops "+":** a new loop ends where the next tempo section starts, or at the track end. It also ends at the track end on a track without a tempo.
+- **Saving:** `player.json` is now schema 5. Older files are converted:
+  - global metronome Off (or never set) → every section's Click and Count In off;
+  - On → the section settings are kept;
+  - global Count In → section 1's Count In.
+- **Re-detection** in the Editor keeps section 1's Click (for all new sections) and Count In.
+
+**Measured layout** (from the app's `player layout` log line):
+
+| Window | Tree | Scroll | Loops beside Sections |
+|---|---|---|---|
+| 1280×800 | folded | 0 px | yes |
+| 1280×800 | shown | 122 px | no, below |
+| 1024×640 | folded | 237 px | no, below |
+| 1024×640 | shown | 650 px | no, below; rows wrap inside the panes, nothing is cut off |
+
+### Acceptance criteria (phase 3)
+
+| # | Criterion | Tests | Result |
+|---|---|---|---|
+| TS18 (spec: layout) | Under the waveform: Sections (with BPM) and Loops in one row, Playback at the bottom; nothing cut off sideways | acceptance_player.test (pane order), GUI `player_phase3` (`loops_beside=1`, overflow ≤ 14), `qa_p3_layout_never_clips_sideways` (4 sizes) | PASS |
+| TS19 (spec: Play count-in) | Play counts in at the tempo of the section under the playhead with Count In, starts at once without | `ts19_*`, `qa_p3_play_count_in_*` (boundary, section 1, track end, no tempo, current loop), `qa_p3_start_jump_*`, `qa_qd3_*`, GUI `player_phase3` | PASS |
+| TS20 (spec: no global metronome) | No global On/Off or Count In; clicks only where Click is on | `ts20_*`, `qa_p3_the_master_metronome_command_and_its_permission_are_gone_everywhere`, vitest `qa_p3: no global Metronome…`, `qa_p3: …no command with "metronome"…` | PASS |
+| TS21 (spec: loop end) | "+" ends at the next section, or at the track end in the last section | `ts21_*`, `qa_p3_plus_*` (past the audio end, last section, three sections, timestamp mode, 99-loop limit), GUI `loop_add_ends_at_the_next_section…` | PASS |
+| TS22 | Schema 1–4 files are converted; schema 6+ read-only | `ts22_*`, `qa_p3_migration_*`, `qa_p3_newer_schemas_stay_read_only_*` | PASS |
+| TS23 | Loop Play counts in only with the loop's own Count-In | `ts23_*`, `qa_p3_play_with_a_current_loop_*` | PASS |
+| TS24 | Re-detection keeps section 1's Click and Count In | `ts24_*`, `qa_p3_autodetect_*`, beat_detect tests | PASS |
+
+**Suites.**
+- `npm test` passes: 599 frontend tests and every Rust test.
+- The full GUI suite passes except `acceptance_stem_extraction_gui::qa_malicious_server_stem_names_are_refused_in_the_ui` (see "Flaky test" below).
+- One full GUI run had many timeouts in every area, including Library and Import. It ran while the tester and I were compiling at the same time. A re-run with nothing else running passed.
+
+### Task log (phase 3)
+
+| Step | By | Result |
+|---|---|---|
+| plan phase 3 | architect | tasks 23–31; you changed Q1 (Play mid-section counts in from that section) and the layout to two rows |
+| task 23: tempo map: section 1 Count In, `count_in_at`, next section, settings carry | implementer | done |
+| task 24: remove the `player_metronome` command | **local (gemma4) failed** → implementer | gemma4 overwrote `build.rs` with one line; reverted, the implementer did the 4 deletions |
+| task 25: backend: schema 5, conversion, Play count-in, loop end, re-detection | implementer | done |
+| task 26: schema numbers in other tests | **local (gemma4)** | all 7 edits correct |
+| task 27: backend acceptance TS19–TS24 | implementer | done, no code fix needed |
+| task 28: frontend without the global metronome | implementer | done (ran alongside task 27) |
+| task 29: two-row layout | implementer | the pane is only 965 px wide at 1280×800, so Loops wrapped; you chose the compact redesign |
+| task 29b: compact layout | implementer | side by side at 1280×800, 0 px scroll |
+| task 30: GUI tests, screenshots, `docs/ui.md` | implementer | done; found sideways clipping at 1024×640 |
+| task 30b: wrap rows in narrow panes | implementer | nothing clipped |
+| task 31: README | **local (gemma4)** | 3½ of 4 replacements; I removed one stale phrase |
+| tester | tester | all PASS except QD3 (below); 20 `qa_p3_*` tests |
+| reviewer | reviewer | APPROVED; 5 stale doc lines, 3 nits |
+| fix round 1 | implementer | QD3 fixed, docs corrected |
+| re-verify | tester, reviewer | QD3 PASS with 6 more edge tests; APPROVED |
+
+**The local model (phase 3).**
+- Task 26 was perfect.
+- Task 31 needed one fix.
+- Task 24 was destructive: asked to delete one line, it replaced the whole `build.rs`.
+
+My notes now say to check the diff size first and to avoid giving it deletions in long files.
+
+### Review and test findings
+- **QD3, fixed:** a Start jump (|◀) to a section whose start isn't on a whole audio frame (common for detected changes) landed a frame early, so Play skipped that section's Count In. Start now lands on the first frame at or after the section start; End is unchanged.
+- **Docs, fixed:** `docs/architecture.md` still listed the removed command, log line and setting, and an old schema-4 rule; `docs/ui.md` described the old message slot.
+- **Left as is:**
+  - **Empty tempo map:** an old file with no tempo sections has nothing to convert, so its global metronome setting is dropped. This is noted in `docs/architecture.md`.
+  - **Hard-coded GUI click positions:** they are re-measured, and any drift shows up as a test failure.
+  - **Layout log:** the layout line is logged after every settled resize.
+- **Cosmetic:**
+  - At 1024×640 with the tree shown, the loop range slider shrinks to a dot.
+  - At 1280×800 the Sections pane has some empty space under its third row.
+  - When it wraps below Sections, Loops doesn't stretch to the full width.
+
+### Flaky test
+`acceptance_stem_extraction_gui::qa_malicious_server_stem_names_are_refused_in_the_ui` has now failed in every full parallel GUI run (4 times), always at about 74 s. It passes every time on its own. It is unrelated to this feature and looks like a timing assumption that breaks under parallel load. It is worth its own fix.
 
 ## How to try it
 
@@ -187,7 +274,7 @@ From `src/calliope-gui/`:
 
 Laptop only. Nothing changes on archserver.
 
-**Note:** this build writes `player.json` as schema 4. Older builds (including the phase-1 build, schema 3) open those files read-only: they play with defaults and never overwrite them. Don't mix builds on the same repository.
+**Note:** this build writes `player.json` as schema 5. Older builds (phase 1: schema 3, phase 2: schema 4) open those files read-only: they play with defaults and never overwrite them. Don't mix builds on the same repository. Opening an older file converts it once: if the old global metronome was Off, every section's Click and Count In start off.
 
 ## Manual checks (laptop with real audio)
 
@@ -227,6 +314,23 @@ Laptop only. Nothing changes on archserver.
   - The Editor shows no names.
 - [ ] **M13, layout.**
   - At your usual window size the Sections group is readable from 1–2 m, and the two Count In buttons are easy to tell apart.
-  - Decide on the 36 px scroll (see "Open issue: layout").
+  - (The phase 2 scroll issue is resolved by the phase 3 layout; see M14.)
+
+- [ ] **M14, layout.**
+  - At 1280×800 with the tree folded: Sections (with BPM) and Loops side by side, Playback at the bottom, and no scrolling.
+  - It is readable from 1–2 m, and Play is easy to find.
+- [ ] **M15, your existing tracks.**
+  - A track used with an older build: with the old Metronome Off it is now silent; with it On, the sections click as before.
+  - If its old Count In was on, Play from the start still counts in.
+  - Loop Play counts in only with the loop's own Count-In.
+- [ ] **M16, Play count-in.**
+  - Turn Count In on for a middle section, pause inside it and press Play: three clicks at its tempo, then the music.
+  - Pausing in a section without Count In, Play starts at once.
+  - Press |◀ on a detected section with Count In, then Play: it counts in (the QD3 fix).
+- [ ] **M17, Click only where wanted.** Click off for the intro and on for the verse: the intro is silent and the verse clicks. There is no global On/Off.
+- [ ] **M18, default loop end.**
+  - Pause inside a section and press "+": the loop ends exactly at the next section (the waveform mark and bar2 agree). In the last section it ends at the track end.
+  - Loop On repeats it, and `e` while playing still shortens it.
+- [ ] **M19, re-detect.** Re-run Autodetect in the Editor on a track whose sections are silent and whose first section has Count In: back in the Player it is still silent, and Play from the start still counts in.
 
 Once you've verified it, tick `gui-player-tempo-sections.md` in the roadmap of `specs/overview.md`.
