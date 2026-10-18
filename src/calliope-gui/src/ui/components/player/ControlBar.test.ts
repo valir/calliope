@@ -287,6 +287,28 @@ describe('Training popover', () => {
     ]);
   });
 
+  it('qa: two edited fields are both saved when it closes by an outside click or by Tab from Close', async () => {
+    await open(withTempo());
+    await openPopover();
+    await fireEvent.input(field('Start %'), { target: { value: '45' } });
+    await fireEvent.input(field('Repeats'), { target: { value: '4' } });
+    await new Promise((r) => setTimeout(r, 60));
+    await fireEvent.pointerDown(input('BPM'), { pointerType: 'mouse', button: 0, clientX: 500, clientY: 500 });
+    await fireEvent.pointerUp(input('BPM'), { pointerType: 'mouse', button: 0, clientX: 500, clientY: 500 });
+    await fireEvent.click(input('BPM'), { button: 0 });
+    await waitFor(() => expect(dialog()).toBeNull());
+    await flush();
+    expect(plans()).toEqual([{ kind: 'training', on: false, start: 45, end: 100, step: 5, repeats: 4 }]);
+    calls.length = 0;
+    await openPopover();
+    await fireEvent.input(field('End %'), { target: { value: '95' } });
+    await fireEvent.input(field('Step %'), { target: { value: '10' } });
+    await fireEvent.keyDown(closeBtn(), { key: 'Tab' });
+    await waitFor(() => expect(dialog()).toBeNull());
+    await flush();
+    expect(plans()).toEqual([{ kind: 'training', on: false, start: 70, end: 95, step: 10, repeats: 2 }]);
+  });
+
   it('Close closes it, and Tab from Close leaves and closes it', async () => {
     await open(withTempo());
     await openPopover();

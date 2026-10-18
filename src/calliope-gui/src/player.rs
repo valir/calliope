@@ -780,7 +780,11 @@ impl Engine {
                 self.beat_dirty = true;
                 self.events.clear();
                 self.timeline.clear();
-                if self.pos >= self.pcm.frames {
+                // a loop end crossed during the return fade is handled here (the bypass check is exact)
+                let crossed = self.wrapping().filter(|l| self.pos >= l.end && l.end <= self.pcm.frames);
+                if let Some(l) = crossed {
+                    self.bypass_loop_end(l);
+                } else if self.pos >= self.pcm.frames {
                     self.playing = false;
                     self.audible = false;
                     self.loop_play = false;
@@ -789,6 +793,26 @@ impl Engine {
             }
         }
         true
+    }
+
+    /// The bypass path reached the end of the wrapping loop `l`: wrap (with its count-in rule) or stop.
+    fn bypass_loop_end(&mut self, l: LoopSpec) {
+        if l.repeat {
+            self.pos = l.start;
+            self.beat_dirty = true;
+            self.shared.wraps.fetch_add(1, Ordering::AcqRel);
+            self.count = l.count_in_bpm_milli.map(|b| self.wrap_count(b, self.speed));
+            if self.count.is_none() {
+                self.start_fade();
+            }
+        } else {
+            self.pos = l.start; // played once: back to the loop start
+            self.playing = false;
+            self.audible = false;
+            self.loop_play = false;
+            self.voice = None;
+            self.shared.loop_stopped.store(true, Ordering::Release);
+        }
     }
 
     /// Fills an interleaved stereo block.
@@ -864,22 +888,7 @@ impl Engine {
             i += 1;
             self.pos += 1;
             if let Some(l) = wraps.filter(|l| self.pos == l.end) {
-                if l.repeat {
-                    self.pos = l.start;
-                    self.beat_dirty = true;
-                    self.shared.wraps.fetch_add(1, Ordering::AcqRel);
-                    self.count = l.count_in_bpm_milli.map(|b| self.wrap_count(b, self.speed));
-                    if self.count.is_none() {
-                        self.start_fade();
-                    }
-                } else {
-                    self.pos = l.start; // played once: back to the loop start
-                    self.playing = false;
-                    self.audible = false;
-                    self.loop_play = false;
-                    self.voice = None;
-                    self.shared.loop_stopped.store(true, Ordering::Release);
-                }
+                self.bypass_loop_end(l);
                 continue;
             }
             if self.pos >= self.pcm.frames {

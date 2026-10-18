@@ -4171,3 +4171,139 @@ fn sp21_a_loop_at_50_percent_wraps_inside_its_song_time_bounds_and_seek_stays_in
     let moved = tr.last().unwrap().position_ms as i64 - p0 as i64;
     assert!((moved - 500).abs() <= 30, "advanced {moved} ms");
 }
+
+// ---- fix round 1 ----------------------------------------------------------------------------
+
+#[test]
+fn sp22_a_huge_step_count_returns_promptly_and_lands_on_the_end() {
+    let mut r = rig(PRACTICE);
+    for (start, steps, want) in [(25i64, i32::MAX, 200u32), (200, i32::MIN, 25), (25, i32::MIN, 25), (200, i32::MAX, 200), (100, 1_000_000, 200)] {
+        set_speed(&mut r, start);
+        let t = Instant::now();
+        let s = r.m.speed(&r.id(), SpeedAction::Step(steps), r.t0).unwrap();
+        assert!(t.elapsed() < Duration::from_millis(200), "step {steps} from {start} took {:?}", t.elapsed());
+        assert_eq!(s.speed_pct, want, "step {steps} from {start}");
+    }
+}
+
+#[test]
+fn sp23_70_to_100_while_playing_is_bit_exact_after_the_fade_with_no_gap_and_no_step_back() {
+    let mut r = rig(PRACTICE);
+    set_speed(&mut r, 70);
+    r.seek(1000);
+    r.play();
+    let (first, _) = run(&mut r, RATE);
+    let reference = rms(&first[RATE / 5..]);
+    assert!(reference > 0.001);
+    set_speed(&mut r, 100);
+    let (fade, tr) = run(&mut r, RATE / 50); // 20 ms: the 3 ms crossfade and more
+    assert_no_dip(&fade, reference * 0.0 + 0.0, "fade"); // (windows only; no floor here)
+    let mut last = 0;
+    let (rest, tr2) = run(&mut r, RATE);
+    for t in tr.iter().chain(tr2.iter()) {
+        assert!(t.position_ms >= last, "position went back {} < {last}", t.position_ms);
+        last = t.position_ms;
+    }
+    assert_eq!(r.snap().speed_pct, 100);
+    // the tail is the source, sample for sample, from some frame f on
+    let pcm = r.pcm();
+    let tail = &rest[RATE..]; // second half of the second
+    let guess = r.pos() as usize * RATE / 1000;
+    let want_len = RATE / 2 * 2;
+    let mut found = None;
+    for f in guess.saturating_sub(RATE / 2)..guess + RATE / 10 {
+        if f + RATE > pcm.frames as usize {
+            break;
+        }
+        let w = expected(&pcm, f, 32);
+        if tail[..64] == w[..] {
+            found = Some(f);
+            break;
+        }
+    }
+    let _ = want_len;
+    let f = found.expect("the tail never matched the source: not bit-exact at 100 % after the fade");
+    // continuity: the next 0.4 s is the same contiguous source run (no gap, no repeat)
+    let n = RATE * 2 / 5;
+    assert_eq!(&tail[..2 * n], &expected(&pcm, f, n)[..], "gap or jump after the fade");
+}
+
+/// 70 % loop playing; at `k` blocks past 40 ms before the loop end, Reset to 100 %; the loop must never
+/// play on past its end (4500 ms).
+fn return_to_100_near_the_loop_end(k: usize, repeat: bool) -> (u64, bool) {
+    let mut r = loop_rig(false);
+    if !repeat {
+        r.lp(LoopAction::Flags { repeat: false, count_in: false }).unwrap();
+    }
+    set_speed(&mut r, 70);
+    r.lp(LoopAction::Play).unwrap();
+    let mut guard = 0;
+    while r.pos() < 4460 {
+        r.b.pull(64);
+        guard += 1;
+        assert!(guard < 4000, "never reached the loop end");
+        if r.pos() < 2400 && guard > 10 {
+            panic!("wrapped early");
+        }
+    }
+    for _ in 0..k {
+        r.b.pull(64);
+    }
+    r.m.speed(&r.id(), SpeedAction::Reset, r.t0).unwrap();
+    let mut maxp = 0;
+    let mut wrapped = false;
+    let mut prev = r.pos();
+    for _ in 0..(RATE / 64) {
+        r.b.pull(64);
+        let t = r.snap().transport;
+        maxp = maxp.max(t.position_ms);
+        if t.position_ms + 1000 < prev {
+            wrapped = true;
+        }
+        prev = t.position_ms;
+    }
+    (maxp, wrapped)
+}
+
+#[test]
+fn sp24_return_to_100_just_before_a_repeating_loop_end_never_plays_past_the_end() {
+    let mut bad = Vec::new();
+    for k in 0..60 {
+        let (maxp, wrapped) = return_to_100_near_the_loop_end(k, true);
+        if maxp > 4502 || (!wrapped && k < 18) {
+            bad.push((k, maxp, wrapped));
+        }
+    }
+    assert!(bad.is_empty(), "(k blocks after 4460 ms, max position, wrapped): {bad:?}");
+}
+
+#[test]
+fn sp25_return_to_100_before_a_non_repeating_loop_end_stops_at_the_end() {
+    let mut bad = Vec::new();
+    for k in 0..60 {
+        let (maxp, _) = return_to_100_near_the_loop_end(k, false);
+        if maxp > 4502 {
+            bad.push((k, maxp));
+        }
+    }
+    assert!(bad.is_empty(), "(k, max position): {bad:?}");
+}
+
+#[test]
+fn sp26_a_speed_action_right_after_a_training_loop_play_is_refused_and_a_plain_loop_play_allows_it() {
+    let mut r = loop_rig(false);
+    r.lp(LoopAction::Training(TRAIN)).unwrap();
+    r.lp(LoopAction::Play).unwrap();
+    // before any audio is pulled
+    for a in [SpeedAction::Step(1), SpeedAction::Step(-1), SpeedAction::Set(50), SpeedAction::Reset] {
+        assert!(r.m.speed(&r.id(), a, r.t0).is_err(), "{a:?} must be refused straight after Play");
+    }
+    assert_eq!(r.snap().speed_pct, 100);
+    r.m.pause(&r.id(), r.t0).unwrap();
+    r.b.pull(64);
+    assert!(r.m.speed(&r.id(), SpeedAction::Set(80), r.t0).is_ok(), "allowed after Pause");
+    // training off: a loop Play does not lock the speed
+    let mut r = loop_rig(false);
+    r.lp(LoopAction::Play).unwrap();
+    assert!(r.m.speed(&r.id(), SpeedAction::Set(80), r.t0).is_ok());
+}

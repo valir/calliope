@@ -19,3 +19,6 @@ task 15 | GUI end-to-end, positions, visual review, docs | implementer | done (f
 tester | all criteria PASS; added sp13-sp21 and 2 frontend tests; no defects | tester | done
 reviewer | CHANGES REQUIRED: 1 major (unbounded speed-step loop on IPC input), 5 minor, 1 nit | reviewer | done
 fix round 1 | step clamp, popover single merged save, 100 % returns to bypass, manager-side training refusal, debug asserts, crate pinned =0.1.3, docs | implementer | done
+tester (re-verify 1) | fix round 1 PASS; added sp22-sp26 + popover merge test; defect: return to 100 % within ~3 ms of a loop end plays past the end (sp24, sp25) | tester | done
+reviewer (re-verify 1) | APPROVED; same loop-end defect as minor | reviewer | done
+fix round 2 | loop end handled when the return-to-100 % fade crosses it; MAX_STEPS constant | implementer | done

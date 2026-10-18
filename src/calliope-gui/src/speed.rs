@@ -12,11 +12,14 @@ const TRAINING_SPEEDS: &str = "Training speeds must be between 25 and 200 %";
 const TRAINING_STEP: &str = "The step must be between 1 and 175 %";
 const TRAINING_REPEATS: &str = "Repeats must be between 1 and 99";
 
+/// Most presses honoured per call: 40 steps cross the whole 25..200 range.
+const MAX_STEPS: u32 = 40;
+
 /// `steps` presses of `-` (negative) or `+`: each moves to the next multiple of 5 in that direction; clamped.
 pub fn step_pct(pct: u32, steps: i32) -> u32 {
     let mut p = pct.clamp(MIN_PCT, MAX_PCT);
-    // 40 steps cross the whole 25..200 range; the count comes from untrusted IPC.
-    for _ in 0..steps.unsigned_abs().min(40) {
+    // the count comes from untrusted IPC
+    for _ in 0..steps.unsigned_abs().min(MAX_STEPS) {
         p = if steps > 0 {
             (p / STEP_PCT + 1) * STEP_PCT
         } else {
