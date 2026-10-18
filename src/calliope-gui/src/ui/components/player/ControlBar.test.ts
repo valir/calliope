@@ -97,9 +97,63 @@ describe('BPM', () => {
     for (const n of ['Metronome in this section', 'Count-in into this section']) expect(btn('Sections', n).disabled).toBe(true);
     expect(screen.queryByRole('button', { name: 'On/Off' })).toBeNull();
     expect(screen.queryByRole('group', { name: 'Metronome' })).toBeNull();
-    // The -/+/Reset placeholders are hidden until that feature exists.
+    // The speed controls are in the Speed group, not in the BPM group.
     for (const n of ['Slower', 'Faster', 'Reset']) expect(group('BPM').queryByRole('button', { name: n })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Detect' })).toBeNull();
+  });
+});
+
+describe('Speed group', () => {
+  const box = () => input('Speed in percent');
+  const actions = () => of('player_tempo').map((c) => c.action);
+
+  it('- three times sends three speed-step -1; Reset is disabled at 100', async () => {
+    await open(withTempo());
+    expect(box().value).toBe('100');
+    expect(btn('Speed', 'Reset').disabled).toBe(true);
+    for (let i = 0; i < 3; i++) await fireEvent.click(btn('Speed', 'Slower'));
+    await flush();
+    expect(actions()).toEqual(Array(3).fill({ kind: 'speed-step', steps: -1 }));
+  });
+
+  it('typing 70 + Enter sends speed-set 70; 20 sends nothing and marks the box invalid', async () => {
+    await open(withTempo());
+    await type(box(), '70');
+    expect(actions()).toEqual([{ kind: 'speed-set', percent: 70 }]);
+    await type(box(), '20');
+    expect(actions()).toHaveLength(1);
+    expect(box().getAttribute('aria-invalid')).toBe('true');
+    expect(box().title).not.toBe('');
+    expect(screen.getByTestId('bpm-readout').textContent).toBe('25–200 %');
+    await fireEvent.input(box(), { target: { value: '2' } });
+    expect(box().getAttribute('aria-invalid')).toBeNull();
+    await fireEvent.keyDown(box(), { key: 'Escape' });
+    expect(box().value).toBe('100');
+  });
+
+  it('is disabled with the reason during a training run and when the player is not active', async () => {
+    await open({ ...withTempo(), transport: { ...idle, training: { loop: 0, speed_pct: 70, repeat: 1, of: 2 } } });
+    for (const n of ['Slower', 'Faster', 'Reset']) {
+      expect(btn('Speed', n).disabled).toBe(true);
+      expect(btn('Speed', n).title).toBe('Speed training is running; stop the loop to change the speed');
+    }
+    expect(box().disabled).toBe(true);
+    expect(actions()).toHaveLength(0);
+  });
+
+  it('the readout shows the played BPM, empty for 0; the BPM box keeps the song BPM', async () => {
+    await open(withTempo());
+    expect(screen.getByTestId('bpm-readout').textContent).toBe('');
+    expect(screen.getByTestId('bpm-readout').getAttribute('aria-label')).toBe('Playing BPM');
+    channel.onmessage({ kind: 'transport', id: practice.id, ...idle, bpm: 120, played_bpm: 60, speed_pct: 50 });
+    await waitFor(() => expect(screen.getByTestId('bpm-readout').textContent).toBe('60 BPM'));
+    expect(input('BPM').value).toBe('120');
+  });
+
+  it('+ and - are disabled at the limits', async () => {
+    await open({ ...withTempo(), speed_pct: 200 });
+    expect(btn('Speed', 'Faster').disabled).toBe(true);
+    expect(btn('Speed', 'Reset').disabled).toBe(false);
   });
 });
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from '$lib/components/ui/button/index.js';
   import { Slider } from '$lib/components/ui/slider/index.js';
+  import SpeedControl from './SpeedControl.svelte';
   import TimeField from '../editor/TimeField.svelte';
   import { formatPosition } from '$lib/time-format';
   import { nudge, pl, playLabel, seek, skip, togglePlay } from '$lib/player-state.svelte';
@@ -58,4 +59,5 @@
       aria-valuetext={formatPosition(pl.transport.position_ms)}
     />
   </div>
+  <SpeedControl />
 </div>

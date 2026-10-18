@@ -118,8 +118,13 @@ describe('AC2-4, 9: pane structure and the inactive state', () => {
     expect(within(group('Loops').getByRole('group', { name: 'Loop list' })).getByText('Loops')).toBeTruthy();
     const playback = group('Playback');
     for (const n of ['Rew', 'Play', 'FF']) expect(playback.getByRole('button', { name: n })).toBeTruthy();
-    expect(playback.getByRole('textbox')).toBeTruthy();
-    expect(playback.getByRole('slider', { name: 'Position' })).toBeTruthy();
+    expect(playback.getByRole('textbox', { name: /^Position/ })).toBeTruthy();
+    const slider = playback.getByRole('slider', { name: 'Position' });
+    const speed = playback.getByRole('group', { name: 'Speed' });
+    expect(slider.compareDocumentPosition(speed) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const n of ['Slower', 'Faster', 'Reset']) expect(within(speed).getByRole('button', { name: n })).toBeTruthy();
+    expect(screen.queryByText(/Comes in a later update/)).toBeNull();
+    expect(document.querySelector('[title="Comes in a later update"]')).toBeNull();
   });
 });
 
@@ -137,18 +142,19 @@ describe('AC13: track without tempo', () => {
       expect(btn('Sections', n).title).toBe('Type a BPM first');
     }
     expect(screen.queryByRole('group', { name: 'Metronome' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Slower' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Faster' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Reset' })).toBeNull();
+    for (const n of ['Slower', 'Faster', 'Reset']) expect(within(screen.getByRole('group', { name: 'BPM' })).queryByRole('button', { name: n })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Detect' })).toBeNull();
   });
 
-  it('on a track with a tempo (increment A) -, +, Reset stay hidden', async () => {
+  it('on a track with a tempo -, +, Reset are in the Speed group, not the BPM group', async () => {
     snap = bpmSnap();
     render(PlayerView);
     await openTrack(snap);
     expect(input('BPM').value).toBe('120');
-    for (const n of ['Slower', 'Faster', 'Reset']) expect(screen.queryByRole('button', { name: n }), n).toBeNull();
+    for (const n of ['Slower', 'Faster', 'Reset']) {
+      expect(within(screen.getByRole('group', { name: 'BPM' })).queryByRole('button', { name: n }), n).toBeNull();
+      expect(btn('Speed', n), n).toBeTruthy();
+    }
   });
 });
 

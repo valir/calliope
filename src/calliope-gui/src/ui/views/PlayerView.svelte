@@ -3,7 +3,7 @@
   import TrackBrowser from '../components/library/TrackBrowser.svelte';
   import PlayerPane from '../components/player/PlayerPane.svelte';
   import { load, lib, selectedTrack } from '$lib/library-state.svelte';
-  import { attachPlayer, syncSelection, togglePlay, loop, jumpSection, pl } from '$lib/player-state.svelte';
+  import { attachPlayer, syncSelection, togglePlay, loop, jumpSection, speedStep, pl } from '$lib/player-state.svelte';
   import { frontendLog } from '$lib/ipc';
 
   let searchRef = $state<HTMLInputElement | null>(null);
@@ -37,17 +37,19 @@
   const OWN_KEYS =
     'input, textarea, select, button, a[href], [role="checkbox"], [role="slider"], [role="tree"], [role="treeitem"], [role="tab"], [role="combobox"], [role="listbox"], [role="option"], [contenteditable="true"]';
 
+  const KEYS = ['b', 'e', 'l', 'L', 'Home', 'End', '[', ']'];
+
   function plainKey(e: KeyboardEvent): void {
     const t = e.target;
     if (t instanceof Element) {
       const own = t.closest(OWN_KEYS);
       // The waveform keeps the arrows, but Space, b, e and l/L keep their Player meaning.
       const passes =
-        own?.hasAttribute('data-player-keys') && (e.code === 'Space' || ['b', 'e', 'l', 'L', 'Home', 'End'].includes(e.key));
+        own?.hasAttribute('data-player-keys') && (e.code === 'Space' || KEYS.includes(e.key));
       if (own && !passes) return;
     }
     // Auto-repeat of a held key must not toggle or mark again.
-    if (e.repeat && (e.code === 'Space' || ['b', 'e', 'l', 'L', 'Home', 'End'].includes(e.key))) {
+    if (e.repeat && (e.code === 'Space' || KEYS.includes(e.key))) {
       if (e.code === 'Space' || e.key === 'Home' || e.key === 'End') e.preventDefault();
       return;
     }
@@ -72,8 +74,10 @@
     } else if (e.key === 'l') {
       e.preventDefault();
       if (cur && cur.end !== null) void loop({ kind: 'flags', repeat: !cur.repeat, count_in: cur.count_in });
+    } else if (e.key === '[' || e.key === ']') {
+      e.preventDefault();
+      void speedStep(e.key === '[' ? -1 : 1, 'key');
     }
-    // `[` and `]` (speed) come with increment B.
   }
 
   function onKeydown(e: KeyboardEvent): void {

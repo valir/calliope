@@ -145,7 +145,7 @@ describe('Player keyboard shortcuts', () => {
         events = a.events as Channel<PlayerEvent>;
         return snap;
       }
-      if (cmd === 'player_loop') return snap;
+      if (cmd === 'player_loop' || cmd === 'player_tempo') return snap;
       if (cmd.startsWith('player_')) return { ...idle };
       if (cmd === 'get_repository') return { root: '/r', is_default: false, status: 'ok' };
       if (cmd === 'list_tracks') return { root: '/r', tracks: [practice], problems: [] };
@@ -190,6 +190,25 @@ describe('Player keyboard shortcuts', () => {
     expect(of('player_loop')).toHaveLength(0);
   });
 
+  it('[ and ] step the speed, also from the waveform; auto-repeat and other fields do nothing', async () => {
+    await open([complete]);
+    const speed = () => of('player_tempo').map((c) => c.action);
+    await key({ key: '[', code: 'BracketLeft' });
+    await key({ key: ']', code: 'BracketRight' });
+    expect(speed()).toEqual([{ kind: 'speed-step', steps: -1 }, { kind: 'speed-step', steps: 1 }]);
+    await key({ key: '[', code: 'BracketLeft', repeat: true });
+    await key({ key: ']', code: 'BracketRight', repeat: true });
+    await key({ key: '[', code: 'BracketLeft' }, screen.getByRole('textbox', { name: 'BPM' }));
+    expect(speed()).toHaveLength(2);
+    const wf = document.createElement('canvas');
+    wf.setAttribute('role', 'slider');
+    wf.setAttribute('data-player-keys', '');
+    document.body.append(wf);
+    await key({ key: ']', code: 'BracketRight' }, wf);
+    wf.remove();
+    expect(speed()).toHaveLength(3);
+  });
+
   it('b and e mark start and end', async () => {
     await open([complete]);
     await key({ key: 'b', code: 'KeyB' });
@@ -226,13 +245,6 @@ describe('Player keyboard shortcuts', () => {
     await open([incomplete]);
     await key({ key: 'L', code: 'KeyL', shiftKey: true });
     expect(of('player_loop')).toHaveLength(0);
-  });
-
-  it('[ and ] do nothing in increment A', async () => {
-    await open([complete]);
-    await key({ key: '[', code: 'BracketLeft' });
-    await key({ key: ']', code: 'BracketRight' });
-    expect(calls.filter((c) => c[0] === 'player_tempo' || c[0] === 'player_loop')).toHaveLength(0);
   });
 
   it('Ctrl+L works with the focus on a field in the view', async () => {

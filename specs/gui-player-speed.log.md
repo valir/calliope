@@ -12,3 +12,4 @@ task 9 | Backend acceptance tests sp01-sp12 | implementer | done
 task 10 | TS IPC types and test fixtures | implementer | done
 task 11 | Frontend speed formatting helpers | implementer (moved from local: new files with logic) | done
 task 12 | Frontend Player state for speed and training | implementer | done
+task 13 | Speed group in the Playback pane, keys | implementer | done (GUI click positions follow in task 15)
