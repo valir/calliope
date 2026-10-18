@@ -143,7 +143,7 @@ fn ok_detects_two_sections_and_stores_them() {
     assert!(tempo.multi);
     let want = vec![(500.0, 120.0, None), (6500.0, 90.0, Some(6500.0))];
     assert_eq!(r.segments(), want);
-    assert_eq!(r.player_json().unwrap()["schema_version"], 5);
+    assert_eq!(r.player_json().unwrap()["schema_version"], 6);
     assert_eq!(r.m.snapshot(SIX).unwrap().tempo.segments.len(), 2, "the session has the new map");
     assert_eq!(r.m.snapshot(SIX).unwrap().detect, None);
     assert!(r.leftovers().is_empty());
@@ -199,7 +199,7 @@ fn a_re_detection_carries_the_play_settings_of_the_old_map() {
     let EditorEvent::Detected { replaced, .. } = r.run() else { panic!("not detected") };
     assert!(replaced);
     let v = r.player_json().unwrap();
-    assert_eq!(v["schema_version"], 5);
+    assert_eq!(v["schema_version"], 6);
     assert!(v.get("metronome").is_none());
     let segs = v["tempo"]["segments"].as_array().unwrap();
     assert_eq!(segs.len(), 2);

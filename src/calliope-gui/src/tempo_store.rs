@@ -15,8 +15,8 @@ pub const NEWER: &str = "player.json was written by a newer version; the tempo w
 pub trait TempoStore: Send + Sync {
     /// The current map (empty when there is none).
     fn load(&self, id: &str, dir: &Path) -> Result<TempoMap, String>;
-    /// Replaces the map by `f(old)`; loops keep their time, `speed` becomes 1.0, every other
-    /// field is kept. Returns the new map.
+    /// Replaces the map by `f(old)`; loops keep their time, every other field (the speed
+    /// included) is kept. Returns the new map.
     fn replace(
         &self,
         id: &str,
@@ -45,7 +45,6 @@ impl TempoStore for FileTempoStore {
         }
         let new = f(&state.tempo)?;
         state.apply_tempo_change(new.clone());
-        state.speed = 1.0;
         player_state::save(dir, &state).map_err(|e| format!("Could not save the tempo: {e}"))?;
         Ok(new)
     }
@@ -70,7 +69,7 @@ mod tests {
     }
 
     #[test]
-    fn replace_keeps_loop_times_unknown_fields_and_resets_speed() {
+    fn replace_keeps_loop_times_unknown_fields_and_keeps_speed() {
         let d = tempfile::tempdir().unwrap();
         write(
             d.path(),
@@ -86,7 +85,7 @@ mod tests {
         assert_eq!(got, new);
         let v = read(d.path());
         assert_eq!(v["future"], json!({"a": 1}));
-        assert_eq!(v["speed"], json!(1.0));
+        assert_eq!(v["speed"], json!(0.8));
         assert_eq!(v["position_ms"], json!(1234));
         assert_eq!(v["tempo"]["segments"][0]["bpm"], json!(90.0));
         let (st, _, _) = player_state::load(d.path());
@@ -97,7 +96,7 @@ mod tests {
     #[test]
     fn newer_schema_is_refused_and_the_file_is_unchanged() {
         let d = tempfile::tempdir().unwrap();
-        write(d.path(), json!({"schema_version": 6, "x": 1}));
+        write(d.path(), json!({"schema_version": 7, "x": 1}));
         let bytes = std::fs::read(d.path().join("player.json")).unwrap();
         assert_eq!(FileTempoStore.replace("t", d.path(), &|_| Ok(map(100.0))).unwrap_err(), NEWER);
         assert_eq!(std::fs::read(d.path().join("player.json")).unwrap(), bytes);

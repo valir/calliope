@@ -3,16 +3,17 @@
 //! newer schema is read-only. Writing never creates the track folder.
 
 use crate::fsutil;
+use crate::speed::{self, Training};
 use crate::tempo_map::{self, Boundary, SectionMeta, Segment, TempoMap, MAX_BPM, MIN_BPM};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::path::Path;
 
 pub(crate) const PLAYER_FILE: &str = "player.json";
-pub(crate) const SCHEMA: u32 = 5;
+pub(crate) const SCHEMA: u32 = 6;
 pub(crate) const MAX_LOOPS: usize = 99;
-pub(crate) const MIN_SPEED: f64 = 0.5;
-pub(crate) const MAX_SPEED: f64 = 1.5;
+pub(crate) const MIN_SPEED: f64 = 0.25;
+pub(crate) const MAX_SPEED: f64 = 2.0;
 const MAX_BEATS_PER_BAR: u64 = 32;
 
 pub(crate) const NOTE_UNREADABLE: &str =
@@ -28,6 +29,8 @@ pub(crate) struct LoopRec {
     pub end: Option<Boundary>,
     pub repeat: bool,
     pub count_in: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub training: Option<Training>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -93,10 +96,23 @@ fn parse_loop(v: &Value) -> Option<LoopRec> {
     let end = o.get("end").and_then(parse_boundary);
     let flag = |k: &str, d: bool| o.get(k).and_then(Value::as_bool).unwrap_or(d);
     let mut extra = o.clone();
-    for k in ["id", "start", "end", "repeat", "count_in"] {
+    for k in ["id", "start", "end", "repeat", "count_in", "training"] {
         extra.remove(k);
     }
-    Some(LoopRec { id, start, end, repeat: flag("repeat", true), count_in: flag("count_in", false), extra })
+    // A damaged or out-of-range training object drops the whole setting.
+    let training = o
+        .get("training")
+        .and_then(|t| serde_json::from_value::<Training>(t.clone()).ok())
+        .filter(|t| t.validate().is_ok());
+    Some(LoopRec {
+        id,
+        start,
+        end,
+        repeat: flag("repeat", true),
+        count_in: flag("count_in", false),
+        training,
+        extra,
+    })
 }
 
 /// Largest accepted tempo-segment start (about 11 days); anything beyond is a damaged file.
@@ -172,7 +188,7 @@ fn from_value(v: &Value) -> PlayerState {
         .get("speed")
         .and_then(Value::as_f64)
         .filter(|s| s.is_finite())
-        .map_or(1.0, |s| s.clamp(MIN_SPEED, MAX_SPEED));
+        .map_or(1.0, |s| f64::from(speed::pct_of_factor(s.clamp(MIN_SPEED, MAX_SPEED))) / 100.0);
     if o.get("schema_version").and_then(Value::as_u64).is_some_and(|n| n <= 4) {
         migrate_master(&mut st.tempo, o.get("metronome"));
     }
@@ -343,6 +359,7 @@ impl PlayerState {
             end,
             repeat: true,
             count_in: false,
+            training: None,
             extra: Map::new(),
         });
         self.sort_loops();
@@ -434,7 +451,39 @@ impl PlayerState {
         if let Some(c) = count_in {
             l.count_in = c;
         }
+        if repeat == Some(false) {
+            if let Some(t) = l.training.as_mut() {
+                t.on = false;
+            }
+        }
         Ok(())
+    }
+
+    /// Stores the training settings of the current loop; `on` also switches Loop On on.
+    #[allow(dead_code)] // used by the manager from Task 5/6 on
+    pub fn set_training(&mut self, t: Training) -> Result<(), String> {
+        let l = self.current_mut()?;
+        if !l.is_complete() {
+            return Err("Set the loop end first".into());
+        }
+        t.validate()?;
+        l.training = Some(t);
+        if t.on {
+            l.repeat = true;
+        }
+        Ok(())
+    }
+
+    /// The track speed in percent (25..=200).
+    #[allow(dead_code)] // used by the manager from Task 5/6 on
+    pub fn speed_pct(&self) -> u32 {
+        speed::pct_of_factor(self.speed)
+    }
+
+    /// Sets the track speed; the caller has checked the range.
+    #[allow(dead_code)] // used by the manager from Task 5/6 on
+    pub fn set_speed_pct(&mut self, pct: u32) {
+        self.speed = f64::from(pct) / 100.0;
     }
 
     /// Replaces the tempo map and re-expresses every loop boundary, keeping its time.
@@ -497,9 +546,9 @@ mod tests {
         assert_eq!(st.current_loop.as_deref(), Some("loop-1"));
         save(d.path(), &st).unwrap();
         let back: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
-        // the v1 fixture reads with the same map and loops and is written back as schema 5
-        assert_eq!(back["schema_version"], 5);
-        v["schema_version"] = json!(5);
+        // the v1 fixture reads with the same map and loops and is written back as schema 6
+        assert_eq!(back["schema_version"], 6);
+        v["schema_version"] = json!(6);
         // the master (Off) is migrated into the sections and not written back
         v.as_object_mut().unwrap().remove("metronome");
         for seg in v["tempo"]["segments"].as_array_mut().unwrap() {
@@ -546,7 +595,7 @@ mod tests {
         assert_eq!(st.tempo.segments[1], Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6400.0), on_beat: false, meta: SectionMeta::default() });
         save(d.path(), &st).unwrap();
         let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
-        assert_eq!(v["schema_version"], 5);
+        assert_eq!(v["schema_version"], 6);
         assert_eq!(v["tempo"]["segments"][1]["detected_ms"], 6400.0);
         assert!(v["tempo"]["segments"][1].get("on_beat").is_none());
 
@@ -585,7 +634,7 @@ mod tests {
         assert!(st.tempo.segments.iter().all(|s| s.meta == SectionMeta::default()));
         save(d.path(), &st).unwrap();
         let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
-        assert_eq!(v["schema_version"], 5);
+        assert_eq!(v["schema_version"], 6);
         assert_eq!(
             v["tempo"]["segments"],
             json!([{"start_ms": 0.0, "bpm": 120.0}, {"start_ms": 6500.0, "bpm": 90.0, "detected_ms": 6400.0, "on_beat": true}])
@@ -665,11 +714,81 @@ mod tests {
         assert_eq!(ids, ["c", "a"]);
         assert_eq!(st.loops[1].end, None);
         assert_eq!(st.current_loop.as_deref(), Some("c")); // stale id: the first loop
+
+        // the speed range is 25..=200 %; a non-number is 100 %
+        for (raw, want) in [(json!(9.0), 2.0), (json!(-1), 0.25), (json!("fast"), 1.0), (json!(0.73), 0.73)] {
+            assert_eq!(migrated(json!({"schema_version": 6, "speed": raw})).speed, want, "{raw}");
+        }
+        // a schema-5 file keeps its speed as a percentage
+        let st = migrated(json!({"schema_version": 5, "speed": 1.0}));
+        assert_eq!(st.speed_pct(), 100);
+        let st = migrated(json!({"schema_version": 5, "speed": 0.73}));
+        assert_eq!(st.speed_pct(), 73);
+        // damaged or out-of-range training settings are dropped with the loop kept
+        for t in [json!({"start": 10}), json!(3), json!({"on": true, "start": 10, "end": 100, "step": 5, "repeats": 0})] {
+            let st = migrated(json!({"schema_version": 6, "loops": [
+                {"id": "a", "start": {"tick": 1}, "end": {"tick": 9}, "training": t}]}));
+            assert_eq!(st.loops.len(), 1);
+            assert_eq!(st.loops[0].training, None);
+            assert!(!st.loops[0].extra.contains_key("training"));
+        }
+    }
+
+    fn training() -> Training {
+        Training { on: true, start: 60, end: 80, step: 10, repeats: 2 }
+    }
+
+    #[test]
+    fn speed_and_training_round_trip() {
+        let d = dir_with("{}");
+        let mut st = bpm_state();
+        st.add(1000.0, 10000.0).unwrap();
+        st.add(5000.0, 10000.0).unwrap();
+        st.set_speed_pct(85);
+        assert_eq!(st.speed, 0.85);
+        st.set_training(training()).unwrap();
+        save(d.path(), &st).unwrap();
+        let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        assert_eq!(v["schema_version"], 6);
+        assert_eq!(v["speed"], 0.85);
+        let with: Vec<_> = v["loops"].as_array().unwrap().iter().filter(|l| l.get("training").is_some()).collect();
+        assert_eq!(with.len(), 1, "a loop without training writes no key");
+        assert_eq!(with[0]["training"], json!({"on": true, "start": 60, "end": 80, "step": 10, "repeats": 2}));
+        let (back, _, _) = load(d.path());
+        assert_eq!(back, st);
+        assert_eq!(back.speed_pct(), 85);
+    }
+
+    #[test]
+    fn set_training_rules_and_loop_on() {
+        let mut st = bpm_state();
+        st.add(1000.0, 10000.0).unwrap();
+        st.loops[0].end = None;
+        let before = st.clone();
+        assert_eq!(st.set_training(training()).unwrap_err(), "Set the loop end first");
+        assert_eq!(st, before);
+
+        let mut st = bpm_state();
+        st.add(1000.0, 10000.0).unwrap();
+        let before = st.clone();
+        assert!(st.set_training(Training { repeats: 0, ..training() }).is_err());
+        assert_eq!(st, before);
+
+        // on switches Loop On on; Loop On off switches training off
+        st.flags(Some(false), None).unwrap();
+        st.set_training(training()).unwrap();
+        assert!(st.loops[0].repeat);
+        st.flags(Some(false), None).unwrap();
+        assert!(!st.loops[0].repeat);
+        assert_eq!(st.loops[0].training, Some(Training { on: false, ..training() }));
+        // off settings do not touch Loop On
+        st.set_training(Training { on: false, ..training() }).unwrap();
+        assert!(!st.loops[0].repeat);
     }
 
     #[test]
     fn newer_schema_is_read_only_and_folders_are_not_created() {
-        let text = r#"{"schema_version": 6, "source": "audio"}"#;
+        let text = r#"{"schema_version": 7, "source": "audio"}"#;
         let d = dir_with(text);
         let (st, note, w) = load(d.path());
         assert!(!w && note.is_some() && st.read_only);
@@ -799,12 +918,12 @@ mod tests {
     }
 
     #[test]
-    fn schema_5_is_written_without_a_master_and_keeps_section_1_count_in() {
+    fn schema_6_is_written_without_a_master_and_keeps_section_1_count_in() {
         let d = dir_with(&v4(json!({"on": true, "count_in": true})).to_string());
         let (st, _, _) = load(d.path());
         save(d.path(), &st).unwrap();
         let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
-        assert_eq!(v["schema_version"], 5);
+        assert_eq!(v["schema_version"], 6);
         assert!(v.get("metronome").is_none());
         assert_eq!(v["tempo"]["segments"][0]["count_in"], true);
         let (back, _, _) = load(d.path());

@@ -776,7 +776,7 @@ fn prev_next_jump_at_once_and_keep_playing() {
 }
 
 #[test]
-fn tempo_change_keeps_loops_in_time_and_resets_speed() {
+fn tempo_change_keeps_loops_in_time_and_the_speed() {
     let (_t, spec, mut m, b, _e, pcm) = with_tempo();
     let t0 = Instant::now();
     let before = m.snapshot(&spec.id).unwrap();
