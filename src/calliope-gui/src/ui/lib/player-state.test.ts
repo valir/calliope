@@ -238,6 +238,91 @@ describe('player sections', () => {
     expect(tempoCalls()).toEqual([{ kind: 'jump-section', index: 2, at: 5000, edge: 'start' }]);
   });
 
+  it('owner sequence: select section 2, Start, play across sections, pause: Start stays at the current section', async () => {
+    const four = [seg(0, 100), seg(2000.01, 120), seg(5000.02, 90), seg(8000.03, 80)];
+    await open(four);
+    const tr = (position_ms: number, tempo_index: number, playing: boolean) => ({ ...idle, playing, position_ms, tempo_index });
+    const ev = (t: PlayerTransport) => channels[0].onmessage({ kind: 'transport', id: practice.id, ...t });
+    ev(tr(100, 0, false));
+    selectSection(1);
+    handlers.player_tempo = (a) => ({ ...withSegs(a.id as string, four), transport: tr(2000, 1, false) });
+    await jumpSection('start');
+    expect(pl.section).toBe(1);
+    ev(tr(2000, 1, true));
+    ev(tr(2600, 1, true));
+    ev(tr(5100, 2, true));
+    ev(tr(8200, 3, true));
+    handlers.player_pause = () => tr(8300, 3, false);
+    await togglePlay();
+    expect(pl.transport.playing).toBe(false);
+    expect(targetSection()).toBe(3);
+    handlers.player_tempo = (a) => ({ ...withSegs(a.id as string, four), transport: tr(8000, 3, false) });
+    await jumpSection('start');
+    await jumpSection('start');
+    const jumps = tempoCalls().filter((c) => (c as { kind: string }).kind === 'jump-section');
+    expect(jumps.slice(-2)).toEqual([
+      { kind: 'jump-section', index: 3, at: 8000.03, edge: 'start' },
+      { kind: 'jump-section', index: 3, at: 8000.03, edge: 'start' },
+    ]);
+  });
+
+  describe('selection follows the playhead through snapshots', () => {
+    const four = [seg(0, 100), seg(2000, 120), seg(5000, 90), seg(8000, 80)];
+    const tr = (position_ms: number, tempo_index: number, playing: boolean) => ({ ...idle, playing, position_ms, tempo_index });
+    const reply = (segs: TempoSegment[], t: PlayerTransport) => {
+      handlers.player_tempo = (a) => ({ ...withSegs(a.id as string, segs), transport: t });
+    };
+
+    it('(a) a snapshot-delivered index change during playback drops the selection', async () => {
+      await open(four);
+      channels[0].onmessage({ kind: 'transport', id: practice.id, ...tr(2100, 1, true) });
+      selectSection(1);
+      reply(four, tr(5100, 2, true));
+      await setSectionFlags(true, false);
+      expect(pl.section).toBeNull();
+      expect(targetSection()).toBe(2);
+    });
+
+    it('(b) a section move whose snapshot changes the playhead index keeps the selection', async () => {
+      await open(four);
+      channels[0].onmessage({ kind: 'transport', id: practice.id, ...tr(5100, 2, false) });
+      selectSection(2);
+      reply([seg(0, 100), seg(2000, 120), seg(5200, 90), seg(8000, 80)], tr(5100, 1, false));
+      moveChange(2, 1);
+      await flush();
+      expect(pl.section).toBe(2);
+    });
+
+    it('(c) jump-section into the selected section keeps it', async () => {
+      await open(four);
+      channels[0].onmessage({ kind: 'transport', id: practice.id, ...tr(100, 0, false) });
+      selectSection(2);
+      reply(four, tr(5000, 2, false));
+      await jumpSection('start');
+      expect(pl.section).toBe(2);
+    });
+
+    it('(d) Start reaches section 2 through a snapshot, playback crosses sections, pause, Start goes to the current one', async () => {
+      await open(four);
+      const ev = (t: PlayerTransport) => channels[0].onmessage({ kind: 'transport', id: practice.id, ...t });
+      ev(tr(100, 0, false));
+      selectSection(1);
+      reply(four, tr(2000, 1, false));
+      await jumpSection('start');
+      ev(tr(2000, 1, true));
+      ev(tr(5100, 2, true));
+      ev(tr(8200, 3, true));
+      handlers.player_pause = () => tr(8300, 3, false);
+      await togglePlay();
+      expect(targetSection()).toBe(3);
+      reply(four, tr(8000, 3, false));
+      await jumpSection('start');
+      await jumpSection('start');
+      const jumps = tempoCalls().filter((c) => (c as { kind: string }).kind === 'jump-section');
+      expect(jumps.map((j) => (j as { index: number }).index)).toEqual([1, 3, 3]);
+    });
+  });
+
   it('a selection made while paused survives play within its section and a play from elsewhere', async () => {
     await open();
     const ev = (position_ms: number, tempo_index: number, playing: boolean) =>

@@ -1121,6 +1121,31 @@ fn jump_section_is_instant_while_playing_and_moves_the_playhead_while_paused() {
     );
 }
 
+/// A detected map has fractional section starts; the jump lands on the next frame and the transport must name that section.
+#[test]
+fn start_jump_on_a_fractional_section_start_stays_in_that_section() {
+    const AT: f64 = 10500.01;
+    let (_t, spec, mut m, b, _e, _pcm) = with_tempo();
+    let t0 = Instant::now();
+    m.session.as_mut().unwrap().state.tempo.segments[1].start_ms = AT;
+    for playing in [false, true] {
+        if playing {
+            m.play(&spec.id, t0).unwrap();
+            b.pull(100);
+        }
+        m.seek(&spec.id, 1000, t0).unwrap();
+        let mut first = None;
+        for _ in 0..3 {
+            let s = m.jump_section(&spec.id, 1, AT, Edge::Start, t0).unwrap();
+            assert_eq!(s.transport.tempo_index, Some(1), "playing={playing}");
+            assert_eq!(s.transport.bpm, m.session.as_ref().unwrap().state.tempo.segments[1].bpm * m.session.as_ref().unwrap().state.speed);
+            let pos = m.session.as_ref().unwrap().pos();
+            assert_eq!(*first.get_or_insert(pos), pos);
+        }
+        assert_eq!(m.snapshot(&spec.id).unwrap().transport.tempo_index, Some(1));
+    }
+}
+
 #[test]
 fn jump_section_cancels_a_pre_roll_count_in() {
     let (_t, spec, mut m, b, _e, _pcm) = with_tempo();

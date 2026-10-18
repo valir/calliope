@@ -735,14 +735,17 @@ impl Session {
 
     fn transport_state(&self) -> PlayerTransport {
         let ms = self.ms_of(self.pos());
+        // The section lookup uses the exact frame time: the whole-ms `position_ms` floors below a fractional
+        // section start the Start jump just landed on (a tolerance absorbs float noise on whole-frame times).
+        let exact = self.pos_ms_f() + 1e-6;
         PlayerTransport {
             playing: self.transport.shows_playing(),
             counting_in: self.shared.counting_in.load(Ordering::Acquire),
             resume_pending: self.transport.resume_pending(),
             position_ms: ms,
             loop_playing: self.shared.loop_playing.load(Ordering::Acquire),
-            bpm: self.state.tempo.bpm_at(ms as f64) * self.state.speed,
-            tempo_index: self.state.tempo.segment_at(ms as f64),
+            bpm: self.state.tempo.bpm_at(exact) * self.state.speed,
+            tempo_index: self.state.tempo.segment_at(exact),
         }
     }
 

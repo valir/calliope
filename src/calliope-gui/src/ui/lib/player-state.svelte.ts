@@ -180,6 +180,7 @@ function logSections(s: { tempo: { segments: TempoSegment[] } }): void {
 
 function applySnapshot(s: PlayerSnapshot): void {
   const { transport, ...rest } = s;
+  const oldStarts = (pl.snap?.tempo.segments ?? []).map((g) => g.start_ms);
   pl.status = 'active';
   pl.trackId = s.id;
   pl.message = '';
@@ -189,6 +190,8 @@ function applySnapshot(s: PlayerSnapshot): void {
     loops: rest.loops.map((l) => ({ ...l })),
     tempo: { ...rest.tempo, segments: rest.tempo.segments.map((g) => ({ ...g })) },
   };
+  const sameStarts = oldStarts.length === s.tempo.segments.length && oldStarts.every((v, i) => v === s.tempo.segments[i].start_ms);
+  if (sameStarts) dropSelectionOnMove(transport.tempo_index);
   pl.transport = { ...transport };
   const n = s.tempo.segments.length;
   if (pl.section !== null && pl.section >= n) pl.section = n === 0 ? null : n - 1;
@@ -225,10 +228,14 @@ export function leavePlayer(): void {
     .catch((e) => fail('player_leave', e));
 }
 
+/** The playhead moved into another section (not onto the selected one): the selection is dropped. */
+function dropSelectionOnMove(next: number | null): void {
+  if (pl.section !== null && next !== pl.transport.tempo_index && next !== pl.section) pl.section = null;
+}
+
 /** Takes a transport; when the playhead moved into another section the selection is dropped, so the actions follow it. */
 function setTransport(t: PlayerTransport): void {
-  const was = pl.transport.tempo_index;
-  if (pl.section !== null && t.tempo_index !== was) pl.section = null;
+  dropSelectionOnMove(t.tempo_index);
   pl.transport = t;
 }
 
