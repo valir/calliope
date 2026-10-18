@@ -42,11 +42,13 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (beat detection job) | Laptop | Renders the drums + bass + guitar stems (`other` without a guitar, else all stems) at unity gain to a part file, uploads it to `POST /v1/beats`, waits, fetches and validates the beats, derives the sections, saves them through the `TempoStore`; phases, cancel, cleanup | Rust (own std thread) | `src/beat_detect.rs` (+ `src/beat_detect_tests.rs`) |
 | calliope-gui (backing render) | Laptop | Offline render of the mix to FLAC | Rust, `flacenc` | `src/backing_render.rs` |
 | calliope-gui (tempo map) | Laptop | Tempo segments, beat grid in 1/64-note ticks (16 per beat, `beats_per_bar` default 4), ms<->tick, snapping, "set BPM at position", beats in a range, loop boundary re-snapping; detected changes (`Segment.detected_ms`) and placed changes (`Segment.on_beat`, added or moved in the Player) both start their section on a beat: beat-rounded tick base, stretched last beat. Section operations: `move_change` (1/64-beat steps of the left tempo; detected: ±256 from the detected position, widened to the current offset; others: counted from the left section's start, no limit), `set_section_bpm`, `scale_section` (×2/÷2), `add_change` (on the split section's 1/64-beat grid), `remove_change`; every section ≥ 1 beat of its own tempo; `set_change_offset` (the Editor's, detected only). Per-section settings `Segment.meta: SectionMeta {name, metronome, count_in}` (flattened; carried through edits: Add copies the split section's metronome flag, Remove drops the joined section's), `set_section_flags`, `set_section_name`, `section_jump_ms` (start, or end; the player lands End on the last frame inside the section) | Rust, pure | `src/tempo_map.rs` |
-| calliope-gui (player state) | Laptop | `player.json` schema 5 (reads 1-5, migrating the old global metronome of 1-4; lenient read, strict write, newer schema read-only), loop list operations (a new loop ends at the next tempo section or the track end), source choice rule, load/save | Rust + serde, pure | `src/player_state.rs` |
+| calliope-gui (player state) | Laptop | `player.json` schema 6 (reads 1-6, migrating the old global metronome of 1-4; lenient read, strict write, newer schema read-only), the track speed (stored as a factor 0.25..2.0, used as a whole percentage), loop list operations (a new loop ends at the next tempo section or the track end), per-loop speed-training settings (Training on also sets Loop On; Loop On off ends Training), source choice rule, load/save | Rust + serde, pure | `src/player_state.rs` |
+| calliope-gui (speed rules) | Laptop | Speed percentages (25..200, `-`/`+` to the next multiple of 5, typed whole numbers), factor ↔ percent, speed-training settings (`Training`: on, start, end, step, repeats; validation) and their pass schedule (`pass_speed`, `progress`) | Rust, pure | `src/speed.rs` |
+| calliope-gui (time-stretch) | Laptop | `Stretcher`: real-time time-stretch with the pitch kept (stereo f32), latencies, the alignment rule (seek pre-roll ending at target + input latency, discard the output latency); no allocation after `new` | Rust over `signalsmith-stretch` (MIT; vendored Signalsmith Stretch C++, MIT) | `src/stretch.rs` |
 | calliope-gui (player sources) | Laptop | Dropdown entries of a track (backing variants, `audio`, `original`, stems), decoding one into memory (FLAC: `claxon`; other formats: external `ffmpeg` piped to memory), waveform peaks (2048) | Rust | `src/player_source.rs` |
-| calliope-gui (metronome) | Laptop | Synthesised click (own sound), count-in plan, placing clicks in an output block, `section_clicks` (the song's click list: beats of sections whose metronome is on, with each section count-in replacing the clicks before that section; skipped at the end of a repeating loop) | Rust, pure | `src/metronome.rs` |
-| calliope-gui (player engine) | Laptop | Player sessions: one decoded source, a callback-owned `Engine` (playback, count-in, loop repeats, metronome, fades) fed by a bounded command channel, transport + scrub rule, events, debounced `player.json` writes, `edit_sections(id, SectionEdit)` (Player tempo-section edits, section flags and names applied live: new click grid, loops re-snapped, debounced write; stale-index guard), `jump_section` (instant jump to a section's start or last bar), the grid sent to the engine is `section_clicks` (re-sent when the repeating loop changes; the engine's metronome flag only means "has a tempo" since gui-player-tempo-sections phase 3), the Play pre-roll comes from the Count In of the section under the playhead and loop Play's from the loop's Count-In, `release(id)` (flush + close + `closed` event when the Editor writes the tempo), `finish_open` re-reads a `player.json` changed since its off-lock load | Rust (std threads) | `src/player.rs` (+ `src/player_tests.rs`) |
-| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Editor: shared track tree + stem mixer + Mix lane with the mix waveform (tempo sections, draggable changes) and Autodetect BPM; Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform (loops + editable tempo sections: drag, keys, BPM label overlay), under the waveform two full-width rows: Sections (the BPM group, then status + section name box, Add, Remove, ×2, ÷2, Start, End and the section's Click / Count In toggles; no global metronome) beside Loops (Loops wraps below in narrow windows), then Playback at the bottom; Home/End keys); Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
+| calliope-gui (metronome) | Laptop | Synthesised click (own sound), count-in plan (at `bpm × speed`), placing clicks in an output block, `section_clicks` (the song's click list: beats of sections whose metronome is on, with each section count-in replacing the clicks before that section; skipped at the end of a repeating loop) | Rust, pure | `src/metronome.rs` |
+| calliope-gui (player engine) | Laptop | Player sessions: one decoded source, a callback-owned `Engine` (playback, count-in, loop repeats, metronome, fades; bypass mode at 100 % and stretch mode otherwise: song-time timeline delayed by the stretcher latency, clicks and wraps placed at the heard song position, crossfade into stretch mode; the speed-training run with per-pass speeds switched at the loop start) fed by a bounded command channel, the track speed (`speed` actions, refused during a training run), transport + scrub rule, events, debounced `player.json` writes, `edit_sections(id, SectionEdit)` (Player tempo-section edits, section flags and names applied live: new click grid, loops re-snapped, debounced write; stale-index guard), `jump_section` (instant jump to a section's start or last bar), the grid sent to the engine is `section_clicks` (re-sent when the repeating loop changes; the engine's metronome flag only means "has a tempo" since gui-player-tempo-sections phase 3), the Play pre-roll comes from the Count In of the section under the playhead and loop Play's from the loop's Count-In, `release(id)` (flush + close + `closed` event when the Editor writes the tempo), `finish_open` re-reads a `player.json` changed since its off-lock load | Rust (std threads) | `src/player.rs` (+ `src/player_tests.rs`) |
+| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Editor: shared track tree + stem mixer + Mix lane with the mix waveform (tempo sections, draggable changes) and Autodetect BPM; Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform (loops + editable tempo sections: drag, keys, BPM label overlay), under the waveform two full-width rows: Sections (the BPM group, then status + section name box, Add, Remove, ×2, ÷2, Start, End and the section's Click / Count In toggles; no global metronome) beside Loops (a "Training…" button on its third line opens the speed-training popover; the training progress shows in its status line; Loops wraps below in narrow windows), then Playback at the bottom (transport, then the Speed group: `-`, % box, `+`, Reset and the played-BPM readout, wrapping to a second line in narrow panes); Home/End and `[`/`]` keys); Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
 | calliope-lib (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation (incl. the beats document, `check_beats`), FLAC STREAMINFO parser, FLAC audible-time scan (`flac_level`: 100 ms windows, RMS of the loudest channel above `AUDIBLE_LEVEL_DBFS = -40`, integer sum-of-squares comparison, peak for display; no 15 s decision), HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel). No Tauri/GTK | Rust; `serde`, `libc`, `claxon`, `ureq` 3 without TLS (feature) | `src/calliope-lib/` |
 | calliope-stems (edge-AI stems service) | archserver (LAN), deployed by hand as a systemd user unit | HTTP server for "calliope-stems API v1": validates FLAC uploads (≤ 15 min), queues jobs (1 running), runs a configurable separator command, measures each stem's audible time, serves the stems, cleans up; beat jobs (`POST /v1/beats`) run a configurable beat-tracker command in the same queue; `--measure FILE...` prints audible times without starting a server. No Tauri/GTK; the GUI doesn't depend on it | Rust; `tiny_http`, `calliope-lib` | `src/calliope-stems/` |
 | separator adapter | archserver | `<sep> <input.flac> <out_dir> <model>` → `<out_dir>/<stem>.flac`; the real one runs the owner's audio-separator venv with `htdemucs_6s` (frees VRAM from Ollama first) | bash | `src/calliope-stems/separators/audio-separator.sh` |
@@ -113,12 +115,15 @@ the GUI crate, `src/calliope-gui/`.
     `open_player(id, events)`, `close_player()`, `get_player()`, `watch_player(events)`,
     `player_select_source(id, source)` (stops playback, keeps the position), `player_play(id)`, `player_pause(id)`, `player_seek(id, position)`,
     `player_nudge(id, delta)` (both with the 0.3 s scrub rule), `player_skip(id, delta)` (instant, Rew/FF),
-    `player_leave(id)` (pause + close output + flush), `player_tempo(id, action)` (`set-bpm` | `speed-step` |
-    `speed-reset` | the section edits of gui-player-tempo-sections plan §2.5: `section-bpm` {index, at, bpm}, `scale-section`
+    `player_leave(id)` (pause + close output + flush), `player_tempo(id, action)` (`set-bpm` | `speed-step` {steps} |
+    `speed-reset` | `speed-set` {percent} (gui-player-speed plan §2.8; refused during a training run) | the section edits of gui-player-tempo-sections plan §2.5: `section-bpm` {index, at, bpm}, `scale-section`
     {index, at, factor: double|halve}, `add-change` {position, bpm}, `remove-change` {index, at}, `move-change` {index, at,
     steps}; phase 2: `section-flags` {index, at, metronome, count_in}, `section-name` {index, at, name}, `jump-section`
     {index, at, edge: start|end}; `at` = the section's current `start_ms`, a mismatch is refused as stale), `player_loop(id, action)` (tagged action: add, remove,
-    select, mark, set, flags, play, stop; loops may have no end yet). Actions are tagged objects to keep the command list
+    select, mark, set, flags, training {on, start, end, step, repeats}, play, stop; loops may have no end yet). The
+    Player transport carries `bpm` (song BPM at the playhead), `played_bpm` (× the speed heard), `speed_pct` (the speed
+    heard: the training speed during a run) and `training` (`{loop, speed_pct, repeat, of|null}` or null); the snapshot
+    carries the track speed `speed_pct` and each loop's `training`. Actions are tagged objects to keep the command list
     short. BPM detection runs from the Editor (Autodetect BPM, stems-beat-autodetect); the Player has no Detect button.
     Types are in `src/ui/lib/ipc.ts` and in the plans (tracks-repository §2.7, stem-extraction §2.10,
     backing-track-editor §2.7, play-backing-track §2.9, stems-beat-autodetect §2.11).
@@ -168,6 +173,9 @@ the GUI crate, `src/calliope-gui/`.
   `player loop <action> index=<n|none> count=<n> complete=<b>`, `player tree collapsed=<b>`, `player leave pause`,
   `player section <bpm|scale|add|remove|move> index=<i> …`, `player section flags index=<i> metronome=<b> count_in=<b>`,
   `player section name index=<i> length=<n>`, `player section jump index=<i> edge=<start|end> position=<ms>`,
+  `player speed percent=<n> via=<minus|plus|reset|typed|key>`, `player speed refused text=<t>`,
+  `player training index=<i> on=<b> start=<s> end=<e> step=<t> repeats=<r>`, `player readout bpm=<text|none> speed=<pct>`
+  (`player active` ends with ` speed=<pct>`),
   `player sections segments=<k> bpm=<a,b,..> starts=<ms,..> metronome=<1|0,..> count_in=<1|0,..> named=<n>`.
   Rust lines (prefix `calliope: `): `dialog kind=<add-tablature|update-tablature|repository-root|export-track|export-tablature|import-audio|import-video> result=<picked|cancelled>`,
   `import job=<job> phase=<phase>`, `import path kind=<audio|video> result=<accepted|rejected>[ reason=<empty|invalid|relative|missing|folder|not-file|unreadable|extension>]`,
@@ -182,7 +190,8 @@ the GUI crate, `src/calliope-gui/`.
   `player transport playing=<b> counting_in=<b> loop=<n|none> position_ms=<ms>` (changes only),
   `player count-in clicks=3 beat_ms=<ms>`, `player wrap loop=<index, 0-based> count_in=<b>`, `player state saved id=<id>`,
   `player state error id=<id> message=<m>`, `player section <bpm|scale|add|remove|move|flags|name> id=<id> index=<i> segments=<k> bpm=<..>[ steps=<s> applied=<s'>] metronome=<1|0,..> count_in=<1|0,..>`,
-  `player section jump id=<id> index=<i> edge=<start|end> position_ms=<ms>`.
+  `player section jump id=<id> index=<i> edge=<start|end> position_ms=<ms>`, `player speed id=<id> percent=<n>`,
+  `player training loop=<i> pass=<n> speed=<pct> repeat=<r>/<of|end>`, `player training end loop=<i> speed=<pct>`.
 - **Settings file**: `$XDG_CONFIG_HOME/app.calliope.gui/settings.json` (Tauri
   `app_config_dir()`), e.g. `{"theme": "dark", "repository_root": null, "edge_ai_url": null, "keep_original": false}`
   (`repository_root`: `null`/absent = the default root, must be an absolute path;
@@ -251,9 +260,9 @@ the GUI crate, `src/calliope-gui/`.
   watcher; the Library rescans each time it is shown. A configured root that doesn't exist is
   never created (it may be an unmounted disk); the default root is created on first use.
 - **Player settings file `player.json`** (gui-play-backing-track plan §2.3-2.5), next to `track.json`:
-  `{"schema_version": 5, "source": "backing:<id>"|"audio"|"original"|"stem:<name>", "position_ms": <int>, "tempo": {"beats_per_bar": 4,
-  "segments": [{"start_ms": <number>, "bpm": <20..300>[, "detected_ms": <number>][, "on_beat": true][, "name": <string>][, "metronome": false][, "count_in": true]}]}, "speed": <0.5..1.5>,
-  "loops": [{"id", "start": {"tick": <int>}|{"ms": <number>}, "end": <same>|null, "repeat", "count_in"}], "current_loop": <id|null>}`.
+  `{"schema_version": 6, "source": "backing:<id>"|"audio"|"original"|"stem:<name>", "position_ms": <int>, "tempo": {"beats_per_bar": 4,
+  "segments": [{"start_ms": <number>, "bpm": <20..300>[, "detected_ms": <number>][, "on_beat": true][, "name": <string>][, "metronome": false][, "count_in": true]}]}, "speed": <0.25..2.0>,
+  "loops": [{"id", "start": {"tick": <int>}|{"ms": <number>}, "end": <same>|null, "repeat", "count_in"[, "training": {"on", "start", "end", "step", "repeats"}]}], "current_loop": <id|null>}`.
   `end: null` = a loop whose end is not set (no repeat, Play disabled, only its start mark drawn). Since gui-player-tempo-sections
   phase 3, `+` sets the end at once: the next tempo section's start tick after the loop start, else the track end (ms in
   timestamp mode); `end` is null only when there is no room, or after `>` moved the start past the end.
@@ -295,13 +304,17 @@ the GUI crate, `src/calliope-gui/`.
   the playhead has `count_in`; loop Play only with the loop's `count_in`. Schema 1-4 files are migrated on read: master
   `on` false (or missing) → every section `metronome: false` and `count_in: false`; master `on` true → the section flags
   kept; then master `count_in` true → the first section's `count_in: true`. A v<=4 file with an empty tempo map has nothing to
-  migrate, so its old master state is dropped. This build reads 1-5 and writes 5; schema-4
-  builds treat the file as newer and never overwrite it.
+  migrate, so its old master state is dropped. Schema-4 builds treat the file as newer and never overwrite it.
+  **Schema 6** (gui-player-speed plan §2.7): `speed` is the track speed as a factor of a whole percentage, 0.25..2.0
+  (read as `round(speed × 100)` clamped to 25..200 %, so older files, always 1.0, open at 100 %); a loop may carry
+  `training` (`on`, `start`/`end` 25..200, `step` 1..175, `repeats` 1..99, whole percentages), written once set, dropped
+  as a whole when damaged. Schema 6 because a schema-5 build clamps `speed` to 0.5..1.5 and would write it back. This
+  build reads 1-6 and writes 6; schema-5 builds treat the file as newer and never overwrite it.
   **The track's one tempo map** (stems-beat-autodetect plan §2.2): `tempo` in `player.json` is also written by the Editor
   (Autodetect BPM, moving a detected change) through `TempoStore::replace`, entirely under the `PlayerHost` lock: if the
   Player holds the track, its pending state is flushed and its session closed (`PlayerEvent::Closed`; the Player view
   reopens the track when it is shown), then the file is loaded → tempo replaced (loops re-snapped keeping their time,
-  `speed` 1.0, position and other fields kept) → `write_atomic`. A failed flush refuses the write. The Player's
+  speed, position and other fields kept; until gui-player-speed `speed` was reset to 1.0) → `write_atomic`. A failed flush refuses the write. The Player's
   `finish_open` re-reads a `player.json` whose revision changed since its off-lock load, so neither side loses the
   other's write. The Editor reads the map through the store (flushing an open Player session) at open and on each Editor
   view entry.
@@ -392,7 +405,7 @@ src/                      ALL source (owner requirement), one folder per crate
                           audio_out, editor (+ editor_tests), backing_render, tempo_map,
                           player_state, player_source, metronome, player (+ player_tests),
                           player_ipc, mix_waveform, tempo_detect, tempo_store,
-                          beat_detect (+ beat_detect_tests), ...)
+                          beat_detect (+ beat_detect_tests), speed, stretch, ...)
     src/ui/               frontend: index.html, main.ts, app.css, App.svelte,
                           components/ (library/ = tree, pane, tablature panel;
                           import/ = source page (URL box, or local path box + Browse +
@@ -400,19 +413,20 @@ src/                      ALL source (owner requirement), one folder per crate
                           editor/ = EditorPane, StemLane, MixLane, TimeField (also used by the Player);
                           player/ = PlayerPane, SourceSelect, WaveformView (shared with the Editor's Mix lane, props-driven;
                           Player mode `freeMove` edits sections), SectionBpmInput (BPM overlay), BpmSection, SectionsSection,
-                          PlaybackSection, LoopsSection (row 1: Sections with BPM inside + Loops; row 2: Playback);
+                          PlaybackSection (+ SpeedControl), LoopsSection (+ TrainingPopover) (row 1: Sections with BPM inside + Loops;
+                          row 2: Playback with the Speed group);
                           library/TrackBrowser.svelte = tree column shared by Library and Editor;
                           TrackFields.svelte shared by Library and Import),
                           views/ (one file per main view),
                           lib/ (ipc.ts, views.ts, theme.ts, app-state.svelte.ts,
                           fuzzy.ts, library-tree.ts, track-draft.ts, library-state.svelte.ts,
                           url-check.ts, import-state.svelte.ts, editor-state.svelte.ts, time-format.ts,
-                          player-state.svelte.ts, bar-format.ts, bpm-format.ts, waveform-geometry.ts,
+                          player-state.svelte.ts, bar-format.ts, bpm-format.ts, speed-format.ts, waveform-geometry.ts,
                           utils.ts, components/ui/ = shadcn components owned by us),
                           *.test.ts next to the code
     dist/                 generated by `vite build`, gitignored, embedded into the binary
     tests/                cargo integration tests (cli, frontend, acceptance_*, gui_smoke, gui_e2e,
-                          gui_library_e2e, gui_import_e2e, gui_editor_e2e, gui_player_e2e); fixtures/library-sample/ = sample
+                          gui_library_e2e, gui_import_e2e, gui_editor_e2e, gui_player_e2e, player_realtime); fixtures/library-sample/ = sample
                           repository (v1), library-v2/ = mixed v1/v2 incl. a stem track,
                           import/ = generated audio/video/stem fixtures (make-fixtures.sh),
                           library-editor/ = stem tracks for the Editor (editor/make-fixtures.sh),
@@ -440,7 +454,8 @@ the server out of the GUI.
 - All `npm` commands run in `src/calliope-gui/`; build output goes to the workspace
   `target/` at the repository root. `cargo` commands work from anywhere in the repository
   (`-p <crate>` or `--workspace` pick the crate).
-- Prerequisites: Rust, `webkit2gtk-4.1 gtk3 base-devel alsa-lib`, Node.js >= 22.12 with npm; run
+- Prerequisites: Rust, `webkit2gtk-4.1 gtk3 base-devel alsa-lib clang` (clang = libclang for the time-stretch binding's
+  bindgen; the C++ compiler comes with base-devel), Node.js >= 22.12 with npm; run
   `npm ci` (in `src/calliope-gui/`) once after cloning and after `package-lock.json` changes. At run time the import
   needs `yt-dlp` and `ffmpeg` (`pacman -S yt-dlp ffmpeg`); tests need `ffmpeg`, `python3` and
   `unshare`/`ip` (util-linux, iproute2), never yt-dlp or the real separation model.
@@ -456,8 +471,9 @@ the server out of the GUI.
   release build fails (naming `npm run build:app`).
   Vite/Vitest cache lives in the GUI crate's `node_modules/.vite` (`cacheDir`), not in `src/ui/`,
   because build.rs watches `src/ui`.
-- The workspace `Cargo.toml` builds `claxon` and `flacenc` with `opt-level = 3` even in the dev
-  profile, so debug builds and tests decode/encode audio at a usable speed.
+- The workspace `Cargo.toml` builds `claxon`, `flacenc` and `signalsmith-stretch` (its vendored C++ is compiled by the
+  crate's build script with the package's opt-level) with `opt-level = 3` even in the dev profile, so debug builds and
+  tests decode/encode/stretch audio at a usable speed.
 - Dev: `npm run dev:app` (= `tauri dev --config tauri.dev.conf.json`, with `@tauri-apps/cli`
   as an npm dev-dependency). It starts the Vite dev server on `http://localhost:5173` (hot
   reload), then `cargo run` with the dev overlay passed in `TAURI_CONFIG`. The overlay has a
@@ -610,7 +626,12 @@ the server out of the GUI.
   `ManualBackend`: exact source samples, 3 ms fades at jumps, click onsets at exact frames, count-in timing, loop
   repeats. GUI tests analyse the capture WAV: tone presence per source frequency (330/440/550/660 Hz fixtures) and
   click onsets in the 1.5-2 kHz band. Non-FLAC sources go through the real local `ffmpeg` on a generated MP3 fixture.
-  Time-stretch (when added) is checked on synthetic tones (pitch within 1 %, duration); listening quality is manual.
+  **Speed** (gui-player-speed): the stretcher on synthetic tones (440 Hz ± 2 Hz at 50-200 %, duration ± 1 %, burst
+  alignment ± 10 ms); the engine's click-on-beat rule by two renders with the same commands (clicks over a silent source,
+  beat bursts without clicks: same timeline, onsets compared); continuity as "no 10 ms window below 50 % of the tone's
+  RMS" across speed changes, wraps and training passes; `tests/player_realtime.rs` counts Rust allocations on the render
+  thread (must be zero after construction; C++ allocations are covered by code reading). At 100 % the engine stays
+  bit-exact. Listening quality is a manual check.
 - MIDI: no fake yet. Each feature that adds hardware must also add a simulator/fake and list it here.
 
 ## Decision log
@@ -1093,6 +1114,8 @@ changes snap to the nearest tick of the current grid, so tick bases are integers
 boundaries are `{tick}` in BPM mode and `{ms}` in timestamp mode (the spec's rule) and are re-snapped, keeping their
 time, whenever the tempo map changes, so a loop stays on the audio the user marked. Speed is one factor per track;
 the BPM shown is `bpm_at(position) * speed`. At BPM 0 there is no speed change (`-`/`+`/`Reset` disabled, owner).
+(**The speed part is superseded** by the 2026-10-18 gui-player-speed entries: a percentage independent of the tempo map,
+also without one; the BPM field shows the song BPM and a separate readout the played BPM.)
 A loop is created with `+` at the position and **no end** (owner): it is "incomplete" (stored `end: null`, never
 repeats, Play/Loop On/Count-In disabled, start mark only) until `<` sets an end after the start; `>` at or after the end
 moves the start and clears the end again, so a loop is never silently reversed.
@@ -1136,7 +1159,8 @@ librosa (one tempo only), a new API version (unnecessary for additive routes).
 The detected tempo serves the metronome and count-in, which read `player.json`, and all sources of a track are
 sample-aligned, so the Editor writes the same `tempo`. Choice (owner): no live hand-over. `TempoStore::replace` runs under
 the `PlayerHost` lock, flushes and closes a Player session holding the track, then rewrites the file from its flushed
-content (only `tempo`, the loops' ticks re-expressed at the same times, and `speed` change). The Player reopens the track
+content (only `tempo` and the loops' ticks re-expressed at the same times change; `speed` was reset too until
+gui-player-speed, which keeps it). The Player reopens the track
 when next shown; `finish_open` re-reads a file whose revision changed since its off-lock load. So the Editor never loses
 the Player's loops or position, and the Player can never write the old tempo back. Detection replaces the whole map
 without a dialog; the raw beats are not stored. Alternatives: pushing the new map into the open session (rejected by the
@@ -1219,3 +1243,48 @@ would start clicking). Layout (owner, Q8): under the waveform two full-width row
 Loops, then Playback at the bottom; the pane logs `player layout overflow=… loops_beside=…` so GUI tests check that the
 pane scrolls at most 14 px at 1280x800 with the tree folded and that Loops sits beside Sections there; narrower
 windows wrap Loops below Sections, never sideways.
+
+### 2026-10-18: Time-stretch with Signalsmith Stretch through `signalsmith-stretch` (MIT), behind `stretch.rs`   (feature: gui-player-speed; plan §2.2)
+The Player needs a real-time speed change from 25 % to 200 % with the pitch kept, under a permissive licence (spec), in the
+existing callback, no symphonia. Choice: Signalsmith Stretch 1.3.1 (MIT C++, vendored in the MIT binding
+`signalsmith-stretch` 0.1.3), wrapped by our `Stretcher` so the binding can be swapped or vendored in one file. Measured on the
+laptop: 0.8 % of one core (release, stereo 44.1 kHz) at any speed, 60 + 60 ms latency, a 440 Hz tone stays 440 Hz (440.9 at
+25 %). Costs: `clang`/libclang at build time (bindgen) and a C++ compiler; dev builds compile the C++ at opt-level 3; the two
+C++ licence texts sit in sub-folders, so the notices generator lists them explicitly. Alternatives: Bungee (MPL-2.0, not
+permissive as the spec asks, CMake), SoundTouch (LGPL) and Rubber Band (GPL) excluded, pure-Rust `timestretch` (unproven on
+guitar) and `wsola` / an own WSOLA (audible doubling on chords and full mixes), an own phase vocoder (weeks of tuning). The
+earlier plan's `Stretcher` trait is dropped: one implementation, one module.
+
+### 2026-10-18: The engine plays stretched audio on a song-time timeline; clicks are placed after the stretch   (feature: gui-player-speed; plan §2.4)
+Clicks, count-ins, wraps, the playhead and training passes must stay on the music although the stretcher delays it.
+Choice: at exactly 100 % (no training run) the engine keeps today's bit-exact bypass path; otherwise it feeds the stretcher
+in sub-blocks (≤ 256 frames, cut at loop and track ends) and records, in a fixed ring, which song frame each output frame
+plays (fed position − input latency, heard output latency later). The heard song position drives `Shared.position`, the
+click list (clicks are synthesised after the stretch, so they are never stretched and stay on the beats), wraps and ends.
+Every discontinuity (Play, Jump, Resume, PlayLoop, wrap with count-in) aligns the stretcher: seek with a pre-roll ending at
+target + input latency, then process and discard the output latency (the library's own `exact()` method; verified with
+bursts at 50/85/150 %, within one 10 ms window). Speed changes while playing only change the feed ratio; entering stretch
+mode from bypass crossfades over 3 ms. Loop wraps without count-in feed straight on (the stretcher overlaps the ends);
+ends with count-in, loops played once and the track end let the tail be heard before acting. Alternatives: always
+stretching (loses bit-exactness and every exact test), placing clicks by the fed position (they would run ~120 ms early),
+re-aligning at every wrap (an audible seam each pass), stretching the clicks with the music (smeared clicks).
+
+### 2026-10-18: Speed is a whole percentage per track, independent of the tempo map; `player.json` schema 6   (feature: gui-player-speed; plan §2.3, §2.7; replaces gui-play-backing-track requirement 14's BPM steps)
+The spec asks for 25..200 % in 5 % steps, typed values and Reset, also without a tempo map, saved per track. Choice: the
+track speed is a whole percentage (`speed.rs` rules; `-`/`+` snap to the 5 % grid), stored as the existing `speed` factor
+(now 0.25..2.0), so old files (always 1.0) open at 100 %. Typing a BPM and Autodetect no longer reset it (it no longer
+derives from a BPM). The Sections BPM box shows the song BPM; the Playback pane shows `bpm × speed` read-only. Schema 6,
+because a schema-5 build would clamp and rewrite the speed. Alternatives: a new `speed_pct` key (two keys for one value
+across versions), keeping schema 5 (old builds would turn 25 % into 50 %).
+
+### 2026-10-18: Speed training runs in the engine; absolute percentages; the run ends with the loop's Play   (feature: gui-player-speed; plan §2.6, §2.11; owner decisions 2026-10-18)
+Each new speed must start exactly at the loop start without a gap, which the 20 ms ticker cannot guarantee. Choice: the
+loop's settings travel in `LoopSpec` as a plan; on the loop's own Play the engine runs `pass_speed(pass)` and switches the
+fed speed at each wrap on the feed side, while the timeline publishes the pass and speed when they are heard (atomics, so
+the manager shows "70 % · 2/4"). Training percentages are absolute (not scaled by the track speed). A run always uses
+stretch mode, ends on Pause, loop Stop, leaving the loop, another loop or Training/Loop On off, and then returns to the
+track speed; the speed control is disabled while it runs. Training needs repeats, so Training on switches Loop On on.
+The settings are edited in a non-modal popover from a "Training…" button in the Loops pane (owner, 2026-10-18; Escape,
+click outside or Close close it, keyboard reachable), so the Loops pane keeps three lines.
+Alternatives: the manager sending `SetSpeed` on each wrap (late by up to a tick), relative percentages (what is heard
+differs from what is shown), training by any playback that wraps the loop (surprising speed changes during normal play).
