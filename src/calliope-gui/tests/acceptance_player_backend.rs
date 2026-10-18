@@ -239,7 +239,9 @@ fn ac13_track_without_tempo_is_timestamp_mode_with_metronome_refused() {
     let flags = |metronome, count_in| SectionEdit::Flags { index: 0, at: 0.0, metronome, count_in };
     assert!(r.m.edit_sections(&r.id(), flags(true, false), r.t0).is_err());
     assert!(r.m.edit_sections(&r.id(), flags(false, true), r.t0).is_err());
-    assert!(r.m.speed(&r.id(), SpeedAction::Step(-1), Instant::now()).is_ok());
+    let s = r.m.speed(&r.id(), SpeedAction::Step(-1), Instant::now()).unwrap();
+    assert_eq!(s.speed_pct, 95, "the speed works without a tempo");
+    assert_eq!((s.transport.bpm, s.transport.played_bpm), (0.0, 0.0));
 }
 
 #[test]
@@ -3618,4 +3620,365 @@ fn qa_qd3_end_jumps_land_on_the_last_frame_of_a_fractional_section() {
     r.m.jump_section(&r.id(), 0, 500.0, tempo_map::Edge::End, r.t0).unwrap();
     let got = r.b.pull(1500);
     assert_eq!(nearest_shift(&r, &got, frames_of(8500.0)), 0);
+}
+
+// =========================================================================================
+// speed and training (gui-player-speed)
+// =========================================================================================
+
+/// Pulls `frames` in 64-frame blocks; returns the audio and the transport after each block.
+fn run(r: &mut Rig, frames: usize) -> (Vec<f32>, Vec<PlayerTransport>) {
+    let (mut audio, mut tr) = (Vec::new(), Vec::new());
+    for _ in 0..frames / 64 {
+        audio.extend(r.b.pull(64));
+        tr.push(r.snap().transport);
+    }
+    (audio, tr)
+}
+
+fn set_speed(r: &mut Rig, pct: i64) {
+    r.m.speed(&r.id(), SpeedAction::Set(pct), r.t0).unwrap();
+}
+
+fn vocals_rig(pct: i64) -> Rig {
+    let mut r = rig(PRACTICE);
+    r.m.select_source(&r.id(), "stem:vocals", r.t0).unwrap();
+    set_speed(&mut r, pct);
+    r
+}
+
+fn rms(v: &[f32]) -> f32 {
+    (v.iter().map(|s| s * s).sum::<f32>() / v.len().max(1) as f32).sqrt()
+}
+
+/// No 10 ms window (stereo interleaved) with an RMS below half of `reference`.
+fn assert_no_dip(v: &[f32], reference: f32, what: &str) {
+    let w = RATE / 100 * 2;
+    for (i, c) in v.chunks_exact(w).enumerate() {
+        assert!(rms(c) >= 0.5 * reference, "{what}: window {i} rms {} < half of {reference}", rms(c));
+    }
+}
+
+#[test]
+fn sp01_minus_three_times_is_85_and_10s_take_11_8s() {
+    let mut r = rig(PRACTICE);
+    for _ in 0..3 {
+        r.m.speed(&r.id(), SpeedAction::Step(-1), r.t0).unwrap();
+    }
+    assert_eq!(r.snap().speed_pct, 85);
+    r.seek(1000);
+    r.play();
+    let mut frames = 0usize;
+    while r.pos() < 11_000 {
+        r.b.pull(64);
+        frames += 64;
+        assert!(frames < RATE * 15, "never reached 11 s");
+    }
+    let secs = frames as f64 / RATE as f64;
+    assert!((secs - 11.76).abs() < 0.1176, "{secs} s");
+}
+
+#[test]
+fn sp02_a_440hz_tone_keeps_its_pitch_at_50_and_150() {
+    for pct in [50, 150] {
+        let mut r = vocals_rig(pct);
+        r.play();
+        r.b.pull(RATE / 2);
+        let steady = r.b.pull(RATE);
+        let (mut best, mut best_hz) = (0.0f32, 0.0f32);
+        let mut hz = 300.0f32;
+        while hz <= 700.0 {
+            let a = goertzel(&steady, hz);
+            if a > best {
+                (best, best_hz) = (a, hz);
+            }
+            hz += 0.5;
+        }
+        assert!((best_hz - 440.0).abs() <= 2.0, "{pct} %: dominant {best_hz} Hz");
+        assert!(best > 0.01, "{pct} %: tone present");
+    }
+}
+
+#[test]
+fn sp03_changing_to_70_while_playing_has_no_pause_and_keeps_moving() {
+    let mut r = vocals_rig(100);
+    r.play();
+    let (first, _) = run(&mut r, RATE);
+    let reference = rms(&first[RATE / 5..]);
+    assert!(reference > 0.01);
+    let p0 = r.pos();
+    set_speed(&mut r, 70);
+    let (after, tr) = run(&mut r, 2 * RATE);
+    assert_no_dip(&after, reference, "after the change");
+    let mut last = p0;
+    for t in &tr {
+        assert!(t.position_ms >= last, "position went back: {} < {last}", t.position_ms);
+        last = t.position_ms;
+    }
+    let moved = (last - p0) as f64;
+    assert!((moved - 1400.0).abs() <= 70.0, "advanced {moved} ms");
+}
+
+#[test]
+fn sp04_120bpm_at_50_shows_60_and_clicks_every_second_on_the_beats() {
+    let mut on = ts_rig();
+    let mut off = ts_rig();
+    on.set_clicks(true);
+    off.set_clicks(false);
+    for r in [&mut on, &mut off] {
+        set_speed(r, 50);
+        r.seek(0);
+        r.play();
+    }
+    let (a, tr) = run(&mut on, 5 * RATE);
+    let (b, _) = run(&mut off, 5 * RATE);
+    let t = tr.last().unwrap();
+    assert_eq!((t.bpm, t.played_bpm, t.speed_pct), (120.0, 60.0, 50));
+    let at = clicks(&a, &b, 0);
+    assert!(at.len() >= 4, "{at:?}");
+    for w in at.windows(2) {
+        let gap = ms_of_frame(w[1] - w[0]);
+        assert!((gap - 1000.0).abs() <= 1.0, "gap {gap} ms in {at:?}");
+    }
+    for f in at {
+        let pos = tr[f / 64].position_ms as f64;
+        let beat = 500.0 + ((pos - 500.0) / 500.0).round() * 500.0;
+        assert!((pos - beat).abs() <= 2.0, "onset at frame {f}: song position {pos} ms, beat {beat}");
+    }
+}
+
+#[test]
+fn sp05_no_tempo_map_no_bpm_and_speed_still_works() {
+    let mut r = rig(PRACTICE);
+    set_speed(&mut r, 50);
+    r.play();
+    let p0 = r.pos();
+    let (_, tr) = run(&mut r, 2 * RATE);
+    let t = tr.last().unwrap();
+    assert_eq!((t.bpm, t.played_bpm), (0.0, 0.0));
+    let moved = (t.position_ms - p0) as f64;
+    assert!((moved - 1000.0).abs() <= 20.0, "advanced {moved} ms");
+}
+
+#[test]
+fn sp06_20_and_250_are_refused_and_the_speed_is_unchanged() {
+    let mut r = rig(PRACTICE);
+    set_speed(&mut r, 80);
+    r.flush();
+    let file = r.spec.dir.join("player.json");
+    std::fs::remove_file(&file).unwrap();
+    for bad in [20, 250] {
+        let e = r.m.speed(&r.id(), SpeedAction::Set(bad), r.t0).unwrap_err();
+        assert_eq!(e, calliope_gui::speed::SPEED_RANGE);
+    }
+    assert_eq!(r.snap().speed_pct, 80);
+    r.m.tick(r.after(5000));
+    assert!(!file.exists(), "a refused speed writes nothing");
+}
+
+#[test]
+fn sp07_80_percent_survives_close_and_reopen() {
+    let mut r = rig(PRACTICE);
+    set_speed(&mut r, 80);
+    r.m.tick(r.after(600));
+    let d = r.disk().unwrap();
+    assert_eq!(d["speed"], 0.8);
+    assert_eq!(d["schema_version"], 6);
+    r.m.close();
+    r.reopen();
+    assert_eq!(r.snap().speed_pct, 80);
+    r.play();
+    let p0 = r.pos();
+    let (_, tr) = run(&mut r, 2 * RATE);
+    let moved = (tr.last().unwrap().position_ms - p0) as f64;
+    assert!((moved - 1600.0).abs() <= 32.0, "advanced {moved} ms");
+}
+
+const TRAIN: Training = Training { on: true, start: 60, end: 80, step: 10, repeats: 2 };
+use calliope_gui::speed::Training;
+
+/// The TS fixture with a 2 s loop (bar 2 to bar 3) selected.
+fn loop_rig(count_in: bool) -> Rig {
+    let mut r = ts_rig();
+    r.seek(2500);
+    r.lp(LoopAction::Add).unwrap();
+    r.lp(LoopAction::Set(Mark::End, Boundary::Tick { tick: 128 })).unwrap();
+    let s = r.snap();
+    let l = &s.loops[0];
+    assert_eq!((l.start_ms, l.end_ms), (2500.0, Some(4500.0)));
+    if count_in {
+        r.lp(LoopAction::Flags { repeat: true, count_in: true }).unwrap();
+    }
+    r
+}
+
+fn tuple(t: &PlayerTransport) -> Option<(u32, u32, Option<u32>)> {
+    t.training.map(|p| (p.speed_pct, p.repeat, p.of))
+}
+
+#[test]
+fn sp08_training_60_to_80_step_10_two_repeats() {
+    let mut r = loop_rig(false);
+    r.lp(LoopAction::Training(TRAIN)).unwrap();
+    r.lp(LoopAction::Play).unwrap();
+    let want = [(60, 1, Some(2)), (60, 2, Some(2)), (70, 1, Some(2)), (70, 2, Some(2)), (80, 1, None), (80, 2, None)];
+    let mut starts: Vec<usize> = vec![0];
+    let mut seen = Vec::new();
+    let mut block = 0usize;
+    while seen.len() < 7 {
+        let (_, tr) = run(&mut r, 64);
+        let t = &tr[0];
+        let tu = tuple(t).expect("a run is shown while playing");
+        assert_eq!(t.speed_pct, tu.0, "speed_pct goes with the pass");
+        if seen.last() != Some(&tu) {
+            seen.push(tu);
+            if seen.len() > 1 {
+                starts.push(block);
+            }
+        }
+        block += 1;
+        assert!(block * 64 < RATE * 25, "run too long: {seen:?}");
+    }
+    assert_eq!(seen[..6], want);
+    let secs = [2.0 / 0.6, 2.0 / 0.6, 2.0 / 0.7, 2.0 / 0.7, 2.0 / 0.8, 2.0 / 0.8];
+    for (i, w) in starts.windows(2).enumerate() {
+        let got = (w[1] - w[0]) as f64 * 64.0 / RATE as f64;
+        assert!((got - secs[i]).abs() <= secs[i] * 0.02, "pass {}: {got} s vs {}", i + 1, secs[i]);
+    }
+}
+
+#[test]
+fn sp09_stopping_returns_to_the_track_speed_and_the_next_play_restarts() {
+    let mut r = loop_rig(false);
+    set_speed(&mut r, 90);
+    r.lp(LoopAction::Training(TRAIN)).unwrap();
+    r.lp(LoopAction::Play).unwrap();
+    let mut block = 0;
+    loop {
+        let (_, tr) = run(&mut r, 64);
+        if tuple(&tr[0]) == Some((70, 1, Some(2))) {
+            break;
+        }
+        block += 1;
+        assert!(block < 4000, "pass 3 never came");
+    }
+    r.lp(LoopAction::Stop).unwrap();
+    r.b.pull(64);
+    let t = r.snap().transport;
+    assert_eq!(t.training, None);
+    assert_eq!(t.speed_pct, 90);
+    assert_eq!(r.snap().speed_pct, 90);
+    r.lp(LoopAction::Play).unwrap();
+    let mut first = None;
+    let mut blocks = 0usize;
+    for b in 0..2000 {
+        let (_, tr) = run(&mut r, 64);
+        let tu = tuple(&tr[0]);
+        if first.is_none() {
+            assert_eq!(tu, Some((60, 1, Some(2))), "pass 1 at 60 %");
+            first = Some(b);
+        }
+        if tu != Some((60, 1, Some(2))) {
+            blocks = b;
+            break;
+        }
+    }
+    let got = blocks as f64 * 64.0 / RATE as f64;
+    assert!((got - 2.0 / 0.6).abs() <= 2.0 / 0.6 * 0.02, "pass 1 took {got} s");
+}
+
+#[test]
+fn sp10_training_settings_survive_close_and_reopen() {
+    let json = r#"{"schema_version":5,"speed":1.0,"loops":[
+        {"id":"a","start":{"tick":64},"end":{"tick":192},"repeat":true,"count_in":false},
+        {"id":"b","start":{"tick":256},"end":{"tick":512},"repeat":true,"count_in":false},
+        {"id":"c","start":{"tick":600},"end":{"tick":700},"repeat":false,"count_in":true}],
+        "current_loop":"a","tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":120}]}}"#;
+    let mut r = rig_with(PRACTICE, json);
+    r.lp(LoopAction::Select(1)).unwrap();
+    assert_eq!(r.snap().current_loop, Some(1));
+    r.lp(LoopAction::Training(TRAIN)).unwrap();
+    r.m.close();
+    let d = r.disk().unwrap();
+    assert_eq!(d["loops"][1]["training"], json!({"on": true, "start": 60, "end": 80, "step": 10, "repeats": 2}));
+    assert!(d["loops"][0].get("training").is_none() && d["loops"][2].get("training").is_none());
+    r.reopen();
+    let s = r.snap();
+    assert_eq!(s.loops[1].training, TRAIN);
+    assert_eq!(s.loops[0].training, Training::default());
+    assert_eq!(s.loops[2].training, Training::default());
+}
+
+#[test]
+fn sp11_previous_version_file_loads_at_100_unchanged() {
+    let json = r#"{"schema_version":5,"speed":1.0,"source":"original","position_ms":1234,
+        "loops":[
+        {"id":"loop-1","start":{"tick":64},"end":{"tick":192},"repeat":true,"count_in":false},
+        {"id":"loop-2","start":{"tick":256},"end":{"tick":512},"repeat":false,"count_in":true},
+        {"id":"loop-3","start":{"tick":300},"end":null,"repeat":true,"count_in":false}],
+        "current_loop":"loop-2","tempo":{"beats_per_bar":4,"segments":[
+        {"start_ms":500,"bpm":120,"name":"Verse","metronome":true,"count_in":false},
+        {"start_ms":8500,"bpm":93,"detected_ms":8500,"name":"Chorus","metronome":false,"count_in":true}]}}"#;
+    let mut r = rig_with(PRACTICE, json);
+    let check = |r: &Rig, name0: &str| {
+        let s = r.snap();
+        assert_eq!(s.speed_pct, 100);
+        let ls: Vec<_> = s.loops.iter().map(|l| (l.id.as_str(), l.start, l.end, l.repeat, l.count_in)).collect();
+        assert_eq!(
+            ls,
+            [
+                ("loop-1", Boundary::Tick { tick: 64 }, Some(Boundary::Tick { tick: 192 }), true, false),
+                ("loop-2", Boundary::Tick { tick: 256 }, Some(Boundary::Tick { tick: 512 }), false, true),
+                ("loop-3", Boundary::Tick { tick: 300 }, None, true, false),
+            ]
+        );
+        assert!(s.loops.iter().all(|l| l.training == Training::default()));
+        assert_eq!(s.current_loop, Some(1));
+        let sec: Vec<_> = s.tempo.segments.iter().map(|g| (g.start_ms, g.bpm, g.meta.name.clone(), g.meta.metronome, g.meta.count_in)).collect();
+        assert_eq!(
+            sec,
+            [
+                (500.0, 120.0, name0.to_string(), true, false),
+                (8500.0, 93.0, "Chorus".to_string(), false, true),
+            ]
+        );
+    };
+    check(&r, "Verse");
+    r.edit(SectionEdit::Name { index: 0, at: 500.0, name: "Intro".into() });
+    r.flush();
+    let d = r.disk().unwrap();
+    assert_eq!(d["schema_version"], 6);
+    assert_eq!(d["speed"], 1.0);
+    assert!(d["loops"].as_array().unwrap().iter().all(|l| l.get("training").is_none()));
+    check(&r, "Intro");
+}
+
+#[test]
+fn sp12_count_in_during_training_uses_the_current_speed() {
+    let mut r = loop_rig(true);
+    r.lp(LoopAction::Training(Training { on: true, start: 60, end: 80, step: 10, repeats: 1 })).unwrap();
+    r.lp(LoopAction::Play).unwrap();
+    let (audio, tr) = run(&mut r, 14 * RATE);
+    // contiguous runs of blocks where the engine reports a count-in
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for (i, t) in tr.iter().enumerate() {
+        if t.counting_in {
+            match runs.last_mut() {
+                Some(l) if l.1 == i => l.1 = i + 1,
+                _ => runs.push((i, i + 1)),
+            }
+        }
+    }
+    assert!(runs.len() >= 2, "{runs:?}");
+    for (run, pct) in runs.iter().zip([60.0, 70.0]) {
+        let beat = RATE as f64 * 0.5 / (pct / 100.0);
+        let a = run.0 * 64;
+        let b = (run.1 * 64).min(a + (beat * 3.0) as usize + 400);
+        let zero = vec![0.0f32; (b - a) * 2];
+        let c = clicks(&audio[2 * a..2 * b], &zero, 0);
+        assert_eq!(c.len(), 3, "{pct} %: {c:?}");
+        for w in c.windows(2) {
+            assert!(((w[1] - w[0]) as f64 - beat).abs() <= 64.0, "{pct} %: spacing {} vs {beat}", w[1] - w[0]);
+        }
+    }
 }
