@@ -10,3 +10,4 @@ task 6 | Training run in the engine | implementer | done (also fixed the jump-ne
 task 7 | Manager and IPC: speed actions, transport fields, training action, logs | implementer | done
 task 9 | Backend acceptance tests sp01-sp12 | implementer | done
 task 10 | TS IPC types and test fixtures | implementer | done
+task 11 | Frontend speed formatting helpers | implementer (moved from local: new files with logic) | done
