@@ -298,6 +298,23 @@ export interface PlayerLoop {
   end_ms: number | null;
   repeat: boolean;
   count_in: boolean;
+  /** speed-training plan of this loop (defaults 70/100/5/2, off, when the file has none) */
+  training: TrainingPlan;
+}
+/** Speed training: percentages start..end in steps of `step`, `repeats` passes at each. */
+export interface TrainingPlan {
+  on: boolean;
+  start: number;
+  end: number;
+  step: number;
+  repeats: number;
+}
+/** Where a running training run is: loop index, heard speed, pass number, and passes at this speed (null at the end speed). */
+export interface TrainingProgress {
+  loop: number;
+  speed_pct: number;
+  repeat: number;
+  of: number | null;
 }
 export interface PlayerTransport {
   /** playing, counting in or resume pending */
@@ -306,9 +323,15 @@ export interface PlayerTransport {
   resume_pending: boolean;
   position_ms: number;
   loop_playing: boolean;
-  /** shown: bpm_at(position) * speed, 0 = none */
+  /** song BPM at the position (without speed), 0 = none */
   bpm: number;
+  /** BPM actually heard: bpm * speed, 0 = none */
+  played_bpm: number;
+  /** heard speed in percent; lags one engine callback after a speed action */
+  speed_pct: number;
   tempo_index: number | null;
+  /** running speed-training pass, null when none */
+  training: TrainingProgress | null;
 }
 export interface PlayerSnapshot {
   id: string;
@@ -321,13 +344,13 @@ export interface PlayerSnapshot {
   peaks: number[];
   mode: 'bpm' | 'time';
   tempo: TempoSnap;
-  speed: number;
+  /** track speed in percent */
+  speed_pct: number;
   loops: PlayerLoop[];
   /** index */
   current_loop: number | null;
   loop_message: string | null;
   transport: PlayerTransport;
-  can_change_speed: boolean;
   /** settings file note */
   note: string | null;
 }
@@ -341,6 +364,7 @@ export type TempoAction =
   | { kind: 'set-bpm'; bpm: number }
   | { kind: 'speed-step'; steps: number }
   | { kind: 'speed-reset' }
+  | { kind: 'speed-set'; percent: number }
   | { kind: 'section-bpm'; index: number; at: number; bpm: number }
   | { kind: 'scale-section'; index: number; at: number; factor: 'double' | 'halve' }
   | { kind: 'add-change'; position: number; bpm: number }
@@ -357,7 +381,8 @@ export type LoopAction =
   | { kind: 'set'; edge: 'start' | 'end'; value: Boundary }
   | { kind: 'flags'; repeat: boolean; count_in: boolean }
   | { kind: 'play' }
-  | { kind: 'stop' };
+  | { kind: 'stop' }
+  | { kind: 'training'; on: boolean; start: number; end: number; step: number; repeats: number };
 
 function playerChannel(onEvent: (e: PlayerEvent) => void): Channel<PlayerEvent> {
   const ch = new Channel<PlayerEvent>();

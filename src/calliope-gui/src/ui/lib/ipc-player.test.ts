@@ -26,10 +26,12 @@ describe('player ipc wrappers', () => {
     await playerLeave('t1');
     await playerTempo('t1', { kind: 'set-bpm', bpm: 92.5 });
     await playerLoop('t1', { kind: 'set', edge: 'start', value: { tick: 32 } });
+    await playerTempo('t1', { kind: 'speed-set', percent: 85 });
+    await playerLoop('t1', { kind: 'training', on: true, start: 70, end: 100, step: 5, repeats: 2 });
     expect(calls.map((c) => c[0])).toEqual([
       'open_player', 'close_player', 'get_player', 'watch_player', 'player_select_source', 'player_play',
       'player_pause', 'player_seek', 'player_nudge', 'player_skip', 'player_leave', 'player_tempo',
-      'player_loop',
+      'player_loop', 'player_tempo', 'player_loop',
     ]);
     const { events: e0, ...open } = calls[0][1];
     expect(open).toEqual({ id: 't1' });
@@ -46,6 +48,8 @@ describe('player ipc wrappers', () => {
     expect(calls[10][1]).toEqual({ id: 't1' });
     expect(calls[11][1]).toEqual({ id: 't1', action: { kind: 'set-bpm', bpm: 92.5 } });
     expect(calls[12][1]).toEqual({ id: 't1', action: { kind: 'set', edge: 'start', value: { tick: 32 } } });
+    expect(calls[13][1]).toEqual({ id: 't1', action: { kind: 'speed-set', percent: 85 } });
+    expect(calls[14][1]).toEqual({ id: 't1', action: { kind: 'training', on: true, start: 70, end: 100, step: 5, repeats: 2 } });
   });
 
   it('types the closed event of a released session', async () => {

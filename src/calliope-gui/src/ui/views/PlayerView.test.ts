@@ -109,10 +109,10 @@ describe('Settings placeholders', () => {
 
 describe('Player keyboard shortcuts', () => {
   const idle: PlayerTransport = {
-    playing: false, counting_in: false, resume_pending: false, position_ms: 0, loop_playing: false, bpm: 0, tempo_index: null,
+    playing: false, counting_in: false, resume_pending: false, position_ms: 0, loop_playing: false, bpm: 0, played_bpm: 0, speed_pct: 100, tempo_index: null, training: null,
   };
   const complete: PlayerLoop = {
-    id: 'l1', start: { tick: 64 }, end: { tick: 192 }, start_ms: 2000, end_ms: 10000, repeat: false, count_in: false,
+    id: 'l1', start: { tick: 64 }, end: { tick: 192 }, start_ms: 2000, end_ms: 10000, repeat: false, count_in: false, training: { on: false, start: 70, end: 100, step: 5, repeats: 2 },
   };
   const incomplete: PlayerLoop = { ...complete, id: 'l2', end: null, end_ms: null };
   let snap: PlayerSnapshot;
@@ -125,9 +125,9 @@ describe('Player keyboard shortcuts', () => {
     snap = {
       id: practice.id, title: 'T', sources: [{ key: 'backing:backing', label: 'Backing' }], source: 'backing:backing',
       duration_ms: 20000, sample_rate: 44100, peaks: [], mode: 'bpm',
-      tempo: { beats_per_bar: 4, segments: [{ start_ms: 0, bpm: 120 }], multi: false }, speed: 1,
+      tempo: { beats_per_bar: 4, segments: [{ start_ms: 0, bpm: 120 }], multi: false }, speed_pct: 100,
       loops, current_loop: 0, loop_message: null,
-      transport: { ...idle }, can_change_speed: false, note: null,
+      transport: { ...idle }, note: null,
     };
     lib.selectedId = practice.id;
     render(PlayerView);

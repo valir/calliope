@@ -7,6 +7,7 @@ import type { PlayerLoop, TempoSegment } from '$lib/ipc';
 
 const mk = (id: string, start_ms: number, end_ms: number | null): PlayerLoop => ({
   id, start: { ms: start_ms }, end: end_ms === null ? null : { ms: end_ms }, start_ms, end_ms, repeat: false, count_in: false,
+  training: { on: false, start: 70, end: 100, step: 5, repeats: 2 },
 });
 const peaks = Array.from({ length: 50 }, (_, i) => (i % 10) / 10);
 

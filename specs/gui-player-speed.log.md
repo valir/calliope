@@ -9,3 +9,4 @@ task 5 | Engine stretch mode and Cmd::SetSpeed | implementer | done (notes for t
 task 6 | Training run in the engine | implementer | done (also fixed the jump-near-loop-end gap from task 5)
 task 7 | Manager and IPC: speed actions, transport fields, training action, logs | implementer | done
 task 9 | Backend acceptance tests sp01-sp12 | implementer | done
+task 10 | TS IPC types and test fixtures | implementer | done

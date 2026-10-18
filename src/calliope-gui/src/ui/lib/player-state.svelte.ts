@@ -28,7 +28,7 @@ export type PlayerStatus = 'inactive' | 'loading' | 'active' | 'error';
 
 const STOPPED: PlayerTransport = {
   playing: false, counting_in: false, resume_pending: false, position_ms: 0,
-  loop_playing: false, bpm: 0, tempo_index: null,
+  loop_playing: false, bpm: 0, played_bpm: 0, speed_pct: 100, tempo_index: null, training: null,
 };
 
 export const pl = $state({

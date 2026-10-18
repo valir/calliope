@@ -17,17 +17,17 @@ import type { PlayerEvent, PlayerLoop, PlayerSnapshot, PlayerTransport } from '$
 
 const [practice] = PLAYER_FIXTURE_TRACKS;
 const idle: PlayerTransport = {
-  playing: false, counting_in: false, resume_pending: false, position_ms: 0, loop_playing: false, bpm: 0, tempo_index: null,
+  playing: false, counting_in: false, resume_pending: false, position_ms: 0, loop_playing: false, bpm: 0, played_bpm: 0, speed_pct: 100, tempo_index: null, training: null,
 };
 const complete: PlayerLoop = {
-  id: 'loop-1', start: { tick: 64 }, end: { tick: 192 }, start_ms: 2000, end_ms: 10000, repeat: true, count_in: false,
+  id: 'loop-1', start: { tick: 64 }, end: { tick: 192 }, start_ms: 2000, end_ms: 10000, repeat: true, count_in: false, training: { on: false, start: 70, end: 100, step: 5, repeats: 2 },
 };
-const open_: PlayerLoop = { id: 'loop-3', start: { tick: 512 }, end: null, start_ms: 18500, end_ms: null, repeat: true, count_in: false };
+const open_: PlayerLoop = { id: 'loop-3', start: { tick: 512 }, end: null, start_ms: 18500, end_ms: null, repeat: true, count_in: false, training: { on: false, start: 70, end: 100, step: 5, repeats: 2 } };
 const base = (): PlayerSnapshot => ({
   id: practice.id, title: 'T', sources: [{ key: 'backing:backing', label: 'Backing' }, { key: 'stem:guitar', label: 'Guitar' }],
   source: 'backing:backing', duration_ms: 20000, sample_rate: 22050, peaks: new Array(64).fill(0.5), mode: 'time',
-  tempo: { beats_per_bar: 4, segments: [], multi: false }, speed: 1,
-  loops: [], current_loop: null, loop_message: null, transport: { ...idle }, can_change_speed: false, note: null,
+  tempo: { beats_per_bar: 4, segments: [], multi: false }, speed_pct: 100,
+  loops: [], current_loop: null, loop_message: null, transport: { ...idle }, note: null,
 });
 const bpmSnap = (): PlayerSnapshot => ({
   ...base(), mode: 'bpm', tempo: { beats_per_bar: 4, segments: [{ start_ms: 500, bpm: 120 }], multi: false },
@@ -125,7 +125,7 @@ describe('AC2-4, 9: pane structure and the inactive state', () => {
 
 describe('AC13: track without tempo', () => {
   it('BPM 0, V unchecked, timestamps in loop boxes, tempo features disabled', async () => {
-    snap = { ...base(), loops: [{ id: 'loop-1', start: { ms: 2500 }, end: { ms: 6000 }, start_ms: 2500, end_ms: 6000, repeat: true, count_in: false }], current_loop: 0 };
+    snap = { ...base(), loops: [{ id: 'loop-1', start: { ms: 2500 }, end: { ms: 6000 }, start_ms: 2500, end_ms: 6000, repeat: true, count_in: false, training: { on: false, start: 70, end: 100, step: 5, repeats: 2 } }], current_loop: 0 };
     render(PlayerView);
     await openTrack(snap);
     expect(input('BPM').value).toBe('0');

@@ -13,7 +13,7 @@ const noAudio = { ...PLAYER_FIXTURE_TRACKS[2], audio: null };
 
 const idle: PlayerTransport = {
   playing: false, counting_in: false, resume_pending: false, position_ms: 0,
-  loop_playing: false, bpm: 0, tempo_index: null,
+  loop_playing: false, bpm: 0, played_bpm: 0, speed_pct: 100, tempo_index: null, training: null,
 };
 const snapshot = (id: string, source = 'backing:backing'): PlayerSnapshot => ({
   id, title: 'T',
@@ -22,9 +22,9 @@ const snapshot = (id: string, source = 'backing:backing'): PlayerSnapshot => ({
     { key: 'stem:drums', label: 'Drums' }, { key: 'original', label: 'Original mix' },
   ],
   source, duration_ms: 10000, sample_rate: 44100, peaks: [], mode: 'bpm',
-  tempo: { beats_per_bar: 4, segments: [], multi: false }, speed: 1,
+  tempo: { beats_per_bar: 4, segments: [], multi: false }, speed_pct: 100,
   loops: [], current_loop: null, loop_message: null,
-  transport: { ...idle }, can_change_speed: false, note: null,
+  transport: { ...idle }, note: null,
 });
 
 type Call = [string, Record<string, unknown>];
@@ -94,7 +94,7 @@ describe('player state', () => {
   });
 
   it('the loop log line carries end=<ms|none>', async () => {
-    const lp = { id: 'l1', start: { ms: 100 }, end: { ms: 900 }, start_ms: 100, end_ms: 900, repeat: false, count_in: false };
+    const lp = { id: 'l1', start: { ms: 100 }, end: { ms: 900 }, start_ms: 100, end_ms: 900, repeat: false, count_in: false, training: { on: false, start: 70, end: 100, step: 5, repeats: 2 } };
     let cur: PlayerSnapshot = { ...snapshot(practice.id), loops: [lp], current_loop: 0 };
     handlers.player_loop = () => cur;
     syncSelection(practice);

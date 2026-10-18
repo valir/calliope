@@ -11,19 +11,19 @@ import type { PlayerEvent, PlayerLoop, PlayerSnapshot, PlayerTransport } from '$
 const [practice] = PLAYER_FIXTURE_TRACKS;
 const idle: PlayerTransport = {
   playing: false, counting_in: false, resume_pending: false, position_ms: 0,
-  loop_playing: false, bpm: 0, tempo_index: null,
+  loop_playing: false, bpm: 0, played_bpm: 0, speed_pct: 100, tempo_index: null, training: null,
 };
 const loop1: PlayerLoop = {
-  id: 'loop-1', start: { tick: 64 }, end: { tick: 192 }, start_ms: 2000, end_ms: 10000, repeat: false, count_in: false,
+  id: 'loop-1', start: { tick: 64 }, end: { tick: 192 }, start_ms: 2000, end_ms: 10000, repeat: false, count_in: false, training: { on: false, start: 70, end: 100, step: 5, repeats: 2 },
 };
 // A second loop without an end.
-const loop3: PlayerLoop = { id: 'loop-3', start: { tick: 32 }, end: null, start_ms: 1000, end_ms: null, repeat: false, count_in: false };
+const loop3: PlayerLoop = { id: 'loop-3', start: { tick: 32 }, end: null, start_ms: 1000, end_ms: null, repeat: false, count_in: false, training: { on: false, start: 70, end: 100, step: 5, repeats: 2 } };
 const withTempo = (): PlayerSnapshot => ({
   id: practice.id, title: 'T', sources: [{ key: 'backing:backing', label: 'Backing' }], source: 'backing:backing',
   duration_ms: 20000, sample_rate: 44100, peaks: [], mode: 'bpm',
-  tempo: { beats_per_bar: 4, segments: [{ start_ms: 0, bpm: 120 }], multi: true }, speed: 1,
+  tempo: { beats_per_bar: 4, segments: [{ start_ms: 0, bpm: 120 }], multi: true }, speed_pct: 100,
   loops: [loop1, { ...loop1, id: 'loop-2' }, loop3], current_loop: 0,
-  loop_message: null, transport: { ...idle, bpm: 120, tempo_index: 0 }, can_change_speed: false, note: null,
+  loop_message: null, transport: { ...idle, bpm: 120, tempo_index: 0 }, note: null,
 });
 const timestamps = (): PlayerSnapshot => ({
   ...withTempo(), mode: 'time', tempo: { beats_per_bar: 4, segments: [], multi: false },
