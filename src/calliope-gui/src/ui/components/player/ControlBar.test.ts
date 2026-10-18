@@ -157,6 +157,136 @@ describe('Speed group', () => {
   });
 });
 
+describe('Training popover', () => {
+  // jsdom has no layout, so floating-ui keeps the content `visibility: hidden` and the testing library gives hidden
+  // elements no accessible name: find the popover's controls by their aria-label.
+  const byLabel = (l: string) => document.querySelector(`[aria-label="${l}"]`);
+  const trainBtn = () => btn('Loops', 'Speed training settings');
+  const plans = () => of('player_loop').map((c) => c.action).filter((a) => (a as { kind: string }).kind === 'training');
+  const logs = () => of('frontend_log').map((c) => String(c.message)).filter((m) => m.startsWith('player training-popover'));
+  const closes = () => logs().filter((m) => m.includes(' close '));
+  const dialog = () => byLabel('Speed training');
+  const field = (n: string) => byLabel(n) as HTMLInputElement;
+  const closeBtn = () => screen.getByText('Close');
+  const openPopover = async () => {
+    await fireEvent.click(trainBtn());
+    await waitFor(() => expect(dialog()).not.toBeNull());
+    await flush();
+  };
+  const on = (t: Partial<PlayerLoop['training']> = {}): PlayerSnapshot => {
+    const s = withTempo();
+    s.loops[0] = { ...loop1, training: { on: true, start: 60, end: 80, step: 10, repeats: 2, ...t } };
+    return s;
+  };
+
+  it('is disabled without a complete loop and does not exist in the DOM until opened', async () => {
+    await open({ ...withTempo(), current_loop: 2 });
+    expect(trainBtn().disabled).toBe(true);
+    expect(trainBtn().title).toBe('Set the loop end first');
+    expect(trainBtn().textContent?.trim()).toBe('Train…');
+    expect(dialog()).toBeNull();
+  });
+
+  it('is amber with the summary title when training is on', async () => {
+    await open(withTempo());
+    expect(trainBtn().title).toBe('Speed training settings');
+    expect(trainBtn().className).not.toContain('bg-amber-500');
+  });
+
+  it('shows the plan in the title and in amber once training is on', async () => {
+    await open(on());
+    expect(trainBtn().className).toContain('bg-amber-500');
+    expect(trainBtn().title).toBe('Speed training on: 60 → 80 %, +10 %, ×2');
+  });
+
+  it('opens with the focus on the switch; the switch sends the plan with on: true', async () => {
+    await open(withTempo());
+    await openPopover();
+    const sw = byLabel('Training on') as HTMLElement;
+    await waitFor(() => expect(document.activeElement).toBe(sw));
+    expect(screen.getByText('Loop 1 of 3')).toBeTruthy();
+    expect(screen.getByText('70 → 100 %, +5 % every 2 passes')).toBeTruthy();
+    await fireEvent.click(sw);
+    await flush();
+    expect(plans()).toEqual([{ kind: 'training', on: true, start: 70, end: 100, step: 5, repeats: 2 }]);
+    await waitFor(() => expect(logs().some((m) => m.startsWith('player training-popover open loop=0 rect='))).toBe(true));
+  });
+
+  it('typed values commit on Enter or on leaving; 0 in Step is refused with the message', async () => {
+    await open(withTempo());
+    await openPopover();
+    await type(field('Start %'), '60');
+    await type(field('End %'), '80');
+    await type(field('Step %'), '10');
+    await fireEvent.input(field('Repeats'), { target: { value: '2' } });
+    await fireEvent.blur(field('Repeats'));
+    await flush();
+    expect(plans()).toEqual([
+      { kind: 'training', on: false, start: 60, end: 100, step: 5, repeats: 2 },
+      { kind: 'training', on: false, start: 70, end: 80, step: 5, repeats: 2 },
+      { kind: 'training', on: false, start: 70, end: 100, step: 10, repeats: 2 },
+      { kind: 'training', on: false, start: 70, end: 100, step: 5, repeats: 2 },
+    ]);
+    await type(field('Step %'), '0');
+    expect(plans()).toHaveLength(4);
+    expect(field('Step %').getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByTestId('training-message').textContent).toBe('The step must be between 1 and 175 %');
+    await fireEvent.input(field('Step %'), { target: { value: '5' } });
+    expect(field('Step %').getAttribute('aria-invalid')).toBeNull();
+    expect(screen.getByTestId('training-message').textContent).toBe('');
+  });
+
+  it('Escape closes it, drops an uncommitted edit and returns the focus to the button', async () => {
+    await open(withTempo());
+    await openPopover();
+    await fireEvent.input(field('Start %'), { target: { value: '55' } });
+    await fireEvent.keyDown(field('Start %'), { key: 'Escape' });
+    await waitFor(() => expect(dialog()).toBeNull());
+    expect(plans()).toEqual([]);
+    expect(closes()).toEqual(['player training-popover close via=escape']);
+    await waitFor(() => expect(document.activeElement).toBe(trainBtn()));
+    await openPopover();
+    expect(field('Start %').value).toBe('70');
+  });
+
+  it('a click outside closes it and sends a valid pending edit once', async () => {
+    await open(withTempo());
+    await openPopover();
+    await fireEvent.input(field('End %'), { target: { value: '90' } });
+    await new Promise((r) => setTimeout(r, 60)); // the layer ignores outside events in its first 20 ms
+    await fireEvent.pointerDown(input('BPM'), { pointerType: 'mouse', button: 0, clientX: 500, clientY: 500 });
+    await fireEvent.pointerUp(input('BPM'), { pointerType: 'mouse', button: 0, clientX: 500, clientY: 500 });
+    await fireEvent.click(input('BPM'), { button: 0 });
+    await waitFor(() => expect(dialog()).toBeNull());
+    await flush();
+    expect(plans()).toEqual([{ kind: 'training', on: false, start: 70, end: 90, step: 5, repeats: 2 }]);
+    expect(closes()).toEqual(['player training-popover close via=outside']);
+  });
+
+  it('Close closes it, and Tab from Close leaves and closes it', async () => {
+    await open(withTempo());
+    await openPopover();
+    await fireEvent.click(closeBtn());
+    await waitFor(() => expect(dialog()).toBeNull());
+    await openPopover();
+    await fireEvent.keyDown(closeBtn(), { key: 'Tab' });
+    await waitFor(() => expect(dialog()).toBeNull());
+    expect(closes()).toEqual(['player training-popover close via=button', 'player training-popover close via=tab']);
+  });
+
+  it('the status line shows the progress, an action error replaces it, and its height stays', async () => {
+    await open(withTempo());
+    const status = screen.getByTestId('loop-status');
+    expect(status.className).toContain('min-h-5');
+    channel.onmessage({ kind: 'transport', id: practice.id, ...idle, speed_pct: 70, training: { loop: 0, speed_pct: 70, repeat: 2, of: 4 } });
+    await waitFor(() => expect(status.textContent).toBe('Training 70 % · 2/4'));
+    expect(status.className).toContain('min-h-5');
+    pl.actionError = 'Boom';
+    await flush();
+    expect(status.textContent).toBe('Boom');
+  });
+});
+
 describe('loops', () => {
   it('shows the section box and the bars; typing a bar sets a tick', async () => {
     await open(withTempo());

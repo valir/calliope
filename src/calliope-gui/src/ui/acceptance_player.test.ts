@@ -125,6 +125,15 @@ describe('AC2-4, 9: pane structure and the inactive state', () => {
     for (const n of ['Slower', 'Faster', 'Reset']) expect(within(speed).getByRole('button', { name: n })).toBeTruthy();
     expect(screen.queryByText(/Comes in a later update/)).toBeNull();
     expect(document.querySelector('[title="Comes in a later update"]')).toBeNull();
+    // The Loops group has three lines (list, range, playback), the last ending in the Training button.
+    const loops = screen.getByRole('group', { name: 'Loops' });
+    const lines = Array.from(loops.children[0].children) as HTMLElement[];
+    expect(lines.map((l) => l.getAttribute('aria-label'))).toEqual(['Loop list', 'Loop range', 'Loop playback']);
+    const third = Array.from(lines[2].querySelectorAll('button')).map((b) => b.textContent?.trim());
+    expect(third).toEqual(['Play', 'Loop On', 'Count-In', 'Train…']);
+    expect(loops.children).toHaveLength(2); // the lines, then the status line
+    // The popover is not in the DOM until opened.
+    expect(document.querySelector('[aria-label="Speed training"]')).toBeNull();
   });
 });
 

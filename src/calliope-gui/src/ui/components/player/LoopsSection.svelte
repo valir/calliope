@@ -2,6 +2,8 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { formatBar, parseBar, formatLoopTime, parseLoopTime } from '$lib/bar-format';
   import type { Boundary, PlayerLoop } from '$lib/ipc';
+  import TrainingPopover from './TrainingPopover.svelte';
+  import { formatTraining } from '$lib/speed-format';
   import { loop, pl } from '$lib/player-state.svelte';
 
   const snap = $derived(pl.snap);
@@ -68,7 +70,9 @@
     if (invalid[edge]) revert(edge);
   }
   const flags = (repeat: boolean, count_in: boolean): void => void loop({ kind: 'flags', repeat, count_in });
-  const btn = 'h-[3.25rem] px-3 text-lg';
+  const btn = 'h-[3.25rem] px-2 text-lg';
+  const error = $derived(snap?.loop_message || pl.actionError || '');
+  const status = $derived(error || (pl.transport.training ? `Training ${formatTraining(pl.transport.training)}` : ''));
   const box = 'w-20 rounded-md border border-input bg-background px-2 py-1 text-center text-xl tabular-nums';
 </script>
 
@@ -76,11 +80,11 @@
   <div class="flex flex-col gap-2">
     <div class="flex flex-wrap items-center gap-x-1 gap-y-2" role="group" aria-label="Loop list">
       <span class="text-lg font-semibold">Loops</span>
-      <Button variant="outline" class="{btn} px-2" disabled={!active || !(snap && snap.loops.length > 0)} onclick={() => void loop({ kind: 'select', delta: -1 })}>Prev</Button>
+      <Button variant="outline" class={btn} disabled={!active || !(snap && snap.loops.length > 0)} onclick={() => void loop({ kind: 'select', delta: -1 })}>Prev</Button>
       <Button variant="outline" class="{btn} w-11 px-0" disabled={!active} aria-label="Add loop" onclick={() => void loop({ kind: 'add' })}>+</Button>
       <input type="text" readonly tabindex="-1" class="w-16 rounded-md border border-input bg-background px-2 py-1 text-center text-xl tabular-nums" aria-label="Loop" data-testid="loop-box" value={boxText} />
       <Button variant="outline" class="{btn} w-11 px-0" disabled={!active || !cur} aria-label="Remove loop" onclick={() => void loop({ kind: 'remove' })}>-</Button>
-      <Button variant="outline" class="{btn} px-2" disabled={!active || !(snap && snap.loops.length > 0)} onclick={() => void loop({ kind: 'select', delta: 1 })}>Next</Button>
+      <Button variant="outline" class={btn} disabled={!active || !(snap && snap.loops.length > 0)} onclick={() => void loop({ kind: 'select', delta: 1 })}>Next</Button>
     </div>
     <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Loop range">
       <Button variant="outline" class="{btn} w-12 px-0" disabled={!active || !cur} aria-label="Mark start" onclick={() => void loop({ kind: 'mark', edge: 'start' })}>&gt;</Button>
@@ -115,14 +119,15 @@
       <Button variant="outline" class="{btn} w-12 px-0" disabled={!active || !cur} aria-label="Mark end" onclick={() => void loop({ kind: 'mark', edge: 'end' })}>&lt;</Button>
     </div>
     <div class="flex flex-wrap items-center gap-x-1.5 gap-y-2" role="group" aria-label="Loop playback">
-      <Button class="{btn} w-20" disabled={!active || !complete} onclick={() => void loop({ kind: pl.transport.loop_playing ? 'stop' : 'play' })}>
+      <Button class="{btn} w-16" disabled={!active || !complete} onclick={() => void loop({ kind: pl.transport.loop_playing ? 'stop' : 'play' })}>
         {pl.transport.loop_playing ? 'Stop' : 'Play'}
       </Button>
       <Button variant="outline" class="{btn} {cur?.repeat && complete ? pressed : ''}" aria-pressed={(cur?.repeat && complete) ?? false} disabled={!active || !complete}
         onclick={() => cur && flags(!cur.repeat, cur.count_in)}>Loop On</Button>
       <Button variant="outline" class="{btn} {cur?.count_in ? pressed : ''}" aria-pressed={cur?.count_in ?? false} disabled={!active || !complete}
         onclick={() => cur && flags(cur.repeat, !cur.count_in)}>Count-In</Button>
+      <TrainingPopover />
     </div>
   </div>
-  <span class="min-h-5 text-base {(snap?.loop_message ?? pl.actionError) ? 'text-destructive' : ''}" role="status" data-testid="loop-status">{snap?.loop_message ?? pl.actionError}</span>
+  <span class="min-h-5 text-base {error ? 'text-destructive' : ''}" role="status" data-testid="loop-status">{status}</span>
 </div>
