@@ -18,3 +18,4 @@ task 16 | README Player usage | local (gemma4, exact edit, correct first try) | 
 task 15 | GUI end-to-end, positions, visual review, docs | implementer | done (fixed: Speed group sideways clip at 1024x640, popover side=left to stay in the window; orchestrator reverted a wrong editor TIME position, waited out the popover close animation in player_speed, README ellipsis made ASCII)
 tester | all criteria PASS; added sp13-sp21 and 2 frontend tests; no defects | tester | done
 reviewer | CHANGES REQUIRED: 1 major (unbounded speed-step loop on IPC input), 5 minor, 1 nit | reviewer | done
+fix round 1 | step clamp, popover single merged save, 100 % returns to bypass, manager-side training refusal, debug asserts, crate pinned =0.1.3, docs | implementer | done

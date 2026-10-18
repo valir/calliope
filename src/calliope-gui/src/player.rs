@@ -238,6 +238,8 @@ pub struct Engine {
     /// Crossfade from the bypass path (still at `xpos`) after a speed change away from 100 %.
     xfade_left: u32,
     xpos: u64,
+    /// The crossfade runs the other way: stretch -> bypass after a speed change back to 100 %.
+    to_bypass: bool,
     run: Option<Run>,
 }
 
@@ -288,6 +290,7 @@ impl Engine {
             timeline: VecDeque::with_capacity(TIMELINE),
             events: VecDeque::with_capacity(MARKS),
             xfade_left: 0,
+            to_bypass: false,
             xpos: 0,
             run: None,
         }
@@ -313,6 +316,7 @@ impl Engine {
     /// (`pos` is already there). Exactly 100 % is the bypass; anything else aligns the stretcher.
     fn enter(&mut self, target: u64) {
         self.xfade_left = 0;
+        self.to_bypass = false;
         if let Some(r) = self.run.as_mut() {
             // a run restarts the feed in the pass being heard
             r.pass = r.heard;
@@ -417,6 +421,7 @@ impl Engine {
     }
 
     fn push_event(&mut self, m: FeedEvent) {
+        debug_assert!(self.events.len() < MARKS, "feed events overflow");
         if self.events.len() < MARKS {
             self.events.push_back(m);
         }
@@ -519,6 +524,11 @@ impl Engine {
                 if self.run.is_some() {
                     return; // a run plays its own speeds; the track speed is back when it ends
                 }
+                if self.to_bypass {
+                    // a change during the way back to the bypass: stay in the stretch path
+                    self.to_bypass = false;
+                    self.xfade_left = 0;
+                }
                 self.speed = f64::from(pct) / 100.0;
                 if self.playing && self.count.is_some() {
                     self.enter(self.pos); // before the music starts: align for the new speed
@@ -529,6 +539,17 @@ impl Engine {
                     self.xpos = at;
                     self.xfade_left = self.fade_len;
                     self.fade_left = 0;
+                }
+                else if self.playing
+                    && self.audible
+                    && self.mode == Mode::Stretch
+                    && pct == 100
+                    && self.xfade_left == 0
+                {
+                    // stretch -> 100 %: back to the bypass path, crossfaded from the heard position
+                    self.xpos = self.pos;
+                    self.xfade_left = self.fade_len;
+                    self.to_bypass = true;
                 }
                 // stretch -> another speed: only the feed ratio changes (`self.speed`)
             }
@@ -581,7 +602,11 @@ impl Engine {
             }
         };
         let u0 = (self.fpos + self.woff) as f64 + self.acc - self.l_in as f64;
-        if self.timeline.back().is_none_or(|e| e.speed != s) && self.timeline.len() < TIMELINE {
+        let changed = self.timeline.back().is_none_or(|e| e.speed != s);
+        debug_assert!(!changed || self.timeline.len() < TIMELINE, "speed timeline overflow");
+        if changed && self.timeline.len() < TIMELINE {
+            // `out` ignores the (at most SUB_BLOCK - 1, ~6 ms) stage frames not yet heard, so a new speed is
+            // shown that much early at worst; the position it moves is below the display's resolution.
             self.timeline.push_back(Entry { out: self.out_count + self.l_out, u: u0, speed: s });
         }
         let exact = self.acc + SUB_BLOCK as f64 * s;
@@ -723,7 +748,10 @@ impl Engine {
         self.stage_at += 1;
         self.out_count += 1;
         if self.xfade_left > 0 {
-            let w = (self.fade_len - self.xfade_left) as f32 / self.fade_len as f32;
+            let mut w = (self.fade_len - self.xfade_left) as f32 / self.fade_len as f32;
+            if self.to_bypass {
+                w = 1.0 - w; // the stretch path fades out
+            }
             let (bl, br) = frame_lr(&self.pcm, self.xpos);
             l = l * w + bl * (1.0 - w);
             r = r * w + br * (1.0 - w);
@@ -743,6 +771,23 @@ impl Engine {
         out[2 * i] = out[2 * i].clamp(-1.0, 1.0);
         out[2 * i + 1] = out[2 * i + 1].clamp(-1.0, 1.0);
         self.pos = (song as u64).min(self.pcm.frames);
+        if self.to_bypass {
+            // the heard position follows the bypass side, so it never goes back
+            self.pos = self.xpos.min(self.pcm.frames);
+            if self.xfade_left == 0 {
+                self.to_bypass = false;
+                self.mode = Mode::Bypass;
+                self.beat_dirty = true;
+                self.events.clear();
+                self.timeline.clear();
+                if self.pos >= self.pcm.frames {
+                    self.playing = false;
+                    self.audible = false;
+                    self.loop_play = false;
+                    self.shared.ended.store(true, Ordering::Release);
+                }
+            }
+        }
         true
     }
 
@@ -1134,6 +1179,9 @@ struct Session {
     last_pass_loop: Option<usize>,
     /// The loop (start, end) in ms the click grid was last computed for (10.6).
     grid_wrap: Option<(f64, f64)>,
+    /// A loop Play with training started a run the callback has not shown yet (`Shared.pass` is still 0):
+    /// the speed is refused until then (the run is seen, or this deadline passes).
+    run_until: Option<Instant>,
 }
 
 impl Session {
@@ -1574,6 +1622,7 @@ impl PlayerManager {
             last_pass: 0,
             last_pass_loop: None,
             grid_wrap: None,
+            run_until: None,
         };
         session.state.position_ms = session.ms_of(frames); // what is on disk or equal to it
         let snap = session.snapshot();
@@ -1741,6 +1790,7 @@ impl PlayerManager {
         };
         s.log_count_in(&plan, s.state.tempo.segment_at(pos_ms));
         s.shared.counting_in.store(plan.is_some(), Ordering::Release);
+        s.run_until = None; // a plain Play ends a run
         s.transport.play();
         s.send(Cmd::Play { count_in: plan });
         s.next_pos_save = Some(now + POSITION_SAVE);
@@ -1756,6 +1806,7 @@ impl PlayerManager {
     pub fn pause(&mut self, id: &str, now: Instant) -> Result<PlayerTransport, String> {
         let sink = self.sink.clone();
         let s = self.session(id)?;
+        s.run_until = None;
         s.transport.pause();
         s.halt();
         s.next_pos_save = None;
@@ -1918,7 +1969,7 @@ impl PlayerManager {
     /// The speed buttons and the typed speed; refused during a training run.
     pub fn speed(&mut self, id: &str, action: SpeedAction, now: Instant) -> Result<PlayerSnapshot, String> {
         let s = self.session(id)?;
-        if s.shared.pass.load(Ordering::Acquire) > 0 {
+        if s.shared.pass.load(Ordering::Acquire) > 0 || s.run_until.is_some_and(|t| now < t) {
             return Err(TRAINING_RUNNING.into());
         }
         let pct = match action {
@@ -1972,6 +2023,7 @@ impl PlayerManager {
         s.log_count_in(&plan, None);
         s.shared.counting_in.store(plan.is_some(), Ordering::Release);
         s.shared.loop_playing.store(true, Ordering::Release);
+        s.run_until = l.training.filter(|t| t.on && l.repeat).map(|_| now + Duration::from_secs(1));
         s.transport.play();
         s.send(Cmd::PlayLoop { count_in: plan });
         s.next_pos_save = Some(now + POSITION_SAVE);
@@ -2146,6 +2198,9 @@ impl PlayerManager {
                 );
             }
             let pass = s.shared.pass.load(Ordering::Acquire);
+            if pass > 0 || ended || loop_stopped {
+                s.run_until = None; // `Shared.pass` tells from here on
+            }
             if pass != s.last_pass {
                 let loop_index = s.loop_index().or(s.last_pass_loop);
                 let at = loop_index.map_or("none".to_string(), |n| n.to_string());

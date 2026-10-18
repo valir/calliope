@@ -1234,6 +1234,8 @@ fn a_training_run_refuses_speed_actions_and_reports_progress() {
     assert_eq!(s.loops[1].training, Training::default());
     m.speed(&spec.id, SpeedAction::Set(90), t0).unwrap();
     m.loop_action(&spec.id, LoopAction::Play, t0).unwrap();
+    // before the callback has shown the run, the manager knows it started
+    assert_eq!(m.speed(&spec.id, SpeedAction::Set(70), t0).unwrap_err(), TRAINING_RUNNING);
     b.pull(4000);
     m.tick(t0 + ms(20));
     let tr = m.snapshot(&spec.id).unwrap().transport;
@@ -1598,14 +1600,23 @@ fn speed_100_with_set_speed_is_still_bit_exact() {
 #[test]
 fn speed_change_while_playing_has_no_gap_and_the_position_never_goes_back() {
     let sec = RATE;
-    let cmds = [(0, Cmd::Play { count_in: None }), (sec, Cmd::SetSpeed(70))];
-    let (x, pos, shared) = render_cmds(tone_pcm(10), &cmds, 4 * sec);
-    assert_no_gap(&x, 0, 4 * sec, "100 -> 70 %");
+    let cmds = [(0, Cmd::Play { count_in: None }), (sec, Cmd::SetSpeed(70)), (3 * sec, Cmd::SetSpeed(100))];
+    let (x, pos, shared) = render_cmds(tone_pcm(10), &cmds, 6 * sec);
+    assert_no_gap(&x, 0, 6 * sec, "100 -> 70 -> 100 %");
     assert!(pos.windows(2).all(|w| w[1] >= w[0]), "the position went back");
     let at = |s: f64| pos[(s * sec as f64) as usize / PULL] as f64;
-    let rate = (at(3.5) - at(2.5)) / sec as f64;
+    let rate = (at(2.9) - at(1.9)) / sec as f64;
     assert!((rate - 0.7).abs() < 0.07, "advances {rate} s per second");
-    assert_eq!(shared.speed_pct.load(Ordering::Acquire), 70);
+    // back at 100 %: the bypass again, bit-exact from the source once the 3 ms crossfade has passed
+    let src = tone_pcm(10);
+    let from = 3 * sec / PULL + 2 * fade_frames() / PULL + 2;
+    for k in from..6 * sec / PULL {
+        for j in 0..PULL {
+            let f = pos[k] as usize - PULL + j;
+            assert_eq!(x[k * PULL + j], f32::from(src.samples[f]) / 32768.0, "pull {k} frame {j}");
+        }
+    }
+    assert_eq!(shared.speed_pct.load(Ordering::Acquire), 100);
 }
 
 #[test]

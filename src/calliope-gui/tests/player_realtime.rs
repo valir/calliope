@@ -1,7 +1,8 @@
 //! The audio callback never allocates (plan 2.4 of gui-player-speed): a counting global allocator watches
 //! the thread that renders. Allocations made by the C++ time-stretcher go through `malloc` and are not
 //! seen here; that part is covered by reading the code (the stretcher is built, and its buffers grown,
-//! before the callback runs).
+//! before the callback runs). That reading is of `signalsmith-stretch` 0.1.3, which Cargo.toml pins
+//! (`=0.1.3`); read the new version again before moving it.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -94,6 +95,19 @@ fn render_and_apply_never_allocate_in_stretch_mode() {
     }
     en.apply(Cmd::SetLoop(None));
     en.apply(Cmd::SetSpeed(70));
+    en.apply(Cmd::Seek(r / 3));
+    en.apply(Cmd::Resume);
+    for _ in 0..10 {
+        en.render(&mut out);
+    }
+    en.apply(Cmd::SetSpeed(100)); // stretched -> the bypass again, crossfaded
+    for _ in 0..10 {
+        en.render(&mut out);
+    }
+    en.apply(Cmd::SetSpeed(70)); // bypass -> stretched
+    for _ in 0..4 {
+        en.render(&mut out);
+    }
     en.apply(Cmd::Jump(frames as u64 - r / 4));
     for _ in 0..40 {
         en.render(&mut out); // the track end

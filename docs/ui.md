@@ -195,7 +195,7 @@
   to 200: Enter commits, Escape or leaving with a bad value drops the edit; a bad value (20, 250, text) is refused,
   the box gets a red border and the readout place shows "25-200 %" (nothing moves). The keys `[` and `]` step
   slower and faster (ignored while a form control has the focus, like the other Player keys). All of it is disabled
-  with a title that says why while a speed-training run is active (stop the loop first). The pitch stays the same.
+  with a title that says why while a speed-training run is active (stop the loop first); `[` and `]` are refused then too. The pitch stays the same.
   Narrow panes (1024x640 with the tree shown, 412 px) wrap the group onto a second line inside the pane rather than
   clip it.
 - Training button and popover (gui-player-speed): the third Loops line ends with a button whose visible label is

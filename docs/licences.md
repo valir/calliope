@@ -57,7 +57,7 @@ you do.
 
 `cpal` links the system `libasound` (alsa-lib, LGPL-2.1+). It is a system library, dynamically linked and not bundled with Calliope. `symphonia` (MPL-2.0) was rejected by the owner because of its MPL-2.0 licence, which is why `claxon` is used. With Calliope itself now under MPL-2.0, the owner may reconsider this; the rule stands until then.
 
-`signalsmith-stretch` pulls in the `dasp` crates (MIT OR Apache-2.0) and, at build time only, `bindgen` (BSD-3-Clause), `clang-sys` (Apache-2.0) and `cc`. It needs `clang` (libclang) and a C++ compiler to build.
+`signalsmith-stretch` pulls in the `dasp` crates (MIT OR Apache-2.0) and, at build time only, `bindgen` (BSD-3-Clause), `clang-sys` (Apache-2.0) and `cc`. It is pinned to `=0.1.3` (the realtime no-allocation test relies on that version's behaviour). It needs `clang` (libclang) and a C++ compiler to build.
 
 ## Rust crates of other workspace members
 

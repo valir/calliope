@@ -263,6 +263,30 @@ describe('Training popover', () => {
     expect(closes()).toEqual(['player training-popover close via=outside']);
   });
 
+  it('two dirty fields are sent as one merged plan on close, and quick commits do not overwrite each other', async () => {
+    await open(withTempo());
+    await openPopover();
+    await fireEvent.input(field('Start %'), { target: { value: '50' } });
+    await fireEvent.input(field('End %'), { target: { value: '90' } });
+    await fireEvent.input(field('Step %'), { target: { value: '300' } }); // invalid: dropped, not sent
+    await fireEvent.click(closeBtn());
+    await waitFor(() => expect(dialog()).toBeNull());
+    await flush();
+    expect(plans()).toEqual([{ kind: 'training', on: false, start: 50, end: 90, step: 5, repeats: 2 }]);
+    // two commits before the first answer: the second builds on the first
+    calls.length = 0;
+    await openPopover();
+    await fireEvent.input(field('Start %'), { target: { value: '40' } });
+    await fireEvent.input(field('Repeats'), { target: { value: '3' } });
+    await fireEvent.keyDown(field('Start %'), { key: 'Enter' });
+    await fireEvent.keyDown(field('Repeats'), { key: 'Enter' });
+    await flush();
+    expect(plans()).toEqual([
+      { kind: 'training', on: false, start: 40, end: 100, step: 5, repeats: 2 },
+      { kind: 'training', on: false, start: 40, end: 100, step: 5, repeats: 3 },
+    ]);
+  });
+
   it('Close closes it, and Tab from Close leaves and closes it', async () => {
     await open(withTempo());
     await openPopover();

@@ -50,20 +50,39 @@
     invalid = { start: false, end: false, step: false, repeats: false };
     message = '';
   }
-  function commit(f: Field): void {
-    const t = texts[f];
-    if (t === null) return;
-    const spec = FIELDS.find((x) => x.key === f)!;
-    const n = parseTrainingField(t, spec.min, spec.max);
-    if (n === null) {
-      invalid[f] = true;
-      message = spec.message;
-      return;
+  // The plan last sent and not yet answered: later edits build on it, so quick successive commits
+  // do not overwrite each other with the stale `plan`.
+  let latest: TrainingPlan | null = null;
+  function send(next: TrainingPlan): void {
+    latest = next;
+    void setTraining(next).finally(() => {
+      if (latest === next) latest = null;
+    });
+  }
+  /** Parses the dirty texts of `fields`; the valid ones are merged into ONE plan and sent, the others flagged. */
+  function commitFields(fields: Field[]): void {
+    let next: TrainingPlan = { ...(latest ?? plan) };
+    let changed = false;
+    for (const f of fields) {
+      const t = texts[f];
+      if (t === null) continue;
+      const spec = FIELDS.find((x) => x.key === f)!;
+      const n = parseTrainingField(t, spec.min, spec.max);
+      if (n === null) {
+        invalid[f] = true;
+        message = spec.message;
+        continue;
+      }
+      texts[f] = null;
+      invalid[f] = false;
+      message = '';
+      next = { ...next, [f]: n };
+      changed = true;
     }
-    texts[f] = null;
-    invalid[f] = false;
-    message = '';
-    void setTraining({ ...plan, [f]: n });
+    if (changed) send(next);
+  }
+  function commit(f: Field): void {
+    commitFields([f]);
   }
   function revert(f: Field): void {
     texts[f] = null;
@@ -88,7 +107,7 @@
     if (!isOpen) return;
     if (via === 'escape') clearEdits();
     else {
-      for (const f of FIELDS) commit(f.key);
+      commitFields(FIELDS.map((f) => f.key));
       clearEdits();
     }
     isOpen = false;

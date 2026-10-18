@@ -15,7 +15,8 @@ const TRAINING_REPEATS: &str = "Repeats must be between 1 and 99";
 /// `steps` presses of `-` (negative) or `+`: each moves to the next multiple of 5 in that direction; clamped.
 pub fn step_pct(pct: u32, steps: i32) -> u32 {
     let mut p = pct.clamp(MIN_PCT, MAX_PCT);
-    for _ in 0..steps.unsigned_abs() {
+    // 40 steps cross the whole 25..200 range; the count comes from untrusted IPC.
+    for _ in 0..steps.unsigned_abs().min(40) {
         p = if steps > 0 {
             (p / STEP_PCT + 1) * STEP_PCT
         } else {
@@ -128,7 +129,7 @@ mod tests {
         for (pct, steps, want) in [
             (100, -3, 85), (73, -1, 70), (73, 1, 75), (70, 1, 75), (70, -1, 65),
             (25, -1, 25), (27, -1, 25), (200, 1, 200), (198, 1, 200), (100, 0, 100),
-            (300, -1, 195),
+            (300, -1, 195), (100, i32::MAX, 200), (100, i32::MIN, 25),
         ] {
             assert_eq!(step_pct(pct, steps), want, "({pct}, {steps})");
         }
