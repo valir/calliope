@@ -41,6 +41,22 @@ they hear the metronome against the song, without going back to the Editor.
 11. Each section can be given a name and that name is presented in an editable
     text box next to the current "Section 6 of 8 * BPM"; these names will also
     e persisted, along with the metronome status for that section
+12. Player view layout, top to bottom under the waveform: a "Sections" pane
+    taking the full width, then a "Loops" pane, then the playback pane (Rew,
+    Play, FF, time, position slider) at the very bottom, also taking the full
+    width
+13. the Sections pane holds the current BPM group followed by the section
+    controls (name, Add, Remove, x2, /2, Start, End, Click, Count In) and
+    still uses 3 rows
+14. the global metronome buttons (Metronome On/Off and its Count In) are
+    removed; only the per-section Click and Count In remain. Pressing Play
+    counts in when the section under the playhead has Count In on
+15. the loops controls keep working as today, in their own pane labelled
+    "Loops"; tempo sections and loops stay separate and their add buttons
+    stay separate
+16. adding a loop at the player position sets its end by default to the start
+    of the next tempo section after that position, or to the end of the track
+    when there is no next section
 
 ## Constraints
 <!-- Language/framework, libraries allowed or forbidden, performance, platforms,
@@ -74,6 +90,18 @@ beyond what already exists. Changes to the Editor view need confirmation first.
   is present and has metronom active, then that section's metronome will
   effectively be adjusted to correctly play the next section's count-in
   correctly.
+- [ ] Given the Player view, then under the waveform come the full-width
+  Sections pane (BPM group, then the section controls in 3 rows), the Loops
+  pane labelled "Loops", and the playback pane at the bottom
+- [ ] Given the section under the playhead has Count In on, when the user
+  presses Play, then the count-in plays at that section's tempo; with Count
+  In off, playback starts at once
+- [ ] Given the Player view, then there is no global Metronome On/Off or
+  global Count In button, and the metronome clicks only in sections whose
+  Click is on
+- [ ] Given the playhead inside a tempo section that has a next section, when
+  the user adds a loop there, then the loop starts at the playhead and ends
+  at the next section's start; in the last section it ends at the track end
 
 ## Open questions
 <!-- Things you haven't decided yet. The architect will ask about anything else it finds. -->
