@@ -52,3 +52,5 @@ reviewer (phase 3 fix round 1) | APPROVED; nit stale QD3 test comment (fixed) | 
 tester (phase 3 fix round 1) | QD3 PASS; 6 qa_qd3 edge tests; no new defects | tester | done
 report | phase 3 added (DONE) | orchestrator | done
 fix round 2 (owner manual test) | stale section selection after playback crossed sections: selection now drops when the playhead enters another section | implementer | done
+reviewer (fix round 2) | APPROVED; 2 minor notes | reviewer | done
+report | fix round 2 added | orchestrator | done

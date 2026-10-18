@@ -260,6 +260,12 @@ My notes now say to check the diff size first and to avoid giving it deletions i
   - At 1280×800 the Sections pane has some empty space under its third row.
   - When it wraps below Sections, Loops doesn't stretch to the full width.
 
+### Fix round 2 (from your laptop test)
+- **Symptom:** select section 2, play into later sections, pause, press |◀ → it jumped back to section 2.
+- **Cause:** the selection in the Player screen stayed set while playback moved on, and the section actions use the selection first. The backend's current section was always right.
+- **Fix (`b458859`):** the selection drops when the playhead enters another section (by playback, a seek or a jump). A section you pick while paused, or by clicking or ↑/↓ while playing, holds until then. Start/End, the toggles, the name box and the status line all act on the same section.
+- **Tests:** two vitest tests reproduce it; both fail without the fix. The reviewer approved. The full GUI suite passed, including the stem-extraction test that had failed in the earlier full runs.
+
 ### Flaky test
 `acceptance_stem_extraction_gui::qa_malicious_server_stem_names_are_refused_in_the_ui` has now failed in every full parallel GUI run (4 times), always at about 74 s. It passes every time on its own. It is unrelated to this feature and looks like a timing assumption that breaks under parallel load. It is worth its own fix.
 
@@ -331,6 +337,7 @@ Laptop only. Nothing changes on archserver.
 - [ ] **M18, default loop end.**
   - Pause inside a section and press "+": the loop ends exactly at the next section (the waveform mark and bar2 agree). In the last section it ends at the track end.
   - Loop On repeats it, and `e` while playing still shortens it.
+- [ ] **M20, section target after playing (fix round 2).** Select section 2, play into section 4 or 5, pause and press |◀: it jumps to the start of the section the playhead is in.
 - [ ] **M19, re-detect.** Re-run Autodetect in the Editor on a track whose sections are silent and whose first section has Count In: back in the Player it is still silent, and Play from the start still counts in.
 
 Once you've verified it, tick `gui-player-tempo-sections.md` in the roadmap of `specs/overview.md`.
