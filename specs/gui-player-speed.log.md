@@ -22,3 +22,5 @@ fix round 1 | step clamp, popover single merged save, 100 % returns to bypass, m
 tester (re-verify 1) | fix round 1 PASS; added sp22-sp26 + popover merge test; defect: return to 100 % within ~3 ms of a loop end plays past the end (sp24, sp25) | tester | done
 reviewer (re-verify 1) | APPROVED; same loop-end defect as minor | reviewer | done
 fix round 2 | loop end handled when the return-to-100 % fade crosses it; MAX_STEPS constant | implementer | done
+reviewer (re-verify 2) | APPROVED; 3 minor follow-ups listed in the report | reviewer | done
+report | written | orchestrator | done
