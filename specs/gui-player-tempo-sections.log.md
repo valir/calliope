@@ -48,3 +48,5 @@ task 30b | Narrow layouts wrap inside Sections and Loops (no sideways clipping a
 tester (phase 3) | all criteria PASS except QD3 (Start jump rounds to the nearest frame, can land before a fractional section start, so Play skips its Count In; ignored test); 15 Rust + 4 vitest + 1 GUI qa_p3 tests | tester | done
 reviewer (phase 3) | APPROVED; 5 minor doc staleness (architecture.md player_metronome, log line, settings, schema-4 wording; ui.md message slot), 3 nits | reviewer | done
 fix round 1 (phase 3) | QD3 Start jump lands at or after the section start; stale architecture.md / ui.md lines; overflow comment | implementer | done
+reviewer (phase 3 fix round 1) | APPROVED; nit stale QD3 test comment (fixed) | reviewer | done
+tester (phase 3 fix round 1) | QD3 PASS; 6 qa_qd3 edge tests; no new defects | tester | done

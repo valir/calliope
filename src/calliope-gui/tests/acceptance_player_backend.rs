@@ -3123,7 +3123,7 @@ fn qa_p3_play_with_a_current_loop_uses_only_the_section_rule_and_loop_play_only_
 
 #[test]
 fn qa_p3_start_jump_to_a_section_that_starts_between_two_frames_still_counts_in_with_that_section() {
-    // 8500.01 ms is 187425.2 frames: the Start jump lands on frame 187425 = 8499.9977 ms
+    // 8500.01 ms is 187425.2 frames: the Start jump must land on frame 187426, at or after the start (nearest-frame rounding gave 187425 = 8499.9977 ms)
     let json = r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[
         {"start_ms":500,"bpm":120},{"start_ms":8500.01,"bpm":93,"detected_ms":8500.01,"count_in":true}]}}"#;
     let mut r = rig_with(PRACTICE, json);
@@ -3507,4 +3507,113 @@ fn qa_p3_the_master_metronome_command_and_its_permission_are_gone_everywhere() {
     let r = rig(PRACTICE);
     let v = serde_json::to_value(r.snap()).unwrap();
     assert!(v.get("metronome").is_none());
+}
+
+// ---- QD3 fix round 1: edge cases of the Start jump landing frame ----
+
+fn qd3_json(second_start: &str, count_in: bool) -> String {
+    format!(
+        r#"{{"schema_version":5,"tempo":{{"beats_per_bar":4,"segments":[
+        {{"start_ms":500,"bpm":120}},{{"start_ms":{second_start},"bpm":93,"detected_ms":{second_start},"count_in":{count_in}}}]}}}}"#
+    )
+}
+
+/// Jumps (playing) to section 2's Start and returns the audio pulled right after, the clicks being off.
+fn qd3_audio_after_jump(start: &str, at: f64) -> (Rig, Vec<f32>) {
+    let mut r = rig_with(PRACTICE, &qd3_json(start, false));
+    r.seek(2000);
+    r.play();
+    r.b.pull(frames_of(100.0));
+    r.m.jump_section(&r.id(), 1, at, tempo_map::Edge::Start, r.t0).unwrap();
+    let got = r.b.pull(1500);
+    (r, got)
+}
+
+/// Which shift s in -3..=3 makes the pulled audio (frames 600..1000, past any fade-in; the
+/// metronome is off) best match the source as if it started at frame `f + s`; fails if the
+/// match is not clear-cut.
+fn nearest_shift(r: &Rig, got: &[f32], f: usize) -> i32 {
+    let mut best = (f32::MAX, 0);
+    let mut scores = vec![];
+    for s in -3i32..=3 {
+        let want = expected(&r.pcm(), (f as i64 + s as i64) as usize + 600, 400);
+        let d = max_diff(&got[1200..2000], &want);
+        scores.push(d);
+        if d < best.0 {
+            best = (d, s);
+        }
+    }
+    // a small residual (a metronome tail) is tolerated; the neighbours must be clearly worse
+    let second = scores.iter().copied().filter(|d| *d != best.0).fold(f32::MAX, f32::min);
+    assert!(best.0 < 0.02 && second > 4.0 * best.0, "no clear match: {scores:?}");
+    best.1
+}
+
+fn max_diff(a: &[f32], b: &[f32]) -> f32 {
+    a.iter().zip(b).fold(0.0, |m, (x, y)| m.max((x - y).abs()))
+}
+
+#[test]
+fn qa_qd3_whole_millisecond_start_lands_exactly_on_its_frame_not_one_later() {
+    let (r, got) = qd3_audio_after_jump("8500", 8500.0);
+    let f = frames_of(8500.0); // 374850, a whole frame
+    assert_eq!(nearest_shift(&r, &got, f), 0, "must start on frame {f}, not one later or earlier");
+}
+
+#[test]
+fn qa_qd3_start_a_hair_after_a_frame_boundary_lands_on_the_next_frame() {
+    // frame 374850 is exactly 8500 ms; 8500.0001 ms is 0.0044 frames after it
+    let (r, got) = qd3_audio_after_jump("8500.0001", 8500.0001);
+    let f = frames_of(8500.0) + 1;
+    assert_eq!(nearest_shift(&r, &got, f), 0, "must start on frame {f}");
+}
+
+#[test]
+fn qa_qd3_start_a_hair_before_a_frame_boundary_lands_on_that_frame() {
+    // 8499.9999 ms is 0.0044 frames before frame 374850
+    let (r, got) = qd3_audio_after_jump("8499.9999", 8499.9999);
+    assert_eq!(nearest_shift(&r, &got, frames_of(8500.0)), 0);
+}
+
+#[test]
+fn qa_qd3_every_fractional_start_counts_in_with_its_own_section() {
+    for start in ["8500", "8500.01", "8500.4", "8500.5", "8500.99", "8501", "9000.001", "12345.678"] {
+        let at: f64 = start.parse().unwrap();
+        let mut r = rig_with(PRACTICE, &qd3_json(start, true));
+        r.m.jump_section(&r.id(), 1, at, tempo_map::Edge::Start, r.t0).unwrap();
+        let t = r.play();
+        assert!(t.counting_in, "start {start}: expected a count-in, position {}", t.position_ms);
+    }
+}
+
+#[test]
+fn qa_qd3_start_jump_at_or_past_the_track_end_is_clamped_without_panic() {
+    let dur = duration_ms(&rig_with(PRACTICE, &qd3_json("8500", false)));
+    for start in [dur, dur - 0.0001, dur + 0.01, dur + 5000.0] {
+        let json = qd3_json(&format!("{start}"), false);
+        let mut r = rig_with(PRACTICE, &json);
+        let n = r.sections().len();
+        if n < 2 {
+            continue; // the engine dropped or refused the section: nothing to jump to
+        }
+        let at = r.sections()[1].0;
+        let res = r.m.jump_section(&r.id(), 1, at, tempo_map::Edge::Start, r.t0);
+        if let Ok(s) = res {
+            assert!(s.transport.position_ms as f64 <= dur + 1.0, "start {start}: position {} past {dur}", s.transport.position_ms);
+        }
+        let _ = r.b.pull(500);
+    }
+}
+
+#[test]
+fn qa_qd3_end_jumps_are_unchanged_by_the_fix() {
+    // End of section 1 (120 BPM, 4/4, section 2 at 8500): last bar starts at 6500
+    let mut r = rig_with(PRACTICE, &qd3_json("8500.01", false));
+    let s = r.m.jump_section(&r.id(), 0, 500.0, tempo_map::Edge::End, r.t0).unwrap();
+    assert_eq!(s.transport.position_ms, 6500);
+    // landing frame is the rounded one: 6500 ms = 286650 frames
+    r.play();
+    r.m.jump_section(&r.id(), 0, 500.0, tempo_map::Edge::End, r.t0).unwrap();
+    let got = r.b.pull(1500);
+    assert_eq!(nearest_shift(&r, &got, frames_of(6500.0)), 0);
 }
