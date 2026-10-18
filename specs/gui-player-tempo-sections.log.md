@@ -34,3 +34,4 @@ reviewer (phase 2) | APPROVED; 2 minors (typed-BPM merge drops the later section
 report | phase 2 added (DONE WITH ISSUES: layout 36 px) | orchestrator | done
 plan phase 3 | architect; owner: Q1 (Play mid-section uses the section Count In) Q2-Q7 recommended, Q8 two-row layout | architect | done
 task 23 | Tempo map: section-1 Count In, count_in_at, next_section_tick, with_play_settings_of | implementer | done (qa_p2_flags_first_section_count_in_* expects the old refusal; updated in task 27)
+task 24 | Remove the player_metronome command | implementer | done (local gemma4 overwrote build.rs; reverted and handed to implementer)

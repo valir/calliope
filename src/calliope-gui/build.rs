@@ -65,7 +65,6 @@ const COMMANDS: &[&str] = &[
     "player_skip",
     "player_leave",
     "player_tempo",
-    "player_metronome",
     "player_loop",
 ];
 

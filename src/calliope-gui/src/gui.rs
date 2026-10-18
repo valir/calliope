@@ -124,7 +124,6 @@ pub fn run() {
             player_ipc::player_skip,
             player_ipc::player_leave,
             player_ipc::player_tempo,
-            player_ipc::player_metronome,
             player_ipc::player_loop
         ])
         .build(tauri::generate_context!())

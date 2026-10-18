@@ -51,7 +51,6 @@
     "allow-player-skip",
     "allow-player-leave",
     "allow-player-tempo",
-    "allow-player-metronome",
     "allow-player-loop"
   ]
 }

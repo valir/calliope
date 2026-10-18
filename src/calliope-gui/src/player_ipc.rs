@@ -411,11 +411,6 @@ pub(crate) async fn player_tempo(app: tauri::AppHandle, id: String, action: Temp
 }
 
 #[tauri::command]
-pub(crate) async fn player_metronome(app: tauri::AppHandle, id: String, on: bool, count_in: bool) -> Result<PlayerSnapshot, String> {
-    blocking(move || app.state::<Arc<PlayerHost>>().with(|m| m.set_metronome(&id, on, count_in, Instant::now()))).await
-}
-
-#[tauri::command]
 pub(crate) async fn player_loop(app: tauri::AppHandle, id: String, action: LoopCmd) -> Result<PlayerSnapshot, String> {
     blocking(move || do_player_loop(&app.state::<Arc<PlayerHost>>(), &app.state::<EditorState>(), &id, action)).await
 }
