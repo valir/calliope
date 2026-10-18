@@ -1209,7 +1209,7 @@ fn engine_callback_never_allocates() {
     let mut en = Engine::new(pcm.clone(), 0, shared.clone()).with_trash(tx);
     let grid: Vec<Beat> = (0..40).map(|k| (k * 11025, k % 4 == 1)).collect();
     let plan = count_in_plan(120.0, 22050);
-    let spec_loop = LoopSpec { start: 20000, end: 40000, repeat: true, count_in_bpm_milli: Some(120_000) };
+    let spec_loop = LoopSpec { start: 20000, end: 40000, repeat: true, count_in_bpm_milli: Some(120_000), training: None };
     let g2 = Arc::new(grid.clone());
     let mut out = vec![0.0f32; 2 * 1024];
     let empty = Arc::new(Vec::new());
@@ -1461,7 +1461,7 @@ fn scenario(name: &str, pct: u32) -> (Vec<(usize, Cmd)>, usize) {
             (c, 6 * sec)
         }
         "wrap" => {
-            let l = LoopSpec { start: 2 * sec as u64, end: 4 * sec as u64, repeat: true, count_in_bpm_milli: None };
+            let l = LoopSpec { start: 2 * sec as u64, end: 4 * sec as u64, repeat: true, count_in_bpm_milli: None, training: None };
             c.extend([(0, Cmd::SetSpeed(pct)), (0, Cmd::SetLoop(Some(l))), (0, Cmd::Play { count_in: None })]);
             (c, 12 * sec)
         }
@@ -1542,7 +1542,7 @@ fn speed_change_while_playing_has_no_gap_and_the_position_never_goes_back() {
 #[test]
 fn a_repeating_loop_at_80_percent_wraps_without_a_gap() {
     let sec = RATE;
-    let l = LoopSpec { start: sec as u64, end: 2 * sec as u64, repeat: true, count_in_bpm_milli: None };
+    let l = LoopSpec { start: sec as u64, end: 2 * sec as u64, repeat: true, count_in_bpm_milli: None, training: None };
     let cmds = [(0, Cmd::SetSpeed(80)), (0, Cmd::SetLoop(Some(l))), (0, Cmd::Seek(sec as u64)), (0, Cmd::Play { count_in: None }), (0, Cmd::Resume)];
     let (x, pos, shared) = render_cmds(tone_pcm(10), &cmds, 5 * sec);
     assert!(shared.wraps.load(Ordering::Acquire) >= 2);
@@ -1556,7 +1556,7 @@ fn a_repeating_loop_at_80_percent_wraps_without_a_gap() {
 #[test]
 fn loop_end_with_count_in_at_50_percent_counts_three_clicks_then_the_music() {
     let sec = RATE;
-    let l = LoopSpec { start: 2 * BEAT as u64, end: 6 * BEAT as u64, repeat: true, count_in_bpm_milli: Some(120_000) };
+    let l = LoopSpec { start: 2 * BEAT as u64, end: 6 * BEAT as u64, repeat: true, count_in_bpm_milli: Some(120_000), training: None };
     let cmds = [(0, Cmd::SetSpeed(50)), (0, Cmd::SetLoop(Some(l))), (0, Cmd::PlayLoop { count_in: None })];
     let total = 9 * sec;
     let (clicks, _, shared) = render_cmds(pcm_of(|_| 0.0, 30 * sec), &cmds, total);
@@ -1609,4 +1609,204 @@ fn seek_while_playing_at_85_percent_stays_silent_until_resume_then_plays_from_th
     let pk = burst_peaks(&x[resume..]);
     let want = (8075.0 / 0.85) as usize;
     assert!(pk[0].abs_diff(want) <= RATE / 100, "burst at {} want {want}", pk[0]);
+}
+
+// ------------------------------------------------------------ speed training (engine)
+
+/// An engine pulled in `PULL`-frame blocks, recording the left channel.
+struct Rig {
+    en: Engine,
+    shared: Arc<Shared>,
+    left: Vec<f32>,
+    buf: Vec<f32>,
+}
+
+impl Rig {
+    fn new(pcm: Pcm) -> Rig {
+        let shared = Arc::new(Shared::default());
+        let en = Engine::new(Arc::new(pcm), 0, shared.clone());
+        Rig { en, shared, left: Vec::new(), buf: vec![0.0; 2 * PULL] }
+    }
+
+    fn cmd(&mut self, c: Cmd) -> &mut Rig {
+        self.en.apply(c);
+        self
+    }
+
+    fn pull(&mut self) {
+        self.en.render(&mut self.buf);
+        self.left.extend(self.buf.iter().step_by(2));
+    }
+
+    fn pass(&self) -> u64 {
+        self.shared.pass.load(Ordering::Acquire)
+    }
+
+    fn pct(&self) -> u64 {
+        self.shared.speed_pct.load(Ordering::Acquire)
+    }
+
+    /// Pulls until `pass()` is `n` (at most `limit` frames).
+    fn until_pass(&mut self, n: u64, limit: usize) {
+        while self.pass() != n {
+            assert!(self.left.len() < limit, "pass {n} not reached (pass {} at {} %)", self.pass(), self.pct());
+            self.pull();
+        }
+    }
+
+    fn pull_for(&mut self, frames: usize) {
+        for _ in 0..frames / PULL {
+            self.pull();
+        }
+    }
+}
+
+/// A repeating 2 s loop (1 s..3 s) of a 30 s tone.
+fn loop_2s(training: Option<Training>, count_in: bool) -> LoopSpec {
+    LoopSpec {
+        start: RATE as u64,
+        end: 3 * RATE as u64,
+        repeat: true,
+        count_in_bpm_milli: count_in.then_some(120_000),
+        training,
+    }
+}
+
+fn plan(start: u32, end: u32, step: u32, repeats: u32) -> Option<Training> {
+    Some(Training { on: true, start, end, step, repeats })
+}
+
+#[test]
+fn a_training_run_plays_each_pass_at_its_speed_without_a_gap() {
+    let mut r = Rig::new(tone_pcm(30));
+    r.cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 2), false)))).cmd(Cmd::PlayLoop { count_in: None });
+    let mut bounds = vec![0usize];
+    let mut seen = vec![(r.pass(), r.pct())];
+    r.pull();
+    seen[0] = (r.pass(), r.pct());
+    assert_eq!(seen[0], (1, 60));
+    let limit = 30 * RATE;
+    for want in 2..=7u64 {
+        r.until_pass(want, limit);
+        bounds.push(r.left.len());
+        seen.push((r.pass(), r.pct()));
+    }
+    let speeds = [60, 60, 70, 70, 80, 80];
+    for k in 0..6 {
+        let len = (bounds[k + 1] - bounds[k]) as f64;
+        let want = 2.0 * RATE as f64 * 100.0 / f64::from(speeds[k]);
+        assert!((len - want).abs() <= 0.02 * want, "pass {} is {len} frames, want {want}", k + 1);
+        assert_eq!(seen[k].0, k as u64 + 1);
+    }
+    // each pass is published with its speed as it is heard
+    assert_eq!(seen.iter().map(|s| s.1).collect::<Vec<_>>(), [60, 60, 70, 70, 80, 80, 80]);
+    assert_no_gap(&r.left, fade_frames() * 4, r.left.len() - 2 * PULL, "pass changes");
+}
+
+#[test]
+fn every_pass_is_counted_in_at_its_own_speed() {
+    let mut r = Rig::new(pcm_of(|_| 0.0, 30 * RATE));
+    r.cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 1), true)))).cmd(Cmd::PlayLoop { count_in: None });
+    r.until_pass(5, 40 * RATE);
+    let on = onsets(&r.left);
+    // no count-in before pass 1 (none was asked for); three clicks before each of passes 2, 3 and 4 (70/80/80 %)
+    assert!(on.len() >= 9, "{on:?}");
+    for (g, pct) in [70.0, 80.0, 80.0].into_iter().enumerate() {
+        let want = BEAT as f64 * 100.0 / pct;
+        for w in on[3 * g..3 * g + 3].windows(2) {
+            assert!(((w[1] - w[0]) as f64 - want).abs() <= 2.0, "group {g}: {} apart, want {want}", w[1] - w[0]);
+        }
+    }
+}
+
+#[test]
+fn pause_ends_the_run_and_the_next_loop_play_starts_at_the_first_speed() {
+    let mut r = Rig::new(tone_pcm(30));
+    r.cmd(Cmd::SetSpeed(90)).cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 2), false))));
+    r.cmd(Cmd::PlayLoop { count_in: None });
+    r.until_pass(3, 20 * RATE);
+    assert_eq!(r.pct(), 70);
+    r.cmd(Cmd::Pause);
+    r.pull();
+    assert_eq!((r.pass(), r.pct()), (0, 90));
+    r.cmd(Cmd::PlayLoop { count_in: None });
+    r.pull();
+    assert_eq!((r.pass(), r.pct()), (1, 60));
+}
+
+#[test]
+fn a_jump_outside_the_loop_ends_the_run_and_a_jump_inside_keeps_it() {
+    let mut r = Rig::new(tone_pcm(30));
+    r.cmd(Cmd::SetSpeed(90)).cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 2), false))));
+    r.cmd(Cmd::PlayLoop { count_in: None });
+    r.until_pass(3, 20 * RATE);
+    r.cmd(Cmd::Jump(RATE as u64 + RATE as u64 / 2));
+    r.pull_for(RATE / 2);
+    assert_eq!((r.pass(), r.pct()), (3, 70), "a jump inside the loop keeps the run");
+    let from = r.left.len();
+    r.cmd(Cmd::Jump(10 * RATE as u64));
+    r.pull();
+    assert_eq!((r.pass(), r.pct()), (0, 90));
+    r.pull_for(2 * RATE);
+    assert_eq!((r.pass(), r.pct()), (0, 90));
+    assert_no_gap(&r.left, from + fade_frames() * 4 + 2 * PULL, r.left.len(), "after the jump");
+    assert!(r.shared.position.load(Ordering::Acquire) > 10 * RATE as u64, "playback continues past the jump target");
+}
+
+#[test]
+fn set_loop_without_training_ends_the_run_at_once_and_new_settings_apply_from_the_next_pass() {
+    let mut r = Rig::new(tone_pcm(30));
+    r.cmd(Cmd::SetSpeed(90)).cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 2), false))));
+    r.cmd(Cmd::PlayLoop { count_in: None });
+    r.until_pass(2, 20 * RATE);
+    // repeats 2 -> 1 in the middle of pass 2: this pass stays at 60 %, the next one is pass 3 of (60, 80, 10, 1) = 80 %
+    r.pull_for(RATE / 2);
+    r.cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 1), false))));
+    r.pull();
+    assert_eq!((r.pass(), r.pct()), (2, 60));
+    r.until_pass(3, 20 * RATE);
+    assert_eq!(r.pct(), 80);
+    r.cmd(Cmd::SetLoop(Some(loop_2s(None, false))));
+    r.pull();
+    assert_eq!(r.pass(), 0);
+    r.pull_for(RATE / 4); // the new ratio is heard after the stretcher's latency
+    assert_eq!(r.pct(), 90);
+    // the loop itself goes on repeating, at the track speed
+    let wraps = r.shared.wraps.load(Ordering::Acquire);
+    r.pull_for(3 * RATE);
+    assert!(r.shared.wraps.load(Ordering::Acquire) > wraps);
+    assert_eq!(r.pct(), 90);
+}
+
+#[test]
+fn a_run_from_100_to_100_stays_in_stretch_mode_with_2s_passes() {
+    let mut r = Rig::new(tone_pcm(30));
+    r.cmd(Cmd::SetLoop(Some(loop_2s(plan(100, 100, 5, 1), false)))).cmd(Cmd::PlayLoop { count_in: None });
+    r.pull();
+    assert!(r.en.mode == Mode::Stretch);
+    let mut bounds = vec![0usize];
+    for want in 2..=4u64 {
+        r.until_pass(want, 10 * RATE);
+        bounds.push(r.left.len());
+    }
+    for w in bounds.windows(2) {
+        let len = (w[1] - w[0]) as f64;
+        assert!((len - 2.0 * RATE as f64).abs() <= 0.02 * 2.0 * RATE as f64, "pass of {len} frames");
+    }
+    assert!(r.en.mode == Mode::Stretch);
+}
+
+#[test]
+fn a_jump_into_the_last_100ms_of_a_repeating_loop_still_wraps() {
+    for pct in [100u32, 85] {
+        let mut r = Rig::new(tone_pcm(30));
+        r.cmd(Cmd::SetSpeed(pct)).cmd(Cmd::SetLoop(Some(loop_2s(None, false)))).cmd(Cmd::Seek(RATE as u64 * 2));
+        r.cmd(Cmd::Play { count_in: None }).cmd(Cmd::Resume);
+        r.pull_for(RATE / 4);
+        r.cmd(Cmd::Jump(3 * RATE as u64 - RATE as u64 / 20));
+        r.pull_for(RATE / 2);
+        assert!(r.shared.wraps.load(Ordering::Acquire) >= 1, "{pct} %: the loop end was ignored");
+        let pos = r.shared.position.load(Ordering::Acquire);
+        assert!(pos < 2 * RATE as u64, "{pct} %: position {pos} is not back in the loop");
+    }
 }

@@ -481,6 +481,11 @@ Never commit in a routine task.
 - **routine:** no
 
 ### Task 7: Manager and IPC: speed actions, transport fields, training action, logs
+- **orchestrator note (after Task 6):** there is no `speed::Plan`; `LoopSpec.training` is `Option<speed::Training>`. Fill it
+  as `l.training.filter(|t| t.on && l.repeat)` and re-send `SetLoop` whenever training changes. Transport `training`
+  progress = `training.progress(Shared.pass - 1)` (`Shared.pass` is 0 without a run); `speed_pct` from
+  `Shared.speed_pct`. Pass-change log lines can come from `tick` watching `Shared.pass`. `plan_at` uses the first-pass
+  speed for loop Play (the engine spaces wrap count-ins itself).
 - **orchestrator note (after Task 5):** `loop_spec` already fills `LoopSpec.count_in_bpm_milli`; `plan_at` still uses
   the old `state.speed` factor — switch it to `speed_pct`. `set_speed_pct`/`set_training` still carry
   `#[allow(dead_code)]`; remove them.

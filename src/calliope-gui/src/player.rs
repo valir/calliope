@@ -16,6 +16,7 @@ use crate::audio_out::{OutputBackend, OutputHandle};
 use crate::metronome::{count_in_plan, section_clicks, Click, CountIn};
 use crate::player_source::{self, Pcm, Source, PEAK_BUCKETS};
 use crate::player_state::{self, LoopRec, Mark, PlayerState};
+use crate::speed::Training;
 use crate::stretch::Stretcher;
 use crate::tempo_map::{Boundary, Edge, Scale, Segment, TempoMap};
 use crate::transport::Transport;
@@ -52,6 +53,8 @@ pub struct LoopSpec {
     /// Count-in before every repeat (the loop's own Count-In): the song BPM at the loop start times 1000.
     /// The engine spaces the clicks by `60 / (bpm × speed)` of the coming pass.
     pub count_in_bpm_milli: Option<u32>,
+    /// Speed training of the loop (settings with `on`; only given when it is on and the loop repeats).
+    pub training: Option<Training>,
 }
 
 /// Commands from the manager to the callback.
@@ -96,6 +99,8 @@ pub struct Shared {
     pub wraps: AtomicU64,
     /// The speed heard now, in percent.
     pub speed_pct: AtomicU64,
+    /// 0 = no training run, else the pass heard now plus one.
+    pub pass: AtomicU64,
 }
 
 struct CountState {
@@ -135,9 +140,10 @@ struct Entry {
 #[derive(Clone, Copy)]
 enum EventKind {
     /// The feed wrapped here: the heard position goes back by `len`.
-    Wrap { len: u64 },
-    /// Loop end with count-in.
-    CountIn { start: u64, bpm_milli: u32 },
+    /// `pass`/`pct`: the pass that starts and its speed (pass 0: no training run).
+    Wrap { len: u64, pass: u32, pct: u32 },
+    /// Loop end with count-in (`pass`/`pct` as for `Wrap`).
+    CountIn { start: u64, bpm_milli: u32, pass: u32, pct: u32 },
     /// A loop played once ended.
     Once { start: u64 },
     /// The track ended.
@@ -149,6 +155,18 @@ enum EventKind {
 struct FeedEvent {
     u: f64,
     kind: EventKind,
+}
+
+/// A speed-training run (2.6). `pass` is the pass the feed is in, `heard` the one being heard (0-based).
+#[derive(Clone, Copy)]
+struct Run {
+    pass: u32,
+    heard: u32,
+    /// Speed of the pass heard, in percent.
+    pct: u32,
+    /// The loop the run belongs to.
+    start: u64,
+    end: u64,
 }
 
 /// Stereo f32 frames from song frame `from` (mono duplicated; zeros outside the track).
@@ -221,6 +239,7 @@ pub struct Engine {
     /// Crossfade from the bypass path (still at `xpos`) after a speed change away from 100 %.
     xfade_left: u32,
     xpos: u64,
+    run: Option<Run>,
 }
 
 impl Engine {
@@ -231,6 +250,7 @@ impl Engine {
         let stretch = Stretcher::new(pcm.rate);
         let scratch = vec![0.0; 2 * stretch.pre_roll_frames().max(2 * SUB_BLOCK + 8)];
         shared.speed_pct.store(100, Ordering::Release);
+        shared.pass.store(0, Ordering::Release);
         Engine {
             pcm,
             pos,
@@ -270,6 +290,7 @@ impl Engine {
             events: VecDeque::with_capacity(MARKS),
             xfade_left: 0,
             xpos: 0,
+            run: None,
         }
     }
 
@@ -293,12 +314,39 @@ impl Engine {
     /// (`pos` is already there). Exactly 100 % is the bypass; anything else aligns the stretcher.
     fn enter(&mut self, target: u64) {
         self.xfade_left = 0;
-        if self.base_pct == 100 {
+        if let Some(r) = self.run.as_mut() {
+            // a run restarts the feed in the pass being heard
+            r.pass = r.heard;
+            if let Some(t) = self.lp.and_then(|l| l.training) {
+                self.speed = f64::from(t.pass_speed(r.pass)) / 100.0;
+            }
+        }
+        if self.base_pct == 100 && self.run.is_none() {
             self.mode = Mode::Bypass;
             return;
         }
         let pcm = &*self.pcm;
-        let fed = self.stretch.align(|f, b| fill_stereo(pcm, f, b), target, self.speed, &mut self.scratch);
+        // a repeating loop the target is inside: the audio stops at its end (with the fade-out)
+        let wrapping = self.wrapping().filter(|l| target < l.end && l.end <= pcm.frames);
+        let fade = u64::from(self.fade_len);
+        let fed = self.stretch.align(
+            |f, b| {
+                fill_stereo(pcm, f, b);
+                if let Some(l) = wrapping {
+                    for (k, fr) in b.chunks_exact_mut(2).enumerate() {
+                        let song = f + k as u64;
+                        if song + fade >= l.end {
+                            let g = if song >= l.end { 0.0 } else { (l.end - song) as f32 / fade as f32 };
+                            fr[0] *= g;
+                            fr[1] *= g;
+                        }
+                    }
+                }
+            },
+            target,
+            self.speed,
+            &mut self.scratch,
+        );
         self.mode = Mode::Stretch;
         self.fpos = fed;
         self.acc = 0.0;
@@ -313,9 +361,59 @@ impl Engine {
         self.timeline.push_back(Entry { out: self.out_count, u: target as f64, speed: self.speed });
         self.beat_dirty = true;
         self.voice = None;
-        if fed >= self.pcm.frames {
+        if let Some(l) = wrapping.filter(|l| fed >= l.end) {
+            // the alignment already fed past the loop end: the end is met now
+            self.loop_end(Some(l), l.end as f64, fed - l.end);
+        } else if fed >= self.pcm.frames {
             self.push_event(FeedEvent { u: self.pcm.frames as f64, kind: EventKind::Track });
             self.feed_zero = true;
+        }
+    }
+
+    /// The feed met the end of loop `l` (or of the track) at unwrapped position `at`, `over` frames short of
+    /// where the feed is now.
+    fn loop_end(&mut self, l: Option<LoopSpec>, at: f64, over: u64) {
+        match l {
+            Some(l) if l.repeat && l.count_in_bpm_milli.is_none() => {
+                let (pass, pct) = self.coming_pass(&l);
+                self.push_event(FeedEvent { u: at, kind: EventKind::Wrap { len: l.end - l.start, pass, pct } });
+                if let Some(r) = self.run.as_mut().filter(|_| pass > 0) {
+                    r.pass += 1;
+                    self.speed = f64::from(pct) / 100.0; // the new speed applies from the loop start
+                }
+                self.woff += l.end - l.start;
+                self.fpos = l.start + over;
+                self.feed_fade_left = self.fade_len;
+            }
+            Some(l) if l.repeat => {
+                let bpm_milli = l.count_in_bpm_milli.unwrap_or(0);
+                let (pass, pct) = self.coming_pass(&l);
+                self.push_event(FeedEvent { u: at, kind: EventKind::CountIn { start: l.start, bpm_milli, pass, pct } });
+                self.feed_zero = true;
+            }
+            Some(l) => {
+                self.push_event(FeedEvent { u: at, kind: EventKind::Once { start: l.start } });
+                self.feed_zero = true;
+            }
+            None => {
+                self.push_event(FeedEvent { u: at, kind: EventKind::Track });
+                self.feed_zero = true;
+            }
+        }
+    }
+
+    /// The pass after the one the feed is in and its speed (pass 0: no run), read from the loop's current plan.
+    fn coming_pass(&self, l: &LoopSpec) -> (u32, u32) {
+        match (self.run, l.training) {
+            (Some(r), Some(t)) => (r.pass + 2, t.pass_speed(r.pass + 1)),
+            _ => (0, 0),
+        }
+    }
+
+    /// The run is over: the track speed again (the ratio changes; the mode stays until the next discontinuity).
+    fn end_run(&mut self) {
+        if self.run.take().is_some() {
+            self.speed = f64::from(self.base_pct) / 100.0;
         }
     }
 
@@ -340,21 +438,29 @@ impl Engine {
     pub fn apply(&mut self, cmd: Cmd) {
         match cmd {
             Cmd::Play { count_in } => {
+                self.end_run();
                 if self.pos >= self.pcm.frames {
                     self.pos = 0;
                 }
                 self.begin(count_in);
             }
             Cmd::PlayLoop { count_in } => {
+                self.end_run(); // a new PlayLoop restarts at pass 0
                 if let Some(l) = self.lp {
                     self.pos = l.start.min(self.pcm.frames);
                     self.loop_play = true;
+                    if let Some(t) = l.training.filter(|_| l.repeat) {
+                        let pct = t.pass_speed(0);
+                        self.run = Some(Run { pass: 0, heard: 0, pct, start: l.start, end: l.end });
+                        self.speed = f64::from(pct) / 100.0;
+                    }
                 } else if self.pos >= self.pcm.frames {
                     self.pos = 0;
                 }
                 self.begin(count_in);
             }
             Cmd::Pause => {
+                self.end_run();
                 self.playing = false;
                 self.audible = false;
                 self.count = None;
@@ -362,6 +468,7 @@ impl Engine {
                 self.voice = None;
             }
             Cmd::Seek(f) => {
+                self.leave_run(f);
                 self.move_to(f);
                 self.count = None;
                 if self.playing {
@@ -369,6 +476,7 @@ impl Engine {
                 }
             }
             Cmd::Jump(f) => {
+                self.leave_run(f);
                 self.move_to(f);
                 self.count = None;
                 if self.playing && self.audible {
@@ -388,6 +496,13 @@ impl Engine {
                 if l.is_none() {
                     self.loop_play = false;
                 }
+                // the run goes on only for the same loop that still repeats with training; changed settings
+                // are read at the next wrap
+                if let Some(r) = self.run {
+                    if !l.is_some_and(|l| l.repeat && l.training.is_some() && l.start == r.start && l.end == r.end) {
+                        self.end_run();
+                    }
+                }
             }
             Cmd::SetGrid(g) => {
                 let old = std::mem::replace(&mut self.grid, g);
@@ -402,6 +517,9 @@ impl Engine {
             }
             Cmd::SetSpeed(pct) => {
                 self.base_pct = pct;
+                if self.run.is_some() {
+                    return; // a run plays its own speeds; the track speed is back when it ends
+                }
                 self.speed = f64::from(pct) / 100.0;
                 if self.playing && self.count.is_some() {
                     self.enter(self.pos); // before the music starts: align for the new speed
@@ -415,6 +533,13 @@ impl Engine {
                 }
                 // stretch -> another speed: only the feed ratio changes (`self.speed`)
             }
+        }
+    }
+
+    /// A move to song frame `f` outside the loop of a run ends it.
+    fn leave_run(&mut self, f: u64) {
+        if self.run.is_some_and(|r| f < r.start || f >= r.end) {
+            self.end_run();
         }
     }
 
@@ -433,8 +558,8 @@ impl Engine {
     }
 
     /// The count-in of a loop wrap, spaced for the coming pass.
-    fn wrap_count(&self, bpm_milli: u32) -> CountState {
-        CountState { plan: count_in_plan(f64::from(bpm_milli) / 1000.0 * self.speed, self.pcm.rate), at: 0 }
+    fn wrap_count(&self, bpm_milli: u32, speed: f64) -> CountState {
+        CountState { plan: count_in_plan(f64::from(bpm_milli) / 1000.0 * speed, self.pcm.rate), at: 0 }
     }
 
     /// The loop the feed wraps at, when it is in play.
@@ -509,43 +634,34 @@ impl Engine {
         }
         self.acc = 0.0;
         let at = (self.fpos + self.woff) as f64;
-        match event.and_then(|e| e.1) {
-            Some(l) if l.repeat && l.count_in_bpm_milli.is_none() => {
-                self.push_event(FeedEvent { u: at, kind: EventKind::Wrap { len: l.end - l.start } });
-                self.woff += l.end - l.start;
-                self.fpos = l.start;
-                self.feed_fade_left = self.fade_len;
-            }
-            Some(l) if l.repeat => {
-                let bpm_milli = l.count_in_bpm_milli.unwrap_or(0);
-                self.push_event(FeedEvent { u: at, kind: EventKind::CountIn { start: l.start, bpm_milli } });
-                self.feed_zero = true;
-            }
-            Some(l) => {
-                self.push_event(FeedEvent { u: at, kind: EventKind::Once { start: l.start } });
-                self.feed_zero = true;
-            }
-            _ => {
-                self.push_event(FeedEvent { u: at, kind: EventKind::Track });
-                self.feed_zero = true;
-            }
+        self.loop_end(event.and_then(|e| e.1), at, 0);
+    }
+
+    /// The heard position entered pass `pass` (1-based, 0 = none) of the run, at `pct` %.
+    fn heard_pass(&mut self, pass: u32, pct: u32) {
+        if let Some(r) = self.run.as_mut().filter(|_| pass > 0) {
+            r.heard = pass - 1;
+            r.pct = pct;
         }
     }
 
     /// The heard position reached a mark. True when it stopped or restarted the audio (no frame this time).
     fn reached(&mut self, kind: EventKind) -> bool {
         match kind {
-            EventKind::Wrap { len } => {
+            EventKind::Wrap { len, pass, pct } => {
+                self.heard_pass(pass, pct);
                 self.hoff += len;
                 self.beat_dirty = true;
                 self.shared.wraps.fetch_add(1, Ordering::AcqRel);
                 false
             }
-            EventKind::CountIn { start, bpm_milli } => {
+            EventKind::CountIn { start, bpm_milli, pass, pct } => {
+                self.heard_pass(pass, pct);
                 self.shared.wraps.fetch_add(1, Ordering::AcqRel);
                 self.pos = start;
                 self.beat_dirty = true;
-                self.count = Some(self.wrap_count(bpm_milli));
+                let speed = if pass > 0 { f64::from(pct) / 100.0 } else { self.speed };
+                self.count = Some(self.wrap_count(bpm_milli, speed));
                 self.enter(start);
                 true
             }
@@ -559,6 +675,7 @@ impl Engine {
                 true
             }
             EventKind::Track => {
+                self.end_run();
                 self.pos = self.pcm.frames;
                 self.playing = false;
                 self.audible = false;
@@ -707,7 +824,7 @@ impl Engine {
                     self.pos = l.start;
                     self.beat_dirty = true;
                     self.shared.wraps.fetch_add(1, Ordering::AcqRel);
-                    self.count = l.count_in_bpm_milli.map(|b| self.wrap_count(b));
+                    self.count = l.count_in_bpm_milli.map(|b| self.wrap_count(b, self.speed));
                     if self.count.is_none() {
                         self.start_fade();
                     }
@@ -732,10 +849,13 @@ impl Engine {
             self.count = None;
         }
         let heard = match self.timeline.front() {
+            _ if self.playing && self.run.is_some() => self.run.map_or(0, |r| u64::from(r.pct)),
             Some(e) if self.mode == Mode::Stretch && self.playing && self.audible => (e.speed * 100.0).round() as u64,
             _ => u64::from(self.base_pct),
         };
         self.shared.speed_pct.store(heard, Ordering::Release);
+        let pass = self.run.filter(|_| self.playing).map_or(0, |r| u64::from(r.heard) + 1);
+        self.shared.pass.store(pass, Ordering::Release);
         self.shared.counting_in.store(self.count.is_some(), Ordering::Release);
         self.shared.loop_playing.store(self.playing && self.loop_play, Ordering::Release);
         self.shared.position.store(self.pos, Ordering::Release);
@@ -1083,7 +1203,7 @@ impl Session {
         let count_in_bpm_milli = (l.count_in && !self.state.tempo.is_empty())
             .then(|| (self.state.tempo.bpm_at(self.boundary_ms(l.start)) * 1000.0).round() as u32)
             .filter(|&b| b > 0);
-        Some(LoopSpec { start, end, repeat: l.repeat, count_in_bpm_milli })
+        Some(LoopSpec { start, end, repeat: l.repeat, count_in_bpm_milli, training: None })
     }
 
     fn sync_loop(&mut self) {
