@@ -117,6 +117,18 @@ impl Rig {
     fn play(&mut self) -> PlayerTransport {
         self.m.play(&self.spec.id, self.t0).unwrap()
     }
+    /// "+" at `ms`, then the end cleared again (Start at the track end clears it, Start back at `ms`):
+    /// a loop without an end, which "+" no longer makes by itself.
+    fn add_unfinished(&mut self, ms: u64) {
+        self.seek(ms);
+        self.lp(LoopAction::Add).unwrap();
+        let dur = self.snap().duration_ms;
+        self.seek(dur);
+        self.lp(LoopAction::Mark(Mark::Start)).unwrap();
+        self.seek(ms);
+        let s = self.lp(LoopAction::Mark(Mark::Start)).unwrap();
+        assert!(s.loops[s.current_loop.unwrap()].end.is_none());
+    }
     fn lp(&mut self, a: LoopAction) -> Result<PlayerSnapshot, String> {
         self.m.loop_action(&self.spec.id, a, self.t0)
     }
@@ -222,9 +234,11 @@ fn ac13_track_without_tempo_is_timestamp_mode_with_metronome_refused() {
     assert_eq!(s.mode, "time");
     assert!(s.tempo.segments.is_empty());
     assert_eq!(s.transport.bpm, 0.0);
-    assert!(!s.metronome.on && !s.metronome.count_in);
-    assert!(r.m.set_metronome(&r.id(), true, false, r.t0).is_err());
-    assert!(r.m.set_metronome(&r.id(), false, true, r.t0).is_err());
+    let json = serde_json::to_value(&s).unwrap();
+    assert!(json.get("metronome").is_none(), "no master in the snapshot");
+    let flags = |metronome, count_in| SectionEdit::Flags { index: 0, at: 0.0, metronome, count_in };
+    assert!(r.m.edit_sections(&r.id(), flags(true, false), r.t0).is_err());
+    assert!(r.m.edit_sections(&r.id(), flags(false, true), r.t0).is_err());
     assert!(r.m.speed_action(&r.id()).is_err());
     assert!(!r.snap().can_change_speed, "increment A: speed not available");
 }
@@ -508,8 +522,9 @@ fn ac16_zero_removes_segment_in_effect_and_last_returns_to_timestamp_mode_keepin
             x => panic!("{x:?}"),
         }
     }
-    // metronome machinery now refuses
-    assert!(r.m.set_metronome(&r.id(), true, false, r.t0).is_err());
+    // the section machinery now refuses
+    let e = SectionEdit::Flags { index: 0, at: 0.0, metronome: true, count_in: false };
+    assert!(r.m.edit_sections(&r.id(), e, r.t0).is_err());
     // zero on an already empty map is harmless
     assert!(r.m.set_bpm(&r.id(), 0.0, r.t0).is_ok());
 }
@@ -545,7 +560,7 @@ fn edge_bpm_text_values() {
 fn ac19_metronome_ticks_on_every_beat_in_one_tone_and_off_stops() {
     let mut r = rig(WITH_TEMPO);
     r.m.select_source(&r.id(), "stem:vocals", r.t0).unwrap();
-    r.m.set_metronome(&r.id(), true, false, r.t0).unwrap();
+    r.set_clicks(true);
     r.seek(1100);
     r.play();
     let n = RATE * 18 / 10; // 1.1 s .. 2.9 s: beats at 1500 (k=2), 2000 (k=3), 2500 (k=4, bar start)
@@ -568,7 +583,7 @@ fn ac19_metronome_ticks_on_every_beat_in_one_tone_and_off_stops() {
         assert!(h15 > h2 * 2.0, "beat at {b} is 1.5 kHz: {h2} {h15}");
     }
     // Off
-    r.m.set_metronome(&r.id(), false, false, r.t0).unwrap();
+    r.set_clicks(false);
     let got = r.b.pull(RATE);
     let at = (1100 + 1800) * RATE / 1000;
     let want = expected(&pcm, at, RATE);
@@ -579,7 +594,7 @@ fn ac19_metronome_ticks_on_every_beat_in_one_tone_and_off_stops() {
 fn ac19_metronome_follows_tempo_change() {
     let mut r = rig(WITH_TEMPO);
     r.m.select_source(&r.id(), "stem:vocals", r.t0).unwrap();
-    r.m.set_metronome(&r.id(), true, false, r.t0).unwrap();
+    r.set_clicks(true);
     // 90 BPM from 10500 ms: beats every 666.67 ms
     r.seek(11000);
     r.play();
@@ -598,7 +613,7 @@ fn ac19_metronome_follows_tempo_change() {
 fn ac20_count_in_three_audible_clicks_then_music_on_a_silent_fourth_beat() {
     let mut r = rig(WITH_TEMPO);
     r.m.select_source(&r.id(), "stem:vocals", r.t0).unwrap();
-    r.m.set_metronome(&r.id(), false, true, r.t0).unwrap();
+    r.count_in_at(1100.0);
     r.seek(1100);
     let st = r.play();
     assert!(st.counting_in && st.playing);
@@ -630,7 +645,7 @@ fn ac20_count_in_three_audible_clicks_then_music_on_a_silent_fourth_beat() {
 #[test]
 fn ac20_count_in_position_is_held_and_pause_cancels() {
     let mut r = rig(WITH_TEMPO);
-    r.m.set_metronome(&r.id(), false, true, r.t0).unwrap();
+    r.count_in_at(1100.0);
     r.seek(1100);
     r.play();
     r.b.pull(RATE / 2 + 7);
@@ -644,7 +659,7 @@ fn ac20_count_in_position_is_held_and_pause_cancels() {
 #[test]
 fn ac20_count_in_uses_the_tempo_at_the_start_position() {
     let mut r = rig(WITH_TEMPO);
-    r.m.set_metronome(&r.id(), false, true, r.t0).unwrap();
+    r.count_in_at(12000.0);
     r.seek(12000); // 90 BPM
     r.play();
     let b = RATE * 2 / 3;
@@ -669,39 +684,32 @@ fn loop_pass(pcm: &player_source::Pcm, start: usize, end: usize, from: usize, n:
 }
 
 #[test]
-fn ac21_global_count_in_precedes_first_loop_pass_only() {
+fn ac21_section_count_in_does_not_precede_loop_play_nor_the_wrap() {
     let mut r = rig(WITH_TEMPO);
     r.m.select_source(&r.id(), "stem:vocals", r.t0).unwrap();
-    r.m.set_metronome(&r.id(), false, true, r.t0).unwrap();
     let s = r.snap();
     let l = &s.loops[s.current_loop.unwrap()];
     assert!(!l.count_in && l.repeat);
+    r.count_in_at(l.start_ms);
     let (start, end) = (
         (l.start_ms * RATE as f64 / 1000.0).round() as usize,
         (l.end_ms.unwrap() * RATE as f64 / 1000.0).round() as usize,
     );
     let snap = r.lp(LoopAction::Play).unwrap();
-    assert!(snap.transport.counting_in && snap.transport.loop_playing);
+    assert!(!snap.transport.counting_in && snap.transport.loop_playing);
     assert!((snap.transport.position_ms as f64 - l.start_ms).abs() <= 1.0);
-    let b = RATE / 2;
     let pass = end - start;
-    let total = 3 * b + 2 * pass + 500;
-    let got = r.b.pull(total);
-    let zero = vec![0.0f32; got.len()];
-    let on = clicks(&got[..2 * 3 * b], &zero[..2 * 3 * b], 0);
-    assert_eq!(on.len(), 3);
-    assert!(silent_between(&got, 2 * b + 700, 3 * b - 1));
-    // after the count-in: pure loop audio for two passes, without clicks at the wrap
+    let got = r.b.pull(2 * pass + 500);
+    // pure loop audio for two passes, without clicks at the start or at the wrap
     let want = loop_pass(&r.pcm(), start, end, start, 2 * pass + 500);
-    let g = &got[2 * 3 * b..];
     let mut worst = 0.0f32;
     for f in 100..(2 * pass + 500) {
         if (f as i64 - pass as i64).abs() < 120 || (f as i64 - 2 * pass as i64).abs() < 120 {
             continue; // fade at the joint
         }
-        worst = worst.max((g[2 * f] - want[2 * f]).abs());
+        worst = worst.max((got[2 * f] - want[2 * f]).abs());
     }
-    assert!(worst < 1e-4, "no count-in at the wrap: {worst}");
+    assert!(worst < 1e-4, "no pre-roll, no count-in at the wrap: {worst}");
 }
 
 #[test]
@@ -741,13 +749,14 @@ fn ac21_loop_count_in_flag_alone_also_counts_in_the_first_pass() {
 // =========================================================================================
 
 #[test]
-fn ac22_plus_creates_loop_without_end_at_position_becomes_current() {
+fn ac22_plus_creates_loop_to_the_track_end_at_position_becomes_current() {
     let mut r = rig(PRACTICE);
     assert!(r.snap().loops.is_empty());
     r.seek(3000);
     let s = r.lp(LoopAction::Add).unwrap();
     assert_eq!(s.loops.len(), 1);
-    assert!(s.loops[0].end.is_none() && s.loops[0].end_ms.is_none());
+    assert!(matches!(s.loops[0].end, Some(Boundary::Ms { .. })), "timestamp mode: the end is the track end");
+    assert_eq!(s.loops[0].end_ms, Some(s.duration_ms as f64));
     assert_eq!(s.loops[0].start_ms, 3000.0);
     assert!(matches!(s.loops[0].start, Boundary::Ms { .. }), "timestamp mode stores exact time");
     assert_eq!(s.current_loop, Some(0));
@@ -877,8 +886,7 @@ fn ac25_stop_is_stop_not_pause() {
 #[test]
 fn ac30_loop_without_end_cannot_play_or_flag_and_never_repeats() {
     let mut r = rig(PRACTICE);
-    r.seek(3000);
-    r.lp(LoopAction::Add).unwrap();
+    r.add_unfinished(3000);
     assert_eq!(r.lp(LoopAction::Play).unwrap_err(), "Set the loop end first");
     assert!(r.lp(LoopAction::Flags { repeat: false, count_in: false }).is_err());
     assert!(r.lp(LoopAction::Flags { repeat: true, count_in: true }).is_err());
@@ -904,8 +912,7 @@ fn ac30_loop_without_end_cannot_play_or_flag_and_never_repeats() {
 #[test]
 fn ac31_end_mark_later_completes_at_or_before_start_is_refused_with_message() {
     let mut r = rig(PRACTICE);
-    r.seek(3000);
-    r.lp(LoopAction::Add).unwrap();
+    r.add_unfinished(3000);
     // at the start
     let s = r.lp(LoopAction::Mark(Mark::End)).unwrap();
     assert!(s.loops[0].end.is_none());
@@ -967,8 +974,7 @@ fn ac32_start_mark_at_or_after_end_moves_start_and_clears_end() {
 #[test]
 fn ac33_unfinished_loop_survives_reselect_and_restart() {
     let mut r = rig(PRACTICE);
-    r.seek(3000);
-    r.lp(LoopAction::Add).unwrap();
+    r.add_unfinished(3000);
     r.flush();
     let d = r.disk().unwrap();
     assert!(d["loops"][0]["end"].is_null());
@@ -1037,14 +1043,13 @@ fn ac28_every_setting_is_on_disk_within_1s_and_restored() {
     let mut r = rig(PRACTICE);
     r.seek(2000);
     r.m.set_bpm(&r.id(), 100.0, r.t0).unwrap();
-    r.m.set_metronome(&r.id(), true, true, r.t0).unwrap();
+    r.set_count_in(0, true);
     r.seek(3000);
     r.lp(LoopAction::Add).unwrap();
     r.seek(5000);
     r.lp(LoopAction::Mark(Mark::End)).unwrap();
     r.lp(LoopAction::Flags { repeat: false, count_in: true }).unwrap();
-    r.seek(7000);
-    r.lp(LoopAction::Add).unwrap(); // second, current, no end
+    r.add_unfinished(7000); // second, current, no end
     r.m.select_source(&r.id(), "stem:guitar", r.t0).unwrap();
     r.seek(8123);
     assert!(r.disk().is_none(), "nothing before the debounce");
@@ -1054,7 +1059,8 @@ fn ac28_every_setting_is_on_disk_within_1s_and_restored() {
     let d = r.disk().expect("written within 1 s");
     assert_eq!(d["source"], "stem:guitar");
     assert_eq!(d["tempo"]["segments"][0]["bpm"], 100.0);
-    assert_eq!(d["metronome"], json!({"on": true, "count_in": true}));
+    assert!(d.get("metronome").is_none(), "no master is written");
+    assert_eq!(d["tempo"]["segments"][0]["count_in"], true);
     assert_eq!(d["loops"].as_array().unwrap().len(), 2);
     assert_eq!(d["loops"][0]["repeat"], false);
     assert_eq!(d["loops"][0]["count_in"], true);
@@ -1066,7 +1072,7 @@ fn ac28_every_setting_is_on_disk_within_1s_and_restored() {
     let s = r.snap();
     assert_eq!(s.source, "stem:guitar");
     assert!((s.transport.position_ms as i64 - 8123).abs() <= 2, "restored {}", s.transport.position_ms);
-    assert!(s.metronome.on && s.metronome.count_in);
+    assert!(s.tempo.segments[0].meta.metronome && s.tempo.segments[0].meta.count_in);
     assert_eq!(s.tempo.segments[0].bpm, 100.0);
     assert_eq!(s.loops.len(), 2);
     assert!(!s.loops[0].repeat && s.loops[0].count_in);
@@ -1148,7 +1154,7 @@ fn ac29_leaving_pauses_at_the_position_and_play_resumes_from_it() {
 #[test]
 fn ac29_leaving_during_count_in_or_loop_play_pauses_cleanly() {
     let mut r = rig(WITH_TEMPO);
-    r.m.set_metronome(&r.id(), false, true, r.t0).unwrap();
+    r.lp(LoopAction::Flags { repeat: true, count_in: true }).unwrap();
     r.lp(LoopAction::Play).unwrap();
     r.b.pull(1000);
     let st = r.m.leave(&r.id(), r.t0).unwrap();
@@ -1193,7 +1199,7 @@ fn hostile_corrupt_player_json_opens_with_defaults_and_a_note() {
         m.set_bpm(&spec.id, 100.0, t0).unwrap();
         m.tick(t0 + Duration::from_millis(700));
         let v: Value = serde_json::from_slice(&std::fs::read(spec.dir.join("player.json")).unwrap()).unwrap();
-        assert_eq!(v["schema_version"], 4);
+        assert_eq!(v["schema_version"], 5);
         m.play(&spec.id, t0).unwrap();
         b.pull(500);
     }
@@ -1241,7 +1247,7 @@ fn hostile_infinite_and_huge_numbers() {
             b.pull(2000);
             let _ = m.loop_action(&spec.id, LoopAction::Play, t0);
             b.pull(2000);
-            let _ = m.set_metronome(&spec.id, true, true, t0);
+            let _ = m.loop_action(&spec.id, LoopAction::Flags { repeat: true, count_in: true }, t0);
             let _ = m.play(&spec.id, t0);
             b.pull(2000);
             m.tick(t0 + Duration::from_millis(700));
@@ -1256,7 +1262,7 @@ fn hostile_infinite_and_huge_numbers() {
 
 #[test]
 fn hostile_newer_schema_is_read_only_and_never_overwritten() {
-    let text = r#"{"schema_version":5,"source":"stem:guitar","future":{"x":1}}"#;
+    let text = r#"{"schema_version":6,"source":"stem:guitar","future":{"x":1}}"#;
     let (_t, spec, mut m, b, e, r) = open_with_file(text.as_bytes());
     let s = r.unwrap();
     assert!(s.note.as_deref().unwrap().contains("newer version"));
@@ -1586,8 +1592,24 @@ impl Rig {
         let t = self.snap().tempo;
         tempo_map::TempoMap { beats_per_bar: t.beats_per_bar, segments: t.segments }
     }
-    fn metronome_on(&mut self) {
-        self.m.set_metronome(&self.spec.id, true, false, self.t0).unwrap();
+    /// Sets Click on or off in every section, keeping each section's Count In (replaces the master).
+    fn set_clicks(&mut self, on: bool) {
+        for (i, s) in self.snap().tempo.segments.iter().enumerate() {
+            let at = s.start_ms;
+            let flags = SectionEdit::Flags { index: i, at, metronome: on, count_in: s.meta.count_in };
+            self.m.edit_sections(&self.spec.id, flags, self.t0).unwrap();
+        }
+    }
+    /// Sets Count In on or off for section `index`, keeping its Click.
+    fn set_count_in(&mut self, index: usize, on: bool) {
+        let s = &self.snap().tempo.segments[index];
+        let flags = SectionEdit::Flags { index, at: s.start_ms, metronome: s.meta.metronome, count_in: on };
+        self.m.edit_sections(&self.spec.id, flags, self.t0).unwrap();
+    }
+    /// Count In on in the section under `ms` (the Play pre-roll of the new rules).
+    fn count_in_at(&mut self, ms: f64) {
+        let i = self.map().segment_at(ms).unwrap();
+        self.set_count_in(i, true);
     }
     /// Pulls `ms` of audio from the current position and returns the click times (absolute ms) found
     /// against the source, and the raw output.
@@ -1642,7 +1664,7 @@ fn ts2_section_bpm_changes_only_that_section_and_metronome_follows() {
     r.edit(SectionEdit::Bpm { index: 0, at: 500.0, bpm: 110.0 });
     assert_eq!(r.sections(), vec![(500.0, 110.0), (8500.0, 93.0)]);
     assert_eq!(r.snap().tempo.segments[1].detected_ms, Some(8500.0));
-    r.metronome_on();
+    r.set_clicks(true);
     r.seek(2000);
     r.play();
     let (c, _) = r.pull_clicks(8000.0 + 4000.0 - 2000.0);
@@ -1666,7 +1688,7 @@ fn ts3_add_splits_at_nearest_fine_step_with_typed_bpm() {
     let k = ((15010.0 - 8500.0) / fine).round();
     assert!((seg.start_ms - (8500.0 + k * fine)).abs() < 1e-6, "{}", seg.start_ms);
     assert!(seg.on_beat && seg.bpm == 140.0 && seg.detected_ms.is_none());
-    r.metronome_on();
+    r.set_clicks(true);
     r.seek(14000);
     r.play();
     let (c, _) = r.pull_clicks(3000.0);
@@ -1681,7 +1703,7 @@ fn ts4_remove_joins_previous() {
     let s = r.edit(SectionEdit::Remove { index: 1, at: 8500.0 });
     assert_eq!(s.tempo.segments.len(), 1);
     assert_eq!(r.sections(), vec![(500.0, 120.0)]);
-    r.metronome_on();
+    r.set_clicks(true);
     r.seek(9100);
     r.play();
     let (c, _) = r.pull_clicks(4000.0);
@@ -1696,7 +1718,7 @@ fn ts5_double_93_gives_186_and_ticks_at_186() {
     assert_eq!(r.sections(), vec![(500.0, 120.0), (8500.0, 186.0)]);
     r.seek(12000);
     assert_eq!(r.snap().transport.bpm, 186.0);
-    r.metronome_on();
+    r.set_clicks(true);
     r.seek(8600);
     r.play();
     let (c, _) = r.pull_clicks(4000.0);
@@ -1717,7 +1739,7 @@ fn ts6_edits_while_playing_continue_and_follow_from_next_beat() {
     ];
     for (name, make) in kinds {
         let mut r = ts_rig();
-        r.metronome_on();
+        r.set_clicks(true);
         r.seek(9000);
         r.play();
         let old = r.map();
@@ -1767,7 +1789,7 @@ fn ts7_edits_survive_close_and_reopen() {
     let want = r.snap().tempo.segments;
     assert_eq!(want.len(), 3);
     r.m.close();
-    assert_eq!(r.disk().unwrap()["schema_version"], 4);
+    assert_eq!(r.disk().unwrap()["schema_version"], 5);
     r.reopen();
     let back = r.snap().tempo.segments;
     assert_eq!(back.len(), want.len());
@@ -1981,13 +2003,13 @@ fn qa_q3_typed_change_becomes_placed_when_moved_and_add_starts_on_a_beat() {
     // the file: on_beat only on the placed change, never on the first
     r.m.close();
     let d = r.disk().unwrap();
-    assert_eq!(d["schema_version"], 4);
+    assert_eq!(d["schema_version"], 5);
     let segs = d["tempo"]["segments"].as_array().unwrap();
     assert!(segs[0].get("on_beat").is_none());
     assert_eq!(segs[1]["on_beat"], true);
     // click on the bar of the placed change
     r.reopen();
-    r.metronome_on();
+    r.set_clicks(true);
     r.seek(frames_of(moved.start_ms - 800.0) as u64 * 1000 / RATE as u64);
     r.play();
     let (c, _) = r.pull_clicks(2500.0);
@@ -2011,7 +2033,7 @@ fn qa_schema_2_file_is_edited_and_saved_as_schema_3_keeping_everything_else() {
     assert_eq!((s.loops[0].start_ms, s.loops[0].end_ms), (l.start_ms, l.end_ms), "loops before the edited section are untouched");
     r.flush();
     let d = r.disk().unwrap();
-    assert_eq!(d["schema_version"], 4);
+    assert_eq!(d["schema_version"], 5);
     assert_eq!(d["tempo"]["segments"][1]["bpm"], 186.0);
     assert_eq!(d["tempo"]["segments"][1]["detected_ms"], 8500.0);
     assert_eq!(d["position_ms"], 4000);
@@ -2041,12 +2063,12 @@ fn qa_schema_1_file_with_tick_loops_is_edited_and_loops_keep_their_time() {
     }
     assert_eq!(r.snap().current_loop, Some(0));
     r.flush();
-    assert_eq!(r.disk().unwrap()["schema_version"], 4);
+    assert_eq!(r.disk().unwrap()["schema_version"], 5);
 }
 
 #[test]
 fn qa_newer_schema_stays_read_only_through_section_edits() {
-    let text = r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":120}]}}"#;
+    let text = r#"{"schema_version":6,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":120}]}}"#;
     let (_t, spec, mut m, _b, _e, r) = open_with_file(text.as_bytes());
     r.unwrap();
     let t0 = Instant::now();
@@ -2160,7 +2182,8 @@ fn count_in_clicks(r: &mut Rig, beat_frames: usize) -> Vec<usize> {
 #[test]
 fn qa_count_in_uses_the_edited_bpm_at_play_time() {
     let mut r = ts_rig();
-    r.m.set_metronome(&r.id(), false, true, r.t0).unwrap();
+    r.set_count_in(0, true);
+    r.set_count_in(1, true);
     // double the 93 section, then count in from inside it
     r.edit(SectionEdit::Scale { index: 1, at: 8500.0, factor: Scale::Double });
     r.seek(12000);
@@ -2307,8 +2330,8 @@ fn ts12_section_metronome_off_is_silent_and_follows_while_playing() {
     assert_eq!(c.len(), 3, "{c:?}");
     assert!(c[0] >= 5900.0 && c[0] < 6200.0, "{c:?}");
     near_all(&gaps(&c), 500.0);
-    // master Off: silence
-    r.m.set_metronome(&r.id(), false, false, r.t0).unwrap();
+    // every Click off: silence
+    r.set_clicks(false);
     let (c, _) = r.pull_clicks(1500.0);
     assert!(c.is_empty(), "{c:?}");
 }
@@ -2388,7 +2411,7 @@ fn ts15_names_and_flags_survive_close_and_reopen() {
     assert_eq!((want[1].meta.name.as_str(), want[1].meta.metronome, want[1].meta.count_in), ("Chorus", false, true));
     r.m.close();
     let d = r.disk().unwrap();
-    assert_eq!(d["schema_version"], 4);
+    assert_eq!(d["schema_version"], 5);
     assert_eq!(d["tempo"]["segments"][0]["name"], "Intro");
     assert_eq!(d["tempo"]["segments"][1]["metronome"], false);
     r.reopen();
@@ -2403,12 +2426,12 @@ fn ts15_names_and_flags_survive_close_and_reopen() {
 #[test]
 fn ts16_older_schemas_upgrade() {
     for v in [1, 2, 3] {
-        let text = TS_FIXTURE.replace(r#""schema_version":2"#, &format!(r#""schema_version":{v}"#));
+        let master = format!(r#""schema_version":{v},"metronome":{{"on":true,"count_in":false}}"#);
+        let text = TS_FIXTURE.replace(r#""schema_version":2"#, &master);
         let mut r = rig_with(PRACTICE, &text);
         for s in &r.snap().tempo.segments {
             assert_eq!((s.meta.name.as_str(), s.meta.metronome, s.meta.count_in), ("", true, false), "v{v}");
         }
-        r.metronome_on();
         let c = clicks_from(&mut r, 4900, 4500.0);
         let mut want = vec![5000.0, 5500.0, 6000.0, 6500.0, 7000.0, 7500.0, 8000.0, 8500.0, 9145.16];
         want.truncate(c.len().min(want.len()));
@@ -2416,10 +2439,10 @@ fn ts16_older_schemas_upgrade() {
         assert_clicks(&c, &want);
         r.edit(SectionEdit::Name { index: 0, at: 500.0, name: "A".into() });
         r.flush();
-        assert_eq!(r.disk().unwrap()["schema_version"], 4, "v{v}");
+        assert_eq!(r.disk().unwrap()["schema_version"], 5, "v{v}");
     }
     // a newer file is never overwritten through flags, name or jump
-    let text = r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":120},{"start_ms":8500,"bpm":93}]}}"#;
+    let text = r#"{"schema_version":6,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":120},{"start_ms":8500,"bpm":93}]}}"#;
     let (_t, spec, mut m, _b, _e, r) = open_with_file(text.as_bytes());
     r.unwrap();
     let t0 = Instant::now();
@@ -2493,16 +2516,19 @@ fn meta_of(r: &Rig, i: usize) -> (String, bool, bool) {
 }
 
 #[test]
-fn qa_p2_master_off_silences_count_ins_and_back_on_while_playing_restores_them() {
-    let mut r = rig_with(PRACTICE, &ts4_json(r#","count_in":true"#, false, ""));
+fn qa_p2_every_click_off_leaves_only_the_count_in_and_back_on_while_playing_restores_the_clicks() {
+    let text = r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[
+        {"start_ms":500,"bpm":120,"metronome":false},{"start_ms":8500,"bpm":93,"detected_ms":8500,"metronome":false,"count_in":true}]}}"#;
+    let mut r = rig_with(PRACTICE, text);
     let c = clicks_from(&mut r, 4900, 4500.0);
-    assert!(c.is_empty(), "master off: {c:?}");
+    // only the section's three count-in clicks sound over the silent sections (phase 2 Q2)
+    assert_clicks(&c, &[6564.52, 7209.68, 7854.84]);
     // On again while playing at ~9400 ms: nothing but the 93 BPM clicks follow
     r.seek(5000);
     r.play();
     let (c, _) = r.pull_clicks(500.0);
     assert!(c.is_empty());
-    r.metronome_on();
+    r.set_clicks(true);
     let (c, _) = r.pull_clicks(3500.0);
     // the count-in (6564.52 ...) is ahead of the playhead (5500+) and sounds
     assert!(c.iter().any(|t| (t - 6564.52).abs() < 1.0), "{c:?}");
@@ -2561,7 +2587,7 @@ fn qa_p2_edits_split_join_move_and_merge_with_names_and_flags() {
     assert_eq!(meta_of(&r, 0), ("A".into(), true, false));
     assert_eq!(meta_of(&r, 1), ("C".into(), true, true));
     // C's count-in now replaces the last clicks of A (before it, 60 BPM beat = 1000)
-    r.metronome_on();
+    r.set_clicks(true);
     // Add inside A (metronome on, named A): the new section is unnamed, clicking, no count-in; A and C keep theirs
     r.edit(SectionEdit::Add { position: 2000.0, bpm: 90.0 });
     assert_eq!(meta_of(&r, 0), ("A".into(), true, false));
@@ -2608,7 +2634,7 @@ fn qa_p2_typed_change_copies_the_split_sections_metronome_flag() {
 
 #[test]
 fn qa_p2_names_are_cleaned_refused_and_saved_exactly() {
-    let mut r = ts_rig();
+    let mut r = rig_with(PRACTICE, &TS_FIXTURE.replace(r#""schema_version":2"#, r#""schema_version":5"#));
     let name = |r: &mut Rig, index: usize, n: &str| {
         let at = r.sections()[index].0;
         r.m.edit_sections(&r.id(), SectionEdit::Name { index, at, name: n.into() }, r.t0)
@@ -2649,9 +2675,11 @@ fn qa_p2_names_are_cleaned_refused_and_saved_exactly() {
 }
 
 #[test]
-fn qa_p2_flags_first_section_count_in_and_out_of_range_are_refused() {
+fn qa_p2_flags_first_section_count_in_is_allowed_and_out_of_range_are_refused() {
     let mut r = ts_rig();
-    assert!(flags(&mut r, 0, true, true).unwrap_err().contains("first section"));
+    // section 1 may have Count In now (the Play pre-roll); it is kept
+    let s = flags(&mut r, 0, true, true).unwrap();
+    assert!(s.tempo.segments[0].meta.count_in && s.tempo.segments[0].meta.metronome);
     assert!(flags(&mut r, 0, false, false).is_ok());
     let e = r.m.edit_sections(&r.id(), SectionEdit::Flags { index: 5, at: 8500.0, metronome: true, count_in: false }, r.t0);
     assert!(e.is_err());
@@ -2694,8 +2722,9 @@ fn qa_p2_jump_edges_short_section_last_section_and_empty_map() {
 #[test]
 fn qa_p2_jump_then_play_uses_the_normal_count_in_rule_and_a_jump_during_a_pre_roll_goes_on_playing() {
     let mut r = ts_rig();
-    r.m.set_metronome(&r.id(), true, true, r.t0).unwrap();
-    // paused jump to the section start, then Play: the pre-roll comes from the master Count In
+    r.set_clicks(true);
+    r.set_count_in(1, true);
+    // paused jump to the section start, then Play: the pre-roll comes from that section's Count In
     r.m.jump_section(&r.id(), 1, 8500.0, tempo_map::Edge::Start, r.t0).unwrap();
     let st = r.play();
     assert!(st.counting_in, "Play after a paused jump counts in");
@@ -2715,13 +2744,275 @@ fn qa_p2_jump_then_play_uses_the_normal_count_in_rule_and_a_jump_during_a_pre_ro
 
 #[test]
 fn qa_p2_schema_4_read_is_lenient_with_bad_names_and_flags() {
-    let text = r#"{"schema_version":4,"tempo":{"beats_per_bar":4,"segments":[
+    let text = r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[
         {"start_ms":0,"bpm":120,"count_in":true,"name":"\u0007bell\n"},
         {"start_ms":8500,"bpm":93,"name":["x"],"metronome":null,"count_in":"yes"},
         {"start_ms":9500,"bpm":93,"name":"   ","metronome":false}]}}"#;
     let r = rig_with(PRACTICE, text);
     let s = r.snap().tempo.segments;
-    assert_eq!((s[0].meta.name.as_str(), s[0].meta.count_in), ("bell", false));
+    assert_eq!((s[0].meta.name.as_str(), s[0].meta.count_in), ("bell", true));
     assert_eq!((s[1].meta.metronome, s[1].meta.count_in, s[1].meta.name.as_str()), (true, false, ""));
     assert_eq!((s[2].meta.metronome, s[2].meta.name.as_str()), (false, ""));
+}
+
+// =========================================================================================
+// phase 3 (gui-player-tempo-sections): no master, Play count-in per section, default loop end
+// =========================================================================================
+
+/// A schema 5 `player.json` with the TS fixture's sections plus the given keys inside section 1 and 2, and loops.
+fn ts5_json(seg0: &str, seg1: &str, loops: &str) -> String {
+    format!(
+        r#"{{"schema_version":5,"loops":[{loops}],"tempo":{{"beats_per_bar":4,"segments":[
+        {{"start_ms":500,"bpm":120{seg0}}},{{"start_ms":8500,"bpm":93,"detected_ms":8500{seg1}}}]}}}}"#
+    )
+}
+
+/// The frame of a click `ms` after a Play that started at frame 0, within 3 frames.
+fn assert_frames(found: &[usize], want_ms: &[f64]) {
+    assert_eq!(found.len(), want_ms.len(), "{found:?} vs {want_ms:?}");
+    for (f, w) in found.iter().zip(want_ms) {
+        assert!((*f as i64 - frames_of(*w) as i64).abs() <= 3, "{found:?} vs {want_ms:?}");
+    }
+}
+
+/// Plays from `from_ms`; returns the pre-roll clicks found in the first `ms` of output (frames since Play)
+/// and the whole output.
+fn pre_roll(r: &mut Rig, from_ms: u64, ms: f64) -> (Vec<usize>, Vec<f32>) {
+    r.seek(from_ms);
+    r.play();
+    let got = r.b.pull(frames_of(ms));
+    let zero = vec![0.0f32; got.len()];
+    (clicks(&got, &zero, 0), got)
+}
+
+#[test]
+fn ts19_play_counts_in_at_the_section_under_the_playhead() {
+    // section 2 (93 BPM from 8500) Count In, Play at 10000: three clicks at 93 BPM, then the source
+    let beat = 60000.0 / 93.0;
+    let mut r = rig_with(PRACTICE, &ts5_json("", r#","count_in":true"#, ""));
+    r.seek(10000);
+    let st = r.play();
+    assert!(st.counting_in && st.playing);
+    let got = r.b.pull(3 * frames_of(beat) + 3000);
+    let zero = vec![0.0f32; got.len()];
+    let n = 3 * frames_of(beat); // the engine counts whole-frame beats
+    let on = clicks(&got[..2 * n], &zero[..2 * n], 0);
+    assert_frames(&on, &[0.0, beat, 2.0 * beat]);
+    assert!(silent_between(&got, frames_of(2.0 * beat) + 700, n - 1), "silent 4th beat");
+    let want = expected(&r.pcm(), frames_of(10000.0), 3000);
+    for (i, (g, w)) in got[2 * (n + 200)..].iter().zip(&want[2 * 200..]).enumerate() {
+        assert!((g - w).abs() < 1e-5, "the source from 10000 after 1935.48 ms: sample {i}");
+    }
+    assert!(!r.snap().transport.counting_in);
+
+    // section 1 (Count In off): Play at 2100 starts at once, no click before the audio
+    let mut r = rig_with(PRACTICE, &ts5_json("", r#","count_in":true"#, ""));
+    r.seek(2100); // between two 120 BPM beats
+    let st = r.play();
+    assert!(!st.counting_in);
+    let got = r.b.pull(3000);
+    let mut want = expected(&r.pcm(), frames_of(2100.0), 3000);
+    let ramp = RATE * 3 / 1000;
+    for k in 0..ramp {
+        for c in 0..2 {
+            want[2 * k + c] *= k as f32 / ramp as f32;
+        }
+    }
+    for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+        assert!((g - w).abs() < 1e-5, "audio at once: sample {i}");
+    }
+
+    // section 1 Count In, Play at 0: the pre-roll at 120 BPM
+    let mut r = rig_with(PRACTICE, &ts5_json(r#","count_in":true"#, "", ""));
+    let (on, _) = pre_roll(&mut r, 0, 1400.0);
+    assert_frames(&on, &[0.0, 500.0, 1000.0]);
+    assert!(r.snap().transport.counting_in || r.snap().transport.playing);
+}
+
+#[test]
+fn ts20_no_master_clicks_only_where_click_is_on() {
+    let r = rig_with(PRACTICE, &ts5_json("", "", ""));
+    let json = serde_json::to_value(r.snap()).unwrap();
+    assert!(json.get("metronome").is_none(), "no master in the snapshot");
+
+    // section 1 Click off, section 2 Click on: nothing before 8500, then 93 BPM
+    let mut r = rig_with(PRACTICE, &ts5_json(r#","metronome":false"#, "", ""));
+    let c = clicks_from(&mut r, 4000, 6000.0);
+    assert_clicks(&c, &[8500.0, 9145.16, 9790.32]);
+
+    // all Click off: silence, across the change as well
+    let mut r = rig_with(PRACTICE, &ts5_json(r#","metronome":false"#, r#","metronome":false"#, ""));
+    let c = clicks_from(&mut r, 4000, 6000.0);
+    assert!(c.is_empty(), "{c:?}");
+
+    // a section Count In still plays over a silent previous section
+    let mut r = rig_with(PRACTICE, &ts5_json(r#","metronome":false"#, r#","count_in":true"#, ""));
+    let c = clicks_from(&mut r, 4900, 4200.0);
+    assert_clicks(&c, &[6564.52, 7209.68, 7854.84, 8500.0]);
+}
+
+#[test]
+fn ts21_new_loop_ends_at_the_next_section_or_the_track_end() {
+    let mut r = rig_with(PRACTICE, &ts5_json("", "", ""));
+    let dur = r.snap().duration_ms as f64;
+    let tick = 60000.0 / (93.0 * 16.0);
+    // inside section 1: the end is the start of section 2, exactly (a detected change)
+    r.seek(3000);
+    let s = r.lp(LoopAction::Add).unwrap();
+    assert_eq!(s.loops[0].end_ms, Some(8500.0), "{:?}", s.loops[0]);
+    assert!(matches!(s.loops[0].end, Some(Boundary::Tick { .. })));
+    // in the last section: the track end, never past it
+    r.seek(12000);
+    let s = r.lp(LoopAction::Add).unwrap();
+    let end = s.loops[1].end_ms.unwrap();
+    assert!(end <= dur && end > dur - tick - 0.01, "{end} of {dur}");
+    assert_eq!(s.current_loop, Some(1));
+    assert!(s.loops[1].repeat && !s.loops[1].count_in);
+
+    // a typed change: within half a tick of its start
+    let typed = r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":120},{"start_ms":8520,"bpm":93}]}}"#;
+    let mut r = rig_with(PRACTICE, typed);
+    r.seek(3000);
+    let s = r.lp(LoopAction::Add).unwrap();
+    let start = s.tempo.segments[1].start_ms;
+    let end = s.loops[0].end_ms.unwrap();
+    assert!((end - start).abs() <= 60000.0 / (120.0 * 16.0) / 2.0 + 0.01, "{end} vs {start}");
+
+    // timestamp mode: the track end
+    let mut r = rig(PRACTICE);
+    r.seek(3000);
+    let s = r.lp(LoopAction::Add).unwrap();
+    assert!(matches!(s.loops[0].end, Some(Boundary::Ms { ms }) if ms == dur));
+
+    // the 99 loop limit is checked first
+    let mut r = rig_with(PRACTICE, &ts5_json("", "", ""));
+    for i in 0..99 {
+        r.seek(i * 100);
+        r.lp(LoopAction::Add).unwrap();
+    }
+    assert!(r.lp(LoopAction::Add).is_err(), "100th refused");
+    assert_eq!(r.snap().loops.len(), 99);
+}
+
+#[test]
+fn ts22_old_files_migrate_to_schema_5() {
+    let master = |v: u32, on: bool, count_in: bool, seg0: &str, seg1: &str| {
+        format!(
+            r#"{{"schema_version":{v},"metronome":{{"on":{on},"count_in":{count_in}}},"tempo":{{"beats_per_bar":4,"segments":[
+            {{"start_ms":500,"bpm":120{seg0}}},{{"start_ms":8500,"bpm":93,"detected_ms":8500{seg1}}}]}}}}"#
+        )
+    };
+    let flags_of = |r: &Rig| -> Vec<(bool, bool)> {
+        r.snap().tempo.segments.iter().map(|s| (s.meta.metronome, s.meta.count_in)).collect()
+    };
+    // v1-v4 with the master Off: every section silent, no section count-in; written as 5 without a master
+    for v in 1..=4 {
+        let mut r = rig_with(PRACTICE, &master(v, false, false, "", r#","count_in":true"#));
+        assert_eq!(flags_of(&r), [(false, false), (false, false)], "v{v}");
+        let c = clicks_from(&mut r, 4900, 4500.0);
+        assert!(c.is_empty(), "v{v}: {c:?}");
+        r.edit(SectionEdit::Name { index: 0, at: 500.0, name: "A".into() });
+        r.flush();
+        let d = r.disk().unwrap();
+        assert_eq!(d["schema_version"], 5, "v{v}");
+        assert!(d.get("metronome").is_none(), "v{v}: no master written");
+        assert_eq!(d["tempo"]["segments"][1]["metronome"], false, "v{v}");
+    }
+    // v4 master On with mixed flags: the same clicks as phase 2
+    let mut r = rig_with(PRACTICE, &master(4, true, false, r#","metronome":false"#, r#","count_in":true"#));
+    assert_eq!(flags_of(&r), [(false, false), (true, true)]);
+    let c = clicks_from(&mut r, 4900, 4200.0);
+    assert_clicks(&c, &[6564.52, 7209.68, 7854.84, 8500.0]);
+    // master Count In: section 1 Count In, with the master On or Off
+    for on in [true, false] {
+        let mut r = rig_with(PRACTICE, &master(4, on, true, "", ""));
+        assert_eq!(flags_of(&r)[0], (on, true), "master on={on}");
+        assert!(!flags_of(&r)[1].1);
+        r.seek(0);
+        assert!(r.play().counting_in, "Play from the song start still counts in (on={on})");
+    }
+    // a v5 file is read as it is, even with a stray master, and written without it
+    let mut r = rig_with(PRACTICE, &master(5, false, true, "", ""));
+    assert_eq!(flags_of(&r), [(true, false), (true, false)]);
+    r.edit(SectionEdit::Name { index: 0, at: 500.0, name: "A".into() });
+    r.flush();
+    assert!(r.disk().unwrap().get("metronome").is_none());
+
+    // a schema 6 file is never overwritten by flags, name, jump or "+"
+    let text = master(6, true, false, "", "");
+    let (_t, spec, mut m, _b, _e, r) = open_with_file(text.as_bytes());
+    r.unwrap();
+    let t0 = Instant::now();
+    let _ = m.edit_sections(&spec.id, SectionEdit::Flags { index: 1, at: 8500.0, metronome: false, count_in: true }, t0);
+    let _ = m.edit_sections(&spec.id, SectionEdit::Name { index: 0, at: 500.0, name: "x".into() }, t0);
+    let _ = m.jump_section(&spec.id, 1, 8500.0, tempo_map::Edge::Start, t0);
+    let _ = m.loop_action(&spec.id, LoopAction::Add, t0);
+    m.tick(t0 + Duration::from_secs(10));
+    m.close();
+    assert_eq!(std::fs::read_to_string(spec.dir.join("player.json")).unwrap(), text);
+}
+
+#[test]
+fn ts23_loop_play_counts_in_only_with_the_loops_count_in() {
+    let loops = r#"{"id":"a","start":{"ms":9000},"end":{"ms":11000},"repeat":true,"count_in":false}"#;
+    let json = ts5_json("", r#","count_in":true"#, loops);
+    let beat = 60000.0 / 93.0;
+    // the section has Count In, the loop does not: no pre-roll
+    let mut r = rig_with(PRACTICE, &json);
+    let l = r.snap().loops[0].clone();
+    let st = r.lp(LoopAction::Play).unwrap();
+    assert!(!st.transport.counting_in && st.transport.loop_playing);
+    let got = r.b.pull(3000);
+    let mut want = expected(&r.pcm(), frames_of(l.start_ms), 3000);
+    let ramp = RATE * 3 / 1000;
+    for k in 0..ramp {
+        for c in 0..2 {
+            want[2 * k + c] *= k as f32 / ramp as f32;
+        }
+    }
+    for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+        assert!((g - w).abs() < 1e-5, "the loop audio at once: sample {i}");
+    }
+
+    // the loop's own Count-In: the pre-roll at the BPM at the loop start, and on each pass
+    let mut r = rig_with(PRACTICE, &json);
+    r.lp(LoopAction::Flags { repeat: true, count_in: true }).unwrap();
+    let st = r.lp(LoopAction::Play).unwrap();
+    assert!(st.transport.counting_in);
+    let pass = frames_of(l.end_ms.unwrap()) - frames_of(l.start_ms);
+    let b = frames_of(beat);
+    let got = r.b.pull(3 * b + pass + 3 * b + 500);
+    let zero = vec![0.0f32; got.len()];
+    let on = clicks(&got[..2 * 3 * b], &zero[..2 * 3 * b], 0);
+    assert_frames(&on, &[0.0, beat, 2.0 * beat]);
+    let win = &got[2 * (3 * b + pass + 150)..2 * (3 * b + pass + 3 * b)];
+    let zero = vec![0.0f32; win.len()];
+    let again = clicks(win, &zero, 0);
+    assert!(again.len() >= 2, "the second pass counts in again: {again:?}");
+    assert!(peak(win) > 0.2);
+}
+
+#[test]
+fn ts24_autodetect_keeps_the_play_settings() {
+    let mut r = rig_with(PRACTICE, &ts5_json(r#","metronome":false,"count_in":true,"name":"Intro""#, "", ""));
+    r.m.close();
+    let seg = |start_ms: f64, bpm: f64| tempo_map::Segment {
+        start_ms,
+        bpm,
+        detected_ms: (start_ms > 1000.0).then_some(start_ms),
+        on_beat: false,
+        meta: tempo_map::SectionMeta::default(),
+    };
+    let new = TempoMap { beats_per_bar: 4, segments: vec![seg(400.0, 100.0), seg(6000.0, 110.0), seg(12000.0, 95.0)] };
+    let got = FileTempoStore.replace(&r.id(), &r.spec.dir, &|old| Ok(new.with_play_settings_of(old))).unwrap();
+    let flags: Vec<_> = got.segments.iter().map(|s| (s.meta.metronome, s.meta.count_in, s.meta.name.as_str())).collect();
+    assert_eq!(flags, [(false, true, ""), (false, false, ""), (false, false, "")]);
+    // the file says the same, and a Player opening it plays with them
+    r.reopen();
+    let s = r.snap().tempo.segments;
+    assert_eq!(s.len(), 3);
+    assert!(!s[0].meta.metronome && s[0].meta.count_in && !s[2].meta.metronome && !s[2].meta.count_in);
+    // an empty old map: the new one as detected (Click on everywhere, no count-in)
+    let fresh = new.with_play_settings_of(&TempoMap::default());
+    assert_eq!(fresh, new);
 }
