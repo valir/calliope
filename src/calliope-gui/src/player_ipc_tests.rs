@@ -103,7 +103,7 @@ fn select_source_keeps_the_session() {
 }
 
 #[test]
-fn tempo_metronome_and_loop_commands() {
+fn tempo_flags_and_loop_commands() {
     let e = env();
     open(&e, PRACTICE).unwrap();
     let err = do_player_tempo(&e.host, PRACTICE, TempoAction::SpeedStep { steps: 1 }).unwrap_err();
@@ -116,12 +116,13 @@ fn tempo_metronome_and_loop_commands() {
     assert_eq!(do_player_tempo(&e.host, PRACTICE, a).unwrap_err(), "The tempo sections changed; try again");
     let err = do_player_tempo(&e.host, PRACTICE, TempoAction::SpeedReset).unwrap_err();
     assert_eq!(err, crate::player::NO_SPEED);
-    let snap = e.host.with(|m| m.set_metronome(PRACTICE, true, true, Instant::now())).unwrap();
-    assert!(snap.metronome.on && snap.metronome.count_in);
+    let start = snap.tempo.segments[0].start_ms;
+    let a = TempoAction::SectionFlags { index: 0, at: start, metronome: false, count_in: true };
+    let snap = do_player_tempo(&e.host, PRACTICE, a).unwrap();
+    assert!(!snap.tempo.segments[0].meta.metronome && snap.tempo.segments[0].meta.count_in);
     let snap = do_player_loop(&e.host, &e.editor, PRACTICE, LoopCmd::Add).unwrap();
     assert_eq!(snap.loops.len(), 1);
-    let err = do_player_loop(&e.host, &e.editor, PRACTICE, LoopCmd::Play).unwrap_err();
-    assert_eq!(err, crate::player::LOOP_INCOMPLETE);
+    assert!(snap.loops[0].end_ms.is_some(), "Add gives the default end");
     let snap = do_player_loop(&e.host, &e.editor, PRACTICE, LoopCmd::Set { edge: Edge::Start, value: Boundary::Tick { tick: 16 } }).unwrap();
     assert_eq!(snap.loops[0].start, Boundary::Tick { tick: 16 });
 }

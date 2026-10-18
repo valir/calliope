@@ -283,7 +283,7 @@ fn run_inner(
         .store
         .replace(&job.id, &job.dir, &|old| {
             replaced.store(!old.is_empty(), Ordering::Relaxed);
-            Ok(new.clone())
+            Ok(new.with_play_settings_of(old))
         })
         .map_err(Stop::Failed)?;
     Ok((tempo, beats.beats.len(), replaced.load(Ordering::Relaxed)))

@@ -28,6 +28,14 @@ fn spec_of(title: &str) -> (tempfile::TempDir, OpenSpec) {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("lib");
     copy_tree(&from, &root);
+    if title == WITH_TEMPO {
+        // the fixture is a schema-1 file with the master Off; the tests hear the clicks, so the
+        // master (migrated into the section flags on reading) is On
+        let p = root.join("tracks/0199c0a0-0000-7000-8000-000000000304/player.json");
+        let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        v["metronome"] = serde_json::json!({"on": true, "count_in": false});
+        std::fs::write(&p, v.to_string()).unwrap();
+    }
     let t = Repository::new(&root).scan().tracks.into_iter().find(|t| t.title == title).unwrap();
     let spec = OpenSpec {
         id: t.id.clone(),
@@ -483,12 +491,21 @@ fn pos_ms(m: &PlayerManager, id: &str) -> u64 {
     m.snapshot(id).unwrap().transport.position_ms
 }
 
+/// The Click and Count In of the section `index` (starting at `at` ms).
+fn flags(m: &mut PlayerManager, id: &str, index: usize, at: f64, metronome: bool, count_in: bool, t: Instant) {
+    m.edit_sections(id, SectionEdit::Flags { index, at, metronome, count_in }, t).unwrap();
+}
+
+/// Click off in both sections of the fixture (the loop tests compare the plain audio).
+fn quiet(m: &mut PlayerManager, id: &str, t: Instant) {
+    flags(m, id, 0, 500.0, false, false, t);
+    flags(m, id, 1, 10500.0, false, false, t);
+}
+
 #[test]
 fn metronome_clicks_at_exact_frames_in_one_tone() {
     let (_t, spec, mut m, b, _e, pcm) = with_tempo();
     let t0 = Instant::now();
-    let snap = m.set_metronome(&spec.id, true, false, t0).unwrap();
-    assert!(snap.metronome.on);
     m.seek(&spec.id, 0, t0).unwrap();
     m.play(&spec.id, t0).unwrap();
     let total = RATE * 2600 / 1000;
@@ -503,11 +520,11 @@ fn metronome_clicks_at_exact_frames_in_one_tone() {
 }
 
 #[test]
-fn metronome_off_leaves_the_source_untouched() {
+fn click_off_in_every_section_leaves_the_source_untouched() {
     let (_t, spec, mut m, b, _e, pcm) = with_tempo();
     let t0 = Instant::now();
-    m.set_metronome(&spec.id, true, false, t0).unwrap();
-    m.set_metronome(&spec.id, false, false, t0).unwrap();
+    flags(&mut m, &spec.id, 0, 500.0, false, false, t0);
+    flags(&mut m, &spec.id, 1, 10500.0, false, false, t0);
     m.seek(&spec.id, 0, t0).unwrap();
     m.play(&spec.id, t0).unwrap();
     let got = b.pull(RATE);
@@ -520,7 +537,7 @@ fn metronome_off_leaves_the_source_untouched() {
 fn count_in_before_main_play() {
     let (_t, spec, mut m, b, _e, pcm) = with_tempo();
     let t0 = Instant::now();
-    m.set_metronome(&spec.id, false, true, t0).unwrap();
+    flags(&mut m, &spec.id, 0, 500.0, false, true, t0);
     m.seek(&spec.id, 0, t0).unwrap();
     let st = m.play(&spec.id, t0).unwrap();
     assert!(st.counting_in && st.playing);
@@ -544,7 +561,7 @@ fn count_in_before_main_play() {
 fn count_in_holds_the_position_and_pause_cancels_it() {
     let (_t, spec, mut m, b, _e, _pcm) = with_tempo();
     let t0 = Instant::now();
-    m.set_metronome(&spec.id, false, true, t0).unwrap();
+    flags(&mut m, &spec.id, 0, 500.0, false, true, t0);
     m.seek(&spec.id, 1000, t0).unwrap();
     m.play(&spec.id, t0).unwrap();
     b.pull(15000);
@@ -561,7 +578,7 @@ fn count_in_holds_the_position_and_pause_cancels_it() {
 fn count_in_is_not_played_after_a_scrub() {
     let (_t, spec, mut m, b, _e, _pcm) = with_tempo();
     let t0 = Instant::now();
-    m.set_metronome(&spec.id, false, true, t0).unwrap();
+    flags(&mut m, &spec.id, 0, 500.0, false, true, t0);
     m.play(&spec.id, t0).unwrap();
     b.pull(33075 + 100);
     m.seek(&spec.id, 5000, t0).unwrap();
@@ -575,6 +592,7 @@ fn count_in_is_not_played_after_a_scrub() {
 fn loop_play_repeats_without_count_in() {
     let (_t, spec, mut m, b, e, pcm) = with_tempo();
     let t0 = Instant::now();
+    quiet(&mut m, &spec.id, t0);
     let snap = m.loop_action(&spec.id, LoopAction::Play, t0).unwrap();
     assert!(snap.transport.loop_playing && !snap.transport.counting_in);
     assert_eq!(snap.transport.position_ms, 2500);
@@ -593,6 +611,7 @@ fn loop_play_repeats_without_count_in() {
 fn loop_with_count_in_plays_it_before_the_first_pass_and_every_repeat() {
     let (_t, spec, mut m, b, _e, pcm) = with_tempo();
     let t0 = Instant::now();
+    quiet(&mut m, &spec.id, t0);
     m.loop_action(&spec.id, LoopAction::Select(1), t0).unwrap();
     m.loop_action(&spec.id, LoopAction::Flags { repeat: true, count_in: true }, t0).unwrap();
     let snap = m.loop_action(&spec.id, LoopAction::Play, t0).unwrap();
@@ -635,6 +654,7 @@ fn loop_with_count_in_plays_it_before_the_first_pass_and_every_repeat() {
 fn loop_on_off_stops_at_the_end_and_returns_to_the_start() {
     let (_t, spec, mut m, b, _e, pcm) = with_tempo();
     let t0 = Instant::now();
+    quiet(&mut m, &spec.id, t0);
     m.loop_action(&spec.id, LoopAction::Flags { repeat: false, count_in: false }, t0).unwrap();
     m.loop_action(&spec.id, LoopAction::Play, t0).unwrap();
     let len = LOOP1_END - LOOP1_START;
@@ -677,6 +697,7 @@ fn loop_stop_returns_to_the_start() {
 fn main_play_inside_a_repeating_loop_wraps() {
     let (_t, spec, mut m, b, _e, pcm) = with_tempo();
     let t0 = Instant::now();
+    quiet(&mut m, &spec.id, t0);
     m.seek(&spec.id, 5000, t0).unwrap();
     m.play(&spec.id, t0).unwrap();
     let from = 5000 * RATE / 1000;
@@ -775,7 +796,6 @@ fn tempo_change_keeps_loops_in_time_and_resets_speed() {
     assert!(disk(&spec).unwrap()["tempo"]["segments"].to_string().contains("100"));
 
     // the new grid is live: 100 BPM beats are 13230 frames apart from 3000 ms
-    m.set_metronome(&spec.id, true, false, t0).unwrap();
     m.seek(&spec.id, 3000, t0).unwrap();
     m.play(&spec.id, t0).unwrap();
     let got = b.pull(20000);
@@ -809,7 +829,6 @@ fn section_edits_reach_the_engine_loops_and_disk() {
     assert!(disk(&spec).unwrap()["tempo"]["segments"].to_string().contains("on_beat"));
 
     // the new grid is live: 100 BPM beats from the placed change
-    m.set_metronome(&spec.id, true, false, t0).unwrap();
     m.seek(&spec.id, 3000, t0).unwrap();
     m.play(&spec.id, t0).unwrap();
     let got = b.pull(20000);
@@ -902,7 +921,6 @@ const STALE: &str = "The tempo sections changed; try again";
 fn section_metronome_toggle_is_heard_from_the_next_beat_and_saved() {
     let (_t, spec, mut m, b, _e, pcm) = with_tempo();
     let t0 = Instant::now();
-    m.set_metronome(&spec.id, true, false, t0).unwrap();
     let e = SectionEdit::Flags { index: 1, at: 10500.0, metronome: false, count_in: false };
     let s = m.edit_sections(&spec.id, e, t0).unwrap();
     assert!(!s.tempo.segments[1].meta.metronome);
@@ -982,12 +1000,11 @@ fn a_repeating_loop_ending_at_a_count_in_section_skips_that_count_in() {
 }
 
 #[test]
-fn master_off_silences_section_count_ins_but_not_the_play_pre_roll() {
+fn click_off_silences_the_section_clicks_and_count_in_on_gives_the_play_pre_roll() {
     let (_t, spec, mut m, b, _e, pcm) = with_tempo();
     let t0 = Instant::now();
-    let e = SectionEdit::Flags { index: 1, at: 10500.0, metronome: true, count_in: true };
-    m.edit_sections(&spec.id, e, t0).unwrap();
-    m.set_metronome(&spec.id, false, false, t0).unwrap();
+    flags(&mut m, &spec.id, 0, 500.0, false, false, t0);
+    flags(&mut m, &spec.id, 1, 10500.0, false, false, t0);
     let start = 8000 * RATE / 1000;
     m.seek(&spec.id, 8000, t0).unwrap();
     m.play(&spec.id, t0).unwrap();
@@ -997,17 +1014,86 @@ fn master_off_silences_section_count_ins_but_not_the_play_pre_roll() {
     close(&b.pull(total), &want);
 
     m.pause(&spec.id, t0).unwrap();
-    m.set_metronome(&spec.id, false, true, t0).unwrap();
+    flags(&mut m, &spec.id, 0, 500.0, false, true, t0);
     m.seek(&spec.id, 8000, t0).unwrap();
     assert!(m.play(&spec.id, t0).unwrap().counting_in);
     assert!(peak(&b.pull(5000)) > 0.0, "the pre-roll clicks");
 }
 
 #[test]
+fn play_counts_in_per_section_at_that_sections_tempo() {
+    let (_t, spec, mut m, b, _e, pcm) = with_tempo();
+    let t0 = Instant::now();
+    // Click off everywhere; Count In only on the 90 BPM section
+    flags(&mut m, &spec.id, 0, 500.0, false, false, t0);
+    flags(&mut m, &spec.id, 1, 10500.0, false, true, t0);
+    // paused inside it: three clicks one 90 BPM beat (14700 frames) apart, then the audio from there
+    m.seek(&spec.id, 12000, t0).unwrap();
+    let st = m.play(&spec.id, t0).unwrap();
+    assert!(st.counting_in && st.playing);
+    let pre = 14700 * 3;
+    let got = b.pull(pre + 2000);
+    let mut want = vec![0.0f32; (pre + 2000) * 2];
+    for f in [0usize, 14700, 29400] {
+        add_click(&mut want, f);
+    }
+    let from = 12000 * RATE / 1000;
+    for (k, x) in expected(&pcm, from, 2000).iter().enumerate() {
+        want[pre * 2 + k] = *x;
+    }
+    fade_in(&mut want, pre);
+    close(&got, &want);
+
+    // inside the section without it: the audio at once
+    m.pause(&spec.id, t0).unwrap();
+    m.seek(&spec.id, 3000, t0).unwrap();
+    assert!(!m.play(&spec.id, t0).unwrap().counting_in);
+    let got = b.pull(2000);
+    let first = got.chunks(2).position(|f| f[0] != 0.0 || f[1] != 0.0).unwrap();
+    assert!(first <= fade_frames() + 1, "first sound at frame {first}");
+    // a play that is already running never counts in again
+    flags(&mut m, &spec.id, 0, 500.0, false, true, t0);
+    assert!(!m.play(&spec.id, t0).unwrap().counting_in);
+}
+
+#[test]
+fn loop_play_counts_in_only_with_the_loops_own_count_in() {
+    let (_t, spec, mut m, _b, _e, _pcm) = with_tempo();
+    let t0 = Instant::now();
+    flags(&mut m, &spec.id, 0, 500.0, true, true, t0); // loop-1 lies in this section
+    let snap = m.loop_action(&spec.id, LoopAction::Play, t0).unwrap();
+    assert!(snap.transport.loop_playing && !snap.transport.counting_in);
+    m.pause(&spec.id, t0).unwrap();
+    m.loop_action(&spec.id, LoopAction::Flags { repeat: true, count_in: true }, t0).unwrap();
+    let snap = m.loop_action(&spec.id, LoopAction::Play, t0).unwrap();
+    assert!(snap.transport.counting_in);
+}
+
+#[test]
+fn plus_while_playing_makes_a_complete_loop_that_wraps_at_the_next_section() {
+    let (_t, spec, mut m, b, _e, _pcm) = with_tempo();
+    let t0 = Instant::now();
+    m.seek(&spec.id, 8000, t0).unwrap();
+    m.play(&spec.id, t0).unwrap();
+    b.pull(100);
+    let snap = m.loop_action(&spec.id, LoopAction::Add, t0).unwrap();
+    let l = &snap.loops[snap.current_loop.unwrap()];
+    assert!(l.repeat && l.end.is_some() && !l.count_in);
+    assert!((l.start_ms - 8000.0).abs() < 60.0, "{}", l.start_ms);
+    assert!((l.end_ms.unwrap() - 10500.0).abs() < 22.0, "{:?}", l.end_ms);
+    let w0 = wraps(&m);
+    b.pull(RATE * 3);
+    assert_eq!(wraps(&m), w0 + 1);
+    let p = pos_ms(&m, &spec.id);
+    assert!((8000..10500).contains(&p), "{p}");
+}
+
+#[test]
 fn jump_section_is_instant_while_playing_and_moves_the_playhead_while_paused() {
     let (_t, spec, mut m, b, events, pcm) = with_tempo();
     let t0 = Instant::now();
-    m.set_metronome(&spec.id, false, false, t0).unwrap();
+    flags(&mut m, &spec.id, 0, 500.0, false, false, t0);
+    flags(&mut m, &spec.id, 1, 10500.0, false, false, t0);
     m.seek(&spec.id, 1000, t0).unwrap();
     m.jump_section(&spec.id, 1, 10500.0, Edge::Start, t0).unwrap();
     assert_eq!(pos_ms(&m, &spec.id), 10500);
@@ -1039,7 +1125,7 @@ fn jump_section_is_instant_while_playing_and_moves_the_playhead_while_paused() {
 fn jump_section_cancels_a_pre_roll_count_in() {
     let (_t, spec, mut m, b, _e, _pcm) = with_tempo();
     let t0 = Instant::now();
-    m.set_metronome(&spec.id, false, true, t0).unwrap();
+    flags(&mut m, &spec.id, 0, 500.0, false, true, t0);
     m.seek(&spec.id, 1000, t0).unwrap();
     m.play(&spec.id, t0).unwrap();
     b.pull(15000);
@@ -1071,15 +1157,16 @@ fn removing_the_tempo_clears_the_grid_and_count_in() {
     assert!(!st.counting_in);
     let got = b.pull(RATE);
     assert!(peak(&got[2 * 3000..2 * 3200]) > 0.0, "audio from the start, no count-in");
-    assert_eq!(m.set_metronome(&spec.id, true, true, t0).unwrap_err(), "Enter a BPM first");
+    let e = SectionEdit::Flags { index: 0, at: 500.0, metronome: true, count_in: true };
+    assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), STALE);
 }
 
 #[test]
-fn metronome_and_speed_are_refused_without_a_tempo() {
+fn section_flags_and_speed_are_refused_without_a_tempo() {
     let (_t, spec, mut m, _b, _e) = opened(PRACTICE);
     let t0 = Instant::now();
-    assert_eq!(m.set_metronome(&spec.id, true, false, t0).unwrap_err(), "Enter a BPM first");
-    assert!(!m.snapshot(&spec.id).unwrap().metronome.on);
+    let e = SectionEdit::Flags { index: 0, at: 0.0, metronome: true, count_in: false };
+    assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), STALE);
     assert_eq!(m.speed_action(&spec.id).unwrap_err(), "Enter a BPM first");
     let (_t, spec, mut m, _b, _e) = opened(WITH_TEMPO);
     assert_eq!(m.speed_action(&spec.id).unwrap_err(), "Speed change is not available yet");

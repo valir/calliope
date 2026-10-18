@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 use std::path::Path;
 
 pub(crate) const PLAYER_FILE: &str = "player.json";
-pub(crate) const SCHEMA: u32 = 4;
+pub(crate) const SCHEMA: u32 = 5;
 pub(crate) const MAX_LOOPS: usize = 99;
 pub(crate) const MIN_SPEED: f64 = 0.5;
 pub(crate) const MAX_SPEED: f64 = 1.5;
@@ -20,12 +20,6 @@ pub(crate) const NOTE_UNREADABLE: &str =
 pub(crate) const NOTE_NEWER: &str =
     "player.json was written by a newer version; the player settings will not be saved";
 pub(crate) const END_BEFORE_START: &str = "The end must be after the start";
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Metronome {
-    pub on: bool,
-    pub count_in: bool,
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct LoopRec {
@@ -51,7 +45,6 @@ pub(crate) struct PlayerState {
     pub position_ms: u64,
     pub tempo: TempoMap,
     pub speed: f64,
-    pub metronome: Metronome,
     pub loops: Vec<LoopRec>,
     pub current_loop: Option<String>,
     #[serde(flatten)]
@@ -69,7 +62,6 @@ impl Default for PlayerState {
             position_ms: 0,
             tempo: TempoMap::default(),
             speed: 1.0,
-            metronome: Metronome { on: false, count_in: false },
             loops: Vec::new(),
             current_loop: None,
             extra: Map::new(),
@@ -137,10 +129,26 @@ fn parse_tempo(v: Option<&Value>) -> TempoMap {
         if let Some(first) = map.segments.first_mut() {
             first.detected_ms = None;
             first.on_beat = false;
-            first.meta.count_in = false;
         }
     }
     map
+}
+
+/// Schema 1-4 had a master metronome (plan 18.3). A missing object or key counts as Off. Master Off
+/// silences every section (Click and Count In off); then the master's Count In becomes section 1's.
+fn migrate_master(tempo: &mut TempoMap, master: Option<&Value>) {
+    let flag = |k: &str| master.and_then(|m| m.get(k)).and_then(Value::as_bool).unwrap_or(false);
+    if !flag("on") {
+        for s in &mut tempo.segments {
+            s.meta.metronome = false;
+            s.meta.count_in = false;
+        }
+    }
+    if flag("count_in") {
+        if let Some(first) = tempo.segments.first_mut() {
+            first.meta.count_in = true;
+        }
+    }
 }
 
 /// A stored section name: control characters removed, trimmed, cut to `MAX_SECTION_NAME` characters.
@@ -165,9 +173,8 @@ fn from_value(v: &Value) -> PlayerState {
         .and_then(Value::as_f64)
         .filter(|s| s.is_finite())
         .map_or(1.0, |s| s.clamp(MIN_SPEED, MAX_SPEED));
-    if let Some(m) = o.get("metronome").and_then(Value::as_object) {
-        st.metronome.on = m.get("on").and_then(Value::as_bool).unwrap_or(false);
-        st.metronome.count_in = m.get("count_in").and_then(Value::as_bool).unwrap_or(false);
+    if o.get("schema_version").and_then(Value::as_u64).is_some_and(|n| n <= 4) {
+        migrate_master(&mut st.tempo, o.get("metronome"));
     }
     if let Some(a) = o.get("loops").and_then(Value::as_array) {
         for l in a.iter().filter_map(parse_loop) {
@@ -295,8 +302,28 @@ impl PlayerState {
         self.loops.iter_mut().find(|l| l.id == id).ok_or_else(|| "There is no loop selected".to_string())
     }
 
-    /// Adds a loop starting at the position, with no end; it becomes current. Returns its id.
-    pub fn add(&mut self, position_ms: f64) -> Result<String, String> {
+    /// The end of a new loop starting at `start` (plan 18.5): the start of the next tempo section,
+    /// or the track end; None when that is not after the start.
+    fn default_end(&self, start: Boundary, track_end_ms: f64) -> Option<Boundary> {
+        let end = match start {
+            Boundary::Ms { .. } => Boundary::Ms { ms: track_end_ms },
+            Boundary::Tick { tick } => match self.tempo.next_section_tick(tick) {
+                Some(next) if self.tempo.ms_at(next) <= track_end_ms => Boundary::Tick { tick: next },
+                _ => {
+                    let mut t = self.tempo.tick_near(track_end_ms);
+                    if self.tempo.ms_at(t) > track_end_ms {
+                        t -= 1;
+                    }
+                    Boundary::Tick { tick: t }
+                }
+            },
+        };
+        self.before(start, end).then_some(end)
+    }
+
+    /// Adds a loop starting at the position, ending at the next tempo section or the track end
+    /// (no end if that is not after the start); it becomes current. Returns its id.
+    pub fn add(&mut self, position_ms: f64, track_end_ms: f64) -> Result<String, String> {
         if self.loops.len() >= MAX_LOOPS {
             return Err(format!("At most {MAX_LOOPS} loops"));
         }
@@ -309,10 +336,11 @@ impl PlayerState {
             + 1;
         let id = format!("loop-{n}");
         let start = self.boundary_at(position_ms);
+        let end = self.default_end(start, track_end_ms);
         self.loops.push(LoopRec {
             id: id.clone(),
             start,
-            end: None,
+            end,
             repeat: true,
             count_in: false,
             extra: Map::new(),
@@ -469,9 +497,14 @@ mod tests {
         assert_eq!(st.current_loop.as_deref(), Some("loop-1"));
         save(d.path(), &st).unwrap();
         let back: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
-        // the v1 fixture reads with the same map and loops and is written back as schema 4
-        assert_eq!(back["schema_version"], 4);
-        v["schema_version"] = json!(4);
+        // the v1 fixture reads with the same map and loops and is written back as schema 5
+        assert_eq!(back["schema_version"], 5);
+        v["schema_version"] = json!(5);
+        // the master (Off) is migrated into the sections and not written back
+        v.as_object_mut().unwrap().remove("metronome");
+        for seg in v["tempo"]["segments"].as_array_mut().unwrap() {
+            seg["metronome"] = json!(false);
+        }
         assert_eq!(back, v);
         assert!(back["loops"][2]["end"].is_null());
         assert_eq!(back["position_ms"], 4000);
@@ -502,9 +535,9 @@ mod tests {
 
     #[test]
     fn on_beat_round_trips_and_v2_files_are_upgraded() {
-        // a v2 file with a detected change loads unchanged and is written as 4
+        // a v2 file with a detected change loads unchanged and is written as 5
         let d = dir_with(
-            &json!({"schema_version": 2, "tempo": {"segments": [
+            &json!({"schema_version": 2, "metronome": {"on": true, "count_in": false}, "tempo": {"segments": [
                 {"start_ms": 0.0, "bpm": 120.0}, {"start_ms": 6500.0, "bpm": 90.0, "detected_ms": 6400.0}]}})
             .to_string(),
         );
@@ -513,7 +546,7 @@ mod tests {
         assert_eq!(st.tempo.segments[1], Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6400.0), on_beat: false, meta: SectionMeta::default() });
         save(d.path(), &st).unwrap();
         let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
-        assert_eq!(v["schema_version"], 4);
+        assert_eq!(v["schema_version"], 5);
         assert_eq!(v["tempo"]["segments"][1]["detected_ms"], 6400.0);
         assert!(v["tempo"]["segments"][1].get("on_beat").is_none());
 
@@ -540,9 +573,9 @@ mod tests {
 
     #[test]
     fn section_meta_reads_defaults_round_trips_and_ignores_bad_values() {
-        // a v3 file reads with every section clicking, no count-in, no name; written as 4, same segments
+        // a v3 file reads with every section clicking, no count-in, no name; written as 5, same segments
         let d = dir_with(
-            &json!({"schema_version": 3, "tempo": {"segments": [
+            &json!({"schema_version": 3, "metronome": {"on": true, "count_in": false}, "tempo": {"segments": [
                 {"start_ms": 0.0, "bpm": 120.0},
                 {"start_ms": 6500.0, "bpm": 90.0, "detected_ms": 6400.0, "on_beat": true}]}})
             .to_string(),
@@ -552,22 +585,22 @@ mod tests {
         assert!(st.tempo.segments.iter().all(|s| s.meta == SectionMeta::default()));
         save(d.path(), &st).unwrap();
         let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
-        assert_eq!(v["schema_version"], 4);
+        assert_eq!(v["schema_version"], 5);
         assert_eq!(
             v["tempo"]["segments"],
             json!([{"start_ms": 0.0, "bpm": 120.0}, {"start_ms": 6500.0, "bpm": 90.0, "detected_ms": 6400.0, "on_beat": true}])
         );
 
-        // a v4 segment with all three keys round-trips; count_in on the first segment is dropped
+        // a v4 segment with all three keys round-trips; count_in on the first segment is kept
         let d = dir_with(
-            &json!({"schema_version": 4, "tempo": {"segments": [
+            &json!({"schema_version": 4, "metronome": {"on": true, "count_in": false}, "tempo": {"segments": [
                 {"start_ms": 0.0, "bpm": 120.0, "name": "Intro", "metronome": false, "count_in": true},
                 {"start_ms": 8500.0, "bpm": 93.0, "name": "Verse", "metronome": false, "count_in": true}]}})
             .to_string(),
         );
         let (st, _, _) = load(d.path());
         let m: Vec<_> = st.tempo.segments.iter().map(|s| (s.meta.name.as_str(), s.meta.metronome, s.meta.count_in)).collect();
-        assert_eq!(m, [("Intro", false, false), ("Verse", false, true)]);
+        assert_eq!(m, [("Intro", false, true), ("Verse", false, true)]);
         save(d.path(), &st).unwrap();
         let (back, _, _) = load(d.path());
         assert_eq!(back.tempo, st.tempo);
@@ -575,11 +608,11 @@ mod tests {
         assert_eq!(v["tempo"]["segments"][1]["name"], "Verse");
         assert_eq!(v["tempo"]["segments"][1]["metronome"], false);
         assert_eq!(v["tempo"]["segments"][1]["count_in"], true);
-        assert!(v["tempo"]["segments"][0].get("count_in").is_none());
+        assert_eq!(v["tempo"]["segments"][0]["count_in"], true);
 
         // bad values are ignored and the segment is kept
         let d = dir_with(
-            &json!({"schema_version": 4, "tempo": {"segments": [
+            &json!({"schema_version": 4, "metronome": {"on": true, "count_in": false}, "tempo": {"segments": [
                 {"start_ms": 0.0, "bpm": 120.0},
                 {"start_ms": 4000.0, "bpm": 90.0, "name": 5, "metronome": "no", "count_in": 1}]}})
             .to_string(),
@@ -612,7 +645,7 @@ mod tests {
         assert_eq!(load(d.path()), (PlayerState::default(), None, true));
 
         let d = dir_with(
-            &json!({"schema_version": 1, "speed": 9.0, "position_ms": -5,
+            &json!({"schema_version": 1, "metronome": {"on": true, "count_in": false}, "speed": 9.0, "position_ms": -5,
               "tempo": {"beats_per_bar": 3, "segments": [{"start_ms": 0.0, "bpm": 500.0}, {"start_ms": 10.0, "bpm": 100.0}]},
               "loops": [
                 {"id": "a", "start": {"tick": 5}, "end": {"tick": "x"}},
@@ -636,7 +669,7 @@ mod tests {
 
     #[test]
     fn newer_schema_is_read_only_and_folders_are_not_created() {
-        let text = r#"{"schema_version": 5, "source": "audio"}"#;
+        let text = r#"{"schema_version": 6, "source": "audio"}"#;
         let d = dir_with(text);
         let (st, note, w) = load(d.path());
         assert!(!w && note.is_some() && st.read_only);
@@ -651,10 +684,9 @@ mod tests {
     #[test]
     fn loop_rules_bpm_mode() {
         let mut s = bpm_state();
-        s.add(3000.0).unwrap();
+        s.add(3000.0, 10000.0).unwrap();
         assert_eq!(s.loops[0].start, Boundary::Tick { tick: 80 });
-        assert_eq!(s.loops[0].end, None);
-        assert!(s.flags(Some(false), None).is_err());
+        assert_eq!(s.loops[0].end, Some(Boundary::Tick { tick: 304 })); // the track end
         s.mark(Mark::End, 9000.0).unwrap();
         assert_eq!(s.loops[0].end, Some(Boundary::Tick { tick: 272 }));
 
@@ -672,6 +704,7 @@ mod tests {
         s.mark(Mark::Start, 10000.0).unwrap();
         assert_eq!(s.loops[0].start, Boundary::Tick { tick: 304 });
         assert_eq!(s.loops[0].end, None);
+        assert!(s.flags(Some(false), None).is_err());
 
         s.mark(Mark::Start, 3000.0).unwrap();
         s.mark(Mark::End, 9000.0).unwrap();
@@ -689,7 +722,8 @@ mod tests {
     #[test]
     fn timestamp_mode_and_tempo_change() {
         let mut s = PlayerState::default();
-        s.add(1000.0).unwrap();
+        s.add(1000.0, 4000.0).unwrap();
+        assert_eq!(s.loops[0].end, Some(Boundary::Ms { ms: 4000.0 }));
         s.mark(Mark::End, 2500.0).unwrap();
         assert_eq!(s.loops[0].end, Some(Boundary::Ms { ms: 2500.0 }));
         let mut m = TempoMap::default();
@@ -705,9 +739,9 @@ mod tests {
     #[test]
     fn order_and_current_survive() {
         let mut s = bpm_state();
-        let a = s.add(8000.0).unwrap();
-        let b = s.add(2000.0).unwrap();
-        let c = s.add(5000.0).unwrap();
+        let a = s.add(8000.0, 1e6).unwrap();
+        let b = s.add(2000.0, 1e6).unwrap();
+        let c = s.add(5000.0, 1e6).unwrap();
         let ids: Vec<_> = s.loops.iter().map(|l| l.id.clone()).collect();
         assert_eq!(ids, [b.clone(), c.clone(), a.clone()]);
         assert_eq!(s.current_loop.as_deref(), Some(c.as_str()));
@@ -725,13 +759,112 @@ mod tests {
         assert!(s.remove().is_err());
     }
 
+    fn migrated(v: Value) -> PlayerState {
+        let d = dir_with(&v.to_string());
+        load(d.path()).0
+    }
+
+    fn flags_of(st: &PlayerState) -> Vec<(bool, bool)> {
+        st.tempo.segments.iter().map(|s| (s.meta.metronome, s.meta.count_in)).collect()
+    }
+
+    fn v4(master: Value) -> Value {
+        let mut v = json!({"schema_version": 4, "tempo": {"segments": [
+            {"start_ms": 0.0, "bpm": 120.0, "metronome": true, "count_in": false},
+            {"start_ms": 8500.0, "bpm": 93.0, "metronome": true, "count_in": true}]}});
+        if !master.is_null() {
+            v["metronome"] = master;
+        }
+        v
+    }
+
+    #[test]
+    fn schema_4_master_is_migrated_into_the_sections() {
+        // master Off: everything silent
+        let st = migrated(v4(json!({"on": false, "count_in": false})));
+        assert_eq!(flags_of(&st), [(false, false), (false, false)]);
+        // master On: the flags are kept
+        let st = migrated(v4(json!({"on": true, "count_in": false})));
+        assert_eq!(flags_of(&st), [(true, false), (true, true)]);
+        // master Count In: section 1 counts in, with the master On or Off
+        let st = migrated(v4(json!({"on": true, "count_in": true})));
+        assert_eq!(flags_of(&st), [(true, true), (true, true)]);
+        let st = migrated(v4(json!({"on": false, "count_in": true})));
+        assert_eq!(flags_of(&st), [(false, true), (false, false)]);
+        // no master object counts as Off
+        let st = migrated(v4(Value::Null));
+        assert_eq!(flags_of(&st), [(false, false), (false, false)]);
+        let st = migrated(v4(json!({"count_in": false})));
+        assert_eq!(flags_of(&st), [(false, false), (false, false)]);
+    }
+
+    #[test]
+    fn schema_5_is_written_without_a_master_and_keeps_section_1_count_in() {
+        let d = dir_with(&v4(json!({"on": true, "count_in": true})).to_string());
+        let (st, _, _) = load(d.path());
+        save(d.path(), &st).unwrap();
+        let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        assert_eq!(v["schema_version"], 5);
+        assert!(v.get("metronome").is_none());
+        assert_eq!(v["tempo"]["segments"][0]["count_in"], true);
+        let (back, _, _) = load(d.path());
+        assert_eq!(back.tempo, st.tempo);
+
+        // a v5 file with a stray top-level master is not migrated and the key is dropped
+        let mut stray = v4(json!({"on": false, "count_in": true}));
+        stray["schema_version"] = json!(5);
+        let d = dir_with(&stray.to_string());
+        let (st, _, _) = load(d.path());
+        assert_eq!(flags_of(&st), [(true, false), (true, true)]);
+        save(d.path(), &st).unwrap();
+        let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        assert!(v.get("metronome").is_none());
+    }
+
+    fn detected_state() -> PlayerState {
+        let st = migrated(json!({"schema_version": 5, "tempo": {"segments": [
+            {"start_ms": 0.0, "bpm": 120.0},
+            {"start_ms": 8500.0, "bpm": 93.0, "detected_ms": 8500.0}]}}));
+        assert_eq!(st.tempo.segments.len(), 2);
+        st
+    }
+
+    #[test]
+    fn add_ends_at_the_next_section_or_the_track_end() {
+        let mut s = detected_state();
+        s.add(2000.0, 20000.0).unwrap();
+        let Some(Boundary::Tick { tick }) = s.loops[0].end else { panic!("tick end") };
+        assert_eq!(s.tempo.ms_at(tick), 8500.0);
+        // the last section: the track end, never past it
+        s.add(12000.0, 20000.0).unwrap();
+        let Some(Boundary::Tick { tick }) = s.loops[1].end else { panic!("tick end") };
+        let ms = s.tempo.ms_at(tick);
+        assert!(ms <= 20000.0 && 20000.0 - ms < 2.0 * tempo_map::tick_ms(93.0), "{ms}");
+        // a next section past the track end: the track end
+        let mut s = detected_state();
+        s.add(2000.0, 6000.0).unwrap();
+        let Some(Boundary::Tick { tick }) = s.loops[0].end else { panic!("tick end") };
+        assert!(s.tempo.ms_at(tick) <= 6000.0);
+        // at the track end: no end
+        let mut s = detected_state();
+        s.add(20000.0, 20000.0).unwrap();
+        assert_eq!(s.loops[0].end, None);
+        // timestamp mode
+        let mut s = PlayerState::default();
+        s.add(1000.0, 5000.0).unwrap();
+        assert_eq!(s.loops[0].end, Some(Boundary::Ms { ms: 5000.0 }));
+        assert!(s.loops[0].repeat && !s.loops[0].count_in);
+        s.add(5000.0, 5000.0).unwrap();
+        assert_eq!(s.loops[1].end, None);
+    }
+
     #[test]
     fn max_loops() {
         let mut s = PlayerState::default();
         for i in 0..MAX_LOOPS {
-            s.add(i as f64).unwrap();
+            s.add(i as f64, 1e6).unwrap();
         }
-        assert!(s.add(1e6).is_err());
+        assert!(s.add(1e6, 1e6).is_err());
         assert_eq!(s.loops.len(), MAX_LOOPS);
     }
 

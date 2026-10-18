@@ -389,12 +389,6 @@ pub struct SnapTempo {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct SnapMetronome {
-    pub on: bool,
-    pub count_in: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PlayerSnapshot {
     pub id: String,
     pub title: String,
@@ -406,7 +400,6 @@ pub struct PlayerSnapshot {
     pub mode: &'static str,
     pub tempo: SnapTempo,
     pub speed: f64,
-    pub metronome: SnapMetronome,
     pub loops: Vec<PlayerLoop>,
     pub current_loop: Option<usize>,
     pub loop_message: Option<String>,
@@ -656,9 +649,11 @@ impl Session {
         (!self.state.tempo.is_empty() && bpm > 0.0).then(|| count_in_plan(bpm, self.pcm.rate))
     }
 
-    fn log_count_in(&self, plan: &Option<CountIn>) {
+    /// Logs a count-in; Play adds the index of the section that counted in.
+    fn log_count_in(&self, plan: &Option<CountIn>, section: Option<usize>) {
         if let Some(p) = plan {
-            eprintln!("calliope: player count-in clicks=3 beat_ms={}", self.ms_of(p.clicks[1]));
+            let section = section.map_or_else(String::new, |i| format!(" section={i}"));
+            eprintln!("calliope: player count-in clicks=3 beat_ms={}{section}", self.ms_of(p.clicks[1]));
         }
     }
 
@@ -703,7 +698,7 @@ impl Session {
     fn sync_grid(&mut self) {
         self.grid_wrap = self.wrap_ms();
         self.send(Cmd::SetGrid(self.grid()));
-        self.send(Cmd::SetMetronome(self.state.metronome.on && !self.state.tempo.is_empty()));
+        self.send(Cmd::SetMetronome(!self.state.tempo.is_empty()));
     }
 
     /// Pauses the engine and clears the count-in and loop-play marks at once.
@@ -778,7 +773,6 @@ impl Session {
                 multi: st.tempo.is_multi(),
             },
             speed: st.speed,
-            metronome: SnapMetronome { on: st.metronome.on, count_in: st.metronome.count_in },
             loops,
             current_loop,
             loop_message: self.loop_message.clone(),
@@ -1152,13 +1146,15 @@ impl PlayerManager {
             s.set_pos(0);
             s.send(Cmd::Seek(0));
         }
-        // A count-in precedes a start from paused or stopped, not a play that is already running.
-        let plan = if s.transport.shows_playing() || !s.state.metronome.count_in {
+        // A count-in precedes a start from paused or stopped, not a play that is already running,
+        // when the section under the playhead has Count In.
+        let pos_ms = s.pos_ms_f();
+        let plan = if s.transport.shows_playing() || !s.state.tempo.count_in_at(pos_ms) {
             None
         } else {
-            s.plan_at(s.pos_ms_f())
+            s.plan_at(pos_ms)
         };
-        s.log_count_in(&plan);
+        s.log_count_in(&plan, s.state.tempo.segment_at(pos_ms));
         s.shared.counting_in.store(plan.is_some(), Ordering::Release);
         s.transport.play();
         s.send(Cmd::Play { count_in: plan });
@@ -1338,19 +1334,6 @@ impl PlayerManager {
         Err(if s.state.tempo.is_empty() { NO_TEMPO } else { NO_SPEED }.into())
     }
 
-    /// Metronome On and Count In; refused on a track without a tempo.
-    pub fn set_metronome(&mut self, id: &str, on: bool, count_in: bool, now: Instant) -> Result<PlayerSnapshot, String> {
-        let s = self.session(id)?;
-        if s.state.tempo.is_empty() {
-            return Err(NO_TEMPO.into());
-        }
-        s.state.metronome.on = on;
-        s.state.metronome.count_in = count_in;
-        s.send(Cmd::SetMetronome(on));
-        s.mark_dirty(now);
-        Ok(s.snapshot())
-    }
-
     // ---------------------------------------------------------------- loops
 
     fn playable_loop(&self, id: &str) -> Result<(), String> {
@@ -1383,10 +1366,10 @@ impl PlayerManager {
         let l = s.state.current().expect("checked");
         let (start_ms, loop_count_in) = (s.boundary_ms(l.start), l.count_in);
         let start = s.frame_of_ms_f(start_ms);
-        let plan = if s.state.metronome.count_in || loop_count_in { s.plan_at(start_ms) } else { None };
+        let plan = if loop_count_in { s.plan_at(start_ms) } else { None };
         s.loop_message = None;
         s.set_pos(start);
-        s.log_count_in(&plan);
+        s.log_count_in(&plan, None);
         s.shared.counting_in.store(plan.is_some(), Ordering::Release);
         s.shared.loop_playing.store(true, Ordering::Release);
         s.transport.play();
@@ -1408,7 +1391,8 @@ impl PlayerManager {
         let pos_ms = s.pos_ms_f();
         match action {
             LoopAction::Add => {
-                s.state.add(pos_ms)?;
+                let track_end_ms = s.ms_of(s.pcm.frames);
+                s.state.add(pos_ms, track_end_ms as f64)?;
             }
             LoopAction::Remove => s.state.remove()?,
             LoopAction::Select(delta) => {

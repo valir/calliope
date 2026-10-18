@@ -143,7 +143,7 @@ fn ok_detects_two_sections_and_stores_them() {
     assert!(tempo.multi);
     let want = vec![(500.0, 120.0, None), (6500.0, 90.0, Some(6500.0))];
     assert_eq!(r.segments(), want);
-    assert_eq!(r.player_json().unwrap()["schema_version"], 4);
+    assert_eq!(r.player_json().unwrap()["schema_version"], 5);
     assert_eq!(r.m.snapshot(SIX).unwrap().tempo.segments.len(), 2, "the session has the new map");
     assert_eq!(r.m.snapshot(SIX).unwrap().detect, None);
     assert!(r.leftovers().is_empty());
@@ -188,6 +188,24 @@ fn failures_have_exact_messages_and_leave_player_json_alone() {
         assert!(r.leftovers().is_empty(), "{mode}");
         assert_eq!(r.m.snapshot(SIX).unwrap().detect, None);
     }
+}
+
+#[test]
+fn a_re_detection_carries_the_play_settings_of_the_old_map() {
+    // schema 4 with the master Off and its Count In on: every new section is silent, section 1 counts in
+    let old = r#"{"schema_version":4,"metronome":{"on":false,"count_in":true},"tempo":{"beats_per_bar":4,"segments":[{"start_ms":100.0,"bpm":100.0}]}}"#;
+    let mut r = Rig::new(TestServer::start_beats("ok", &[]));
+    std::fs::write(r.spec.dir.join("player.json"), old).unwrap();
+    let EditorEvent::Detected { replaced, .. } = r.run() else { panic!("not detected") };
+    assert!(replaced);
+    let v = r.player_json().unwrap();
+    assert_eq!(v["schema_version"], 5);
+    assert!(v.get("metronome").is_none());
+    let segs = v["tempo"]["segments"].as_array().unwrap();
+    assert_eq!(segs.len(), 2);
+    assert!(segs.iter().all(|s| s["metronome"] == false));
+    assert_eq!(segs[0]["count_in"], true);
+    assert!(segs[1].get("count_in").is_none());
 }
 
 #[test]
