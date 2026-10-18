@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import type { Channel } from '@tauri-apps/api/core';
 import {
-  beginNameEdit, cancelSectionBpm, cancelSectionName, commitSectionBpm, commitSectionName, jumpSection, setSectionFlags, editSectionBpm, leavePlayer, moveChange, pl, removeChange, scaleSection,
+  loop, beginNameEdit, cancelSectionBpm, cancelSectionName, commitSectionBpm, commitSectionName, jumpSection, setSectionFlags, editSectionBpm, leavePlayer, moveChange, pl, removeChange, scaleSection,
   selectSection, startAdd, targetSection, playLabel, resetPlayer, seek, selectSource, syncSelection, togglePlay } from './player-state.svelte';
 import { resetLibrary } from './library-state.svelte';
 import { PLAYER_FIXTURE_TRACKS } from './fixture-tracks';
@@ -23,7 +23,7 @@ const snapshot = (id: string, source = 'backing:backing'): PlayerSnapshot => ({
   ],
   source, duration_ms: 10000, sample_rate: 44100, peaks: [], mode: 'bpm',
   tempo: { beats_per_bar: 4, segments: [], multi: false }, speed: 1,
-  metronome: { on: false, count_in: false }, loops: [], current_loop: null, loop_message: null,
+  loops: [], current_loop: null, loop_message: null,
   transport: { ...idle }, can_change_speed: false, note: null,
 });
 
@@ -91,6 +91,19 @@ describe('player state', () => {
     expect(pl.status).toBe('active');
     expect(pl.trackId).toBe(stemsOnly.id);
     expect(names()).toContain('close_player');
+  });
+
+  it('the loop log line carries end=<ms|none>', async () => {
+    const lp = { id: 'l1', start: { ms: 100 }, end: { ms: 900 }, start_ms: 100, end_ms: 900, repeat: false, count_in: false };
+    let cur: PlayerSnapshot = { ...snapshot(practice.id), loops: [lp], current_loop: 0 };
+    handlers.player_loop = () => cur;
+    syncSelection(practice);
+    await flush();
+    await loop({ kind: 'add' });
+    expect(logs()).toContain('player loop add index=0 count=1 complete=true end=900');
+    cur = { ...cur, loops: [{ ...lp, end: null, end_ms: null }] };
+    await loop({ kind: 'add' });
+    expect(logs()).toContain('player loop add index=0 count=1 complete=false end=none');
   });
 
   it('a closed event bumps reopen and the next sync of the same track opens it again', async () => {

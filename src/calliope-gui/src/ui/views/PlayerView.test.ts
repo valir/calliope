@@ -126,7 +126,7 @@ describe('Player keyboard shortcuts', () => {
       id: practice.id, title: 'T', sources: [{ key: 'backing:backing', label: 'Backing' }], source: 'backing:backing',
       duration_ms: 20000, sample_rate: 44100, peaks: [], mode: 'bpm',
       tempo: { beats_per_bar: 4, segments: [{ start_ms: 0, bpm: 120 }], multi: false }, speed: 1,
-      metronome: { on: false, count_in: false }, loops, current_loop: 0, loop_message: null,
+      loops, current_loop: 0, loop_message: null,
       transport: { ...idle }, can_change_speed: false, note: null,
     };
     lib.selectedId = practice.id;

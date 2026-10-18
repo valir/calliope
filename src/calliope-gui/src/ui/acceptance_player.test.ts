@@ -26,7 +26,7 @@ const open_: PlayerLoop = { id: 'loop-3', start: { tick: 512 }, end: null, start
 const base = (): PlayerSnapshot => ({
   id: practice.id, title: 'T', sources: [{ key: 'backing:backing', label: 'Backing' }, { key: 'stem:guitar', label: 'Guitar' }],
   source: 'backing:backing', duration_ms: 20000, sample_rate: 22050, peaks: new Array(64).fill(0.5), mode: 'time',
-  tempo: { beats_per_bar: 4, segments: [], multi: false }, speed: 1, metronome: { on: false, count_in: false },
+  tempo: { beats_per_bar: 4, segments: [], multi: false }, speed: 1,
   loops: [], current_loop: null, loop_message: null, transport: { ...idle }, can_change_speed: false, note: null,
 });
 const bpmSnap = (): PlayerSnapshot => ({
@@ -60,7 +60,7 @@ beforeEach(() => {
     const a = (args ?? {}) as Record<string, unknown>;
     calls.push([cmd, a]);
     if (cmd === 'open_player') { channel = a.events as Channel<PlayerEvent>; return snap; }
-    if (cmd === 'player_tempo' || cmd === 'player_metronome' || cmd === 'player_loop' || cmd === 'player_select_source') return snap;
+    if (cmd === 'player_tempo' || cmd === 'player_loop' || cmd === 'player_select_source') return snap;
     if (cmd === 'player_leave') return { ...idle };
     if (cmd.startsWith('player_')) return { ...idle };
     if (cmd === 'get_repository') return { root: '/r', is_default: false, status: 'ok' };
@@ -85,7 +85,6 @@ describe('AC2-4, 9: pane structure and the inactive state', () => {
     expect(btn('Playback', 'Rew').disabled).toBe(true);
     expect(btn('Playback', 'FF').disabled).toBe(true);
     expect(input('BPM').disabled).toBe(true);
-    expect(btn('Metronome', 'On/Off').disabled).toBe(true);
     expect(btn('Loops', 'Add loop').disabled).toBe(true);
     expect(input('bar1').disabled).toBe(true);
   });
@@ -96,7 +95,7 @@ describe('AC2-4, 9: pane structure and the inactive state', () => {
     await openTrack(snap);
     expect(screen.getByRole('button', { name: 'Audio source' }).textContent).toContain('Backing');
     expect(screen.getByTestId('placeholder')).toBeTruthy();
-    for (const g of ['BPM', 'Metronome', 'Playback', 'Loops']) expect(screen.getByRole('group', { name: g })).toBeTruthy();
+    for (const g of ['BPM', 'Sections', 'Playback', 'Loops']) expect(screen.getByRole('group', { name: g })).toBeTruthy();
     expect(document.querySelector('canvas')).toBeTruthy();
     expect(btn('Playback', 'Play').disabled).toBe(false);
   });
@@ -111,25 +110,23 @@ describe('AC13: track without tempo', () => {
     expect((screen.getByRole('checkbox', { name: 'V' }) as HTMLInputElement).checked).toBe(false);
     expect(input('bar1').value).toMatch(/^0:02\.5/);
     expect(input('bar2').value).toMatch(/^0:06\.0/);
-    expect(btn('Metronome', 'On/Off').disabled).toBe(true);
-    expect(btn('Metronome', 'Count In').disabled).toBe(true);
+    for (const n of ['Metronome in this section', 'Count-in into this section']) {
+      expect(btn('Sections', n).disabled).toBe(true);
+      expect(btn('Sections', n).title).toBe('Type a BPM first');
+    }
+    expect(screen.queryByRole('group', { name: 'Metronome' })).toBeNull();
     expect(btn('BPM', 'Slower').disabled).toBe(true);
     expect(btn('BPM', 'Faster').disabled).toBe(true);
     expect(btn('BPM', 'Reset').disabled).toBe(true);
     expect(screen.queryByRole('button', { name: 'Detect' })).toBeNull();
   });
 
-  it('on a track with a tempo (increment A) -, +, Reset stay disabled but Metronome works', async () => {
+  it('on a track with a tempo (increment A) -, +, Reset stay disabled', async () => {
     snap = bpmSnap();
     render(PlayerView);
     await openTrack(snap);
     expect(input('BPM').value).toBe('120');
-    expect(btn('Metronome', 'On/Off').disabled).toBe(false);
-    expect(btn('Metronome', 'Count In').disabled).toBe(false);
     for (const n of ['Slower', 'Faster', 'Reset']) expect(btn('BPM', n).disabled, n).toBe(true);
-    await fireEvent.click(btn('Metronome', 'On/Off'));
-    await flush();
-    expect(of('player_metronome')).toHaveLength(1);
   });
 });
 

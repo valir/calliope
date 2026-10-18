@@ -5,7 +5,6 @@ import {
   openPlayer,
   playerLeave,
   playerLoop,
-  playerMetronome,
   playerNudge,
   playerPause,
   playerPlay,
@@ -42,7 +41,7 @@ export const pl = $state({
   /** Everything of the last snapshot except its transport. */
   snap: null as Omit<PlayerSnapshot, 'transport'> | null,
   transport: { ...STOPPED } as PlayerTransport,
-  /** Refusal of the last tempo/metronome/loop/transport command. */
+  /** Refusal of the last tempo/loop/transport command. */
   actionError: '',
   /** Playback stopped by an audio error. */
   audioError: '',
@@ -189,7 +188,6 @@ function applySnapshot(s: PlayerSnapshot): void {
     sources: rest.sources.map((x) => ({ ...x })),
     loops: rest.loops.map((l) => ({ ...l })),
     tempo: { ...rest.tempo, segments: rest.tempo.segments.map((g) => ({ ...g })) },
-    metronome: { ...rest.metronome },
   };
   pl.transport = { ...transport };
   const n = s.tempo.segments.length;
@@ -348,14 +346,6 @@ export async function setBpm(bpm: number): Promise<void> {
   );
 }
 
-export async function setMetronome(on: boolean, countIn: boolean): Promise<void> {
-  await snapshotCall(
-    'player_metronome',
-    (id) => playerMetronome(id, on, countIn),
-    (s) => `player metronome on=${s.metronome.on} count_in=${s.metronome.count_in}`,
-  );
-}
-
 export async function loop(action: LoopAction): Promise<void> {
   const name = action.kind === 'mark' ? `mark-${action.edge}` : action.kind;
   await snapshotCall(
@@ -363,7 +353,7 @@ export async function loop(action: LoopAction): Promise<void> {
     (id) => playerLoop(id, action),
     (s) => {
       const cur = s.current_loop === null ? null : s.loops[s.current_loop];
-      return `player loop ${name} index=${s.current_loop ?? 'none'} count=${s.loops.length} complete=${!!cur && cur.end !== null}`;
+      return `player loop ${name} index=${s.current_loop ?? 'none'} count=${s.loops.length} complete=${!!cur && cur.end !== null} end=${cur?.end_ms ?? 'none'}`;
     },
   );
 }

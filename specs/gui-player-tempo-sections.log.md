@@ -37,3 +37,4 @@ task 23 | Tempo map: section-1 Count In, count_in_at, next_section_tick, with_pl
 task 24 | Remove the player_metronome command | implementer | done (local gemma4 overwrote build.rs; reverted and handed to implementer)
 task 25 | Backend: schema 5, migration, no master, Play count-in per section, default loop end, Autodetect carry | implementer | done (acceptance_player_backend does not compile until task 27)
 task 26 | Schema-number literals in the other tests | local | done (gemma4 all 7 edits correct)
+task 28 | Frontend: no global metronome, section-1 Count In, loop log end= | implementer | done (ran in parallel with task 27)

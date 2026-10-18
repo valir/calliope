@@ -22,7 +22,7 @@ const withTempo = (): PlayerSnapshot => ({
   id: practice.id, title: 'T', sources: [{ key: 'backing:backing', label: 'Backing' }], source: 'backing:backing',
   duration_ms: 20000, sample_rate: 44100, peaks: [], mode: 'bpm',
   tempo: { beats_per_bar: 4, segments: [{ start_ms: 0, bpm: 120 }], multi: true }, speed: 1,
-  metronome: { on: false, count_in: false }, loops: [loop1, { ...loop1, id: 'loop-2' }, loop3], current_loop: 0,
+  loops: [loop1, { ...loop1, id: 'loop-2' }, loop3], current_loop: 0,
   loop_message: null, transport: { ...idle, bpm: 120, tempo_index: 0 }, can_change_speed: false, note: null,
 });
 const timestamps = (): PlayerSnapshot => ({
@@ -58,7 +58,7 @@ beforeEach(() => {
     const a = (args ?? {}) as Record<string, unknown>;
     calls.push([cmd, a]);
     if (cmd === 'open_player') { channel = a.events as Channel<PlayerEvent>; return snap; }
-    if (cmd === 'player_tempo' || cmd === 'player_metronome' || cmd === 'player_loop') return snap;
+    if (cmd === 'player_tempo' || cmd === 'player_loop') return snap;
     if (cmd.startsWith('player_')) return { ...idle };
     if (cmd === 'get_repository') return { root: '/r', is_default: false, status: 'ok' };
     if (cmd === 'list_tracks') return { root: '/r', tracks: [practice], problems: [] };
@@ -73,7 +73,7 @@ afterEach(() => {
   clearMocks();
 });
 
-describe('BPM and metronome', () => {
+describe('BPM', () => {
   it('shows the BPM and the V indicator; Enter sets it', async () => {
     await open(withTempo());
     expect(input('BPM').value).toBe('120');
@@ -91,19 +91,12 @@ describe('BPM and metronome', () => {
     expect(screen.getByRole('alert').textContent).toBe('Enter a BPM between 20 and 300, or 0 to clear');
   });
 
-  it('metronome buttons toggle', async () => {
-    await open(withTempo());
-    const on = btn('Metronome', 'On/Off');
-    expect(on.getAttribute('aria-pressed')).toBe('false');
-    await fireEvent.click(on);
-    await fireEvent.click(btn('Metronome', 'Count In'));
-    expect(of('player_metronome')).toMatchObject([{ on: true, countIn: false }, { on: false, countIn: true }]);
-  });
-
-  it('timestamp mode disables metronome, -, + and Reset', async () => {
+  it('timestamp mode disables the section toggles, -, + and Reset', async () => {
     await open(timestamps());
     expect(input('BPM').value).toBe('0');
-    for (const n of ['On/Off', 'Count In']) expect(btn('Metronome', n).disabled).toBe(true);
+    for (const n of ['Metronome in this section', 'Count-in into this section']) expect(btn('Sections', n).disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: 'On/Off' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Metronome' })).toBeNull();
     for (const n of ['Slower', 'Faster', 'Reset']) expect(btn('BPM', n).disabled).toBe(true);
     expect(screen.queryByRole('button', { name: 'Detect' })).toBeNull();
   });
@@ -305,16 +298,14 @@ describe('Sections group', () => {
     };
     const tempoActions = () => of('player_tempo').map((c) => c.action);
 
-    it('the toggles show the target meta; section 1 has no Count In', async () => {
+    it('the toggles show the target meta; section 1 has Count In', async () => {
       await open(meta());
       expect(btn('Sections', 'Metronome in this section').getAttribute('aria-pressed')).toBe('false');
       expect(btn('Sections', 'Count-in into this section').getAttribute('aria-pressed')).toBe('true');
       pl.section = 0;
       await flush();
       expect(btn('Sections', 'Metronome in this section').getAttribute('aria-pressed')).toBe('true');
-      const ci = btn('Sections', 'Count-in into this section');
-      expect(ci.disabled).toBe(true);
-      expect(ci.title).toBe('The first section has no section before it');
+      expect(btn('Sections', 'Count-in into this section').disabled).toBe(false);
     });
 
     it('clicks send section-flags', async () => {
@@ -375,11 +366,18 @@ describe('Sections group', () => {
       expect(tempoActions()).toEqual([{ kind: 'section-name', index: 1, at: 6000, name: 'Bridge' }]);
     });
 
-    it('the master buttons still work in the nested Metronome group', async () => {
+    it('section 1 Count In is enabled and sends section-flags index=0 count_in=true', async () => {
       await open(meta());
-      await fireEvent.click(btn('Metronome', 'On/Off'));
+      pl.section = 0;
       await flush();
-      expect(of('player_metronome')).toHaveLength(1);
+      const ci = btn('Sections', 'Count-in into this section');
+      expect(ci.disabled).toBe(false);
+      expect(ci.title).toBe('');
+      await fireEvent.click(ci);
+      await flush();
+      expect(tempoActions()).toEqual([{ kind: 'section-flags', index: 0, at: 0, metronome: true, count_in: true }]);
+      expect(screen.queryByRole('button', { name: 'On/Off' })).toBeNull();
+      expect(screen.queryByRole('group', { name: 'Metronome' })).toBeNull();
     });
   });
 

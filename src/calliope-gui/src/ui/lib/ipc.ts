@@ -322,7 +322,6 @@ export interface PlayerSnapshot {
   mode: 'bpm' | 'time';
   tempo: TempoSnap;
   speed: number;
-  metronome: { on: boolean; count_in: boolean };
   loops: PlayerLoop[];
   /** index */
   current_loop: number | null;
@@ -388,7 +387,5 @@ export const playerLeave = (id: string): Promise<PlayerTransport> =>
   invoke<PlayerTransport>('player_leave', { id });
 export const playerTempo = (id: string, action: TempoAction): Promise<PlayerSnapshot> =>
   invoke<PlayerSnapshot>('player_tempo', { id, action });
-export const playerMetronome = (id: string, on: boolean, countIn: boolean): Promise<PlayerSnapshot> =>
-  invoke<PlayerSnapshot>('player_metronome', { id, on, countIn });
 export const playerLoop = (id: string, action: LoopAction): Promise<PlayerSnapshot> =>
   invoke<PlayerSnapshot>('player_loop', { id, action });

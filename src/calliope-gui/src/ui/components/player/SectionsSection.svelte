@@ -3,7 +3,7 @@
   import { formatBpm, scaleBpm } from '$lib/bpm-format';
   import { sectionClicks, sectionCountIn, MAX_SECTION_NAME } from '$lib/section-meta';
   import {
-    pl, removeChange, scaleSection, startAdd, targetSection, setMetronome, setSectionFlags, jumpSection,
+    pl, removeChange, scaleSection, startAdd, targetSection, setSectionFlags, jumpSection,
     beginNameEdit, commitSectionName, cancelSectionName,
   } from '$lib/player-state.svelte';
 
@@ -22,10 +22,7 @@
   const meta = $derived(target === null ? null : segs[target]);
   const clicks = $derived(meta ? sectionClicks(meta) : false);
   const countIn = $derived(meta ? sectionCountIn(meta) : false);
-  const noCountIn = $derived(none || target === null || target === 0);
-  const usable = $derived(pl.status === 'active' && pl.snap?.mode === 'bpm');
-  const mOn = $derived(pl.snap?.metronome.on ?? false);
-  const mCountIn = $derived(pl.snap?.metronome.count_in ?? false);
+  const noCountIn = $derived(none);
   const pressed = 'bg-amber-500! text-black! hover:bg-amber-500/90!';
   const nameValue = $derived(pl.nameEdit ? pl.nameEdit.draft : (meta?.name ?? ''));
   const message = $derived(pl.sectionError || (segs.length === 0 && pl.status === 'active' ? NEED_BPM : ''));
@@ -104,23 +101,6 @@
     >End ▶|</Button>
   </div>
   <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
-    <div class="flex items-center gap-2" role="group" aria-label="Metronome">
-      <span class="text-base">Metronome</span>
-      <Button
-        variant="outline"
-        class="h-[3.25rem] text-lg {mOn ? pressed : ''}"
-        aria-pressed={mOn}
-        disabled={!usable}
-        onclick={() => void setMetronome(!mOn, mCountIn)}
-      >On/Off</Button>
-      <Button
-        variant="outline"
-        class="h-[3.25rem] text-lg {mCountIn ? pressed : ''}"
-        aria-pressed={mCountIn}
-        disabled={!usable}
-        onclick={() => void setMetronome(mOn, !mCountIn)}
-      >Count In</Button>
-    </div>
     <div class="flex items-center gap-2" role="group" aria-label="This section">
       <span class="text-base">This section</span>
       <Button
@@ -138,7 +118,7 @@
         aria-label="Count-in into this section"
         aria-pressed={countIn && !noCountIn}
         disabled={noCountIn}
-        title={none ? NEED_BPM : noCountIn ? 'The first section has no section before it' : undefined}
+        title={none ? NEED_BPM : undefined}
         onclick={() => void setSectionFlags(clicks, !countIn)}
       >Count In</Button>
     </div>

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import {
-  closePlayer, getPlayer, openPlayer, playerLeave, playerLoop, playerMetronome, playerNudge, playerPause,
+  closePlayer, getPlayer, openPlayer, playerLeave, playerLoop, playerNudge, playerPause,
   playerPlay, playerSeek, playerSelectSource, playerSkip, playerTempo, watchPlayer,
 } from './ipc';
 import type { PlayerEvent } from './ipc';
@@ -25,12 +25,11 @@ describe('player ipc wrappers', () => {
     await playerSkip('t1', 5000);
     await playerLeave('t1');
     await playerTempo('t1', { kind: 'set-bpm', bpm: 92.5 });
-    await playerMetronome('t1', true, false);
     await playerLoop('t1', { kind: 'set', edge: 'start', value: { tick: 32 } });
     expect(calls.map((c) => c[0])).toEqual([
       'open_player', 'close_player', 'get_player', 'watch_player', 'player_select_source', 'player_play',
       'player_pause', 'player_seek', 'player_nudge', 'player_skip', 'player_leave', 'player_tempo',
-      'player_metronome', 'player_loop',
+      'player_loop',
     ]);
     const { events: e0, ...open } = calls[0][1];
     expect(open).toEqual({ id: 't1' });
@@ -46,8 +45,7 @@ describe('player ipc wrappers', () => {
     expect(calls[9][1]).toEqual({ id: 't1', delta: 5000 });
     expect(calls[10][1]).toEqual({ id: 't1' });
     expect(calls[11][1]).toEqual({ id: 't1', action: { kind: 'set-bpm', bpm: 92.5 } });
-    expect(calls[12][1]).toEqual({ id: 't1', on: true, countIn: false });
-    expect(calls[13][1]).toEqual({ id: 't1', action: { kind: 'set', edge: 'start', value: { tick: 32 } } });
+    expect(calls[12][1]).toEqual({ id: 't1', action: { kind: 'set', edge: 'start', value: { tick: 32 } } });
   });
 
   it('types the closed event of a released session', async () => {
