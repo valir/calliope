@@ -44,24 +44,24 @@
 
 ## Task log
 
-| Step | By | Result |
-|---|---|---|
-| plan | architect | 11 tasks; you confirmed Q1–Q4 as recommended and accepted Q5 |
-| task 1: tempo map, `on_beat` and section operations | implementer | done |
-| task 2: `player.json` schema 3 | implementer | done |
-| task 3: Player session `edit_sections`, IPC actions | implementer | done |
-| task 4: backend acceptance tests ts1–ts7 | implementer | done |
-| task 5: TS IPC types | **local (gemma4:26b-a4b-it-qat)** | done; edits exact, but it hit 40 turns and dropped a final newline (I restored it) |
-| task 6: `scaleBpm` | **local (gemma4:26b-a4b-it-qat)** | done; correct on the first try (I trimmed an extra trailing blank line) |
-| task 7: waveform geometry for free moves | implementer | done |
-| task 8: Player frontend state for sections | implementer | done |
-| task 9: editable waveform, BPM overlay | implementer | done |
-| task 10: Sections group, pane wiring, keys | implementer | done |
-| task 11: GUI e2e test, visual review, docs | implementer | done |
-| tester | tester | all criteria PASS; 21 extra tests; QD1 (low) found |
-| reviewer | reviewer | CHANGES REQUIRED: M1 major, m1 and m2 minor |
-| fix round 1 | implementer | M1, m1, m2, QD1 and a nit fixed |
-| re-verify | tester, reviewer | PASS, no new defects; APPROVED |
+| Step                                                | By                                | Result                                                                             |
+|-----------------------------------------------------|-----------------------------------|------------------------------------------------------------------------------------|
+| plan                                                | architect                         | 11 tasks; you confirmed Q1–Q4 as recommended and accepted Q5                       |
+| task 1: tempo map, `on_beat` and section operations | implementer                       | done                                                                               |
+| task 2: `player.json` schema 3                      | implementer                       | done                                                                               |
+| task 3: Player session `edit_sections`, IPC actions | implementer                       | done                                                                               |
+| task 4: backend acceptance tests ts1–ts7            | implementer                       | done                                                                               |
+| task 5: TS IPC types                                | **local (gemma4:26b-a4b-it-qat)** | done; edits exact, but it hit 40 turns and dropped a final newline (I restored it) |
+| task 6: `scaleBpm`                                  | **local (gemma4:26b-a4b-it-qat)** | done; correct on the first try (I trimmed an extra trailing blank line)            |
+| task 7: waveform geometry for free moves            | implementer                       | done                                                                               |
+| task 8: Player frontend state for sections          | implementer                       | done                                                                               |
+| task 9: editable waveform, BPM overlay              | implementer                       | done                                                                               |
+| task 10: Sections group, pane wiring, keys          | implementer                       | done                                                                               |
+| task 11: GUI e2e test, visual review, docs          | implementer                       | done                                                                               |
+| tester                                              | tester                            | all criteria PASS; 21 extra tests; QD1 (low) found                                 |
+| reviewer                                            | reviewer                          | CHANGES REQUIRED: M1 major, m1 and m2 minor                                        |
+| fix round 1                                         | implementer                       | M1, m1, m2, QD1 and a nit fixed                                                    |
+| re-verify                                           | tester, reviewer                  | PASS, no new defects; APPROVED                                                     |
 
 **The local model.** It did both of its tasks correctly, unlike the earlier models. On task 5 it ran out of turns; telling it to run the check once and stop fixed that for task 6.
 
@@ -123,15 +123,15 @@ Names and toggles are saved in `player.json`, which is now schema 4.
 
 ### Acceptance criteria (phase 2)
 
-| # | Criterion | Tests | Result |
-|---|---|---|---|
-| TS11 | Count-in into a section: the previous section's clicks make room for it (the new spec criterion) | `ts11_*`, `metronome::clicks_ts11_count_in`, `qa_p2_count_in_into_a_section_whose_own_metronome_is_off_*`, `qa_p2_overlapping_count_ins_*`, GUI `player_section_metronome` | PASS |
-| TS12 | Per-section Click; toggling while playing is heard from the next beat; master Off silences all | `ts12_*`, `qa_p2_master_off_*`, `qa_p2_typed_change_copies_*`, ControlBar.test, GUI step 4 | PASS |
-| TS13 | Count-in with the previous section off or short, at loop ends; Metronome controls in Sections | `ts13_*`, `qa_p2_loop_end_*`, acceptance_player.test | PASS |
-| TS14 | Start / End and Home / End while playing, paused and in a pre-roll | `ts14_*`, `qa_p2_jump_*`, acceptance_player.test, GUI | PASS |
-| TS15 | Names and flags survive close and reopen; name cleaning; name box | `ts15_*`, `qa_p2_names_*`, `qa_p2_flags_*`, section-meta.test, GUI step 8 | PASS |
-| TS16 | Schema 1–3 upgrade to 4; schema 5 read-only | `ts16_*`, `qa_p2_schema_4_read_*`, player_state | PASS |
-| TS17 | Add / Remove / Move / BPM / merge carry the settings as agreed | `ts17_*`, `qa_p2_edits_split_join_move_and_merge_*`, tempo_map | PASS |
+| #    | Criterion                                                                                        | Tests                                                                                                                                                                      | Result |
+|------|--------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------|
+| TS11 | Count-in into a section: the previous section's clicks make room for it (the new spec criterion) | `ts11_*`, `metronome::clicks_ts11_count_in`, `qa_p2_count_in_into_a_section_whose_own_metronome_is_off_*`, `qa_p2_overlapping_count_ins_*`, GUI `player_section_metronome` | PASS   |
+| TS12 | Per-section Click; toggling while playing is heard from the next beat; master Off silences all   | `ts12_*`, `qa_p2_master_off_*`, `qa_p2_typed_change_copies_*`, ControlBar.test, GUI step 4                                                                                 | PASS   |
+| TS13 | Count-in with the previous section off or short, at loop ends; Metronome controls in Sections    | `ts13_*`, `qa_p2_loop_end_*`, acceptance_player.test                                                                                                                       | PASS   |
+| TS14 | Start / End and Home / End while playing, paused and in a pre-roll                               | `ts14_*`, `qa_p2_jump_*`, acceptance_player.test, GUI                                                                                                                      | PASS   |
+| TS15 | Names and flags survive close and reopen; name cleaning; name box                                | `ts15_*`, `qa_p2_names_*`, `qa_p2_flags_*`, section-meta.test, GUI step 8                                                                                                  | PASS   |
+| TS16 | Schema 1–3 upgrade to 4; schema 5 read-only                                                      | `ts16_*`, `qa_p2_schema_4_read_*`, player_state                                                                                                                            | PASS   |
+| TS17 | Add / Remove / Move / BPM / merge carry the settings as agreed                                   | `ts17_*`, `qa_p2_edits_split_join_move_and_merge_*`, tempo_map                                                                                                             | PASS   |
 
 **Suites.** `npm test` passes: 1060 Rust tests and 594 vitest tests. In the full GUI suite every test passes except the known stem-extraction flake (below), which passed when re-run alone.
 

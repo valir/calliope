@@ -148,7 +148,7 @@ tester for the features.
 - [x] `gui-existing-track-import.md`: import an existing backing track from various sources
 - [x] `gui-play-backing-track.md`: start playing a backing track
 - [x] `stems-beat-autodetect.md`: specifies how the beat autodetection should work
-- [ ] `gui-player-tempo-sections.md`: edit tempo sections in the player
+- [x] `gui-player-tempo-sections.md`: edit tempo sections in the player
 - [ ] `gui-tablatures.md`: associate tablature to backing track
 - [ ] `gui-manipulate-backing-track.md`: associate tempo and MIDI commands into the backing track
 - [ ] `stems-empty-detection.md`: better detection of the empty resulting stems
