@@ -30,13 +30,13 @@ const ITEM_Y: [i32; 4] = [113, 167, 221, 275]; // Backing, Original mix, Vocals,
 const BPM: (i32, i32) = (534, 427);
 const PLAY: (i32, i32) = (477, 696);
 const TIME: (i32, i32) = (669, 695);
-// Loops group: `+` (line 1), `>` and `<` (line 2), Play, Loop On and Count-In (line 3).
-const LOOP_ADD: (i32, i32) = (962, 436);
+// Loops group: the label, `+` (line 1), `>` and `<` (line 2), Play, Loop On and Count-In (line 3).
+const LOOP_ADD: (i32, i32) = (1009, 436);
 const MARK_START: (i32, i32) = (881, 502);
 const MARK_END: (i32, i32) = (1222, 502);
-const LOOP_PLAY: (i32, i32) = (965, 571);
-const LOOP_ON: (i32, i32) = (1073, 571);
-const LOOP_COUNT_IN: (i32, i32) = (1193, 571);
+const LOOP_PLAY: (i32, i32) = (898, 571);
+const LOOP_ON: (i32, i32) = (1004, 571);
+const LOOP_COUNT_IN: (i32, i32) = (1122, 571);
 // The Sections group (name box next to the BPM in the title row, six icon-sized buttons, then Click and
 // Count In), the waveform (section 0 | the change bar at 8500 ms | section 1) and its labels.
 const SEC_NAME: (i32, i32) = (723, 427);

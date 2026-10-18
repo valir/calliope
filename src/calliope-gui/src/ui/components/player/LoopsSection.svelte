@@ -74,12 +74,13 @@
 
 <div class="flex min-w-0 max-w-[24rem] flex-1 basis-[23rem] flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Loops">
   <div class="flex flex-col gap-2">
-    <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Loop list">
-      <Button variant="outline" class={btn} disabled={!active || !(snap && snap.loops.length > 0)} onclick={() => void loop({ kind: 'select', delta: -1 })}>Prev</Button>
-      <Button variant="outline" class="{btn} w-12 px-0" disabled={!active} aria-label="Add loop" onclick={() => void loop({ kind: 'add' })}>+</Button>
+    <div class="flex flex-wrap items-center gap-x-1 gap-y-2" role="group" aria-label="Loop list">
+      <span class="text-lg font-semibold">Loops</span>
+      <Button variant="outline" class="{btn} px-2" disabled={!active || !(snap && snap.loops.length > 0)} onclick={() => void loop({ kind: 'select', delta: -1 })}>Prev</Button>
+      <Button variant="outline" class="{btn} w-11 px-0" disabled={!active} aria-label="Add loop" onclick={() => void loop({ kind: 'add' })}>+</Button>
       <input type="text" readonly tabindex="-1" class="w-16 rounded-md border border-input bg-background px-2 py-1 text-center text-xl tabular-nums" aria-label="Loop" data-testid="loop-box" value={boxText} />
-      <Button variant="outline" class="{btn} w-12 px-0" disabled={!active || !cur} aria-label="Remove loop" onclick={() => void loop({ kind: 'remove' })}>-</Button>
-      <Button variant="outline" class={btn} disabled={!active || !(snap && snap.loops.length > 0)} onclick={() => void loop({ kind: 'select', delta: 1 })}>Next</Button>
+      <Button variant="outline" class="{btn} w-11 px-0" disabled={!active || !cur} aria-label="Remove loop" onclick={() => void loop({ kind: 'remove' })}>-</Button>
+      <Button variant="outline" class="{btn} px-2" disabled={!active || !(snap && snap.loops.length > 0)} onclick={() => void loop({ kind: 'select', delta: 1 })}>Next</Button>
     </div>
     <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Loop range">
       <Button variant="outline" class="{btn} w-12 px-0" disabled={!active || !cur} aria-label="Mark start" onclick={() => void loop({ kind: 'mark', edge: 'start' })}>&gt;</Button>
@@ -114,7 +115,6 @@
       <Button variant="outline" class="{btn} w-12 px-0" disabled={!active || !cur} aria-label="Mark end" onclick={() => void loop({ kind: 'mark', edge: 'end' })}>&lt;</Button>
     </div>
     <div class="flex flex-wrap items-center gap-x-1.5 gap-y-2" role="group" aria-label="Loop playback">
-      <span class="text-lg font-semibold">Loops</span>
       <Button class="{btn} w-20" disabled={!active || !complete} onclick={() => void loop({ kind: pl.transport.loop_playing ? 'stop' : 'play' })}>
         {pl.transport.loop_playing ? 'Stop' : 'Play'}
       </Button>

@@ -182,8 +182,8 @@
   playhead, then the audio) when that section has Count In on; elsewhere Play starts at once. A loop's Play counts in only
   with the loop's own Count-In. Older files are migrated: a track whose old Metronome was Off is silent (all section
   Click and Count In off), one whose old Count In was on gets Count In on its first section.
-- Loops group (3 short lines, about 430 px): Prev, `+`, the loop box, `-`, Next; `>`, bar1, the progress slider,
-  bar2, `<`; then the "Loops" title with Play/Stop, Loop On and Count-In. `+` at the playhead makes a complete loop
+- Loops group (3 short lines, about 430 px): the "Loops" title, Prev, `+`, the loop box, `-`, Next (4 px gaps so
+  the line fits); `>`, bar1, the progress slider, bar2, `<`; then Play/Stop, Loop On and Count-In. `+` at the playhead makes a complete loop
   at once: it ends at the next section change, or at the track end in the last section (or when nothing follows),
   so Play works straight away; `<` at or before the loop start is refused with a message.
 - Name box: text up to 40 characters, trimmed. Enter or leaving the box saves, Escape drops the edit. While it

@@ -18,9 +18,9 @@ const BPM: (i32, i32) = (534, 427);
 const TIME: (i32, i32) = (669, 695);
 const SEC_CLICK: (i32, i32) = (384, 544);
 const SEC_COUNT_IN: (i32, i32) = (481, 544);
-const LOOP_ADD: (i32, i32) = (962, 436);
+const LOOP_ADD: (i32, i32) = (1009, 436);
 const MARK_END: (i32, i32) = (1222, 502);
-const LOOP_PLAY: (i32, i32) = (965, 571);
+const LOOP_PLAY: (i32, i32) = (898, 571);
 
 fn secs(s: u64) -> Duration {
     Duration::from_secs(s)

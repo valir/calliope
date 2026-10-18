@@ -114,7 +114,8 @@ describe('AC2-4, 9: pane structure and the inactive state', () => {
     const bpm = within(sections).getByRole('group', { name: 'BPM' });
     const status = screen.getByTestId('section-status');
     expect(bpm.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(group('Loops').getByText('Loops')).toBeTruthy();
+    // The Loops label opens the first line of the group.
+    expect(within(group('Loops').getByRole('group', { name: 'Loop list' })).getByText('Loops')).toBeTruthy();
     const playback = group('Playback');
     for (const n of ['Rew', 'Play', 'FF']) expect(playback.getByRole('button', { name: n })).toBeTruthy();
     expect(playback.getByRole('textbox')).toBeTruthy();
