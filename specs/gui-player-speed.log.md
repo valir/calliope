@@ -14,3 +14,4 @@ task 11 | Frontend speed formatting helpers | implementer (moved from local: new
 task 12 | Frontend Player state for speed and training | implementer | done
 task 13 | Speed group in the Playback pane, keys | implementer | done (GUI click positions follow in task 15)
 task 14 | Train... button and the training popover | implementer | done (label 'Train...' per the 2.9 fallback; GUI positions follow in task 15)
+task 16 | README Player usage | local (gemma4, exact edit, correct first try) | done
