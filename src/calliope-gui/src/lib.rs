@@ -24,6 +24,7 @@ pub mod player_source;
 pub mod player_state;
 pub mod repository;
 pub mod settings;
+pub mod speed;
 pub mod stem_audio;
 pub mod tempo_detect;
 pub mod tempo_map;
