@@ -114,7 +114,7 @@ Names and toggles are saved in `player.json`, which is now schema 4.
   - When the previous section is shorter than the count-in, they reach back into earlier sections.
   - The section's own first beat clicks only if its Click is on.
 - **When it plays:** only when playing through the section start, not when Play or a loop starts there. It is skipped at the end of a repeating loop that ends at that section.
-- **Master switch:** Metronome On/Off silences everything, count-ins included.
+- **Master switch:** Metronome On/Off silenced everything, count-ins included (removed in phase 3).
 - **What edits do with the settings:**
   - Add copies Click and gives no name or count-in.
   - Remove drops the removed section's settings.
@@ -279,7 +279,7 @@ Laptop only. Nothing changes on archserver.
 ## Manual checks (laptop with real audio)
 
 - [ ] **M1, Deja-Vu intro.**
-  - Metronome On, Play from the start.
+  - Click on in the sections, Play from the start.
   - Select a wrong intro section and Remove it (or press Delete) until the intro is one section.
   - Click its label and type the right BPM: the clicks follow from the next beat, and playback doesn't stop.
 - [ ] **M2, half tempo.** Select a 93 BPM section and press ×2. The label shows 186 and the clicks double from the next beat; ÷2 restores it.
@@ -297,13 +297,13 @@ Laptop only. Nothing changes on archserver.
 - [ ] **M7, keys.** With the waveform focused, Space plays and pauses, and `b`/`e` mark the loop.
 
 - [ ] **M8, count-in into a section.**
-  - On Deja-Vu, turn Count In on for the section after the intro. With the Metronome On, play from a few bars before it.
+  - On Deja-Vu, turn Count In on for the section after the intro. With Click on, play from a few bars before it.
   - The last bar counts "1, 2, 3" at the new tempo, and the new section starts on the next beat.
   - If it doesn't sound right musically, we revisit the count-in rule.
 - [ ] **M9, sections without clicks.**
   - Turn Click off for the intro: it is silent, and clicks start with the next section.
   - With the next section's Count In on, the count-in still plays over the silent intro.
-  - Metronome On/Off silences everything.
+  - (Phase 3: there is no global On/Off any more; see M17.)
 - [ ] **M10, practising one section.** Loop exactly one section whose next section has Count In, with Loop On. No count-in at the loop end; without the loop it plays.
 - [ ] **M11, Start / End.**
   - While playing, End (or the End key) jumps to the section's last bar without a gap, and Start (Home) jumps back.
