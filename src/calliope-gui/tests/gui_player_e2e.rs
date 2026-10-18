@@ -27,31 +27,30 @@ const BLANK: (i32, i32) = (356, 47); // the "Play:" label: a click there only re
 const TRIGGER: (i32, i32) = (555, 47);
 const ITEM_X: i32 = 500;
 const ITEM_Y: [i32; 4] = [113, 167, 221, 275]; // Backing, Original mix, Vocals, Guitar
-const BPM: (i32, i32) = (445, 272);
-const METRO: (i32, i32) = (761, 383);
-const METRO_COUNT_IN: (i32, i32) = (867, 383);
-const PLAY: (i32, i32) = (477, 495);
-const TIME: (i32, i32) = (669, 494);
-const LOOP_ADD: (i32, i32) = (457, 634);
-const MARK_START: (i32, i32) = (798, 634);
-const MARK_END: (i32, i32) = (1203, 634);
-const LOOP_PLAY: (i32, i32) = (402, 701);
-const LOOP_ON: (i32, i32) = (517, 701);
-const LOOP_COUNT_IN: (i32, i32) = (633, 701);
-// The Sections group (name box, buttons, the Metronome sub-group and the "This section" toggles), the
-// waveform (section 0 | the change bar at 8500 ms | section 1) and its labels.
-const SEC_NAME: (i32, i32) = (1043, 266);
-const SEC_ADD: (i32, i32) = (643, 320);
-const SEC_REMOVE: (i32, i32) = (734, 320);
-const SEC_DOUBLE: (i32, i32) = (820, 320);
-const SEC_START: (i32, i32) = (965, 320);
-const SEC_END: (i32, i32) = (1072, 320);
-const SEC_CLICK: (i32, i32) = (1082, 383);
-const SEC_COUNT_IN: (i32, i32) = (1179, 383);
-const WAVE_BAR: (i32, i32) = (729, 180);
-const WAVE_SECTION0: (i32, i32) = (450, 180);
-const WAVE_SECTION1: (i32, i32) = (1000, 180);
-const WAVE_LABEL0: (i32, i32) = (370, 215);
+const BPM: (i32, i32) = (534, 427);
+const PLAY: (i32, i32) = (477, 696);
+const TIME: (i32, i32) = (669, 695);
+// Loops group: `+` (line 1), `>` and `<` (line 2), Play, Loop On and Count-In (line 3).
+const LOOP_ADD: (i32, i32) = (962, 436);
+const MARK_START: (i32, i32) = (881, 502);
+const MARK_END: (i32, i32) = (1222, 502);
+const LOOP_PLAY: (i32, i32) = (965, 571);
+const LOOP_ON: (i32, i32) = (1073, 571);
+const LOOP_COUNT_IN: (i32, i32) = (1193, 571);
+// The Sections group (name box next to the BPM in the title row, six icon-sized buttons, then Click and
+// Count In), the waveform (section 0 | the change bar at 8500 ms | section 1) and its labels.
+const SEC_NAME: (i32, i32) = (723, 427);
+const SEC_ADD: (i32, i32) = (376, 485);
+const SEC_REMOVE: (i32, i32) = (438, 485);
+const SEC_DOUBLE: (i32, i32) = (501, 485);
+const SEC_START: (i32, i32) = (628, 485);
+const SEC_END: (i32, i32) = (691, 485);
+const SEC_CLICK: (i32, i32) = (384, 544);
+const SEC_COUNT_IN: (i32, i32) = (481, 544);
+const WAVE_BAR: (i32, i32) = (729, 337);
+const WAVE_SECTION0: (i32, i32) = (450, 337);
+const WAVE_SECTION1: (i32, i32) = (1000, 337);
+const WAVE_LABEL0: (i32, i32) = (370, 372);
 
 fn secs(s: u64) -> Duration {
     Duration::from_secs(s)
@@ -239,7 +238,7 @@ fn play_and_change_source() {
     assert_eq!(app.count("player seek"), 0, "playing or pausing caused a seek");
 
     // Clicking the position slider seeks (its middle is about 10 s of the 20 s).
-    app.click(&wid, 798, 546);
+    app.click(&wid, 999, 696);
     let l = app.wait_contains("calliope-ui: player seek position=");
     assert!((8500..11500).contains(&position_of(&l)), "{l}");
     finish(&app);
@@ -267,9 +266,7 @@ fn tempo_metronome_count_in() {
     assert_eq!(v["tempo"]["segments"][0]["start_ms"].as_f64(), Some(1000.0), "{v}");
     assert_eq!(v["tempo"]["segments"][0]["bpm"].as_f64(), Some(120.0), "{v}");
 
-    // Metronome on: clicks every 500 ms.
-    at(&app, &wid, METRO);
-    app.wait_contains("player metronome on=true");
+    // A new map clicks in every section (Click is on): clicks every 500 ms.
     let start = mark(&app, &cap);
     at(&app, &wid, PLAY);
     app.wait_contains("audio backend=capture");
@@ -285,14 +282,15 @@ fn tempo_metronome_count_in() {
     for w in on.windows(2) {
         assert!((w[1] - w[0] - 500.0).abs() <= 5.0, "clicks are not 500 ms apart: {on:?}");
     }
-    at(&app, &wid, METRO);
-    app.wait_contains("player metronome on=false");
 
-    // Count-in with the guitar: three clicks 500 ms apart, then the tone after 1500 ms.
+    // Count-in with the guitar: Click off and Count In on in section 1, so the only clicks are
+    // three 500 ms apart, then the tone after 1500 ms.
     choose_source(&app, &wid, 3);
     app.wait_contains("player source key=stem:guitar");
-    at(&app, &wid, METRO_COUNT_IN);
-    app.wait_contains("player metronome on=false count_in=true");
+    at(&app, &wid, SEC_CLICK);
+    app.wait_contains("player section flags index=0 metronome=false count_in=false");
+    at(&app, &wid, SEC_COUNT_IN);
+    app.wait_contains("player section flags index=0 metronome=false count_in=true");
     enter(&app, &wid, TIME, "0:01.0");
     app.wait_line(|l| l.contains("player seek position=1000"), secs(10));
     let start = mark(&app, &cap);
@@ -319,7 +317,7 @@ fn tempo_metronome_count_in() {
     finish(&app);
 }
 
-const SECTIONS_FIXTURE: &str = r#"{"schema_version":2,"tempo":{"beats_per_bar":4,"segments":[
+const SECTIONS_FIXTURE: &str = r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[
     {"start_ms":500,"bpm":120},{"start_ms":8500,"bpm":93,"detected_ms":8500}]}}"#;
 
 /// The backend's line for a moved change (the frontend logs its own after the answer).
@@ -378,12 +376,10 @@ fn player_tempo_sections() {
     app.key(&wid, "Return");
     app.wait_contains("player sections segments=2 bpm=110,93");
 
-    // 5. Section 1 is the target; double it while the metronome plays.
+    // 5. Section 1 is the target; double it while its clicks play.
     at(&app, &wid, WAVE_SECTION1);
     enter(&app, &wid, TIME, "0:11.0");
     app.wait_contains("player seek position=11000");
-    at(&app, &wid, METRO);
-    app.wait_contains("player metronome on=true");
     let start = mark(&app, &cap);
     app.skip_seen();
     at(&app, &wid, PLAY);
@@ -425,7 +421,7 @@ fn player_tempo_sections() {
     let l = app.wait_contains("player sections segments=2 bpm=110,186");
     assert_eq!(starts_of(&l), doubled, "{l}");
 
-    // 8. Restart: the same sections, schema 3.
+    // 8. Restart: the same sections, schema 5.
     app.close_gracefully(&wid);
     app.wait_exit(secs(5));
     let v = serde_json::from_slice::<Value>(&std::fs::read(dirs.player_json(PL_PRACTICE)).unwrap()).unwrap();
@@ -455,7 +451,7 @@ fn player_section_metronome() {
     pick(&mut app, &wid, &mut collapsed, "practice song", PL_PRACTICE);
     let cap = dirs.capture();
 
-    // 1. Every section clicks, no count-in, no names.
+    // 1. Every section clicks, no count-in, no names (a schema 5 file without flags).
     assert_eq!(app.count("player sections segments=2 bpm=120,93 starts=500,8500 metronome=1,1 count_in=0,0 named=0"), 1);
     shot("player-sections-p2");
 
@@ -465,8 +461,6 @@ fn player_section_metronome() {
     app.wait_contains("player section flags index=1 metronome=true count_in=true");
 
     // 3. Played from 5.0 s: the 120-BPM clicks of the last bar (6500 .. 8000) become three clicks at 93 BPM.
-    at(&app, &wid, METRO);
-    app.wait_contains("player metronome on=true");
     let play_from = |app: &mut App, wid: &str, play_ms: u64| -> Vec<f64> {
         enter(app, wid, TIME, "0:05.0");
         app.wait_line(|l| l.contains("player seek position=5000"), secs(10));
@@ -532,7 +526,7 @@ fn player_section_metronome() {
     let l = app.wait_contains("player section jump index=1 edge=start");
     assert_eq!(position_of(&l), 8500, "{l}");
 
-    // 7. Saved as schema 4.
+    // 7. Saved as schema 5.
     ms(600);
     let v = wait_json(&dirs, PL_PRACTICE, |v| v["tempo"]["segments"][1]["name"] == "Verse");
     assert_eq!(v["schema_version"], 5, "{v}");
@@ -568,15 +562,15 @@ fn loops() {
     enter(&app, &wid, TIME, "0:02.0");
     app.wait_contains("player seek position=2000");
 
-    // `+` starts a loop without an end; its Play is disabled.
+    // `+` makes a complete loop at once: with one section it ends at the track end (20 s; the
+    // nearest beat of the 120-BPM grid before it).
     at(&app, &wid, LOOP_ADD);
     let l = app.wait_contains("player loop add");
-    assert!(l.contains("complete=false"), "{l}");
+    assert!(l.contains("complete=true"), "{l}");
+    let end: f64 = field(&l, "end").parse().unwrap();
+    assert!(end <= 20000.0 && end > 19900.0, "{l}");
     ms(300);
-    shot("player-loop-incomplete");
-    at(&app, &wid, LOOP_PLAY);
-    ms(700);
-    assert_eq!(app.count("player loop play"), 0, "the loop Play must be disabled without an end");
+    shot("player-loop-added");
 
     // Playing on, `<` ends the loop at the position.
     at(&app, &wid, PLAY);
@@ -623,12 +617,18 @@ fn loops() {
     at(&app, &wid, LOOP_PLAY);
     app.wait_contains("player loop stop");
 
-    // `>` after the loop's end drops the end.
+    // `>` after the loop's end drops the end; the loop is incomplete again.
     enter(&app, &wid, TIME, "0:06.0");
     app.wait_line(|l| l.contains("player seek position=6000"), secs(10));
     at(&app, &wid, MARK_START);
     let l = app.wait_contains("player loop mark-start");
     assert!(l.contains("complete=false"), "{l}");
+    ms(300);
+    shot("player-loop-incomplete");
+    let plays = app.count("player loop play");
+    at(&app, &wid, LOOP_PLAY);
+    ms(700);
+    assert_eq!(app.count("player loop play"), plays, "the loop Play must be disabled without an end");
     finish(&app);
 }
 
@@ -728,17 +728,25 @@ fn other_sources_and_leaving() {
 /// The waveform of "with tempo" (20 s; sections at 0.5 s and 10.5 s) in the floated window: its
 /// left and right edge, the y of its middle and the y of its label row. The tree state decides
 /// where it is; the values were read from the screenshots of the sweep.
-fn wave_box(w: u32, collapsed: bool) -> (i32, i32, i32, i32) {
+fn wave_box(w: u32, h: u32, collapsed: bool) -> (i32, i32, i32, i32) {
     let left = if collapsed { 334 } else { 634 };
     // at 1024 px with the tree shown the title wraps onto its own row
     let down = if !collapsed && w < 1280 { 35 } else { 0 };
-    (left, w as i32 - 19, 180 + down, 216 + down)
+    // at 800 px with the tree collapsed the tablature placeholder is as tall as the pane allows
+    // and the waveform sits just above the Sections and Loops row
+    let tall = if collapsed && h >= 800 { 157 } else { 0 };
+    (left, w as i32 - 19, 180 + down + tall, 216 + down + tall)
+}
+
+/// The last `player layout overflow=... width=... loops_beside=...` line (logged 300 ms after the pane's size changed).
+fn last_layout(app: &App) -> String {
+    app.all_lines().into_iter().rev().find(|l| l.contains("player layout overflow=")).expect("a player layout line")
 }
 
 /// "Section selected" (a click in section 1: its bar is drawn 4 px wide) and "overlay open" (its
 /// label clicked) screenshots. Ends with section 0 selected and the overlay closed.
-fn sections_states(app: &App, wid: &str, name: impl Fn(&str) -> String, w: u32, collapsed: bool) {
-    let (x0, x1, y, label_y) = wave_box(w, collapsed);
+fn sections_states(app: &App, wid: &str, name: impl Fn(&str) -> String, w: u32, h: u32, collapsed: bool) {
+    let (x0, x1, y, label_y) = wave_box(w, h, collapsed);
     let bar = x0 + (x1 - x0) * 10500 / 20000;
     app.click(wid, bar + 60, y);
     settle();
@@ -754,7 +762,8 @@ fn sections_states(app: &App, wid: &str, name: impl Fn(&str) -> String, w: u32, 
 /// Screenshots for the visual review (`target/gui-shots/player-*.png`): dark and light, 1280x800
 /// and 1024x640, tree shown and collapsed; inactive, active (complete and incomplete loops on the
 /// waveform) and counting in. The shots are looked at by hand; the test only checks that the
-/// window keeps the size and that nothing is logged as an error.
+/// window keeps the size, that nothing is logged as an error, and (1280x800, tree collapsed) the
+/// layout target; the measured `player layout` lines go to `target/gui-shots/player-<theme>-layout.txt`.
 ///
 /// The full sweep (about 46 screenshots) only runs with `CALLIOPE_GUI_SHOTS=1`; by default the test
 /// runs the same flow (tree collapse, count-in) in dark at 1280x800 and takes one screenshot.
@@ -769,16 +778,25 @@ fn visual_review() {
     let sizes: &[(u32, u32)] = if sweep { &[(1280, 800), (1024, 640)] } else { &[(1280, 800)] };
     for &theme in themes {
         let dirs = player_dirs(&format!("player_visual_{theme}"));
-        // Section 1 of "with tempo" is named and has its count-in on, so selecting it shows the toggles on.
+        // Section 1 of "with tempo" is named and has its count-in on, so selecting it shows the toggles on;
+        // section 0 has Click and Count In on. The file is rewritten as schema 5 (no master metronome), so
+        // the section flags are the ones written here.
         let file = dirs.player_json(PL_TEMPO);
         let mut v: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
         v["tempo"]["segments"][1]["name"] = "Verse".into();
         v["tempo"]["segments"][1]["count_in"] = true.into();
+        v["schema_version"] = 5.into();
+        v.as_object_mut().unwrap().remove("metronome");
+        for i in 0..2 {
+            v["tempo"]["segments"][i]["metronome"] = true.into();
+        }
+        v["tempo"]["segments"][0]["count_in"] = true.into();
         std::fs::write(&file, serde_json::to_vec(&v).unwrap()).unwrap();
         std::fs::create_dir_all(dirs.app_config()).unwrap();
         std::fs::write(dirs.app_config().join("settings.json"), format!(r#"{{"theme":"{theme}"}}"#)).unwrap();
         let (mut app, wid) = start_player(&dirs);
         let name = |size: &str, tree: &str, what: &str| format!("player-{theme}-{size}-{tree}-{what}");
+        let mut layouts: Vec<String> = Vec::new();
 
         for &(w, h) in sizes {
             size(&wid, w, h);
@@ -790,9 +808,6 @@ fn visual_review() {
         size(&wid, 1280, 800);
         let mut collapsed = false;
         pick(&mut app, &wid, &mut collapsed, "with tempo", PL_TEMPO);
-        // Count In on (the buttons are at known places at 1280x800 with the tree collapsed).
-        at(&app, &wid, METRO_COUNT_IN);
-        app.wait_contains("player metronome on=false count_in=true");
 
         for &(w, h) in sizes {
             size(&wid, w, h);
@@ -804,11 +819,19 @@ fn visual_review() {
                     collapsed = !collapsed;
                 }
                 settle();
+                ms(600);
+                let l = last_layout(&app);
+                println!("LAYOUT {theme} {sz} tree={tree}: {l}");
+                layouts.push(format!("{theme} {sz} tree={tree}: {}", l.split("player layout ").nth(1).unwrap_or(&l)));
+                if w == 1280 && tree == "rail" {
+                    assert_eq!(field(&l, "loops_beside"), "1", "{l}");
+                    assert!(field(&l, "overflow").parse::<i32>().unwrap() <= 14, "{l}");
+                }
                 if sweep || tree == "shown" {
                     shot(&name(&sz, tree, "active"));
                 }
                 if sweep {
-                    sections_states(&app, &wid, |what| name(&sz, tree, what), w, collapsed);
+                    sections_states(&app, &wid, |what| name(&sz, tree, what), w, h, collapsed);
                     // How far the pane scrolls: compare with the unscrolled shot above.
                     app.wheel(&wid, 900, 450, false, 15);
                     ms(400);
@@ -830,6 +853,115 @@ fn visual_review() {
                 app.wait_line(|l| l.contains("player pause"), secs(10));
             }
         }
+        // Kept for the review (the test output is only shown on failure).
+        let dir = repo().join("target/gui-shots");
+        std::fs::write(dir.join(format!("player-{theme}-layout.txt")), layouts.join("\n") + "\n").unwrap();
         finish(&app);
     }
+}
+
+/// Phase 3: the compact layout (Sections beside Loops, nothing to scroll at 1280x800 with the tree
+/// folded), the Play count-in of the section under the playhead (and none elsewhere), the default
+/// loop end of `+` and the schema 5 file.
+#[test]
+#[ignore]
+fn player_phase3() {
+    if !ready() {
+        return;
+    }
+    let dirs = player_dirs("player_phase3");
+    // Section 1 does not click, section 2 counts in.
+    std::fs::write(
+        dirs.player_json(PL_PRACTICE),
+        r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[
+            {"start_ms":500,"bpm":120,"metronome":false},
+            {"start_ms":8500,"bpm":93,"detected_ms":8500,"count_in":true}]}}"#,
+    )
+    .unwrap();
+    let (mut app, wid) = start_player(&dirs);
+    let mut collapsed = false;
+    pick(&mut app, &wid, &mut collapsed, "practice song", PL_PRACTICE);
+    let cap = dirs.capture();
+
+    // 1. Layout: one row for Sections and Loops, no scrolling.
+    ms(800);
+    let l = last_layout(&app);
+    println!("LAYOUT 1280x800 tree folded: {l}");
+    assert_eq!(field(&l, "loops_beside"), "1", "{l}");
+    let overflow: i32 = field(&l, "overflow").parse().unwrap();
+    assert!(overflow <= 14, "the Player pane scrolls by {overflow} px: {l}");
+    shot("player-p3-layout");
+
+    // 2. Play inside section 2 (Count In on): three clicks at its tempo, then the tone.
+    enter(&app, &wid, TIME, "0:10.0");
+    app.wait_line(|l| l.contains("player seek position=10000"), secs(10));
+    let start = mark(&app, &cap);
+    app.skip_seen();
+    at(&app, &wid, BLANK);
+    app.key(&wid, "space");
+    app.wait_contains("audio backend=capture");
+    app.wait_contains("player count-in clicks=3 beat_ms=645 section=1");
+    app.wait_contains("player play");
+    let rate = rate_of(&app);
+    ms(300);
+    shot("player-p3-count-in");
+    ms(2800);
+    app.key(&wid, "space");
+    app.wait_contains("player pause");
+    let heard = since(&app, &cap, start);
+    let clicks = click_onsets_ms(&heard, rate);
+    assert!(clicks.len() >= 3, "count-in clicks: {clicks:?}");
+    for w in clicks[..3].windows(2) {
+        assert!((w[1] - w[0] - 645.16).abs() <= 5.0, "{clicks:?}");
+    }
+    let tone = tone_start_ms(&heard, rate, 330.0).expect("the backing starts");
+    assert!((tone - clicks[0] - 3.0 * 645.16).abs() <= 10.0, "the tone starts at {tone} ms, the first click at {} ms", clicks[0]);
+
+    // 3. Play inside section 1 (no Count In, no Click): no count-in, the tone at once, no click.
+    let count_ins = app.count("player count-in");
+    enter(&app, &wid, TIME, "0:02.0");
+    app.wait_line(|l| l.contains("player seek position=2000"), secs(10));
+    let start = mark(&app, &cap);
+    app.skip_seen();
+    at(&app, &wid, BLANK);
+    app.key(&wid, "space");
+    app.wait_contains("player play");
+    ms(1500);
+    app.key(&wid, "space");
+    app.wait_contains("player pause");
+    assert_eq!(app.count("player count-in"), count_ins, "a count-in in a section without Count In");
+    let heard = since(&app, &cap, start);
+    let tone = tone_start_ms(&heard, rate, 330.0).expect("the backing starts");
+    // The capture also holds the silence between the mark and the key press; a count-in would add 1500 ms.
+    assert!(tone <= 1000.0, "the tone starts after {tone} ms");
+    // (the tone's own start shows up as an onset in the click band; nothing else may)
+    let clicks: Vec<f64> = click_onsets_ms(&heard, rate).into_iter().filter(|c| (c - tone).abs() > 20.0).collect();
+    assert!(clicks.is_empty(), "section 1 does not click: {clicks:?} tone={tone}");
+
+    // 4. `+` ends the loop at the next section change, or at the track end in the last section.
+    enter(&app, &wid, TIME, "0:03.0");
+    app.wait_line(|l| l.contains("player seek position=3000"), secs(10));
+    app.skip_seen();
+    at(&app, &wid, LOOP_ADD);
+    let l = app.wait_contains("player loop add");
+    assert_eq!(field(&l, "complete"), "true", "{l}");
+    let end: f64 = field(&l, "end").parse().unwrap();
+    assert!((end - 8500.0).abs() <= 1.0, "{l}");
+    enter(&app, &wid, TIME, "0:12.0");
+    app.wait_line(|l| l.contains("player seek position=12000"), secs(10));
+    app.skip_seen();
+    at(&app, &wid, LOOP_ADD);
+    let l = app.wait_contains("player loop add");
+    assert_eq!(field(&l, "complete"), "true", "{l}");
+    let end: f64 = field(&l, "end").parse().unwrap();
+    assert!(end <= 20001.0 && end > 20000.0 - 2.0 * 60000.0 / 93.0 / 64.0, "{l}");
+
+    // 5. Saved as schema 5, without the master metronome; the first loop ends on the tick of 8500 ms.
+    ms(600);
+    let v = wait_json(&dirs, PL_PRACTICE, |v| v["loops"].as_array().is_some_and(|a| a.len() == 2));
+    assert_eq!(v["schema_version"], 5, "{v}");
+    assert!(v.get("metronome").is_none(), "{v}");
+    let tick = v["loops"][0]["end"]["tick"].as_i64().expect("a tick end");
+    assert_eq!(tick, 256, "{v}"); // (8500 - 500) ms at 120 BPM, 16 ticks per beat (31.25 ms)
+    finish(&app);
 }

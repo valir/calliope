@@ -1,4 +1,4 @@
-//! QA acceptance GUI tests for the Player (hostile files, BPM 0, loops without an end). Run with:
+//! QA acceptance GUI tests for the Player (hostile files, BPM 0, a loop end that is refused). Run with:
 //! `DISPLAY=:1 cargo test --features e2e-hooks --test gui_player_acceptance_e2e -- --ignored --test-threads=1`
 //! NullBackend with a capture file only: no real audio device is ever opened.
 #![cfg(feature = "e2e-hooks")]
@@ -13,13 +13,14 @@ fn ready() -> bool {
     have_display() && have("xdotool") && have("i3-msg")
 }
 const BLANK: (i32, i32) = (356, 47);
-const PLAY: (i32, i32) = (477, 495);
-const BPM: (i32, i32) = (445, 272);
-const METRO: (i32, i32) = (761, 383);
-const METRO_COUNT_IN: (i32, i32) = (867, 383);
-const LOOP_ADD: (i32, i32) = (457, 634);
-const MARK_END: (i32, i32) = (1203, 634);
-const LOOP_PLAY: (i32, i32) = (402, 701);
+const PLAY: (i32, i32) = (477, 696);
+const BPM: (i32, i32) = (534, 427);
+const TIME: (i32, i32) = (669, 695);
+const SEC_CLICK: (i32, i32) = (384, 544);
+const SEC_COUNT_IN: (i32, i32) = (481, 544);
+const LOOP_ADD: (i32, i32) = (962, 436);
+const MARK_END: (i32, i32) = (1222, 502);
+const LOOP_PLAY: (i32, i32) = (965, 571);
 
 fn secs(s: u64) -> Duration {
     Duration::from_secs(s)
@@ -101,7 +102,7 @@ fn newer_schema_player_json_is_left_alone() {
     assert_eq!(std::fs::read_to_string(dirs.player_json(PL_PRACTICE)).unwrap(), text);
 }
 
-/// BPM 0: bad BPM texts are refused, the metronome buttons do nothing, and Play makes no click.
+/// BPM 0: bad BPM texts are refused, the section Click and Count In buttons do nothing, and Play makes no click.
 #[test]
 #[ignore]
 fn bpm_zero_has_no_clicks_and_bad_bpm_text_is_refused() {
@@ -120,10 +121,10 @@ fn bpm_zero_has_no_clicks_and_bad_bpm_text_is_refused() {
     }
     shot("qa-player-bad-bpm");
     app.skip_seen();
-    at(&app, &wid, METRO);
-    at(&app, &wid, METRO_COUNT_IN);
+    at(&app, &wid, SEC_CLICK);
+    at(&app, &wid, SEC_COUNT_IN);
     ms(300);
-    assert_eq!(app.count("player metronome"), 0, "the disabled metronome buttons acted");
+    assert_eq!(app.count("player section flags"), 0, "the disabled section buttons acted");
     let start = (capture_len(&cap), app.count("audio backend=capture"));
     at(&app, &wid, BLANK);
     app.key(&wid, "space");
@@ -142,31 +143,43 @@ fn bpm_zero_has_no_clicks_and_bad_bpm_text_is_refused() {
     app.assert_no_real_audio();
 }
 
-/// `+` then `<` at the start: refused with the message; Loop Play stays disabled.
+/// `+` ends the loop at the next section change; `<` at the loop's start is refused with the
+/// message and keeps the end; Loop Play stays enabled.
 #[test]
 #[ignore]
-fn loop_without_end_refuses_end_at_start_in_the_gui() {
+fn loop_add_ends_at_the_next_section_and_a_bad_end_is_refused() {
     if !ready() {
         return;
     }
     let dirs = player_dirs("qa_player_loop_noend");
+    std::fs::write(
+        dirs.player_json(PL_PRACTICE),
+        r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[
+            {"start_ms":500,"bpm":120},{"start_ms":8500,"bpm":93,"detected_ms":8500}]}}"#,
+    )
+    .unwrap();
     let (mut app, wid) = start_player(&dirs);
     pick(&mut app, &wid, "practice song", PL_PRACTICE);
+    enter(&app, &wid, TIME, "0:03.0");
+    app.wait_contains("player seek position=3000");
     at(&app, &wid, LOOP_ADD);
-    app.wait_contains("player loop add");
+    let l = app.wait_contains("player loop add");
+    assert_eq!(field(&l, "complete"), "true", "{l}");
+    let end: f64 = field(&l, "end").parse().unwrap();
+    assert!((end - 8500.0).abs() <= 1.0, "{l}");
     app.skip_seen();
     at(&app, &wid, MARK_END);
     let l = app.wait_contains("player loop mark-end");
-    assert_eq!(field(&l, "complete"), "false", "{l}");
+    assert_eq!(field(&l, "complete"), "true", "{l}");
+    assert!((field(&l, "end").parse::<f64>().unwrap() - 8500.0).abs() <= 1.0, "the refused end changed the loop: {l}");
     ms(300);
     shot("qa-player-loop-end-refused");
     app.skip_seen();
     at(&app, &wid, LOOP_PLAY);
-    ms(500);
-    assert_eq!(app.count("player loop play"), 0, "Play of a loop without an end acted");
+    app.wait_contains("player loop play");
     ms(1500);
     let v = json(&dirs, PL_PRACTICE).unwrap();
-    assert!(v["loops"][0]["end"].is_null(), "{v}");
+    assert!(v["loops"][0]["end"]["tick"].is_i64(), "{v}");
     app.no_csp_violation();
 }
 

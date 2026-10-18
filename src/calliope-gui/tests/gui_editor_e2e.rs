@@ -423,7 +423,7 @@ fn mix_waveform_and_autodetect() {
 
 const TAB_TABLATURE: (i32, i32) = (737, 36);
 const TAB_STEMS: (i32, i32) = (664, 36);
-const PLAYER_LOOP_ADD: (i32, i32) = (457, 634); // 1280x800, track tree collapsed
+const PLAYER_LOOP_ADD: (i32, i32) = (962, 436); // 1280x800, track tree collapsed
 
 /// Waits until no process of the test runs the stub beat tracker (up to 5 s).
 fn assert_no_tracker(app: &App) {
