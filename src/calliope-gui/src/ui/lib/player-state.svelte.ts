@@ -17,11 +17,14 @@ import {
   type PlayerEvent,
   type PlayerSnapshot,
   type PlayerTransport,
+  type TrainingPlan,
+  type TempoAction,
   type TempoSegment,
   type TrackRecord,
 } from './ipc';
 import { selectTrack } from './library-state.svelte';
 import { scaleBpm } from './bpm-format';
+import { MAX_SPEED, MIN_SPEED, parseSpeed, readoutText } from './speed-format';
 import { cleanSectionName, sectionClicks, sectionCountIn } from './section-meta';
 
 export type PlayerStatus = 'inactive' | 'loading' | 'active' | 'error';
@@ -43,6 +46,8 @@ export const pl = $state({
   transport: { ...STOPPED } as PlayerTransport,
   /** Refusal of the last tempo/loop/transport command. */
   actionError: '',
+  /** Refusal of the last speed command (typed or from Rust); the next successful one clears it. */
+  speedError: '',
   /** Playback stopped by an audio error. */
   audioError: '',
   /** player.json could not be written. */
@@ -67,6 +72,7 @@ const clean = (err: unknown): string => String(err).replace(/^Error: /, '');
 let generation = 0;
 let sessionOpen = false;
 let key: string | null | undefined = undefined;
+let lastReadout = '';
 const OPEN_ATTEMPTS = 3;
 
 function resetFields(): void {
@@ -75,6 +81,8 @@ function resetFields(): void {
   pl.snap = null;
   pl.transport = { ...STOPPED };
   pl.actionError = '';
+  pl.speedError = '';
+  lastReadout = '';
   pl.audioError = '';
   pl.stateError = '';
   pl.section = null;
@@ -162,7 +170,7 @@ export function syncSelection(track: TrackRecord | null): void {
 function logActive(s: PlayerSnapshot): void {
   log(
     `player active id=${s.id} source=${s.source} sources=${s.sources.length} mode=${s.mode} ` +
-      `loops=${s.loops.length} position=${s.transport.position_ms}`,
+      `loops=${s.loops.length} position=${s.transport.position_ms} speed=${s.speed_pct}`,
   );
   logSections(s);
 }
@@ -193,6 +201,7 @@ function applySnapshot(s: PlayerSnapshot): void {
   const sameStarts = oldStarts.length === s.tempo.segments.length && oldStarts.every((v, i) => v === s.tempo.segments[i].start_ms);
   if (sameStarts) dropSelectionOnMove(transport.tempo_index);
   pl.transport = { ...transport };
+  logReadout();
   const n = s.tempo.segments.length;
   if (pl.section !== null && pl.section >= n) pl.section = n === 0 ? null : n - 1;
 }
@@ -237,6 +246,7 @@ function dropSelectionOnMove(next: number | null): void {
 function setTransport(t: PlayerTransport): void {
   dropSelectionOnMove(t.tempo_index);
   pl.transport = t;
+  logReadout();
 }
 
 function onEvent(gen: number, e: PlayerEvent): void {
@@ -276,6 +286,14 @@ function onEvent(gen: number, e: PlayerEvent): void {
   }
 }
 
+/** Logs the Playing-BPM readout when its text changes. */
+function logReadout(): void {
+  const text = readoutText(pl.transport.played_bpm);
+  if (text === lastReadout) return;
+  lastReadout = text;
+  log(`player readout bpm=${text === '' ? 'none' : text} speed=${pl.transport.speed_pct}`);
+}
+
 // ---- derived ----
 
 export const playLabel = (): 'Play' | 'Pause' => (pl.transport.playing || pl.transport.counting_in ? 'Pause' : 'Play');
@@ -311,6 +329,7 @@ async function snapshotCall(
   command: string,
   run: (id: string) => Promise<PlayerSnapshot>,
   logLine: (s: PlayerSnapshot) => string,
+  onError?: (message: string) => void,
 ): Promise<boolean> {
   const id = pl.trackId;
   if (pl.status !== 'active' || !id) return false;
@@ -325,7 +344,8 @@ async function snapshotCall(
     return true;
   } catch (err) {
     if (gen !== generation) return false;
-    pl.actionError = clean(err);
+    if (onError) onError(clean(err));
+    else pl.actionError = clean(err);
     fail(command, err);
     return false;
   }
@@ -618,5 +638,60 @@ export async function jumpSection(edge: 'start' | 'end'): Promise<void> {
     (id) => playerTempo(id, { kind: 'jump-section', index, at, edge }),
     undefined,
     (s) => `edge=${edge} position=${s.transport.position_ms}`,
+  );
+}
+
+// ---- speed and training ----
+
+export type SpeedVia = 'minus' | 'plus' | 'reset' | 'typed' | 'key';
+
+/** True while a speed-training run is active: the speed controls are locked. */
+export const speedLocked = (): boolean => pl.transport.training !== null;
+
+/** The speed to show: the heard speed during a run, else the track speed (the heard one lags a callback). */
+export const shownSpeed = (): number => (speedLocked() ? pl.transport.speed_pct : (pl.snap?.speed_pct ?? pl.transport.speed_pct));
+
+async function speedCall(action: TempoAction, via: SpeedVia): Promise<void> {
+  if (pl.status !== 'active' || speedLocked()) return;
+  const ok = await snapshotCall('player_tempo', (id) => playerTempo(id, action), (s) => `player speed percent=${s.speed_pct} via=${via}`, (e) => {
+    pl.speedError = e;
+  });
+  if (ok) pl.speedError = '';
+}
+
+/** Changes the track speed by `steps` presets (-1 slower, +1 faster). */
+export async function speedStep(steps: number, via: 'minus' | 'plus' | 'key'): Promise<void> {
+  await speedCall({ kind: 'speed-step', steps }, via);
+}
+
+export async function speedReset(): Promise<void> {
+  await speedCall({ kind: 'speed-reset' }, 'reset');
+}
+
+/** Sets a typed speed; text that is not a whole number from 25 to 200 is refused here. */
+export async function speedSet(text: string): Promise<void> {
+  if (pl.status !== 'active' || speedLocked()) return;
+  const percent = parseSpeed(text);
+  if (percent === null) {
+    pl.speedError = `Enter a whole number from ${MIN_SPEED} to ${MAX_SPEED} %`;
+    log(`player speed refused text=${text}`);
+    return;
+  }
+  await speedCall({ kind: 'speed-set', percent }, 'typed');
+}
+
+/** Clears the typed-speed refusal (the next edit). */
+export function clearSpeedError(): void {
+  pl.speedError = '';
+}
+
+/** Sets the speed-training plan of the current loop. */
+export async function setTraining(t: TrainingPlan): Promise<void> {
+  const index = pl.snap?.current_loop ?? null;
+  if (index === null) return;
+  await snapshotCall(
+    'player_loop',
+    (id) => playerLoop(id, { kind: 'training', ...t }),
+    () => `player training index=${index} on=${t.on} start=${t.start} end=${t.end} step=${t.step} repeats=${t.repeats}`,
   );
 }

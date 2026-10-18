@@ -640,6 +640,12 @@ Never commit in a routine task.
 - **routine:** no
 
 ### Task 13: Speed group in the Playback pane, keys
+- **orchestrator note (after Task 12), state API as built** (`player-state.svelte.ts`): `pl.speedError`,
+  `clearSpeedError()` (call on the next edit), `speedStep(steps, via: 'minus'|'plus'|'key')`, `speedReset()`,
+  `speedSet(text)` (parses with `parseSpeed`; refusal sets `speedError`, no IPC), `speedLocked()` (a training run is
+  active; all three speed functions are no-ops then and when the player is not active), `shownSpeed()` (show this in the
+  % box: heard speed during a run, else `snap.speed_pct`), `setTraining(t: TrainingPlan)` for the current loop (errors
+  to `pl.actionError`). The readout log line `player readout bpm=<text|none> speed=<n>` is already emitted by the state.
 - **files:** `src/calliope-gui/src/ui/components/player/SpeedControl.svelte` (new), `PlaybackSection.svelte`,
   `BpmSection.svelte`, `src/calliope-gui/src/ui/views/PlayerView.svelte`, `ControlBar.test.ts`,
   `src/calliope-gui/src/ui/views/PlayerView.test.ts`, `src/calliope-gui/src/ui/acceptance_player.test.ts`

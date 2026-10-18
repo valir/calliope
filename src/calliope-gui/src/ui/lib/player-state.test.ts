@@ -3,7 +3,8 @@ import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import type { Channel } from '@tauri-apps/api/core';
 import {
   loop, beginNameEdit, cancelSectionBpm, cancelSectionName, commitSectionBpm, commitSectionName, jumpSection, setSectionFlags, editSectionBpm, leavePlayer, moveChange, pl, removeChange, scaleSection,
-  selectSection, startAdd, targetSection, playLabel, resetPlayer, seek, selectSource, syncSelection, togglePlay } from './player-state.svelte';
+  selectSection, startAdd, targetSection, playLabel, resetPlayer, seek, selectSource, syncSelection, togglePlay,
+  speedStep, speedReset, speedSet, setTraining, speedLocked, shownSpeed } from './player-state.svelte';
 import { resetLibrary } from './library-state.svelte';
 import { PLAYER_FIXTURE_TRACKS } from './fixture-tracks';
 import type { PlayerEvent, PlayerSnapshot, PlayerTransport, TempoSegment } from './ipc';
@@ -74,7 +75,7 @@ describe('player state', () => {
     await flush();
     expect(pl.status).toBe('active');
     expect(logs()).toContain(
-      `player active id=${practice.id} source=backing:backing sources=4 mode=bpm loops=0 position=0`,
+      `player active id=${practice.id} source=backing:backing sources=4 mode=bpm loops=0 position=0 speed=100`,
     );
   });
 
@@ -504,5 +505,96 @@ describe('player sections', () => {
     syncSelection(stemsOnly);
     await flush();
     expect(pl.nameEdit).toBeNull();
+  });
+});
+
+describe('player speed and training', () => {
+  const calls_ = (name: string) => calls.filter((c) => c[0] === name).map((c) => c[1]);
+  const withSpeed = (id: string, pct: number, loopIdx: number | null = null): PlayerSnapshot => ({
+    ...snapshot(id), speed_pct: pct, current_loop: loopIdx,
+  });
+  async function open(): Promise<void> {
+    syncSelection(practice);
+    await flush();
+  }
+
+  it('step, reset and typed speed send the action and log once; success clears the error', async () => {
+    await open();
+    pl.speedError = 'old';
+    handlers.player_tempo = (a) => withSpeed(a.id as string, 95);
+    await speedStep(-1, 'minus');
+    expect(pl.speedError).toBe('');
+    handlers.player_tempo = (a) => withSpeed(a.id as string, 100);
+    await speedReset();
+    handlers.player_tempo = (a) => withSpeed(a.id as string, 70);
+    await speedSet(' 70 % ');
+    await speedStep(1, 'key');
+    expect(calls_('player_tempo').map((c) => c.action)).toEqual([
+      { kind: 'speed-step', steps: -1 }, { kind: 'speed-reset' }, { kind: 'speed-set', percent: 70 }, { kind: 'speed-step', steps: 1 },
+    ]);
+    expect(logs().filter((l) => l.startsWith('player speed '))).toEqual([
+      'player speed percent=95 via=minus', 'player speed percent=100 via=reset',
+      'player speed percent=70 via=typed', 'player speed percent=70 via=key',
+    ]);
+    expect(shownSpeed()).toBe(70);
+  });
+
+  it('a refused typed value sends nothing and sets speedError; Rust errors go to speedError', async () => {
+    await open();
+    await speedSet('20');
+    await speedSet('abc');
+    expect(calls_('player_tempo')).toEqual([]);
+    expect(pl.speedError).toBe('Enter a whole number from 25 to 200 %');
+    expect(logs()).toContain('player speed refused text=20');
+    expect(logs()).toContain('player speed refused text=abc');
+    handlers.player_tempo = () => { throw new Error('nope'); };
+    await speedStep(1, 'plus');
+    expect(pl.speedError).toBe('nope');
+    expect(pl.actionError).toBe('');
+  });
+
+  it('during a run the speed actions send nothing and the heard speed is shown', async () => {
+    await open();
+    pl.snap!.speed_pct = 90;
+    expect(speedLocked()).toBe(false);
+    expect(shownSpeed()).toBe(90);
+    pl.transport.training = { loop: 0, speed_pct: 70, pass: 3, repeat: 1, of: 2 } as PlayerTransport['training'];
+    pl.transport.speed_pct = 70;
+    expect(speedLocked()).toBe(true);
+    expect(shownSpeed()).toBe(70);
+    await speedStep(-1, 'minus');
+    await speedReset();
+    await speedSet('50');
+    expect(calls_('player_tempo')).toEqual([]);
+  });
+
+  it('setTraining sends the loop action for the current loop and logs; errors go to actionError', async () => {
+    handlers.open_player = (a) => withSpeed(a.id as string, 100, 0);
+    await open();
+    const t = { on: true, start: 60, end: 70, step: 10, repeats: 1 };
+    handlers.player_loop = (a) => withSpeed(a.id as string, 100, 0);
+    await setTraining(t);
+    expect(calls_('player_loop').map((c) => c.action)).toEqual([{ kind: 'training', ...t }]);
+    expect(logs()).toContain('player training index=0 on=true start=60 end=70 step=10 repeats=1');
+    handlers.player_loop = () => { throw new Error('bad plan'); };
+    await setTraining(t);
+    expect(pl.actionError).toBe('bad plan');
+    expect(pl.speedError).toBe('');
+  });
+
+  it('the readout is logged only when its text changes', async () => {
+    await open();
+    const ev = (played_bpm: number, position_ms: number, speed_pct = 100): PlayerEvent =>
+      ({ kind: 'transport', id: practice.id, ...idle, played_bpm, position_ms, speed_pct });
+    const readouts = () => logs().filter((l) => l.startsWith('player readout'));
+    channels[0].onmessage(ev(0, 10));
+    expect(readouts()).toEqual([]);
+    channels[0].onmessage(ev(60, 20, 50));
+    channels[0].onmessage(ev(60, 30, 50));
+    channels[0].onmessage(ev(72, 40, 60));
+    channels[0].onmessage(ev(0, 50));
+    expect(readouts()).toEqual([
+      'player readout bpm=60 BPM speed=50', 'player readout bpm=72 BPM speed=60', 'player readout bpm=none speed=100',
+    ]);
   });
 });
