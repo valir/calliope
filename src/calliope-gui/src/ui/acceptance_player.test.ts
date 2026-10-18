@@ -581,3 +581,51 @@ describe('QA phase 3: no master metronome, the panes (gui-player-tempo-sections)
     expect(screen.getByTestId('section-status').textContent).toContain('Section 1 of 2');
   });
 });
+
+describe('gui-player-speed: edge cases through the rendered pane', () => {
+  const speedBox = () => input('Speed in percent');
+  const tempoActions = () => of('player_tempo').map((c) => c.action);
+
+  it('refused typed values send nothing; "70 %" and " 25 " are accepted', async () => {
+    snap = bpmSnap();
+    render(PlayerView);
+    await openTrack(snap);
+    for (const bad of ['20', '250', '24', '201', 'abc', '70.5', '-5', '', '1e2', '0x40']) {
+      await fireEvent.input(speedBox(), { target: { value: bad } });
+      await fireEvent.keyDown(speedBox(), { key: 'Enter' });
+      await flush();
+    }
+    expect(tempoActions()).toEqual([]);
+    for (const good of ['70 %', ' 25 ', '200']) {
+      await fireEvent.input(speedBox(), { target: { value: good } });
+      await fireEvent.keyDown(speedBox(), { key: 'Enter' });
+      await flush();
+    }
+    expect(tempoActions()).toEqual([
+      { kind: 'speed-set', percent: 70 }, { kind: 'speed-set', percent: 25 }, { kind: 'speed-set', percent: 200 },
+    ]);
+  });
+
+  it('during a training run [ and ] send nothing, the Loops pane shows the progress, the controls show the run speed', async () => {
+    snap = { ...bpmSnap(), loops: [complete], current_loop: 0 };
+    render(PlayerView);
+    await openTrack(snap);
+    channel!.onmessage({
+      kind: 'transport', id: practice.id, ...idle, playing: true, loop_playing: true, bpm: 120, played_bpm: 84, speed_pct: 70,
+      training: { loop: 0, speed_pct: 70, repeat: 2, of: 4 },
+    });
+    await waitFor(() => expect(screen.getByTestId('bpm-readout').textContent).toBe('84 BPM'));
+    expect(group('Loops').getByText(/70 % · 2\/4/)).toBeTruthy();
+    expect(speedBox().value).toBe('70');
+    await fireEvent.keyDown(window, { key: '[', code: 'BracketLeft' });
+    await fireEvent.keyDown(window, { key: ']', code: 'BracketRight' });
+    await flush();
+    expect(tempoActions()).toEqual([]);
+    // the run ends: the box goes back to the track speed
+    channel!.onmessage({ kind: 'transport', id: practice.id, ...idle, bpm: 120, played_bpm: 120, speed_pct: 100, training: null });
+    await waitFor(() => expect(speedBox().value).toBe('100'));
+    await fireEvent.keyDown(window, { key: ']', code: 'BracketRight' });
+    await flush();
+    expect(tempoActions()).toEqual([{ kind: 'speed-step', steps: 1 }]);
+  });
+});

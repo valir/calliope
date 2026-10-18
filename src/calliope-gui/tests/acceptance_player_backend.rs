@@ -3982,3 +3982,192 @@ fn sp12_count_in_during_training_uses_the_current_speed() {
         }
     }
 }
+
+// ---- QA additions: edge cases of speed and training ----
+
+fn dominant_hz(v: &[f32]) -> f32 {
+    let (mut best, mut best_hz, mut hz) = (0.0f32, 0.0f32, 300.0f32);
+    while hz <= 700.0 {
+        let a = goertzel(v, hz);
+        if a > best {
+            (best, best_hz) = (a, hz);
+        }
+        hz += 0.5;
+    }
+    best_hz
+}
+
+#[test]
+fn sp13_the_range_ends_25_and_200_work_with_pitch_and_rate() {
+    for (pct, tol_hz) in [(25i64, 3.0f32), (200, 2.0)] {
+        let mut r = vocals_rig(pct);
+        assert_eq!(r.snap().speed_pct, pct as u32);
+        r.play();
+        r.b.pull(RATE); // latency + settle
+        let p0 = r.pos();
+        let (steady, tr) = run(&mut r, 2 * RATE);
+        let hz = dominant_hz(&steady);
+        assert!((hz - 440.0).abs() <= tol_hz, "{pct} %: {hz} Hz");
+        let moved = (tr.last().unwrap().position_ms - p0) as f64;
+        let want = 2000.0 * pct as f64 / 100.0;
+        assert!((moved - want).abs() <= want * 0.04 + 20.0, "{pct} %: advanced {moved} ms, want {want}");
+    }
+}
+
+#[test]
+fn sp14_bounds_steps_and_every_refused_value() {
+    let mut r = rig(PRACTICE);
+    set_speed(&mut r, 25);
+    assert_eq!(r.m.speed(&r.id(), SpeedAction::Step(-1), r.t0).unwrap().speed_pct, 25, "- stops at 25");
+    set_speed(&mut r, 200);
+    assert_eq!(r.m.speed(&r.id(), SpeedAction::Step(1), r.t0).unwrap().speed_pct, 200, "+ stops at 200");
+    set_speed(&mut r, 73);
+    assert_eq!(r.m.speed(&r.id(), SpeedAction::Step(-1), r.t0).unwrap().speed_pct, 70);
+    set_speed(&mut r, 73);
+    assert_eq!(r.m.speed(&r.id(), SpeedAction::Step(1), r.t0).unwrap().speed_pct, 75);
+    assert_eq!(r.m.speed(&r.id(), SpeedAction::Reset, r.t0).unwrap().speed_pct, 100);
+    set_speed(&mut r, 64);
+    for bad in [24, 201, 0, -50, 1000, i64::MIN, i64::MAX] {
+        assert!(r.m.speed(&r.id(), SpeedAction::Set(bad), r.t0).is_err(), "{bad} must be refused");
+        assert_eq!(r.snap().speed_pct, 64, "after {bad}");
+    }
+    set_speed(&mut r, 25);
+    set_speed(&mut r, 200);
+}
+
+#[test]
+fn sp15_a_newer_schema_file_is_never_overwritten_by_speed_or_training() {
+    let text = r#"{"schema_version":7,"speed":0.5,"loops":[{"id":"a","start":{"tick":64},"end":{"tick":192}}],"future":{"x":1}}"#;
+    let mut r = rig_with(PRACTICE, text);
+    assert!(r.snap().note.as_deref().unwrap().contains("newer version"));
+    let _ = r.m.speed(&r.id(), SpeedAction::Set(80), r.t0);
+    let _ = r.lp(LoopAction::Training(TRAIN));
+    r.m.tick(r.after(1000));
+    r.m.close();
+    let on_disk = std::fs::read_to_string(r.spec.dir.join("player.json")).unwrap();
+    assert_eq!(on_disk, text, "a schema 7 file stays byte for byte as it was");
+}
+
+#[test]
+fn sp16_schema_5_with_odd_speed_values_loads_clamped_and_saves_as_6() {
+    // 0.5 and 1.5 were the old limits; 1.0 is the only value an old build wrote, but be lenient
+    for (factor, pct) in [("1.0", 100), ("0.73", 73), ("0.1", 25), ("9", 200), ("1.5", 150)] {
+        let json = format!(r#"{{"schema_version":5,"speed":{factor},"position_ms":1000}}"#);
+        let mut r = rig_with(PRACTICE, &json);
+        assert_eq!(r.snap().speed_pct, pct, "factor {factor}");
+        set_speed(&mut r, pct as i64 + if pct < 200 { 5 } else { -5 });
+        r.flush();
+        let d = r.disk().unwrap();
+        assert_eq!(d["schema_version"], 6);
+    }
+}
+
+#[test]
+fn sp17_the_100_percent_path_is_bit_exact_after_a_round_trip_through_other_speeds() {
+    let mut r = rig(PRACTICE);
+    set_speed(&mut r, 70);
+    r.m.speed(&r.id(), SpeedAction::Reset, r.t0).unwrap();
+    r.seek(1000);
+    r.play();
+    let got = r.b.pull(RATE);
+    let mut want = expected(&r.pcm(), 1000 * RATE / 1000, RATE);
+    let n = RATE * 3 / 1000;
+    for k in 0..n {
+        for c in 0..2 {
+            want[2 * k + c] *= k as f32 / n as f32;
+        }
+    }
+    assert_eq!(got, want, "100 % must be the exact source samples");
+}
+
+#[test]
+fn sp18_training_from_80_down_to_60_slows_down_then_stays() {
+    let mut r = loop_rig(false);
+    r.lp(LoopAction::Training(Training { on: true, start: 80, end: 60, step: 10, repeats: 1 })).unwrap();
+    r.lp(LoopAction::Play).unwrap();
+    let mut seen: Vec<(u32, u32, Option<u32>)> = Vec::new();
+    let mut blocks = 0usize;
+    while seen.len() < 5 {
+        let (_, tr) = run(&mut r, 64);
+        let tu = tuple(&tr[0]).expect("run shown");
+        if seen.last() != Some(&tu) {
+            seen.push(tu);
+        }
+        blocks += 1;
+        assert!(blocks * 64 < RATE * 20, "{seen:?}");
+    }
+    assert_eq!(seen[..4], [(80, 1, Some(1)), (70, 1, Some(1)), (60, 1, None), (60, 2, None)]);
+}
+
+#[test]
+fn sp19_pause_during_a_run_restores_the_track_speed_and_unlocks_the_speed_controls() {
+    let mut r = loop_rig(false);
+    set_speed(&mut r, 90);
+    r.lp(LoopAction::Training(TRAIN)).unwrap();
+    r.lp(LoopAction::Play).unwrap();
+    run(&mut r, RATE);
+    // refused while the run is going
+    assert!(r.m.speed(&r.id(), SpeedAction::Step(1), r.t0).is_err());
+    assert!(r.m.speed(&r.id(), SpeedAction::Set(50), r.t0).is_err());
+    assert!(r.m.speed(&r.id(), SpeedAction::Reset, r.t0).is_err());
+    assert_eq!(r.snap().speed_pct, 90, "the track speed is untouched by the refusals");
+    r.m.pause(&r.id(), r.t0).unwrap();
+    r.b.pull(64);
+    let t = r.snap().transport;
+    assert_eq!((t.playing, t.training, t.speed_pct), (false, None, 90));
+    assert_eq!(r.m.speed(&r.id(), SpeedAction::Step(1), r.t0).unwrap().speed_pct, 95);
+    set_speed(&mut r, 90);
+    r.lp(LoopAction::Play).unwrap();
+    let (_, tr) = run(&mut r, 64);
+    assert_eq!(tuple(&tr[0]), Some((60, 1, Some(2))), "restarts at the start %");
+}
+
+#[test]
+fn sp20_a_speed_change_during_a_count_in_keeps_the_count_in_sane() {
+    let mut r = loop_rig(true);
+    r.lp(LoopAction::Play).unwrap();
+    assert!(r.snap().transport.counting_in);
+    run(&mut r, 3200);
+    set_speed(&mut r, 50);
+    let (audio, tr) = run(&mut r, 6 * RATE);
+    assert!(audio.iter().all(|s| s.is_finite() && s.abs() <= 1.5));
+    let mut last = 0;
+    for t in &tr {
+        // a repeating loop wraps back to its start (2500); nothing else may go back
+        assert!(t.position_ms + 40 >= last || t.position_ms <= 2600, "position went back {} < {last}", t.position_ms);
+        last = t.position_ms;
+        assert!(t.position_ms <= 4600, "left the loop: {}", t.position_ms);
+    }
+    let t = tr.last().unwrap();
+    assert!(t.playing, "still playing");
+    assert_eq!(t.speed_pct, 50);
+}
+
+#[test]
+fn sp21_a_loop_at_50_percent_wraps_inside_its_song_time_bounds_and_seek_stays_in_song_time() {
+    let mut r = loop_rig(false);
+    set_speed(&mut r, 50);
+    r.seek(2500);
+    r.lp(LoopAction::Play).unwrap();
+    let (_, tr) = run(&mut r, 9 * RATE); // 2 s of song takes 4 s: two wraps in 9 s
+    let mut wraps = 0;
+    let mut prev = tr[0].position_ms;
+    for t in &tr {
+        assert!((2400..=4600).contains(&t.position_ms), "outside the loop: {}", t.position_ms);
+        if t.position_ms + 1000 < prev {
+            wraps += 1;
+        }
+        prev = t.position_ms;
+    }
+    assert_eq!(wraps, 2, "wraps");
+    // a seek while playing at 50 % lands on the target in song time and carries on at half rate
+    r.m.seek(&r.id(), 3000, r.t0).unwrap();
+    assert_eq!(r.pos(), 3000);
+    assert!(r.snap().transport.resume_pending);
+    r.m.tick(r.after(400));
+    run(&mut r, 3200);
+    let p0 = r.pos();
+    let (_, tr) = run(&mut r, RATE);
+    let moved = tr.last().unwrap().position_ms as i64 - p0 as i64;
+    assert!((moved - 500).abs() <= 30, "advanced {moved} ms");
+}
