@@ -72,8 +72,9 @@
   const box = 'w-24 rounded-md border border-input bg-background px-2 py-1 text-center text-xl tabular-nums';
 </script>
 
-<div class="flex w-full flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Loops">
+<div class="flex min-w-[27rem] flex-1 flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Loops">
   <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
+    <span class="text-lg font-semibold">Loops</span>
     <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Loop list">
       <Button variant="outline" class={btn} disabled={!active || !(snap && snap.loops.length > 0)} onclick={() => void loop({ kind: 'select', delta: -1 })}>Prev</Button>
       <Button variant="outline" class="{btn} w-14" disabled={!active} aria-label="Add loop" onclick={() => void loop({ kind: 'add' })}>+</Button>

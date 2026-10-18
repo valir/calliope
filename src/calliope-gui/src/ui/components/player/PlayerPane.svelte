@@ -1,9 +1,10 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { frontendLog } from '$lib/ipc';
   import { selectedTrack } from '$lib/library-state.svelte';
   import {
     pl, selectSource, targetSection, selectSection, editSectionBpm, commitSectionBpm, cancelSectionBpm, startAdd, removeChange, moveChange,
   } from '$lib/player-state.svelte';
-  import BpmSection from './BpmSection.svelte';
   import LoopsSection from './LoopsSection.svelte';
   import PlaybackSection from './PlaybackSection.svelte';
   import WaveformView from './WaveformView.svelte';
@@ -13,9 +14,33 @@
   const track = $derived(selectedTrack());
   const loops = $derived(pl.snap?.loops ?? []);
   const sources = $derived(pl.snap?.sources ?? []);
+
+  // Logs the pane's overflow, width and whether Loops sits beside Sections once its size has settled.
+  let pane = $state<HTMLElement | null>(null);
+  onMount(() => {
+    if (!pane || typeof ResizeObserver === 'undefined') return;
+    const el = pane;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const report = () => {
+      const top = (name: string) => el.querySelector(`[role="group"][aria-label="${name}"]`)?.getBoundingClientRect().top;
+      const beside = top('Sections') !== undefined && top('Sections') === top('Loops');
+      void frontendLog(`player layout overflow=${el.scrollHeight - el.clientHeight} width=${el.clientWidth} loops_beside=${beside ? 1 : 0}`);
+    };
+    const ro = new ResizeObserver(() => {
+      clearTimeout(timer);
+      timer = setTimeout(report, 300);
+    });
+    ro.observe(el);
+    const controls = el.querySelector('[data-testid="player-controls"]');
+    if (controls) ro.observe(controls);
+    return () => {
+      clearTimeout(timer);
+      ro.disconnect();
+    };
+  });
 </script>
 
-<section aria-label="Player" class="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-y-auto p-4">
+<section bind:this={pane} aria-label="Player" class="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-y-auto p-4">
   <div class="flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="player-source-row">
     <span class="text-lg">Play:</span>
     <SourceSelect {sources} value={pl.snap?.source ?? ''} disabled={pl.status !== 'active' || sources.length === 0} onchange={(k) => void selectSource(k)} />
@@ -64,10 +89,11 @@
     oncancelbpm={cancelSectionBpm}
     oninvalidbpm={(m) => (pl.sectionError = m)}
   />
-  <div class="flex shrink-0 flex-wrap gap-2" data-testid="player-controls">
-    <BpmSection />
-    <SectionsSection />
+  <div class="flex shrink-0 flex-col gap-2" data-testid="player-controls">
+    <div class="flex flex-wrap items-stretch gap-2">
+      <SectionsSection />
+      <LoopsSection />
+    </div>
     <PlaybackSection />
-    <LoopsSection />
   </div>
 </section>

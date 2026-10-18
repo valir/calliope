@@ -99,6 +99,27 @@ describe('AC2-4, 9: pane structure and the inactive state', () => {
     expect(document.querySelector('canvas')).toBeTruthy();
     expect(btn('Playback', 'Play').disabled).toBe(false);
   });
+
+  it('lays the controls out in two rows: Sections (BPM inside) and Loops, then Playback', async () => {
+    snap = base();
+    render(PlayerView);
+    await openTrack(snap);
+    const controls = screen.getByTestId('player-controls');
+    const rows = Array.from(controls.children) as HTMLElement[];
+    expect(rows.length).toBe(2);
+    const names = (el: HTMLElement) => Array.from(el.children).map((c) => c.getAttribute('aria-label'));
+    expect(names(rows[0])).toEqual(['Sections', 'Loops']);
+    expect(rows[1].getAttribute('aria-label')).toBe('Playback');
+    const sections = screen.getByRole('group', { name: 'Sections' });
+    const bpm = within(sections).getByRole('group', { name: 'BPM' });
+    const status = screen.getByTestId('section-status');
+    expect(bpm.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(group('Loops').getByText('Loops')).toBeTruthy();
+    const playback = group('Playback');
+    for (const n of ['Rew', 'Play', 'FF']) expect(playback.getByRole('button', { name: n })).toBeTruthy();
+    expect(playback.getByRole('textbox')).toBeTruthy();
+    expect(playback.getByRole('slider', { name: 'Position' })).toBeTruthy();
+  });
 });
 
 describe('AC13: track without tempo', () => {

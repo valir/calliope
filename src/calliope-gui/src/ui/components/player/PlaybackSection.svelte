@@ -28,21 +28,20 @@
 
 <svelte:window onpointerup={endDrag} onpointercancel={endDrag} />
 
-<div class="flex max-w-full grow basis-[23rem] flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Playback">
-  <div class="flex flex-wrap items-center gap-2">
-    <Button variant="outline" class="h-[3.25rem] text-lg" disabled={!active} onclick={() => void skip(-5000)}>Rew</Button>
-    <Button class="h-[3.25rem] w-24 text-lg" disabled={!active} onclick={() => void togglePlay()}>{playLabel()}</Button>
-    <Button variant="outline" class="h-[3.25rem] text-lg" disabled={!active} onclick={() => void skip(5000)}>FF</Button>
-    <TimeField
-      positionMs={pl.transport.position_ms}
-      durationMs={duration}
-      {active}
-      onseek={seek}
-      onnudge={(d) => void nudge(d)}
+<div class="flex w-full flex-wrap items-center gap-2 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Playback">
+  <Button variant="outline" class="h-[3.25rem] text-lg" disabled={!active} onclick={() => void skip(-5000)}>Rew</Button>
+  <Button class="h-[3.25rem] w-24 text-lg" disabled={!active} onclick={() => void togglePlay()}>{playLabel()}</Button>
+  <Button variant="outline" class="h-[3.25rem] text-lg" disabled={!active} onclick={() => void skip(5000)}>FF</Button>
+  <TimeField
+    positionMs={pl.transport.position_ms}
+    durationMs={duration}
+    {active}
+    onseek={seek}
+    onnudge={(d) => void nudge(d)}
     />
-  </div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
+    class="min-w-48 flex-1"
     onpointerdowncapture={() => { dragging = true; dragValue = pl.transport.position_ms; }}
     onkeydowncapture={() => { keying = true; }}
     onkeyup={() => { keying = false; }}

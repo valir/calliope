@@ -385,9 +385,11 @@ describe('Sections group', () => {
     await open(three());
     const slot = screen.getByTestId('section-message');
     expect(slot.className).toContain('min-h-5');
+    expect(slot.className).toContain('truncate');
     pl.sectionError = 'Too close to the neighbour';
     await flush();
     expect(slot.textContent).toBe('Too close to the neighbour');
+    expect(slot.title).toBe('Too close to the neighbour');
     expect(slot.className).toContain('min-h-5');
   });
 });

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import BpmSection from './BpmSection.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { formatBpm, scaleBpm } from '$lib/bpm-format';
   import { sectionClicks, sectionCountIn, MAX_SECTION_NAME } from '$lib/section-meta';
@@ -28,7 +29,9 @@
   const message = $derived(pl.sectionError || (segs.length === 0 && pl.status === 'active' ? NEED_BPM : ''));
 </script>
 
-<div class="relative flex flex-col gap-1 rounded-lg border-2 border-border bg-card px-3 pt-2 pb-6" role="group" aria-label="Sections">
+<div class="flex max-w-full flex-none flex-wrap gap-x-3 gap-y-2 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Sections">
+  <BpmSection nested />
+  <div class="flex min-w-0 flex-col gap-1">
   <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
     <span class="text-lg font-semibold">Sections</span>
     <span class="text-base tabular-nums" data-testid="section-status">{status}</span>
@@ -100,8 +103,8 @@
       onclick={() => void jumpSection('end')}
     >End ▶|</Button>
   </div>
-  <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
-    <div class="flex items-center gap-2" role="group" aria-label="This section">
+  <div class="flex items-center gap-x-4 gap-y-1">
+    <div class="flex flex-none items-center gap-2" role="group" aria-label="This section">
       <span class="text-base">This section</span>
       <Button
         variant="outline"
@@ -122,7 +125,7 @@
         onclick={() => void setSectionFlags(clicks, !countIn)}
       >Count In</Button>
     </div>
+    <span class="min-h-5 min-w-0 flex-1 truncate text-sm {pl.sectionError ? 'text-destructive' : 'text-muted-foreground'}" role={pl.sectionError ? 'alert' : undefined} title={message || undefined} data-testid="section-message">{message}</span>
   </div>
-  <!-- Absolutely placed in the group's bottom padding: it reserves its line without a row of its own. -->
-  <span class="absolute inset-x-3 bottom-0.5 min-h-5 truncate text-sm {pl.sectionError ? 'text-destructive' : 'text-muted-foreground'}" role={pl.sectionError ? 'alert' : undefined} title={message || undefined} data-testid="section-message">{message}</span>
+  </div>
 </div>

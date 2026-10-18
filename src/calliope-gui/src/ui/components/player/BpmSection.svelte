@@ -3,6 +3,8 @@
   import { formatBpm, parseBpm } from '$lib/bpm-format';
   import { pl, setBpm } from '$lib/player-state.svelte';
 
+  let { nested = false }: { nested?: boolean } = $props();
+
   const HINT = 'Comes in a later update';
   const active = $derived(pl.status === 'active');
   // Unsaved text while the user edits; null means the field follows the transport.
@@ -41,7 +43,11 @@
   }
 </script>
 
-<div class="flex flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="BPM">
+<div
+  class="flex flex-col gap-1 {nested ? 'self-stretch border-r border-border pr-3' : 'rounded-lg border-2 border-border bg-card p-3'}"
+  role="group"
+  aria-label="BPM"
+>
   <div class="flex flex-wrap items-center gap-2">
     <label for="bpm-field" class="text-lg font-semibold">BPM</label>
     <input
