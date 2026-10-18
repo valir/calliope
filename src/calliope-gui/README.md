@@ -114,9 +114,9 @@ Ctrl+L folds it to a narrow rail).
 * The waveform shows the whole source, the playhead and the loops (the current loop in amber, a loop
   without an end as a start mark only). Tempo sections (from Autodetect BPM in the Editor or a typed
   tempo) show as bars labelled with their BPM; the Player edits them (see Sections below).
-* BPM: type a tempo (20 to 300; 0 clears it) to place it at the playback position. Metronome: On/Off
-  clicks on the beat, Count In plays three clicks before the audio starts. The bar fields of the loops
-  need a BPM; without one they show times.
+* Under the waveform: the Sections pane (with the BPM field in its title row) and the Loops pane side by side (Loops
+  goes below Sections in a narrow window), and Playback at the bottom. BPM: type a tempo (20 to 300; 0 clears
+  it) to place it at the playback position. The bar fields of the loops need a BPM; without one they show times.
 * Sections: the tempo can change along the song. Click a section in the waveform to select it (else the
   one at the playhead is used) and drag a change's bar to move it, or use the keys (see Keyboard). Click
   a label to type that section's BPM. The Sections group has Add (a new change at the playhead, you type its
@@ -127,16 +127,16 @@ Ctrl+L folds it to a narrow rail).
   (Enter or leaving the box saves it, Escape drops the edit; it is shown in the box and spoken by the waveform; the Editor does
   not show names), "This section" Click (the section's metronome clicks; off makes the section silent)
   and Count In (three clicks at this section's tempo just before it, replacing the end of the section
-  before; refused for the first section, and skipped where a repeating loop ends at the section), and Start
-  / End (jump to the section's first beat / the start of its last bar; playing continues without a pause).
-  The Metronome group (On/Off, Count In for Play) is part of the Sections group; On/Off silences every
-  click, also the section count-ins.
+  before, and skipped where a repeating loop ends at the section; Play pressed anywhere in a section with
+  Count In counts in at its tempo, also in the first section), and Start / End (jump to the section's
+  first beat / the start of its last bar; playing continues without a pause). There is no global
+  metronome switch: a section clicks only when its Click is on.
 * Playback: Rew / FF jump 5 s, the time field takes a time (the mouse wheel nudges by 100 ms), the
   slider seeks.
-* Loops: "+" starts a loop at the position (it has no end until you press "<"), ">" and "<" set the
-  start and end at the position, Prev/Next select, "-" removes. The loop Play button plays the current
-  loop; Loop On repeats it, Count-In counts in before every pass.
-* Everything is saved by itself in `player.json` next to `track.json` (source, tempo, metronome,
+* Loops: "+" starts a loop at the position and ends it where the next tempo section starts (or at the end of
+  the track), ">" and "<" set the start and end at the position, Prev/Next select, "-" removes. The loop Play
+  button plays the current loop; Loop On repeats it, Count-In counts in before every pass.
+* Everything is saved by itself in `player.json` next to `track.json` (source, tempo sections with their settings,
   loops, position) and restored the next time the track is opened.
 * Audio output and tests: as for the Editor. To try it, copy `tests/fixtures/library-player` to a new
   folder and choose it in Settings.

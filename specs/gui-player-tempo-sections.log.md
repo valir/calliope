@@ -43,3 +43,4 @@ task 27 | Backend acceptance tests: master removed, TS19-TS24 | implementer | do
 owner | layout: compact redesign so Sections and Loops fit side by side at 1280x800 (plan 24 addendum) | owner | done
 task 29b | Compact layout: BPM in the Sections title row, compact buttons, Loops in 3 short lines | implementer | done (1280x800 folded: overflow=0 loops_beside=1; tree shown: Loops wraps, overflow 162)
 task 30 | GUI end-to-end: re-measured positions, master removed, player_phase3, visual review, docs/ui.md | implementer | done (1024x640 tree shown clips Sections/Loops sideways; follow-up)
+task 31 | README Player usage | local | done (gemma4 3.5 of 4 replacements; orchestrator removed a stale "refused for the first section")
