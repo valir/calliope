@@ -580,6 +580,14 @@ Never commit in a routine task.
 - **routine:** no
 
 ### Task 10: TS IPC types and test fixtures
+- **orchestrator note (after Task 7), the shapes as built:** `TempoAction` `{kind:'speed-step', steps}`,
+  `{kind:'speed-reset'}`, `{kind:'speed-set', percent}`; `LoopCmd` `{kind:'training', on, start, end, step, repeats}`.
+  `PlayerSnapshot.speed` → `speed_pct: number` (track speed); `can_change_speed` removed. `PlayerLoop.training:
+  {on, start, end, step, repeats}` (default 70/100/5/2, off, when the file has none). `PlayerTransport`: `playing,
+  counting_in, resume_pending, position_ms, loop_playing, bpm` (song BPM, 0 = none), `played_bpm` (0 = none),
+  `speed_pct`, `tempo_index: number|null`, `training: {loop, speed_pct, repeat, of: number|null} | null`; the Transport
+  event flattens the same fields. `transport.speed_pct` is the heard speed and lags one engine callback after a speed
+  action; the frontend shows `snapshot.speed_pct` as the track speed when no training run is active.
 - **files:** `src/calliope-gui/src/ui/lib/ipc.ts`, `src/calliope-gui/src/ui/lib/ipc-player.test.ts`, and the snapshot /
   transport fixtures in `src/calliope-gui/src/ui/lib/player-state.test.ts`,
   `src/calliope-gui/src/ui/components/player/ControlBar.test.ts`, `src/calliope-gui/src/ui/acceptance_player.test.ts`,

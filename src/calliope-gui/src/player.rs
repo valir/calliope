@@ -16,7 +16,7 @@ use crate::audio_out::{OutputBackend, OutputHandle};
 use crate::metronome::{count_in_plan, section_clicks, Click, CountIn};
 use crate::player_source::{self, Pcm, Source, PEAK_BUCKETS};
 use crate::player_state::{self, LoopRec, Mark, PlayerState};
-use crate::speed::Training;
+use crate::speed::{self, Training};
 use crate::stretch::Stretcher;
 use crate::tempo_map::{Boundary, Edge, Scale, Segment, TempoMap};
 use crate::transport::Transport;
@@ -32,8 +32,7 @@ pub(crate) const EVENT_INTERVAL: Duration = Duration::from_millis(100);
 const FADE_MS: u32 = 3;
 const COMMANDS: usize = 64;
 const TRASH: usize = 8;
-pub(crate) const NO_TEMPO: &str = "Enter a BPM first";
-pub(crate) const NO_SPEED: &str = "Speed change is not available yet";
+pub(crate) const TRAINING_RUNNING: &str = "Stop the speed training first";
 pub(crate) const LOOP_INCOMPLETE: &str = "Set the loop end first";
 
 // ---------------------------------------------------------------------- engine
@@ -871,8 +870,25 @@ pub struct PlayerTransport {
     pub resume_pending: bool,
     pub position_ms: u64,
     pub loop_playing: bool,
+    /// The song BPM of the section under the playhead (0 = none), not scaled by the speed.
     pub bpm: f64,
+    /// `bpm × speed_pct / 100` (0 = none).
+    pub played_bpm: f64,
+    /// The speed heard now (the pass speed during a training run).
+    pub speed_pct: u32,
     pub tempo_index: Option<usize>,
+    /// The running speed training, else none.
+    pub training: Option<TrainingProgress>,
+}
+
+/// The running training as the Loops pane shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct TrainingProgress {
+    #[serde(rename = "loop")]
+    pub loop_index: usize,
+    pub speed_pct: u32,
+    pub repeat: u32,
+    pub of: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -890,6 +906,8 @@ pub struct PlayerLoop {
     pub end_ms: Option<f64>,
     pub repeat: bool,
     pub count_in: bool,
+    /// The training settings (the defaults when the file has none).
+    pub training: Training,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -910,12 +928,12 @@ pub struct PlayerSnapshot {
     pub peaks: Vec<f32>,
     pub mode: &'static str,
     pub tempo: SnapTempo,
-    pub speed: f64,
+    /// The track speed in percent.
+    pub speed_pct: u32,
     pub loops: Vec<PlayerLoop>,
     pub current_loop: Option<usize>,
     pub loop_message: Option<String>,
     pub transport: PlayerTransport,
-    pub can_change_speed: bool,
     pub note: Option<String>,
 }
 
@@ -1082,6 +1100,8 @@ struct EventKey {
     resume_pending: bool,
     counting_in: bool,
     loop_playing: bool,
+    speed_pct: u64,
+    pass: u64,
 }
 
 struct Session {
@@ -1109,6 +1129,9 @@ struct Session {
     /// Refusal of the last `<`/`>`, shown by the Loops section.
     loop_message: Option<String>,
     last_wraps: u64,
+    /// `Shared.pass` last seen by `tick`, and the loop it ran in (for the log).
+    last_pass: u64,
+    last_pass_loop: Option<usize>,
     /// The loop (start, end) in ms the click grid was last computed for (10.6).
     grid_wrap: Option<(f64, f64)>,
 }
@@ -1160,8 +1183,8 @@ impl Session {
     }
 
     /// The count-in for a start at `ms`; none without a tempo.
-    fn plan_at(&self, ms: f64) -> Option<CountIn> {
-        let bpm = self.state.tempo.bpm_at(ms) * self.state.speed;
+    fn plan_at(&self, ms: f64, pct: u32) -> Option<CountIn> {
+        let bpm = self.state.tempo.bpm_at(ms) * f64::from(pct) / 100.0;
         (!self.state.tempo.is_empty() && bpm > 0.0).then(|| count_in_plan(bpm, self.pcm.rate))
     }
 
@@ -1203,7 +1226,7 @@ impl Session {
         let count_in_bpm_milli = (l.count_in && !self.state.tempo.is_empty())
             .then(|| (self.state.tempo.bpm_at(self.boundary_ms(l.start)) * 1000.0).round() as u32)
             .filter(|&b| b > 0);
-        Some(LoopSpec { start, end, repeat: l.repeat, count_in_bpm_milli, training: None })
+        Some(LoopSpec { start, end, repeat: l.repeat, count_in_bpm_milli, training: l.training.filter(|t| t.on && l.repeat) })
     }
 
     fn sync_loop(&mut self) {
@@ -1243,7 +1266,27 @@ impl Session {
             resume_pending: self.transport.resume_pending(),
             counting_in: self.shared.counting_in.load(Ordering::Acquire),
             loop_playing: self.shared.loop_playing.load(Ordering::Acquire),
+            speed_pct: self.shared.speed_pct.load(Ordering::Acquire),
+            pass: self.shared.pass.load(Ordering::Acquire),
         }
+    }
+
+    /// The speed heard now: the engine's while an output is open, else the track speed.
+    fn heard_pct(&self) -> u32 {
+        if self.output.is_some() {
+            self.shared.speed_pct.load(Ordering::Acquire) as u32
+        } else {
+            self.state.speed_pct()
+        }
+    }
+
+    /// The training run being heard (`Shared.pass` is 0 without one) with its loop.
+    fn training_progress(&self) -> Option<TrainingProgress> {
+        let pass = self.shared.pass.load(Ordering::Acquire);
+        let loop_index = self.loop_index()?;
+        let t = self.state.current()?.training?;
+        let p = t.progress(u32::try_from(pass.checked_sub(1)?).ok()?);
+        Some(TrainingProgress { loop_index, speed_pct: p.speed_pct, repeat: p.repeat, of: p.of })
     }
 
     fn transport_state(&self) -> PlayerTransport {
@@ -1251,14 +1294,19 @@ impl Session {
         // The section lookup uses the exact frame time: the whole-ms `position_ms` floors below a fractional
         // section start the Start jump just landed on (a tolerance absorbs float noise on whole-frame times).
         let exact = self.pos_ms_f() + 1e-6;
+        let bpm = self.state.tempo.bpm_at(exact);
+        let speed_pct = self.heard_pct();
         PlayerTransport {
             playing: self.transport.shows_playing(),
             counting_in: self.shared.counting_in.load(Ordering::Acquire),
             resume_pending: self.transport.resume_pending(),
             position_ms: ms,
             loop_playing: self.shared.loop_playing.load(Ordering::Acquire),
-            bpm: self.state.tempo.bpm_at(exact) * self.state.speed,
+            bpm,
+            played_bpm: bpm * f64::from(speed_pct) / 100.0,
+            speed_pct,
             tempo_index: self.state.tempo.segment_at(exact),
+            training: self.training_progress(),
         }
     }
 
@@ -1276,6 +1324,7 @@ impl Session {
             end_ms: l.end.map(ms_of),
             repeat: l.repeat,
             count_in: l.count_in,
+            training: l.training.unwrap_or_default(),
         })
         .collect();
         let current_loop = st.current_loop.as_ref().and_then(|c| st.loops.iter().position(|l| &l.id == c));
@@ -1293,12 +1342,11 @@ impl Session {
                 segments: st.tempo.segments.clone(),
                 multi: st.tempo.is_multi(),
             },
-            speed: st.speed,
+            speed_pct: st.speed_pct(),
             loops,
             current_loop,
             loop_message: self.loop_message.clone(),
             transport: self.transport_state(),
-            can_change_speed: false,
             note: self.note.clone(),
         }
     }
@@ -1356,7 +1404,9 @@ fn publish(sink: &EventSink, s: &mut Session, now: Instant) -> PlayerTransport {
     let moved = state.position_ms != s.last_position;
     let due = s.last_emit.is_none_or(|t| now.saturating_duration_since(t) >= EVENT_INTERVAL);
     if key_changed || (key.playing && due) || (!key.playing && moved) {
-        if key_changed {
+        if key_changed && (key.playing, key.resume_pending, key.counting_in, key.loop_playing)
+            != (s.last_key.playing, s.last_key.resume_pending, s.last_key.counting_in, s.last_key.loop_playing)
+        {
             eprintln!(
                 "calliope: player transport playing={} counting_in={} loop={} position_ms={}",
                 state.playing,
@@ -1371,6 +1421,16 @@ fn publish(sink: &EventSink, s: &mut Session, now: Instant) -> PlayerTransport {
         sink(PlayerEvent::Transport { id: s.id.clone(), state: state.clone() });
     }
     state
+}
+
+/// A change of the track speed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpeedAction {
+    /// -1 / +1 per press: the next multiple of 5 in that direction.
+    Step(i32),
+    Reset,
+    /// A typed percentage (25..=200 or refused).
+    Set(i64),
 }
 
 /// What the Loops section asks for.
@@ -1388,6 +1448,7 @@ pub enum LoopAction {
         repeat: bool,
         count_in: bool,
     },
+    Training(Training),
     Play,
     Stop,
 }
@@ -1505,11 +1566,13 @@ impl PlayerManager {
             switching: None,
             select_gen: 0,
             select_cancel: None,
-            last_key: EventKey { playing: false, resume_pending: false, counting_in: false, loop_playing: false },
+            last_key: EventKey { playing: false, resume_pending: false, counting_in: false, loop_playing: false, speed_pct: 0, pass: 0 },
             last_position: 0,
             last_emit: None,
             loop_message: None,
             last_wraps: 0,
+            last_pass: 0,
+            last_pass_loop: None,
             grid_wrap: None,
         };
         session.state.position_ms = session.ms_of(frames); // what is on disk or equal to it
@@ -1674,7 +1737,7 @@ impl PlayerManager {
         let plan = if s.transport.shows_playing() || !s.state.tempo.count_in_at(pos_ms) {
             None
         } else {
-            s.plan_at(pos_ms)
+            s.plan_at(pos_ms, s.state.speed_pct())
         };
         s.log_count_in(&plan, s.state.tempo.segment_at(pos_ms));
         s.shared.counting_in.store(plan.is_some(), Ordering::Release);
@@ -1749,12 +1812,11 @@ impl PlayerManager {
     // ------------------------------------------------------ tempo, metronome
 
     /// Types a BPM at the current position (0 clears the segment there); resets the speed to
-    /// 1.0, re-snaps the loops and uploads the new grid.
+    /// kept, re-snaps the loops and uploads the new grid.
     pub fn set_bpm(&mut self, id: &str, bpm: f64, now: Instant) -> Result<PlayerSnapshot, String> {
         let s = self.session(id)?;
         let mut map: TempoMap = s.state.tempo.clone();
         map.set_bpm_at(s.pos_ms_f(), bpm)?;
-        s.state.speed = 1.0;
         s.state.apply_tempo_change(map);
         s.loop_message = None;
         s.sync_grid();
@@ -1853,10 +1915,22 @@ impl PlayerManager {
         Ok(s.snapshot())
     }
 
-    /// The speed buttons: not in this increment.
-    pub fn speed_action(&mut self, id: &str) -> Result<PlayerSnapshot, String> {
+    /// The speed buttons and the typed speed; refused during a training run.
+    pub fn speed(&mut self, id: &str, action: SpeedAction, now: Instant) -> Result<PlayerSnapshot, String> {
         let s = self.session(id)?;
-        Err(if s.state.tempo.is_empty() { NO_TEMPO } else { NO_SPEED }.into())
+        if s.shared.pass.load(Ordering::Acquire) > 0 {
+            return Err(TRAINING_RUNNING.into());
+        }
+        let pct = match action {
+            SpeedAction::Step(steps) => speed::step_pct(s.state.speed_pct(), steps),
+            SpeedAction::Reset => 100,
+            SpeedAction::Set(p) => speed::check_pct(p)?,
+        };
+        s.state.set_speed_pct(pct);
+        s.send(Cmd::SetSpeed(pct));
+        s.mark_dirty(now);
+        eprintln!("calliope: player speed id={id} percent={pct}");
+        Ok(s.snapshot())
     }
 
     // ---------------------------------------------------------------- loops
@@ -1890,8 +1964,9 @@ impl PlayerManager {
         }
         let l = s.state.current().expect("checked");
         let (start_ms, loop_count_in) = (s.boundary_ms(l.start), l.count_in);
+        let first_pct = l.training.filter(|t| t.on && l.repeat).map_or(s.state.speed_pct(), |t| t.pass_speed(0));
         let start = s.frame_of_ms_f(start_ms);
-        let plan = if loop_count_in { s.plan_at(start_ms) } else { None };
+        let plan = if loop_count_in { s.plan_at(start_ms, first_pct) } else { None };
         s.loop_message = None;
         s.set_pos(start);
         s.log_count_in(&plan, None);
@@ -1950,6 +2025,7 @@ impl PlayerManager {
                 s.state.set(edge, value)?
             }
             LoopAction::Flags { repeat, count_in } => s.state.flags(Some(repeat), Some(count_in))?,
+            LoopAction::Training(t) => s.state.set_training(t)?,
             LoopAction::Stop => {
                 let l = s.state.current().ok_or("There is no loop selected")?;
                 let f = s.frame_of_ms_f(s.boundary_ms(l.start));
@@ -2068,6 +2144,25 @@ impl PlayerManager {
                     s.loop_index().map_or("none".to_string(), |n| n.to_string()),
                     s.state.current().is_some_and(|l| l.count_in)
                 );
+            }
+            let pass = s.shared.pass.load(Ordering::Acquire);
+            if pass != s.last_pass {
+                let loop_index = s.loop_index().or(s.last_pass_loop);
+                let at = loop_index.map_or("none".to_string(), |n| n.to_string());
+                if pass > 0 {
+                    s.last_pass_loop = loop_index;
+                    if let Some(p) = s.training_progress() {
+                        let of = p.of.map_or("end".to_string(), |n| n.to_string());
+                        eprintln!(
+                            "calliope: player training loop={at} pass={pass} speed={} repeat={}/{of}",
+                            p.speed_pct, p.repeat
+                        );
+                    }
+                } else {
+                    let at = s.last_pass_loop.map_or(at, |n| n.to_string());
+                    eprintln!("calliope: player training end loop={at} speed={}", s.state.speed_pct());
+                }
+                s.last_pass = pass;
             }
             if let Some(o) = &s.output {
                 while o.trash.try_recv().is_ok() {}

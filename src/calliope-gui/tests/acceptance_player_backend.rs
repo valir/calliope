@@ -239,8 +239,7 @@ fn ac13_track_without_tempo_is_timestamp_mode_with_metronome_refused() {
     let flags = |metronome, count_in| SectionEdit::Flags { index: 0, at: 0.0, metronome, count_in };
     assert!(r.m.edit_sections(&r.id(), flags(true, false), r.t0).is_err());
     assert!(r.m.edit_sections(&r.id(), flags(false, true), r.t0).is_err());
-    assert!(r.m.speed_action(&r.id()).is_err());
-    assert!(!r.snap().can_change_speed, "increment A: speed not available");
+    assert!(r.m.speed(&r.id(), SpeedAction::Step(-1), Instant::now()).is_ok());
 }
 
 #[test]
@@ -1224,7 +1223,7 @@ fn hostile_wrong_types_inside_valid_json_are_dropped_not_fatal() {
     assert_eq!(s.tempo.segments[0].bpm, 120.0);
     assert_eq!(s.loops.len(), 1, "{:?}", s.loops);
     assert!(s.loops[0].end.is_none());
-    assert!(s.speed >= 0.5 && s.speed <= 1.5);
+    assert!((25..=200).contains(&s.speed_pct));
 }
 
 #[test]

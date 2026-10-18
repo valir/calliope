@@ -12,10 +12,11 @@ use crate::audio_out::OutputBackend;
 use crate::ipc::{EditorState, RepoState};
 use crate::player::{
     self, EventSink, LoopAction, OpenSpec, OutputRequest, PlayerEvent, PlayerManager, PlayerSnapshot,
-    PlayerTransport, SectionEdit,
+    PlayerTransport, SectionEdit, SpeedAction,
 };
 use crate::player_source;
 use crate::player_state::Mark;
+use crate::speed::Training;
 use crate::repository::Repository;
 use crate::tempo_map::{Boundary, Scale, TempoMap};
 use crate::tempo_store::{FileTempoStore, TempoStore};
@@ -239,6 +240,7 @@ pub(crate) enum TempoAction {
     SetBpm { bpm: f64 },
     SpeedStep { steps: i32 },
     SpeedReset,
+    SpeedSet { percent: i64 },
     SectionBpm { index: usize, at: f64, bpm: f64 },
     ScaleSection { index: usize, at: f64, factor: Factor },
     AddChange { position: f64, bpm: f64 },
@@ -265,6 +267,7 @@ pub(crate) enum LoopCmd {
     Mark { edge: Edge },
     Set { edge: Edge, value: Boundary },
     Flags { repeat: bool, count_in: bool },
+    Training { on: bool, start: u32, end: u32, step: u32, repeats: u32 },
     Play,
     Stop,
 }
@@ -278,6 +281,9 @@ impl From<LoopCmd> for LoopAction {
             LoopCmd::Mark { edge } => LoopAction::Mark(edge.into()),
             LoopCmd::Set { edge, value } => LoopAction::Set(edge.into(), value),
             LoopCmd::Flags { repeat, count_in } => LoopAction::Flags { repeat, count_in },
+            LoopCmd::Training { on, start, end, step, repeats } => {
+                LoopAction::Training(Training { on, start, end, step, repeats })
+            }
             LoopCmd::Play => LoopAction::Play,
             LoopCmd::Stop => LoopAction::Stop,
         }
@@ -291,7 +297,9 @@ fn edit(host: &PlayerHost, id: &str, e: SectionEdit) -> Result<PlayerSnapshot, S
 pub(crate) fn do_player_tempo(host: &PlayerHost, id: &str, action: TempoAction) -> Result<PlayerSnapshot, String> {
     match action {
         TempoAction::SetBpm { bpm } => host.with(|m| m.set_bpm(id, bpm, Instant::now())),
-        TempoAction::SpeedStep { .. } | TempoAction::SpeedReset => host.with(|m| m.speed_action(id)),
+        TempoAction::SpeedStep { steps } => host.with(|m| m.speed(id, SpeedAction::Step(steps), Instant::now())),
+        TempoAction::SpeedReset => host.with(|m| m.speed(id, SpeedAction::Reset, Instant::now())),
+        TempoAction::SpeedSet { percent } => host.with(|m| m.speed(id, SpeedAction::Set(percent), Instant::now())),
         TempoAction::SectionBpm { index, at, bpm } => edit(host, id, SectionEdit::Bpm { index, at, bpm }),
         TempoAction::ScaleSection { index, at, factor } => {
             let factor = if factor == Factor::Double { Scale::Double } else { Scale::Halve };

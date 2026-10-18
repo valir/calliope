@@ -106,16 +106,19 @@ fn select_source_keeps_the_session() {
 fn tempo_flags_and_loop_commands() {
     let e = env();
     open(&e, PRACTICE).unwrap();
-    let err = do_player_tempo(&e.host, PRACTICE, TempoAction::SpeedStep { steps: 1 }).unwrap_err();
-    assert_eq!(err, crate::player::NO_TEMPO);
+    let snap = do_player_tempo(&e.host, PRACTICE, TempoAction::SpeedStep { steps: -1 }).unwrap();
+    assert_eq!((snap.speed_pct, snap.transport.bpm), (95, 0.0));
     let snap = do_player_tempo(&e.host, PRACTICE, TempoAction::SetBpm { bpm: 120.0 }).unwrap();
     assert_eq!(snap.transport.bpm, 120.0);
     let a = TempoAction::ScaleSection { index: 0, at: snap.tempo.segments[0].start_ms, factor: Factor::Double };
     assert_eq!(do_player_tempo(&e.host, PRACTICE, a).unwrap().tempo.segments[0].bpm, 240.0);
     let a = TempoAction::RemoveChange { index: 1, at: 0.0 };
     assert_eq!(do_player_tempo(&e.host, PRACTICE, a).unwrap_err(), "The tempo sections changed; try again");
-    let err = do_player_tempo(&e.host, PRACTICE, TempoAction::SpeedReset).unwrap_err();
-    assert_eq!(err, crate::player::NO_SPEED);
+    let snap = do_player_tempo(&e.host, PRACTICE, TempoAction::SpeedReset).unwrap();
+    assert_eq!(snap.speed_pct, 100);
+    let snap = do_player_tempo(&e.host, PRACTICE, TempoAction::SpeedSet { percent: 80 }).unwrap();
+    assert_eq!(snap.speed_pct, 80);
+    assert!(do_player_tempo(&e.host, PRACTICE, TempoAction::SpeedSet { percent: 250 }).is_err());
     let start = snap.tempo.segments[0].start_ms;
     let a = TempoAction::SectionFlags { index: 0, at: start, metronome: false, count_in: true };
     let snap = do_player_tempo(&e.host, PRACTICE, a).unwrap();
@@ -134,6 +137,8 @@ fn action_json_matches_the_typescript_types() {
     let t: TempoAction = serde_json::from_str(r#"{"kind":"speed-step","steps":-2}"#).unwrap();
     assert_eq!(t, TempoAction::SpeedStep { steps: -2 });
     assert_eq!(serde_json::from_str::<TempoAction>(r#"{"kind":"speed-reset"}"#).unwrap(), TempoAction::SpeedReset);
+    let t: TempoAction = serde_json::from_str(r#"{"kind":"speed-set","percent":73}"#).unwrap();
+    assert_eq!(t, TempoAction::SpeedSet { percent: 73 });
     let sec = |j: &str| serde_json::from_str::<TempoAction>(j);
     assert_eq!(sec(r#"{"kind":"section-bpm","index":1,"at":8500.0,"bpm":93.5}"#).unwrap(), TempoAction::SectionBpm { index: 1, at: 8500.0, bpm: 93.5 });
     assert_eq!(sec(r#"{"kind":"scale-section","index":2,"at":9.5,"factor":"halve"}"#).unwrap(), TempoAction::ScaleSection { index: 2, at: 9.5, factor: Factor::Halve });
@@ -162,6 +167,10 @@ fn action_json_matches_the_typescript_types() {
         (r#"{"kind":"set","edge":"start","value":{"tick":32}}"#, LoopCmd::Set { edge: Edge::Start, value: Boundary::Tick { tick: 32 } }),
         (r#"{"kind":"set","edge":"end","value":{"ms":1500.5}}"#, LoopCmd::Set { edge: Edge::End, value: Boundary::Ms { ms: 1500.5 } }),
         (r#"{"kind":"flags","repeat":true,"count_in":false}"#, LoopCmd::Flags { repeat: true, count_in: false }),
+        (
+            r#"{"kind":"training","on":true,"start":60,"end":80,"step":10,"repeats":2}"#,
+            LoopCmd::Training { on: true, start: 60, end: 80, step: 10, repeats: 2 },
+        ),
         (r#"{"kind":"play"}"#, LoopCmd::Play),
         (r#"{"kind":"stop"}"#, LoopCmd::Stop),
     ];

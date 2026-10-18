@@ -776,13 +776,14 @@ fn prev_next_jump_at_once_and_keep_playing() {
 }
 
 #[test]
-fn tempo_change_keeps_loops_in_time_and_the_speed() {
+fn tempo_change_keeps_loops_in_time_and_keeps_speed() {
     let (_t, spec, mut m, b, _e, pcm) = with_tempo();
     let t0 = Instant::now();
     let before = m.snapshot(&spec.id).unwrap();
     m.seek(&spec.id, 3000, t0).unwrap();
+    m.speed(&spec.id, SpeedAction::Set(80), t0).unwrap();
     let s = m.set_bpm(&spec.id, 100.0, t0).unwrap();
-    assert_eq!(s.speed, 1.0);
+    assert_eq!(s.speed_pct, 80);
     for (a, b) in before.loops.iter().zip(&s.loops) {
         assert!((a.start_ms - b.start_ms).abs() <= 21.0, "{} vs {}", a.start_ms, b.start_ms);
         assert_eq!(a.end_ms.is_some(), b.end_ms.is_some());
@@ -795,6 +796,7 @@ fn tempo_change_keeps_loops_in_time_and_the_speed() {
     m.tick(t0 + ms(500));
     assert!(disk(&spec).unwrap()["tempo"]["segments"].to_string().contains("100"));
 
+    m.speed(&spec.id, SpeedAction::Reset, t0).unwrap(); // the audio below is compared at 100 %
     // the new grid is live: 100 BPM beats are 13230 frames apart from 3000 ms
     m.seek(&spec.id, 3000, t0).unwrap();
     m.play(&spec.id, t0).unwrap();
@@ -818,7 +820,7 @@ fn section_edits_reach_the_engine_loops_and_disk() {
     let s = m.edit_sections(&spec.id, SectionEdit::Add { position: 3000.0, bpm: 100.0 }, t0).unwrap();
     assert_eq!(starts(&s), vec![500.0, 3000.0, 10500.0]);
     assert!(s.tempo.segments[1].on_beat);
-    assert_eq!(s.speed, 1.0);
+    assert_eq!(s.speed_pct, 100);
     for (a, b) in before.loops.iter().zip(&s.loops) {
         assert!((a.start_ms - b.start_ms).abs() <= 21.0, "{} vs {}", a.start_ms, b.start_ms);
     }
@@ -1141,7 +1143,7 @@ fn start_jump_on_a_fractional_section_start_stays_in_that_section() {
         for _ in 0..3 {
             let s = m.jump_section(&spec.id, 1, AT, Edge::Start, t0).unwrap();
             assert_eq!(s.transport.tempo_index, Some(1), "playing={playing}");
-            assert_eq!(s.transport.bpm, m.session.as_ref().unwrap().state.tempo.segments[1].bpm * m.session.as_ref().unwrap().state.speed);
+            assert_eq!(s.transport.bpm, m.session.as_ref().unwrap().state.tempo.segments[1].bpm);
             let pos = m.session.as_ref().unwrap().pos();
             assert_eq!(*first.get_or_insert(pos), pos);
         }
@@ -1190,14 +1192,81 @@ fn removing_the_tempo_clears_the_grid_and_count_in() {
 }
 
 #[test]
-fn section_flags_and_speed_are_refused_without_a_tempo() {
+fn section_flags_are_refused_without_a_tempo() {
     let (_t, spec, mut m, _b, _e) = opened(PRACTICE);
     let t0 = Instant::now();
     let e = SectionEdit::Flags { index: 0, at: 0.0, metronome: true, count_in: false };
     assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), STALE);
-    assert_eq!(m.speed_action(&spec.id).unwrap_err(), "Enter a BPM first");
+    // the speed works without a tempo; there is no BPM to play
+    let s = m.speed(&spec.id, SpeedAction::Step(-1), t0).unwrap();
+    assert_eq!((s.speed_pct, s.transport.bpm, s.transport.played_bpm), (95, 0.0, 0.0));
+}
+
+#[test]
+fn speed_actions_clamp_refuse_and_save() {
     let (_t, spec, mut m, _b, _e) = opened(WITH_TEMPO);
-    assert_eq!(m.speed_action(&spec.id).unwrap_err(), "Speed change is not available yet");
+    let t0 = Instant::now();
+    let speed = |m: &mut PlayerManager, a| m.speed(&spec.id, a, t0);
+    assert_eq!(speed(&mut m, SpeedAction::Set(80)).unwrap().speed_pct, 80);
+    let t = speed(&mut m, SpeedAction::Step(0)).unwrap().transport;
+    assert_eq!((t.bpm, t.played_bpm, t.speed_pct), (120.0, 96.0, 80));
+    assert_eq!(speed(&mut m, SpeedAction::Set(50)).unwrap().transport.played_bpm, 60.0);
+    assert_eq!(speed(&mut m, SpeedAction::Set(250)).unwrap_err(), crate::speed::SPEED_RANGE);
+    assert_eq!(m.snapshot(&spec.id).unwrap().speed_pct, 50);
+    assert_eq!(speed(&mut m, SpeedAction::Set(25)).unwrap().speed_pct, 25);
+    assert_eq!(speed(&mut m, SpeedAction::Step(-1)).unwrap().speed_pct, 25);
+    assert_eq!(speed(&mut m, SpeedAction::Set(200)).unwrap().speed_pct, 200);
+    assert_eq!(speed(&mut m, SpeedAction::Step(1)).unwrap().speed_pct, 200);
+    assert_eq!(speed(&mut m, SpeedAction::Reset).unwrap().speed_pct, 100);
+    speed(&mut m, SpeedAction::Set(80)).unwrap();
+    m.tick(t0 + ms(500));
+    assert_eq!(disk(&spec).unwrap()["speed"], 0.8);
+}
+
+#[test]
+fn a_training_run_refuses_speed_actions_and_reports_progress() {
+    let (_t, spec, mut m, b, _e) = opened(WITH_TEMPO);
+    let t0 = Instant::now();
+    let t = Training { on: true, start: 60, end: 80, step: 10, repeats: 2 };
+    let s = m.loop_action(&spec.id, LoopAction::Training(t), t0).unwrap();
+    assert_eq!(s.loops[0].training, t);
+    assert_eq!(s.transport.training, None);
+    assert_eq!(s.loops[1].training, Training::default());
+    m.speed(&spec.id, SpeedAction::Set(90), t0).unwrap();
+    m.loop_action(&spec.id, LoopAction::Play, t0).unwrap();
+    b.pull(4000);
+    m.tick(t0 + ms(20));
+    let tr = m.snapshot(&spec.id).unwrap().transport;
+    assert_eq!(tr.training, Some(TrainingProgress { loop_index: 0, speed_pct: 60, repeat: 1, of: Some(2) }));
+    assert_eq!(tr.speed_pct, 60);
+    for a in [SpeedAction::Step(1), SpeedAction::Reset, SpeedAction::Set(70)] {
+        assert_eq!(m.speed(&spec.id, a, t0).unwrap_err(), TRAINING_RUNNING);
+    }
+    assert_eq!(m.snapshot(&spec.id).unwrap().speed_pct, 90);
+    m.pause(&spec.id, t0).unwrap();
+    b.pull(4000);
+    m.tick(t0 + ms(40));
+    let snap = m.snapshot(&spec.id).unwrap();
+    assert_eq!((snap.transport.training, snap.transport.speed_pct), (None, 90));
+    assert!(m.speed(&spec.id, SpeedAction::Reset, t0).is_ok());
+}
+
+#[test]
+fn loop_play_with_training_counts_in_at_the_first_pass_speed() {
+    let (_t, spec, mut m, _b, _e) = opened(WITH_TEMPO);
+    let t0 = Instant::now();
+    let t = Training { on: true, start: 60, end: 80, step: 10, repeats: 2 };
+    m.loop_action(&spec.id, LoopAction::Training(t), t0).unwrap();
+    m.loop_action(&spec.id, LoopAction::Flags { repeat: true, count_in: true }, t0).unwrap();
+    let snap = m.loop_action(&spec.id, LoopAction::Play, t0).unwrap();
+    assert!(snap.transport.counting_in);
+    let s = m.session.as_ref().unwrap();
+    let start_ms = s.boundary_ms(s.state.current().unwrap().start);
+    let plan = s.plan_at(start_ms, 60).unwrap();
+    assert_eq!(s.ms_of(plan.clicks[1]), 833); // the log line's beat_ms at 120 BPM and 60 %
+    let spec_loop = s.loop_spec().unwrap();
+    assert_eq!(spec_loop.training, Some(t));
+    assert_eq!(spec_loop.count_in_bpm_milli, Some(120_000));
 }
 
 #[test]

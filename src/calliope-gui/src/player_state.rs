@@ -460,7 +460,6 @@ impl PlayerState {
     }
 
     /// Stores the training settings of the current loop; `on` also switches Loop On on.
-    #[allow(dead_code)] // used by the manager from Task 5/6 on
     pub fn set_training(&mut self, t: Training) -> Result<(), String> {
         let l = self.current_mut()?;
         if !l.is_complete() {
@@ -480,7 +479,6 @@ impl PlayerState {
     }
 
     /// Sets the track speed; the caller has checked the range.
-    #[allow(dead_code)] // used by the manager from Task 5/6 on
     pub fn set_speed_pct(&mut self, pct: u32) {
         self.speed = f64::from(pct) / 100.0;
     }
