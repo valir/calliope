@@ -46,7 +46,7 @@
 
 <!-- Lives in the Sections title row. The -/+/Reset placeholders and the "later update" hint stay hidden until
      that feature exists: set SHOW_PLACEHOLDERS to true to bring them back. -->
-<div class="flex flex-none items-center gap-2 {nested ? '' : 'rounded-lg border-2 border-border bg-card p-3'}" role="group" aria-label="BPM">
+<div class="flex flex-none flex-wrap items-center gap-2 {nested ? '' : 'rounded-lg border-2 border-border bg-card p-3'}" role="group" aria-label="BPM">
   <label for="bpm-field" class="text-lg font-semibold">BPM</label>
   <input
     id="bpm-field"

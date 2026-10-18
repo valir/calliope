@@ -29,12 +29,12 @@
   const message = $derived(pl.sectionError || (segs.length === 0 && pl.status === 'active' ? NEED_BPM : ''));
 </script>
 <div class="flex min-w-0 max-w-full flex-none flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Sections">
-  <div class="flex items-center gap-x-3">
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
     <span class="text-lg font-semibold">Sections</span>
     <BpmSection nested />
     <input
       type="text"
-      class="h-9 w-40 min-w-0 rounded-md border border-input bg-background px-2 text-base disabled:opacity-50"
+      class="h-9 w-40 min-w-24 max-w-full rounded-md border border-input bg-background px-2 text-base disabled:opacity-50"
       aria-label="Section name"
       placeholder="Name this section"
       maxlength={MAX_SECTION_NAME}
@@ -50,7 +50,7 @@
       }}
     />
   </div>
-  <div class="flex items-center gap-2">
+  <div class="flex flex-wrap items-center gap-2">
     <Button
       variant="outline"
       class="h-[3.25rem] w-12 px-0 text-lg"
@@ -100,7 +100,7 @@
       onclick={() => void jumpSection('end')}
     >▶|</Button>
   </div>
-  <div class="flex items-center gap-x-3 gap-y-1">
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
     <div class="flex flex-none items-center gap-2" role="group" aria-label="This section" title="This section">
       <Button
         variant="outline"
@@ -121,7 +121,7 @@
         onclick={() => void setSectionFlags(clicks, !countIn)}
       >Count In</Button>
     </div>
-    <span class="min-w-0 truncate text-base tabular-nums" data-testid="section-status">{status}</span>
+    <span class="min-w-0 max-w-full text-base tabular-nums" data-testid="section-status">{status}</span>
   </div>
   <span class="min-h-5 min-w-0 truncate text-sm {pl.sectionError ? 'text-destructive' : 'text-muted-foreground'}" role={pl.sectionError ? 'alert' : undefined} title={message || undefined} data-testid="section-message">{message}</span>
 </div>
