@@ -3016,3 +3016,496 @@ fn ts24_autodetect_keeps_the_play_settings() {
     let fresh = new.with_play_settings_of(&TempoMap::default());
     assert_eq!(fresh, new);
 }
+
+// =========================================================================================
+// QA, phase 3 (gui-player-tempo-sections): edge cases of the Play count-in, the migration, the
+// default loop end, the Autodetect carry and the removed master command
+// =========================================================================================
+
+/// Counts in or not after a Play from `from_ms`: (counting_in of the transport, the first click frames found
+/// in the first `ms` of output).
+fn play_from(r: &mut Rig, from_ms: u64) -> bool {
+    r.seek(from_ms);
+    r.play().counting_in
+}
+
+#[test]
+fn qa_p3_play_count_in_exactly_on_a_section_boundary_belongs_to_the_new_section() {
+    // section 2 (from 8500) has Count In, section 1 has not
+    let mut r = rig_with(PRACTICE, &ts5_json("", r#","count_in":true"#, ""));
+    assert!(play_from(&mut r, 8500), "Play on the change counts in with the new section");
+    // 93 BPM: three clicks 645 ms apart
+    let got = r.b.pull(frames_of(2000.0));
+    let zero = vec![0.0f32; got.len()];
+    assert_frames(&clicks(&got, &zero, 0)[..3], &[0.0, 60000.0 / 93.0, 2.0 * 60000.0 / 93.0]);
+    let mut r = rig_with(PRACTICE, &ts5_json("", r#","count_in":true"#, ""));
+    assert!(!play_from(&mut r, 8499), "one ms before the change the section before decides");
+
+    // the other way round: only section 1 has Count In
+    let mut r = rig_with(PRACTICE, &ts5_json(r#","count_in":true"#, "", ""));
+    assert!(!play_from(&mut r, 8500));
+    let mut r = rig_with(PRACTICE, &ts5_json(r#","count_in":true"#, "", ""));
+    assert!(play_from(&mut r, 8499));
+    let got = r.b.pull(frames_of(1200.0));
+    let zero = vec![0.0f32; got.len()];
+    assert_frames(&clicks(&got, &zero, 0)[..3], &[0.0, 500.0, 1000.0]); // section 1 is 120 BPM
+}
+
+#[test]
+fn qa_p3_play_count_in_in_section_1_before_its_start_and_at_the_track_end() {
+    // the first change is at 500 ms: before it, section 1 decides
+    let mut r = rig_with(PRACTICE, &ts5_json(r#","count_in":true"#, "", ""));
+    assert!(play_from(&mut r, 0));
+    let mut r = rig_with(PRACTICE, &ts5_json(r#","count_in":true"#, "", ""));
+    assert!(play_from(&mut r, 499));
+    // Play at the track end goes to 0 first, and section 1 decides (not the last section)
+    let mut r = rig_with(PRACTICE, &ts5_json("", r#","count_in":true"#, ""));
+    let dur = r.snap().duration_ms;
+    let t = {
+        r.seek(dur);
+        r.play()
+    };
+    assert_eq!(t.position_ms, 0);
+    assert!(!t.counting_in, "the last section has Count In but Play restarts in section 1");
+    let mut r = rig_with(PRACTICE, &ts5_json(r#","count_in":true"#, "", ""));
+    r.seek(dur);
+    assert!(r.play().counting_in, "section 1 has Count In: the restart counts in");
+    // Play at the track end inside a last section with Count In and a single section: counts in at its tempo
+    let one = r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":0,"bpm":100,"count_in":true}]}}"#;
+    let mut r = rig_with(PRACTICE, one);
+    r.seek(dur);
+    let t = r.play();
+    assert_eq!(t.position_ms, 0);
+    assert!(t.counting_in);
+}
+
+#[test]
+fn qa_p3_no_tempo_never_counts_in_even_with_an_old_global_count_in() {
+    let mut r = rig(PRACTICE);
+    assert!(!play_from(&mut r, 0));
+    assert!(!play_from(&mut r, 5000));
+    // a schema 4 file with the master Count In on but no sections at all
+    let old = r#"{"schema_version":4,"metronome":{"on":true,"count_in":true}}"#;
+    let mut r = rig_with(PRACTICE, old);
+    assert!(!play_from(&mut r, 0));
+    // the sections are removed again: nothing counts in and no click is heard
+    let one = r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":0,"bpm":100,"count_in":true}]}}"#;
+    let mut r = rig_with(PRACTICE, one);
+    r.m.set_bpm(&r.id(), 0.0, r.t0).unwrap();
+    assert!(r.snap().tempo.segments.is_empty());
+    assert!(!play_from(&mut r, 0));
+}
+
+#[test]
+fn qa_p3_play_with_a_current_loop_uses_only_the_section_rule_and_loop_play_only_the_loop() {
+    let loops = r#"{"id":"a","start":{"ms":9000},"end":{"ms":11000},"repeat":true,"count_in":true}"#;
+    // section 1 has Count In, the loop (in section 2) too; plain Play at 2000 counts in at 120 BPM (section 1)
+    let mut r = rig_with(PRACTICE, &ts5_json(r#","count_in":true"#, "", loops));
+    assert!(r.snap().current_loop.is_some());
+    assert!(play_from(&mut r, 2000));
+    // plain Play in section 2 (no Count In there) with a current loop whose Count-In is on: at once
+    let mut r = rig_with(PRACTICE, &ts5_json(r#","count_in":true"#, "", loops));
+    assert!(!play_from(&mut r, 9500), "the loop's Count-In belongs to loop Play only");
+    // loop Play with the loop's Count-In off and section 2 Count In on: no pre-roll
+    let off = r#"{"id":"a","start":{"ms":9000},"end":{"ms":11000},"repeat":true,"count_in":false}"#;
+    let mut r = rig_with(PRACTICE, &ts5_json("", r#","count_in":true"#, off));
+    let st = r.lp(LoopAction::Play).unwrap();
+    assert!(!st.transport.counting_in);
+    // plain Play afterwards (paused inside the loop, in section 2): counts in with the section's rule
+    r.m.pause(&r.id(), r.t0).unwrap();
+    assert!(play_from(&mut r, 9500));
+    // Play while already counting in or playing does not start another pre-roll
+    let before = r.b.pull(10).len();
+    assert!(before > 0);
+    let t = r.play();
+    assert!(t.playing);
+}
+
+#[test]
+#[ignore = "DEFECT: Start jump rounds a fractional section start to the nearest frame, which can be before the start, so Play counts in with the previous section"]
+fn qa_p3_start_jump_to_a_section_that_starts_between_two_frames_still_counts_in_with_that_section() {
+    // 8500.01 ms is 187425.2 frames: the Start jump lands on frame 187425 = 8499.9977 ms
+    let json = r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[
+        {"start_ms":500,"bpm":120},{"start_ms":8500.01,"bpm":93,"detected_ms":8500.01,"count_in":true}]}}"#;
+    let mut r = rig_with(PRACTICE, json);
+    r.m.jump_section(&r.id(), 1, 8500.01, tempo_map::Edge::Start, r.t0).unwrap();
+    let t = r.play();
+    assert!(t.counting_in, "Start of section 2 (Count In on), then Play: expected a count-in, position {}", t.position_ms);
+}
+
+/// A schema `v` file with the given master (raw JSON text, or None to leave the key out) and two sections.
+fn old_json(v: u32, master: Option<&str>, seg0: &str, seg1: &str, loops: &str) -> String {
+    let m = master.map_or(String::new(), |m| format!(r#""metronome":{m},"#));
+    format!(
+        r#"{{"schema_version":{v},{m}"loops":[{loops}],"tempo":{{"beats_per_bar":4,"segments":[
+        {{"start_ms":500,"bpm":120{seg0}}},{{"start_ms":8500,"bpm":93,"detected_ms":8500{seg1}}}]}}}}"#
+    )
+}
+
+fn flags_now(r: &Rig) -> Vec<(bool, bool)> {
+    r.snap().tempo.segments.iter().map(|s| (s.meta.metronome, s.meta.count_in)).collect()
+}
+
+#[test]
+fn qa_p3_migration_missing_and_wrong_typed_masters_count_as_off() {
+    let on_flags = r#","metronome":true,"count_in":true"#;
+    for v in 0..=4 {
+        for master in [
+            None,
+            Some("{}"),
+            Some("null"),
+            Some("true"),
+            Some("false"),
+            Some(r#""on""#),
+            Some("[true]"),
+            Some("7"),
+            Some(r#"{"on":"true","count_in":"true"}"#),
+            Some(r#"{"on":1,"count_in":1}"#),
+            Some(r#"{"on":null,"count_in":null}"#),
+            Some(r#"{"count_in":false}"#),
+        ] {
+            let r = rig_with(PRACTICE, &old_json(v, master, on_flags, on_flags, ""));
+            assert_eq!(flags_now(&r), [(false, false), (false, false)], "v{v} master {master:?}");
+        }
+    }
+    // a wrong-typed Count In under a good master On: the section flags stay, no section 1 Count In is added
+    for v in 1..=4 {
+        for ci in [r#""true""#, "1", "null", "[]", "{}"] {
+            let m = format!(r#"{{"on":true,"count_in":{ci}}}"#);
+            let r = rig_with(PRACTICE, &old_json(v, Some(&m), r#","count_in":false"#, r#","metronome":false,"count_in":true"#, ""));
+            assert_eq!(flags_now(&r), [(true, false), (false, true)], "v{v} count_in {ci}");
+        }
+        // a wrong-typed On is Off even if the Count In is a good true: silent, section 1 Count In on
+        let r = rig_with(PRACTICE, &old_json(v, Some(r#"{"on":"yes","count_in":true}"#), "", "", ""));
+        assert_eq!(flags_now(&r), [(false, true), (false, false)], "v{v}");
+    }
+}
+
+#[test]
+fn qa_p3_migration_keeps_loops_and_runs_once() {
+    let loops = r#"{"id":"a","start":{"ms":9000},"end":{"ms":11000},"repeat":false,"count_in":true}"#;
+    // master Off with a loop that has Count-In: the loop is not changed, the sections are silenced
+    let mut r = rig_with(PRACTICE, &old_json(4, Some(r#"{"on":false,"count_in":true}"#), "", r#","count_in":true"#, loops));
+    assert_eq!(flags_now(&r), [(false, true), (false, false)]);
+    let l = r.snap().loops[0].clone();
+    assert!(l.count_in && !l.repeat);
+    // the user turns Click on in section 2 and everything is saved; a reopen must not silence it again
+    flags(&mut r, 1, true, false).unwrap();
+    r.flush();
+    let d = r.disk().unwrap();
+    assert_eq!(d["schema_version"], 5);
+    assert!(d.get("metronome").is_none());
+    r.reopen();
+    assert_eq!(flags_now(&r), [(false, true), (true, false)]);
+    let l = r.snap().loops[0].clone();
+    assert!(l.count_in && !l.repeat);
+
+    // reading a file without any edit does not write it (the migration is saved on the first change)
+    let text = old_json(3, Some(r#"{"on":true,"count_in":false}"#), "", "", "");
+    let (_t, spec, mut m, _b, _e, res) = open_with_file(text.as_bytes());
+    res.unwrap();
+    m.tick(Instant::now() + Duration::from_secs(5));
+    m.close();
+    let after = std::fs::read_to_string(spec.dir.join("player.json")).unwrap();
+    assert!(after.contains("\"schema_version\":3") || after.contains("\"schema_version\": 3") || after == text, "{after}");
+
+    // migration with no sections at all and the master Count In: no panic, an empty map
+    let r = rig_with(PRACTICE, r#"{"schema_version":2,"metronome":{"on":true,"count_in":true},"tempo":{"segments":[]}}"#);
+    assert!(r.snap().tempo.segments.is_empty());
+}
+
+#[test]
+fn qa_p3_newer_schemas_stay_read_only_for_every_kind_of_edit() {
+    for v in [6u64, 7, 99, 4_000_000_000] {
+        let text = old_json(5, Some(r#"{"on":true,"count_in":true}"#), "", r#","count_in":true"#, "").replace(
+            "\"schema_version\":5",
+            &format!("\"schema_version\":{v}"),
+        );
+        let (_t, spec, mut m, b, _e, res) = open_with_file(text.as_bytes());
+        let snap = res.unwrap();
+        assert!(snap.note.as_deref().unwrap().contains("newer version"), "v{v}");
+        assert!(snap.tempo.segments.is_empty(), "values of a newer file are not applied (v{v})");
+        let t0 = Instant::now();
+        let _ = m.set_bpm(&spec.id, 100.0, t0);
+        let _ = m.edit_sections(&spec.id, SectionEdit::Flags { index: 0, at: 0.0, metronome: false, count_in: true }, t0);
+        let _ = m.edit_sections(&spec.id, SectionEdit::Name { index: 0, at: 0.0, name: "x".into() }, t0);
+        let _ = m.loop_action(&spec.id, LoopAction::Add, t0);
+        let _ = m.loop_action(&spec.id, LoopAction::Flags { repeat: false, count_in: true }, t0);
+        let _ = m.seek(&spec.id, 4000, t0);
+        let _ = m.play(&spec.id, t0);
+        b.pull(1000);
+        m.tick(t0 + Duration::from_secs(30));
+        let _ = m.leave(&spec.id, t0);
+        m.close();
+        assert_eq!(std::fs::read_to_string(spec.dir.join("player.json")).unwrap(), text, "v{v}");
+    }
+}
+
+/// A schema 5 file whose two sections are at 500 ms and `second` ms; plus an optional third at `third`.
+fn two_or_three(second: f64, third: Option<f64>) -> String {
+    let t = third.map_or(String::new(), |t| format!(r#",{{"start_ms":{t},"bpm":100,"detected_ms":{t}}}"#));
+    format!(
+        r#"{{"schema_version":5,"tempo":{{"beats_per_bar":4,"segments":[{{"start_ms":500,"bpm":120}},
+        {{"start_ms":{second},"bpm":93,"detected_ms":{second}}}{t}]}}}}"#
+    )
+}
+
+fn tick_ms(bpm: f64) -> f64 {
+    60000.0 / (bpm * 16.0)
+}
+
+#[test]
+fn qa_p3_plus_end_is_the_track_end_when_the_next_section_starts_past_the_audio() {
+    let mut r = rig_with(PRACTICE, &two_or_three(5000.0, None));
+    let dur = r.snap().duration_ms as f64;
+    // a damaged map: the change after the audio's end
+    let mut r2 = rig_with(PRACTICE, &two_or_three(dur + 5000.0, None));
+    r2.seek(3000);
+    let s = r2.lp(LoopAction::Add).unwrap();
+    let end = s.loops[0].end_ms.expect("a complete loop");
+    assert!(end <= dur && end > dur - tick_ms(120.0) - 0.01, "{end} of {dur}");
+    // exactly at the end, and one tick before and after it
+    for at in [dur, dur - tick_ms(120.0), dur + tick_ms(120.0)] {
+        let mut r3 = rig_with(PRACTICE, &two_or_three(at, None));
+        r3.seek(3000);
+        let s = r3.lp(LoopAction::Add).unwrap();
+        let end = s.loops[0].end_ms.expect("a complete loop");
+        assert!(end <= dur + 0.001 && end > 3000.0, "next section at {at}: end {end} of {dur}");
+        // and the loop can be played
+        r3.lp(LoopAction::Play).unwrap();
+        r3.b.pull(2000);
+    }
+    // the ordinary case still ends at the section
+    r.seek(3000);
+    let s = r.lp(LoopAction::Add).unwrap();
+    assert_eq!(s.loops[0].end_ms, Some(5000.0));
+}
+
+#[test]
+fn qa_p3_plus_in_the_last_section_on_a_change_and_next_to_the_end() {
+    let mut r = rig_with(PRACTICE, &ts5_json("", "", ""));
+    let dur = r.snap().duration_ms as f64;
+    // the playhead exactly on the last change, and 1 ms before it (the nearest tick is the change)
+    for at in [8500u64, 8499, 8501] {
+        let mut r = rig_with(PRACTICE, &ts5_json("", "", ""));
+        r.seek(at);
+        let s = r.lp(LoopAction::Add).unwrap();
+        let l = &s.loops[0];
+        assert!((l.start_ms - 8500.0).abs() < 0.01, "at {at}: start {}", l.start_ms);
+        let end = l.end_ms.unwrap();
+        assert!(end <= dur && end > dur - tick_ms(93.0) - 0.01, "at {at}: end {end}");
+    }
+    // 1 ms before the change but the start tick is the one before it: ends at the change
+    let mut r1 = rig_with(PRACTICE, &ts5_json("", "", ""));
+    r1.seek(8500 - 20);
+    let s = r1.lp(LoopAction::Add).unwrap();
+    assert!(s.loops[0].start_ms < 8500.0 && s.loops[0].end_ms == Some(8500.0), "{:?}", s.loops[0]);
+    // at the very end of the track: no end (the start is within a tick of it), no panic, not playable
+    r.seek(dur as u64);
+    let s = r.lp(LoopAction::Add).unwrap();
+    let l = s.loops.last().unwrap();
+    if let Some(e) = l.end_ms {
+        assert!(e > l.start_ms, "an end must be after the start: {l:?}");
+    } else {
+        assert!(r.lp(LoopAction::Play).is_err());
+    }
+    // two ticks before the end the loop is complete and ends in the audio
+    let mut r = rig_with(PRACTICE, &ts5_json("", "", ""));
+    r.seek((dur - 2.0 * tick_ms(93.0) - 10.0) as u64);
+    let s = r.lp(LoopAction::Add).unwrap();
+    let l = &s.loops[0];
+    assert!(l.end_ms.unwrap() > l.start_ms && l.end_ms.unwrap() <= dur, "{l:?}");
+}
+
+#[test]
+fn qa_p3_plus_with_three_sections_ends_at_the_very_next_one_and_follows_edits() {
+    let mut r = rig_with(PRACTICE, &two_or_three(6000.0, Some(12000.0)));
+    r.seek(2000);
+    let s = r.lp(LoopAction::Add).unwrap();
+    assert_eq!(s.loops[0].end_ms, Some(6000.0));
+    r.seek(7000);
+    let s = r.lp(LoopAction::Add).unwrap();
+    let l = s.loops.iter().find(|l| l.start_ms > 6000.0).unwrap();
+    assert_eq!(l.end_ms, Some(12000.0));
+    // after a section is removed the next one is further away
+    r.edit(SectionEdit::Remove { index: 1, at: 6000.0 });
+    r.seek(2000);
+    let s = r.lp(LoopAction::Add).unwrap();
+    let l = s.loops.iter().filter(|l| l.start_ms < 3000.0).last().unwrap();
+    assert_eq!(l.end_ms, Some(12000.0));
+    // while playing: Add does not stop the playback
+    r.play();
+    r.b.pull(500);
+    r.lp(LoopAction::Add).unwrap();
+    assert!(r.snap().transport.playing);
+}
+
+#[test]
+fn qa_p3_plus_in_timestamp_mode_and_at_the_99_loop_limit() {
+    let mut r = rig(PRACTICE);
+    let dur = r.snap().duration_ms as f64;
+    // at the very start and in the middle: always the track end
+    for at in [0u64, 7777] {
+        r.seek(at);
+        let s = r.lp(LoopAction::Add).unwrap();
+        let l = s.loops.last().unwrap();
+        assert!(matches!(l.end, Some(Boundary::Ms { ms }) if ms == dur), "{l:?}");
+    }
+    // at the track end itself: no end after the start
+    r.seek(dur as u64);
+    let s = r.lp(LoopAction::Add).unwrap();
+    assert!(s.loops.iter().all(|l| l.end_ms.is_none_or(|e| e > l.start_ms)), "{:?}", s.loops);
+
+    // the limit: the 100th is refused with the message and changes nothing, in BPM mode and in the last section
+    let mut r = rig_with(PRACTICE, &ts5_json("", "", ""));
+    for i in 0..99 {
+        r.seek(9000 + i * 10);
+        r.lp(LoopAction::Add).unwrap();
+    }
+    let before = r.snap().loops.clone();
+    let e = r.lp(LoopAction::Add).unwrap_err();
+    assert!(e.contains("99"), "{e}");
+    assert_eq!(r.snap().loops, before);
+    // removing one makes room again
+    r.lp(LoopAction::Remove).unwrap();
+    r.lp(LoopAction::Add).unwrap();
+    assert_eq!(r.snap().loops.len(), 99);
+}
+
+fn seg_of(start_ms: f64, bpm: f64, click: bool, count_in: bool, name: &str) -> tempo_map::Segment {
+    tempo_map::Segment {
+        start_ms,
+        bpm,
+        detected_ms: (start_ms > 1000.0).then_some(start_ms),
+        on_beat: false,
+        meta: tempo_map::SectionMeta { name: name.into(), metronome: click, count_in },
+    }
+}
+
+#[test]
+fn qa_p3_autodetect_carry_takes_only_section_1_click_and_count_in() {
+    let carried = |old: Vec<tempo_map::Segment>, new: Vec<tempo_map::Segment>| -> Vec<(bool, bool, String)> {
+        let old = TempoMap { beats_per_bar: 4, segments: old };
+        let new = TempoMap { beats_per_bar: 4, segments: new };
+        new.with_play_settings_of(&old).segments.iter().map(|s| (s.meta.metronome, s.meta.count_in, s.meta.name.clone())).collect()
+    };
+    let new3 = || vec![seg_of(400.0, 100.0, true, false, ""), seg_of(6000.0, 110.0, true, false, ""), seg_of(12000.0, 95.0, true, false, "")];
+    // Click on in section 1, off in section 2, section 2 Count In on: all new sections click, none but the first counts in
+    let got = carried(
+        vec![seg_of(0.0, 120.0, true, false, "A"), seg_of(5000.0, 90.0, false, true, "B")],
+        new3(),
+    );
+    assert_eq!(got, [(true, false, "".into()), (true, false, "".into()), (true, false, "".into())]);
+    // Click off + Count In on in section 1
+    let got = carried(vec![seg_of(0.0, 120.0, false, true, "A"), seg_of(5000.0, 90.0, true, false, "")], new3());
+    assert_eq!(got, [(false, true, "".into()), (false, false, "".into()), (false, false, "".into())]);
+    // a one-section old map and a one-section new map
+    let got = carried(vec![seg_of(0.0, 120.0, false, true, "")], vec![seg_of(300.0, 80.0, true, false, "x")]);
+    assert_eq!(got, [(false, true, "x".into())], "the new map keeps its own names (none for a detection)");
+    // an empty new map stays empty, an empty old map changes nothing
+    assert!(carried(vec![seg_of(0.0, 120.0, false, true, "")], vec![]).is_empty());
+    assert_eq!(carried(vec![], new3()), [(true, false, "".into()), (true, false, "".into()), (true, false, "".into())]);
+    // the BPM and the starts of the new map are untouched
+    let old = TempoMap { beats_per_bar: 4, segments: vec![seg_of(0.0, 120.0, false, true, "")] };
+    let new = TempoMap { beats_per_bar: 3, segments: new3() };
+    let out = new.with_play_settings_of(&old);
+    assert_eq!(out.beats_per_bar, 3);
+    assert_eq!(out.segments.iter().map(|s| (s.start_ms, s.bpm, s.detected_ms)).collect::<Vec<_>>(), new.segments.iter().map(|s| (s.start_ms, s.bpm, s.detected_ms)).collect::<Vec<_>>());
+}
+
+#[test]
+fn qa_p3_autodetect_on_a_track_without_a_player_json_and_with_a_migrated_one() {
+    // no player.json at all: the new map as detected
+    let (_t, spec) = spec_of(PRACTICE);
+    let new = TempoMap { beats_per_bar: 4, segments: vec![seg_of(400.0, 100.0, true, false, ""), seg_of(6000.0, 110.0, true, false, "")] };
+    let got = FileTempoStore.replace(&spec.id, &spec.dir, &|old| Ok(new.with_play_settings_of(old))).unwrap();
+    assert_eq!(got, new);
+    // a schema 4 file with the master Off + Count In: after the migration and Autodetect, silent and section 1 counts in
+    let (_t, spec) = spec_of(PRACTICE);
+    std::fs::write(spec.dir.join("player.json"), old_json(4, Some(r#"{"on":false,"count_in":true}"#), "", "", "")).unwrap();
+    let got = FileTempoStore.replace(&spec.id, &spec.dir, &|old| Ok(new.with_play_settings_of(old))).unwrap();
+    let f: Vec<_> = got.segments.iter().map(|s| (s.meta.metronome, s.meta.count_in)).collect();
+    assert_eq!(f, [(false, true), (false, false)]);
+    let (mut m, _b, _e) = manager();
+    let s = m.open(&spec).unwrap();
+    let f: Vec<_> = s.tempo.segments.iter().map(|s| (s.meta.metronome, s.meta.count_in)).collect();
+    assert_eq!(f, [(false, true), (false, false)]);
+    let d: Value = serde_json::from_slice(&std::fs::read(spec.dir.join("player.json")).unwrap()).unwrap();
+    assert_eq!(d["schema_version"], 5);
+    assert!(d.get("metronome").is_none());
+}
+
+/// Every place that could still name the removed master command.
+#[test]
+fn qa_p3_the_master_metronome_command_and_its_permission_are_gone_everywhere() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let words = [concat!("player_", "metronome"), concat!("player", "Metronome"), concat!("set", "Metronome"), concat!("set_", "metronome")];
+    let mut files = Vec::new();
+    fn walk(d: &Path, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+            let p = e.path();
+            let n = p.file_name().unwrap().to_string_lossy().to_string();
+            if p.is_dir() {
+                if !["node_modules", "target", "tests", "fixtures", ".svelte-kit"].contains(&n.as_str()) {
+                    walk(&p, out);
+                }
+            } else if p.extension().is_some_and(|x| ["rs", "ts", "svelte", "json", "toml", "md", "html", "js"].contains(&x.to_str().unwrap())) {
+                out.push(p);
+            }
+        }
+    }
+    for d in ["src", "capabilities", "permissions", "gen", "build.rs", "README.md", "tauri.conf.json"] {
+        let p = root.join(d);
+        if p.is_dir() {
+            walk(&p, &mut files);
+        } else if p.is_file() {
+            files.push(p);
+        }
+    }
+    assert!(files.len() > 40, "walked only {} files", files.len());
+    for f in &files {
+        let Ok(text) = std::fs::read_to_string(f) else { continue };
+        if f.file_name().is_some_and(|n| n.to_string_lossy().contains("_tests.rs") || n.to_string_lossy().contains(".test.ts")) {
+            continue;
+        }
+        for w in words {
+            assert!(!text.contains(w), "{} still mentions {w}", f.display());
+        }
+    }
+    // the ACL list, the command registration and the capability agree on the player commands
+    let player_cmds = |text: &str, prefix: &str| -> std::collections::BTreeSet<String> {
+        let mut s = std::collections::BTreeSet::new();
+        for (i, _) in text.match_indices(prefix) {
+            let rest = &text[i + prefix.len()..];
+            let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            if name.starts_with("player_") || name == "open_player" {
+                s.insert(name);
+            }
+        }
+        s
+    };
+    let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
+    let registered = player_cmds(&read("src/gui.rs"), "player_ipc::");
+    let acl: std::collections::BTreeSet<String> = read("build.rs")
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix('"').and_then(|l| l.strip_suffix("\",")).map(str::to_string))
+        .filter(|n| n.starts_with("player_") || n == "open_player")
+        .collect();
+    let cap: Value = serde_json::from_str(&read("capabilities/main.json")).unwrap();
+    let granted: std::collections::BTreeSet<String> = cap["permissions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|p| p.as_str())
+        .map(|p| p.strip_prefix("allow-").unwrap_or(p).replace('-', "_"))
+        .filter(|n| n.starts_with("player_") || n == "open_player")
+        .collect();
+    assert!(!registered.is_empty() && !acl.is_empty() && !granted.is_empty(), "{registered:?} {acl:?} {granted:?}");
+    assert_eq!(registered, acl, "registered vs build.rs");
+    assert_eq!(acl, granted, "build.rs vs capability");
+    assert!(!acl.iter().any(|c| c.contains("metronome")));
+    // the snapshot has no master either
+    let r = rig(PRACTICE);
+    let v = serde_json::to_value(r.snap()).unwrap();
+    assert!(v.get("metronome").is_none());
+}

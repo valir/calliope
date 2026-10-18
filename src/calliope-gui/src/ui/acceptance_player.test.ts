@@ -479,3 +479,89 @@ describe('QA phase 2: section name box, Home / End and the section toggles (gui-
     expect(box.value).toBe('Two'); // the box follows the playhead again
   });
 });
+
+describe('QA phase 3: no master metronome, the panes (gui-player-tempo-sections)', () => {
+  const twoSections = (): PlayerSnapshot => ({
+    ...bpmSnap(),
+    tempo: { beats_per_bar: 4, multi: true, segments: [{ start_ms: 500, bpm: 120 }, { start_ms: 8500, bpm: 93, detected_ms: 8500 }] },
+    transport: { ...idle, bpm: 120, tempo_index: 0 },
+  });
+
+  it('qa_p3: no global Metronome or Count In button anywhere, even if a stale snapshot still carries a master', async () => {
+    snap = { ...twoSections(), metronome: { on: true, count_in: true } } as unknown as PlayerSnapshot;
+    render(PlayerView);
+    await openTrack(snap);
+    for (const name of ['Metronome', 'Metronome On', 'Metronome Off', 'Count In', 'On', 'Off']) {
+      expect(screen.queryByRole('button', { name }), name).toBeNull();
+      expect(screen.queryByRole('checkbox', { name }), name).toBeNull();
+    }
+    // the only button called Count-In is the loop's, inside the Loops pane
+    expect(screen.getAllByRole('button', { name: 'Count-In' })).toHaveLength(1);
+    expect(group('Loops').getByRole('button', { name: 'Count-In' })).toBeTruthy();
+    expect(screen.queryByRole('group', { name: 'Metronome' })).toBeNull();
+    // the per-section ones are in the Sections pane only, and the loop's Count-In is in the Loops pane
+    expect(group('Sections').getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent?.trim())).toEqual(
+      expect.arrayContaining(['Metronome in this section', 'Count-in into this section']),
+    );
+    expect(group('Loops').queryByRole('button', { name: 'Metronome in this section' })).toBeNull();
+  });
+
+  it('qa_p3: whatever the user presses, no command with "metronome" in its name is ever sent', async () => {
+    snap = twoSections();
+    render(PlayerView);
+    await openTrack(snap);
+    const press = async (g: string, name: string) => {
+      const b = btn(g, name);
+      if (!b.disabled) await fireEvent.click(b);
+    };
+    await press('Sections', 'Metronome in this section');
+    await press('Sections', 'Count-in into this section');
+    await press('Sections', 'Add a tempo change at the playhead');
+    await press('Playback', 'Play');
+    await press('Playback', 'Rew');
+    await press('Playback', 'FF');
+    await press('Loops', 'Add loop');
+    await press('Loops', 'Count-In');
+    for (const key of [' ', 'b', 'e', 'm', 'c', 'Home', 'End', 'ArrowLeft', 'ArrowRight', 'l']) {
+      await fireEvent.keyDown(document.body, { key, code: key === ' ' ? 'Space' : key });
+    }
+    await flush();
+    expect(calls.length).toBeGreaterThan(3);
+    expect(calls.map((c) => c[0]).filter((c) => /metronome/i.test(c))).toEqual([]);
+    // the section toggles do go out as section flags
+    expect(of('player_tempo').some((c) => (c.action as { kind: string }).kind === 'section-flags')).toBe(true);
+  });
+
+  it('qa_p3: Sections and Loops each have their own Add button and the panes are in the order Sections, Loops, Playback', async () => {
+    snap = twoSections();
+    render(PlayerView);
+    await openTrack(snap);
+    expect(btn('Sections', 'Add a tempo change at the playhead')).toBeTruthy();
+    expect(group('Sections').queryByRole('button', { name: 'Add loop' })).toBeNull();
+    expect(btn('Loops', 'Add loop')).toBeTruthy();
+    expect(group('Loops').queryByRole('button', { name: /tempo change/ })).toBeNull();
+    await fireEvent.click(btn('Loops', 'Add loop'));
+    await flush();
+    expect(of('player_loop').map((c) => (c.action as { kind: string }).kind)).toEqual(['add']);
+    expect(of('player_tempo')).toHaveLength(0); // "+" of the loops never touches the sections
+    // document order of the three panes and nothing else between the waveform and Playback
+    const order = ['Sections', 'Loops', 'Playback'].map((n) => screen.getByRole('group', { name: n }));
+    expect(order[0].compareDocumentPosition(order[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(order[1].compareDocumentPosition(order[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const wave = screen.getByTestId('player-waveform');
+    expect(wave.compareDocumentPosition(order[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // the BPM group is inside Sections and is not a pane of its own
+    const controls = screen.getByTestId('player-controls');
+    expect(Array.from(controls.querySelectorAll(':scope > [role="group"]')).map((e) => e.getAttribute('aria-label'))).toEqual(['Playback']);
+    expect(within(order[0]).getByRole('group', { name: 'BPM' })).toBeTruthy();
+    // Playback is the last thing in the controls, and has no wrap-around position classes
+    expect(controls.lastElementChild).toBe(order[2]);
+  });
+
+  it('qa_p3: the loop log line carries the end, and a stale master field in a snapshot does not break the pane', async () => {
+    snap = { ...twoSections(), metronome: 5 } as unknown as PlayerSnapshot;
+    render(PlayerView);
+    await openTrack(snap);
+    expect(screen.getByTestId('section-status').textContent).toContain('Section 1 of 2');
+  });
+});

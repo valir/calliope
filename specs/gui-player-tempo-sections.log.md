@@ -45,3 +45,5 @@ task 29b | Compact layout: BPM in the Sections title row, compact buttons, Loops
 task 30 | GUI end-to-end: re-measured positions, master removed, player_phase3, visual review, docs/ui.md | implementer | done (1024x640 tree shown clips Sections/Loops sideways; follow-up)
 task 31 | README Player usage | local | done (gemma4 3.5 of 4 replacements; orchestrator removed a stale "refused for the first section")
 task 30b | Narrow layouts wrap inside Sections and Loops (no sideways clipping at 1024x640) | implementer | done
+tester (phase 3) | all criteria PASS except QD3 (Start jump rounds to the nearest frame, can land before a fractional section start, so Play skips its Count In; ignored test); 15 Rust + 4 vitest + 1 GUI qa_p3 tests | tester | done
+reviewer (phase 3) | APPROVED; 5 minor doc staleness (architecture.md player_metronome, log line, settings, schema-4 wording; ui.md message slot), 3 nits | reviewer | done

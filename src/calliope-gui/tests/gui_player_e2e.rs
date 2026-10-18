@@ -965,3 +965,57 @@ fn player_phase3() {
     assert_eq!(tick, 256, "{v}"); // (8500 - 500) ms at 120 BPM, 16 ticks per beat (31.25 ms)
     finish(&app);
 }
+
+/// QA phase 3: the four size/tree cases of the layout. Whatever the size, no pane is wider than the Player
+/// pane (nothing clipped sideways), the two panes of row 1 do not overlap when they are side by side, and at
+/// 1280x800 with the tree folded Sections and Loops are side by side. Screenshots go to
+/// `target/gui-shots/qa-p3-*.png` for a look.
+#[test]
+#[ignore]
+fn qa_p3_layout_never_clips_sideways() {
+    if !ready() {
+        return;
+    }
+    let dirs = player_dirs("qa_p3_layout");
+    // Section 1 is named and every toggle is on, so the section column has its longest content.
+    std::fs::write(
+        dirs.player_json(PL_PRACTICE),
+        r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[
+            {"start_ms":500,"bpm":120,"name":"A rather long section name that is cut","count_in":true},
+            {"start_ms":8500,"bpm":93,"detected_ms":8500,"count_in":true}]},
+            "loops":[{"id":"a","start":{"ms":9000},"end":{"ms":11000},"repeat":true,"count_in":true}]}"#,
+    )
+    .unwrap();
+    let (mut app, wid) = start_player(&dirs);
+    let mut collapsed = false;
+    pick(&mut app, &wid, &mut collapsed, "practice song", PL_PRACTICE);
+    let mut report = Vec::new();
+    for (w, h) in [(1280u32, 800u32), (1024, 640)] {
+        size(&wid, w, h);
+        for tree in ["rail", "shown"] {
+            if (tree == "shown") == collapsed {
+                app.key(&wid, "ctrl+l");
+                app.wait_line(|l| l.contains("player tree collapsed="), secs(5));
+                collapsed = !collapsed;
+            }
+            settle();
+            ms(700);
+            let l = last_layout(&app);
+            let num = |k: &str| -> i32 { field(&l, k).parse().unwrap_or_else(|_| panic!("{k} in {l}")) };
+            let (width, sec, lp) = (num("width"), num("sections_w"), num("loops_w"));
+            report.push(format!("{w}x{h} tree={tree}: {l}"));
+            assert!(sec > 0 && lp > 0, "{l}");
+            assert!(sec <= width && lp <= width, "a pane is wider than the Player pane: {l}");
+            if field(&l, "loops_beside") == "1" {
+                assert!(sec + lp <= width, "side by side but overlapping: {l}");
+            }
+            if w == 1280 && tree == "rail" {
+                assert_eq!(field(&l, "loops_beside"), "1", "{l}");
+            }
+            shot(&format!("qa-p3-{w}x{h}-{tree}"));
+        }
+    }
+    println!("{}", report.join("\n"));
+    std::fs::write(repo().join("target/gui-shots/qa-p3-layout.txt"), report.join("\n") + "\n").unwrap();
+    finish(&app);
+}
