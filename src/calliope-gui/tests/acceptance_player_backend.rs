@@ -1199,7 +1199,7 @@ fn hostile_corrupt_player_json_opens_with_defaults_and_a_note() {
         m.set_bpm(&spec.id, 100.0, t0).unwrap();
         m.tick(t0 + Duration::from_millis(700));
         let v: Value = serde_json::from_slice(&std::fs::read(spec.dir.join("player.json")).unwrap()).unwrap();
-        assert_eq!(v["schema_version"], 5);
+        assert_eq!(v["schema_version"], 6);
         m.play(&spec.id, t0).unwrap();
         b.pull(500);
     }
@@ -1262,7 +1262,7 @@ fn hostile_infinite_and_huge_numbers() {
 
 #[test]
 fn hostile_newer_schema_is_read_only_and_never_overwritten() {
-    let text = r#"{"schema_version":6,"source":"stem:guitar","future":{"x":1}}"#;
+    let text = r#"{"schema_version":7,"source":"stem:guitar","future":{"x":1}}"#;
     let (_t, spec, mut m, b, e, r) = open_with_file(text.as_bytes());
     let s = r.unwrap();
     assert!(s.note.as_deref().unwrap().contains("newer version"));
@@ -1789,7 +1789,7 @@ fn ts7_edits_survive_close_and_reopen() {
     let want = r.snap().tempo.segments;
     assert_eq!(want.len(), 3);
     r.m.close();
-    assert_eq!(r.disk().unwrap()["schema_version"], 5);
+    assert_eq!(r.disk().unwrap()["schema_version"], 6);
     r.reopen();
     let back = r.snap().tempo.segments;
     assert_eq!(back.len(), want.len());
@@ -2003,7 +2003,7 @@ fn qa_q3_typed_change_becomes_placed_when_moved_and_add_starts_on_a_beat() {
     // the file: on_beat only on the placed change, never on the first
     r.m.close();
     let d = r.disk().unwrap();
-    assert_eq!(d["schema_version"], 5);
+    assert_eq!(d["schema_version"], 6);
     let segs = d["tempo"]["segments"].as_array().unwrap();
     assert!(segs[0].get("on_beat").is_none());
     assert_eq!(segs[1]["on_beat"], true);
@@ -2033,7 +2033,7 @@ fn qa_schema_2_file_is_edited_and_saved_as_schema_3_keeping_everything_else() {
     assert_eq!((s.loops[0].start_ms, s.loops[0].end_ms), (l.start_ms, l.end_ms), "loops before the edited section are untouched");
     r.flush();
     let d = r.disk().unwrap();
-    assert_eq!(d["schema_version"], 5);
+    assert_eq!(d["schema_version"], 6);
     assert_eq!(d["tempo"]["segments"][1]["bpm"], 186.0);
     assert_eq!(d["tempo"]["segments"][1]["detected_ms"], 8500.0);
     assert_eq!(d["position_ms"], 4000);
@@ -2063,12 +2063,12 @@ fn qa_schema_1_file_with_tick_loops_is_edited_and_loops_keep_their_time() {
     }
     assert_eq!(r.snap().current_loop, Some(0));
     r.flush();
-    assert_eq!(r.disk().unwrap()["schema_version"], 5);
+    assert_eq!(r.disk().unwrap()["schema_version"], 6);
 }
 
 #[test]
 fn qa_newer_schema_stays_read_only_through_section_edits() {
-    let text = r#"{"schema_version":6,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":120}]}}"#;
+    let text = r#"{"schema_version":7,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":120}]}}"#;
     let (_t, spec, mut m, _b, _e, r) = open_with_file(text.as_bytes());
     r.unwrap();
     let t0 = Instant::now();
@@ -2412,7 +2412,7 @@ fn ts15_names_and_flags_survive_close_and_reopen() {
     assert_eq!((want[1].meta.name.as_str(), want[1].meta.metronome, want[1].meta.count_in), ("Chorus", false, true));
     r.m.close();
     let d = r.disk().unwrap();
-    assert_eq!(d["schema_version"], 5);
+    assert_eq!(d["schema_version"], 6);
     assert_eq!(d["tempo"]["segments"][0]["name"], "Intro");
     assert_eq!(d["tempo"]["segments"][1]["metronome"], false);
     r.reopen();
@@ -2440,10 +2440,10 @@ fn ts16_older_schemas_upgrade() {
         assert_clicks(&c, &want);
         r.edit(SectionEdit::Name { index: 0, at: 500.0, name: "A".into() });
         r.flush();
-        assert_eq!(r.disk().unwrap()["schema_version"], 5, "v{v}");
+        assert_eq!(r.disk().unwrap()["schema_version"], 6, "v{v}");
     }
     // a newer file is never overwritten through flags, name or jump
-    let text = r#"{"schema_version":6,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":120},{"start_ms":8500,"bpm":93}]}}"#;
+    let text = r#"{"schema_version":7,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":120},{"start_ms":8500,"bpm":93}]}}"#;
     let (_t, spec, mut m, _b, _e, r) = open_with_file(text.as_bytes());
     r.unwrap();
     let t0 = Instant::now();
@@ -2917,7 +2917,7 @@ fn ts22_old_files_migrate_to_schema_5() {
         r.edit(SectionEdit::Name { index: 0, at: 500.0, name: "A".into() });
         r.flush();
         let d = r.disk().unwrap();
-        assert_eq!(d["schema_version"], 5, "v{v}");
+        assert_eq!(d["schema_version"], 6, "v{v}");
         assert!(d.get("metronome").is_none(), "v{v}: no master written");
         assert_eq!(d["tempo"]["segments"][1]["metronome"], false, "v{v}");
     }
@@ -2941,8 +2941,8 @@ fn ts22_old_files_migrate_to_schema_5() {
     r.flush();
     assert!(r.disk().unwrap().get("metronome").is_none());
 
-    // a schema 6 file is never overwritten by flags, name, jump or "+"
-    let text = master(6, true, false, "", "");
+    // a schema 7 file is never overwritten by flags, name, jump or "+"
+    let text = master(7, true, false, "", "");
     let (_t, spec, mut m, _b, _e, r) = open_with_file(text.as_bytes());
     r.unwrap();
     let t0 = Instant::now();
@@ -3195,7 +3195,7 @@ fn qa_p3_migration_keeps_loops_and_runs_once() {
     flags(&mut r, 1, true, false).unwrap();
     r.flush();
     let d = r.disk().unwrap();
-    assert_eq!(d["schema_version"], 5);
+    assert_eq!(d["schema_version"], 6);
     assert!(d.get("metronome").is_none());
     r.reopen();
     assert_eq!(flags_now(&r), [(false, true), (true, false)]);
@@ -3218,7 +3218,7 @@ fn qa_p3_migration_keeps_loops_and_runs_once() {
 
 #[test]
 fn qa_p3_newer_schemas_stay_read_only_for_every_kind_of_edit() {
-    for v in [6u64, 7, 99, 4_000_000_000] {
+    for v in [7u64, 8, 99, 4_000_000_000] {
         let text = old_json(5, Some(r#"{"on":true,"count_in":true}"#), "", r#","count_in":true"#, "").replace(
             "\"schema_version\":5",
             &format!("\"schema_version\":{v}"),
@@ -3433,7 +3433,7 @@ fn qa_p3_autodetect_on_a_track_without_a_player_json_and_with_a_migrated_one() {
     let f: Vec<_> = s.tempo.segments.iter().map(|s| (s.meta.metronome, s.meta.count_in)).collect();
     assert_eq!(f, [(false, true), (false, false)]);
     let d: Value = serde_json::from_slice(&std::fs::read(spec.dir.join("player.json")).unwrap()).unwrap();
-    assert_eq!(d["schema_version"], 5);
+    assert_eq!(d["schema_version"], 6);
     assert!(d.get("metronome").is_none());
 }
 

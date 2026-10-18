@@ -457,9 +457,9 @@ fn a5_a8_a9_a10_detection_stores_schema_3_and_replaces_the_old_map() {
     assert_eq!(beats, 27);
     assert_eq!(tempo.segments.len(), 2);
     let v = r.player_json().unwrap();
-    assert_eq!(v["schema_version"], 5);
+    assert_eq!(v["schema_version"], 6);
     assert_eq!(v["position_ms"], 777);
-    assert_eq!(v["speed"], 1.0, "speed is 100 % after a new map");
+    assert_eq!(v["speed"], 0.7, "the speed is kept with a new map");
     assert_eq!(v["future_key"], json!({"a": 1}), "other settings kept");
     let segs = v["tempo"]["segments"].as_array().unwrap();
     assert_eq!(segs.len(), 2);
@@ -608,7 +608,7 @@ fn erratic_valid_beat_lists_end_quickly_with_a_sane_map_or_an_error() {
 fn newer_schema_player_json_refuses_detection_result_and_stays_byte_identical() {
     let server = real_server(Some("ok"));
     let mut r = Rig::new();
-    let newer = r#"{"schema_version":6,"tempo":{"beats_per_bar":4,"segments":[]},"x":[1,2]}"#;
+    let newer = r#"{"schema_version":7,"tempo":{"beats_per_bar":4,"segments":[]},"x":[1,2]}"#;
     fs::write(r.spec.dir.join("player.json"), newer).unwrap();
     assert_eq!(failure(r.run(&server.url)), NEWER);
     assert_eq!(fs::read_to_string(r.spec.dir.join("player.json")).unwrap(), newer);
@@ -710,7 +710,7 @@ fn detection_racing_with_a_save_finishes_both_cleanly() {
     serde_json::from_slice::<Value>(&fs::read(dir.join("track.json")).unwrap()).unwrap();
     if let Ok(b) = fs::read(dir.join("player.json")) {
         let v: Value = serde_json::from_slice(&b).unwrap();
-        assert_eq!(v["schema_version"], 5);
+        assert_eq!(v["schema_version"], 6);
     }
     let stray: Vec<_> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with(".calliope-")).collect();
     assert!(stray.is_empty(), "{stray:?}");

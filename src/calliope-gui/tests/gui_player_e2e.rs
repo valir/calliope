@@ -358,7 +358,7 @@ fn player_tempo_sections() {
     let l = moved(&mut app);
     assert_eq!(field(&l, "applied"), "256", "{l}");
     let v = wait_json(&dirs, PL_PRACTICE, |v| change_start(v, 1) == 10500.0);
-    assert_eq!(v["schema_version"], 5, "{v}");
+    assert_eq!(v["schema_version"], 6, "{v}");
     assert_eq!(v["tempo"]["segments"][1]["detected_ms"].as_f64(), Some(8500.0), "{v}");
 
     // 3. The waveform has the focus: Left moves it one step back.
@@ -425,7 +425,7 @@ fn player_tempo_sections() {
     app.close_gracefully(&wid);
     app.wait_exit(secs(5));
     let v = serde_json::from_slice::<Value>(&std::fs::read(dirs.player_json(PL_PRACTICE)).unwrap()).unwrap();
-    assert_eq!(v["schema_version"], 5, "{v}");
+    assert_eq!(v["schema_version"], 6, "{v}");
     let (mut app, wid) = start_player(&dirs);
     let mut collapsed = false;
     pick(&mut app, &wid, &mut collapsed, "practice song", PL_PRACTICE);
@@ -524,7 +524,7 @@ fn player_section_metronome() {
     // 7. Saved as schema 5.
     ms(600);
     let v = wait_json(&dirs, PL_PRACTICE, |v| v["tempo"]["segments"][1]["name"] == "Verse");
-    assert_eq!(v["schema_version"], 5, "{v}");
+    assert_eq!(v["schema_version"], 6, "{v}");
     assert_eq!(v["tempo"]["segments"][1]["count_in"], true, "{v}");
     assert_eq!(v["tempo"]["segments"][0]["metronome"], false, "{v}");
 
@@ -955,7 +955,7 @@ fn player_phase3() {
     // 5. Saved as schema 5, without the master metronome; the first loop ends on the tick of 8500 ms.
     ms(600);
     let v = wait_json(&dirs, PL_PRACTICE, |v| v["loops"].as_array().is_some_and(|a| a.len() == 2));
-    assert_eq!(v["schema_version"], 5, "{v}");
+    assert_eq!(v["schema_version"], 6, "{v}");
     assert!(v.get("metronome").is_none(), "{v}");
     let tick = v["loops"][0]["end"]["tick"].as_i64().expect("a tick end");
     assert_eq!(tick, 256, "{v}"); // (8500 - 500) ms at 120 BPM, 16 ticks per beat (31.25 ms)

@@ -358,7 +358,7 @@ fn mix_waveform_and_autodetect() {
         .collect();
     assert!(phases.len() >= 2 && phases.contains(&"detecting".to_string()), "phases {phases:?}");
     let v: serde_json::Value = serde_json::from_slice(&std::fs::read(dirs.player_json(ED_FOUR)).unwrap()).unwrap();
-    assert_eq!(v["schema_version"], 5, "{v}");
+    assert_eq!(v["schema_version"], 6, "{v}");
     let segs = wait_segments(&dirs, ED_FOUR, |s| s.len() == 2);
     assert_eq!(start_ms(&segs[1]), CHANGE_MS, "{segs:?}");
     assert_eq!(segs[1]["detected_ms"].as_f64(), Some(CHANGE_MS), "{segs:?}");
