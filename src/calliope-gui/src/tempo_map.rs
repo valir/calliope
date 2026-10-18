@@ -48,7 +48,7 @@ pub struct SectionMeta {
     /// Whether the section's beats click (default: they do, as in older maps).
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub metronome: bool,
-    /// Three clicks at this section's tempo just before it. Never set on the first segment.
+    /// Three clicks at this section's tempo just before it. On the first segment: only the Play count-in.
     #[serde(default, skip_serializing_if = "is_false")]
     pub count_in: bool,
 }
@@ -182,6 +182,29 @@ impl TempoMap {
         Some(self.segments.iter().rposition(|s| s.start_ms <= ms).unwrap_or(0))
     }
 
+    /// Whether the section under `ms` has Count In (the Play pre-roll); false on an empty map.
+    pub fn count_in_at(&self, ms: f64) -> bool {
+        self.segment_at(ms).is_some_and(|i| self.segments[i].meta.count_in)
+    }
+
+    /// The smallest segment tick base greater than `tick`.
+    pub fn next_section_tick(&self, tick: i64) -> Option<i64> {
+        self.bases().into_iter().find(|&b| b > tick)
+    }
+
+    /// This map with the play settings of `old` carried over (Autodetect): every section gets the
+    /// Click of `old`'s first section, the first one also its Count In. Names are not carried.
+    /// An empty `old` changes nothing.
+    pub fn with_play_settings_of(&self, old: &TempoMap) -> TempoMap {
+        let Some(first) = old.segments.first() else { return self.clone() };
+        let mut map = self.clone();
+        for (i, s) in map.segments.iter_mut().enumerate() {
+            s.meta.metronome = first.meta.metronome;
+            s.meta.count_in = i == 0 && first.meta.count_in;
+        }
+        map
+    }
+
     pub fn bpm_at(&self, ms: f64) -> f64 {
         self.segment_at(ms).map_or(0.0, |i| self.segments[i].bpm)
     }
@@ -274,7 +297,6 @@ impl TempoMap {
             if let Some(first) = self.segments.first_mut() {
                 first.detected_ms = None;
                 first.on_beat = false;
-                first.meta.count_in = false;
             }
         } else {
             let tick = self.tick_near(position_ms);
@@ -432,14 +454,10 @@ impl TempoMap {
         Ok(map)
     }
 
-    /// Set the metronome flag and the count-in of section `index`. The first section has no
-    /// section before it, so it can't have a count-in.
+    /// Set the metronome flag and the count-in of section `index`.
     pub fn set_section_flags(&self, index: usize, metronome: bool, count_in: bool) -> Result<TempoMap, String> {
         if index >= self.segments.len() {
             return Err("There is no such section".to_string());
-        }
-        if index == 0 && count_in {
-            return Err("The first section has no section before it".to_string());
         }
         let mut map = self.clone();
         map.segments[index].meta.metronome = metronome;
@@ -992,11 +1010,15 @@ mod tests {
         m.set_bpm_at(8500.0, 120.0).unwrap();
         assert_eq!(m.segments.len(), 2);
         assert_eq!(m.segments[0].meta, SectionMeta::default());
-        // BPM 0 on the first: the new first loses its count-in, keeps the rest
+        // BPM 0 on the first: the new first keeps its own meta
         let mut m = flagged(1, false, true);
         m.set_bpm_at(500.0, 0.0).unwrap();
         assert_eq!(m.segments.len(), 2);
-        assert_eq!(m.segments[0].meta, SectionMeta { name: "S1".to_string(), metronome: false, count_in: false });
+        assert_eq!(m.segments[0].meta, SectionMeta { name: "S1".to_string(), metronome: false, count_in: true });
+        let mut m = flagged(1, false, false);
+        m.segments[1].meta.count_in = true;
+        m.set_bpm_at(500.0, 0.0).unwrap();
+        assert!(m.segments[0].meta.count_in);
     }
 
     #[test]
@@ -1006,7 +1028,8 @@ mod tests {
         assert!(!n.segments[1].meta.metronome && n.segments[1].meta.count_in);
         assert_eq!(n.segments[1].meta.name, "S1");
         assert!(m.set_section_flags(0, false, false).is_ok());
-        assert_eq!(m.set_section_flags(0, true, true).unwrap_err(), "The first section has no section before it");
+        let n = m.set_section_flags(0, true, true).unwrap();
+        assert!(n.segments[0].meta.count_in && n.segments[0].meta.metronome);
         assert_eq!(m.set_section_flags(3, true, false).unwrap_err(), "There is no such section");
 
         assert_eq!(m.set_section_name(1, "  Verse ").unwrap().segments[1].meta.name, "Verse");
@@ -1019,6 +1042,50 @@ mod tests {
         );
         assert_eq!(m.set_section_name(0, "a\tb").unwrap_err(), "Section names can't contain control characters");
         assert_eq!(m.set_section_name(3, "x").unwrap_err(), "There is no such section");
+    }
+
+    #[test]
+    fn count_in_at_sections() {
+        assert!(!TempoMap::default().count_in_at(100.0));
+        let mut m = map(&[(500.0, 120.0), (8500.0, 93.0)]);
+        m.segments[0].meta.count_in = true;
+        assert!(m.count_in_at(0.0)); // before the first start: section 1
+        assert!(m.count_in_at(4000.0));
+        assert!(!m.count_in_at(8500.0)); // at a change: the new section
+        assert!(!m.count_in_at(9000.0));
+        m.segments[1].meta.count_in = true;
+        m.segments[0].meta.count_in = false;
+        assert!(!m.count_in_at(8499.0));
+        assert!(m.count_in_at(8500.0));
+    }
+
+    #[test]
+    fn next_section_tick_rules() {
+        let mut m = map(&[(500.0, 120.0), (8500.0, 93.0)]);
+        m.segments[1].detected_ms = Some(8500.0);
+        let b = m.bases();
+        assert_eq!(m.next_section_tick(0), Some(b[1]));
+        assert_eq!(m.ms_at(b[1]), 8500.0);
+        assert_eq!(m.next_section_tick(b[1]), None);
+        assert_eq!(m.next_section_tick(b[1] - 1), Some(b[1]));
+        assert_eq!(TempoMap::default().next_section_tick(0), None);
+        // a typed change: within half a tick of its start
+        let t = map(&[(500.0, 120.0), (8510.0, 93.0)]);
+        let n = t.next_section_tick(0).unwrap();
+        assert!((t.ms_at(n) - 8510.0).abs() <= tick_ms(120.0) / 2.0);
+    }
+
+    #[test]
+    fn with_play_settings_of_carries_section_one() {
+        let mut old = map(&[(500.0, 120.0), (8500.0, 93.0)]);
+        old.segments[0].meta = SectionMeta { name: "Intro".to_string(), metronome: false, count_in: true };
+        old.segments[1].meta.count_in = true;
+        let new = map(&[(400.0, 100.0), (5000.0, 90.0), (9000.0, 95.0)]);
+        let n = new.with_play_settings_of(&old);
+        assert!(n.segments.iter().all(|s| !s.meta.metronome && s.meta.name.is_empty()));
+        assert_eq!(n.segments.iter().map(|s| s.meta.count_in).collect::<Vec<_>>(), [true, false, false]);
+        assert_eq!(n.segments[1].bpm, 90.0);
+        assert_eq!(new.with_play_settings_of(&TempoMap::default()), new);
     }
 
     #[test]
