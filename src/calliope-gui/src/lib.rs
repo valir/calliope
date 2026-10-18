@@ -25,6 +25,8 @@ pub mod player_state;
 pub mod repository;
 pub mod settings;
 pub mod speed;
+#[allow(dead_code)] // until the engine uses it (task 5)
+pub(crate) mod stretch;
 pub mod stem_audio;
 pub mod tempo_detect;
 pub mod tempo_map;

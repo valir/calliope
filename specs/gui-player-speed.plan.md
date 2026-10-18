@@ -417,6 +417,10 @@ Never commit in a routine task.
 - **routine:** no
 
 ### Task 5: Engine stretch mode and `Cmd::SetSpeed`
+- **orchestrator note (after Task 3):** `Stretcher::align` returns the song frame to feed next (it consumes source
+  audio while discarding the first `output_latency()` frames), so continue from that value, not from
+  `target + input_latency()`. `align`'s scratch buffer must hold `pre_roll_frames()` stereo frames (tests use
+  `pre_roll_frames() * 2 * 2` floats). Remove the temporary `#[allow(dead_code)]` on `mod stretch` in `lib.rs`.
 - **files:** `src/calliope-gui/src/player.rs`, `src/calliope-gui/src/player_tests.rs`,
   `src/calliope-gui/tests/player_realtime.rs` (new)
 - **does:** 2.4 completely, without the training run: the two modes, `Cmd::SetSpeed`, the feed with sub-blocks cut at
