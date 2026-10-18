@@ -97,7 +97,8 @@ describe('BPM', () => {
     for (const n of ['Metronome in this section', 'Count-in into this section']) expect(btn('Sections', n).disabled).toBe(true);
     expect(screen.queryByRole('button', { name: 'On/Off' })).toBeNull();
     expect(screen.queryByRole('group', { name: 'Metronome' })).toBeNull();
-    for (const n of ['Slower', 'Faster', 'Reset']) expect(btn('BPM', n).disabled).toBe(true);
+    // The -/+/Reset placeholders are hidden until that feature exists.
+    for (const n of ['Slower', 'Faster', 'Reset']) expect(group('BPM').queryByRole('button', { name: n })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Detect' })).toBeNull();
   });
 });

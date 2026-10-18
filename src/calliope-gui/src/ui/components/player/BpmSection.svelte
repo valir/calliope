@@ -6,6 +6,7 @@
   let { nested = false }: { nested?: boolean } = $props();
 
   const HINT = 'Comes in a later update';
+  const SHOW_PLACEHOLDERS = false;
   const active = $derived(pl.status === 'active');
   // Unsaved text while the user edits; null means the field follows the transport.
   let text = $state<string | null>(null);
@@ -43,33 +44,32 @@
   }
 </script>
 
-<div
-  class="flex flex-col gap-1 {nested ? 'self-stretch border-r border-border pr-3' : 'rounded-lg border-2 border-border bg-card p-3'}"
-  role="group"
-  aria-label="BPM"
->
-  <div class="flex flex-wrap items-center gap-2">
-    <label for="bpm-field" class="text-lg font-semibold">BPM</label>
-    <input
-      id="bpm-field"
-      type="text"
-      class="w-20 rounded-md border border-input bg-background px-2 py-1 text-center text-2xl font-semibold tabular-nums"
-      aria-invalid={invalid !== null ? 'true' : undefined}
-      disabled={!active}
-      value={shown}
-      oninput={(e) => { text = e.currentTarget.value; invalid = null; }}
-      {onkeydown}
-      {onblur}
-    />
-    <label class="flex items-center gap-1 text-lg" title="The track has several tempos">
-      <input type="checkbox" class="size-5" disabled checked={multi} />
-      V
-    </label>
-  </div>
-  <div class="flex flex-wrap items-center gap-2">
+<!-- Lives in the Sections title row. The -/+/Reset placeholders and the "later update" hint stay hidden until
+     that feature exists: set SHOW_PLACEHOLDERS to true to bring them back. -->
+<div class="flex flex-none items-center gap-2 {nested ? '' : 'rounded-lg border-2 border-border bg-card p-3'}" role="group" aria-label="BPM">
+  <label for="bpm-field" class="text-lg font-semibold">BPM</label>
+  <input
+    id="bpm-field"
+    type="text"
+    class="w-16 rounded-md border border-input bg-background px-1 py-0.5 text-center text-xl font-semibold tabular-nums"
+    aria-invalid={invalid !== null ? 'true' : undefined}
+    title={invalid ?? undefined}
+    disabled={!active}
+    value={shown}
+    oninput={(e) => { text = e.currentTarget.value; invalid = null; }}
+    {onkeydown}
+    {onblur}
+  />
+  <label class="flex items-center gap-1 text-lg" title="The track has several tempos">
+    <input type="checkbox" class="size-5" disabled checked={multi} />
+    V
+  </label>
+  {#if SHOW_PLACEHOLDERS}
     <Button variant="outline" class="h-[3.25rem] w-14 text-xl" disabled title={HINT} aria-label="Slower">-</Button>
     <Button variant="outline" class="h-[3.25rem] w-14 text-xl" disabled title={HINT} aria-label="Faster">+</Button>
     <Button variant="outline" class="h-[3.25rem] text-lg" disabled title={HINT}>Reset</Button>
-  </div>
-  <span class="min-h-5 text-sm {invalid ? 'text-destructive' : 'text-muted-foreground'}" role={invalid ? 'alert' : undefined} data-testid="bpm-note">{invalid ?? HINT}</span>
+  {/if}
+  {#if invalid || SHOW_PLACEHOLDERS}
+    <span class="text-sm {invalid ? 'text-destructive' : 'text-muted-foreground'}" role={invalid ? 'alert' : undefined} data-testid="bpm-note">{invalid ?? HINT}</span>
+  {/if}
 </div>

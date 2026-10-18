@@ -136,18 +136,18 @@ describe('AC13: track without tempo', () => {
       expect(btn('Sections', n).title).toBe('Type a BPM first');
     }
     expect(screen.queryByRole('group', { name: 'Metronome' })).toBeNull();
-    expect(btn('BPM', 'Slower').disabled).toBe(true);
-    expect(btn('BPM', 'Faster').disabled).toBe(true);
-    expect(btn('BPM', 'Reset').disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Slower' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Faster' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reset' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Detect' })).toBeNull();
   });
 
-  it('on a track with a tempo (increment A) -, +, Reset stay disabled', async () => {
+  it('on a track with a tempo (increment A) -, +, Reset stay hidden', async () => {
     snap = bpmSnap();
     render(PlayerView);
     await openTrack(snap);
     expect(input('BPM').value).toBe('120');
-    for (const n of ['Slower', 'Faster', 'Reset']) expect(btn('BPM', n).disabled, n).toBe(true);
+    for (const n of ['Slower', 'Faster', 'Reset']) expect(screen.queryByRole('button', { name: n }), n).toBeNull();
   });
 });
 

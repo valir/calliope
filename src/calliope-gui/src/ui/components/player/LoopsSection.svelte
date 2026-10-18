@@ -68,22 +68,21 @@
     if (invalid[edge]) revert(edge);
   }
   const flags = (repeat: boolean, count_in: boolean): void => void loop({ kind: 'flags', repeat, count_in });
-  const btn = 'h-[3.25rem] text-lg';
-  const box = 'w-24 rounded-md border border-input bg-background px-2 py-1 text-center text-xl tabular-nums';
+  const btn = 'h-[3.25rem] px-3 text-lg';
+  const box = 'w-20 rounded-md border border-input bg-background px-2 py-1 text-center text-xl tabular-nums';
 </script>
 
-<div class="flex min-w-[27rem] flex-1 flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Loops">
-  <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
-    <span class="text-lg font-semibold">Loops</span>
-    <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Loop list">
+<div class="flex min-w-0 max-w-[24rem] flex-1 basis-[23rem] flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Loops">
+  <div class="flex flex-col gap-2">
+    <div class="flex items-center gap-2" role="group" aria-label="Loop list">
       <Button variant="outline" class={btn} disabled={!active || !(snap && snap.loops.length > 0)} onclick={() => void loop({ kind: 'select', delta: -1 })}>Prev</Button>
-      <Button variant="outline" class="{btn} w-14" disabled={!active} aria-label="Add loop" onclick={() => void loop({ kind: 'add' })}>+</Button>
-      <input type="text" readonly tabindex="-1" class="w-20 rounded-md border border-input bg-background px-2 py-1 text-center text-xl tabular-nums" aria-label="Loop" data-testid="loop-box" value={boxText} />
-      <Button variant="outline" class="{btn} w-14" disabled={!active || !cur} aria-label="Remove loop" onclick={() => void loop({ kind: 'remove' })}>-</Button>
+      <Button variant="outline" class="{btn} w-12 px-0" disabled={!active} aria-label="Add loop" onclick={() => void loop({ kind: 'add' })}>+</Button>
+      <input type="text" readonly tabindex="-1" class="w-16 rounded-md border border-input bg-background px-2 py-1 text-center text-xl tabular-nums" aria-label="Loop" data-testid="loop-box" value={boxText} />
+      <Button variant="outline" class="{btn} w-12 px-0" disabled={!active || !cur} aria-label="Remove loop" onclick={() => void loop({ kind: 'remove' })}>-</Button>
       <Button variant="outline" class={btn} disabled={!active || !(snap && snap.loops.length > 0)} onclick={() => void loop({ kind: 'select', delta: 1 })}>Next</Button>
     </div>
-    <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Loop range">
-      <Button variant="outline" class="{btn} w-14" disabled={!active || !cur} aria-label="Mark start" onclick={() => void loop({ kind: 'mark', edge: 'start' })}>&gt;</Button>
+    <div class="flex items-center gap-2" role="group" aria-label="Loop range">
+      <Button variant="outline" class="{btn} w-12 px-0" disabled={!active || !cur} aria-label="Mark start" onclick={() => void loop({ kind: 'mark', edge: 'start' })}>&gt;</Button>
       <input
         type="text" class={box} aria-label="bar1" placeholder="start" disabled={!active || !cur}
         aria-invalid={invalid.start ? 'true' : undefined} value={shown('start')}
@@ -92,7 +91,7 @@
       />
       <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
       <div
-        class="relative h-2 w-20 shrink-0 overflow-hidden rounded-full bg-muted"
+        class="relative h-2 w-16 shrink-0 overflow-hidden rounded-full bg-muted"
         role="slider"
         aria-label="Position in the loop"
         aria-readonly="true"
@@ -112,10 +111,11 @@
         oninput={(e) => { texts.end = e.currentTarget.value; invalid.end = false; }}
         onkeydown={(e) => keydown('end', e)} onblur={() => blur('end')}
       />
-      <Button variant="outline" class="{btn} w-14" disabled={!active || !cur} aria-label="Mark end" onclick={() => void loop({ kind: 'mark', edge: 'end' })}>&lt;</Button>
+      <Button variant="outline" class="{btn} w-12 px-0" disabled={!active || !cur} aria-label="Mark end" onclick={() => void loop({ kind: 'mark', edge: 'end' })}>&lt;</Button>
     </div>
-    <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Loop playback">
-      <Button class="{btn} w-24" disabled={!active || !complete} onclick={() => void loop({ kind: pl.transport.loop_playing ? 'stop' : 'play' })}>
+    <div class="flex items-center gap-2" role="group" aria-label="Loop playback">
+      <span class="text-lg font-semibold">Loops</span>
+      <Button class="{btn} w-20" disabled={!active || !complete} onclick={() => void loop({ kind: pl.transport.loop_playing ? 'stop' : 'play' })}>
         {pl.transport.loop_playing ? 'Stop' : 'Play'}
       </Button>
       <Button variant="outline" class="{btn} {cur?.repeat && complete ? pressed : ''}" aria-pressed={(cur?.repeat && complete) ?? false} disabled={!active || !complete}
@@ -124,5 +124,5 @@
         onclick={() => cur && flags(cur.repeat, !cur.count_in)}>Count-In</Button>
     </div>
   </div>
-  <span class="min-h-6 text-base {(snap?.loop_message ?? pl.actionError) ? 'text-destructive' : ''}" role="status" data-testid="loop-status">{snap?.loop_message ?? pl.actionError}</span>
+  <span class="min-h-5 text-base {(snap?.loop_message ?? pl.actionError) ? 'text-destructive' : ''}" role="status" data-testid="loop-status">{snap?.loop_message ?? pl.actionError}</span>
 </div>

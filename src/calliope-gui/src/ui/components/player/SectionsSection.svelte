@@ -28,16 +28,13 @@
   const nameValue = $derived(pl.nameEdit ? pl.nameEdit.draft : (meta?.name ?? ''));
   const message = $derived(pl.sectionError || (segs.length === 0 && pl.status === 'active' ? NEED_BPM : ''));
 </script>
-
-<div class="flex max-w-full flex-none flex-wrap gap-x-3 gap-y-2 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Sections">
-  <BpmSection nested />
-  <div class="flex min-w-0 flex-col gap-1">
-  <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+<div class="flex min-w-0 max-w-full flex-none flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Sections">
+  <div class="flex items-center gap-x-3">
     <span class="text-lg font-semibold">Sections</span>
-    <span class="text-base tabular-nums" data-testid="section-status">{status}</span>
+    <BpmSection nested />
     <input
       type="text"
-      class="h-9 w-48 rounded-md border border-input bg-background px-2 text-base disabled:opacity-50"
+      class="h-9 w-40 min-w-0 rounded-md border border-input bg-background px-2 text-base disabled:opacity-50"
       aria-label="Section name"
       placeholder="Name this section"
       maxlength={MAX_SECTION_NAME}
@@ -53,26 +50,26 @@
       }}
     />
   </div>
-  <div class="flex flex-wrap items-center gap-2">
+  <div class="flex items-center gap-2">
     <Button
       variant="outline"
-      class="h-[3.25rem] text-lg"
+      class="h-[3.25rem] w-12 px-0 text-lg"
       aria-label="Add a tempo change at the playhead"
       disabled={none}
       title={none ? NEED_BPM : undefined}
       onclick={() => startAdd()}
-    >Add</Button>
+    >+</Button>
     <Button
       variant="outline"
-      class="h-[3.25rem] text-lg"
+      class="h-[3.25rem] w-12 px-0 text-lg"
       aria-label="Remove the tempo change"
       disabled={noRemove}
       title={none ? NEED_BPM : noRemove ? 'The first section has no tempo change to remove' : undefined}
       onclick={() => void removeChange()}
-    >Remove</Button>
+    >−</Button>
     <Button
       variant="outline"
-      class="h-[3.25rem] text-lg"
+      class="h-[3.25rem] w-12 px-0 text-lg"
       aria-label="Double the section's BPM"
       disabled={noDouble}
       title={none ? NEED_BPM : noDouble ? 'Doubling would go over 300 BPM' : undefined}
@@ -80,7 +77,7 @@
     >×2</Button>
     <Button
       variant="outline"
-      class="h-[3.25rem] text-lg"
+      class="h-[3.25rem] w-12 px-0 text-lg"
       aria-label="Halve the section's BPM"
       disabled={noHalve}
       title={none ? NEED_BPM : noHalve ? 'Halving would go under 20 BPM' : undefined}
@@ -88,24 +85,23 @@
     >÷2</Button>
     <Button
       variant="outline"
-      class="h-[3.25rem] text-lg"
+      class="h-[3.25rem] w-12 px-0 text-lg"
       aria-label="Jump to the start of the section"
       disabled={none}
       title={none ? NEED_BPM : undefined}
       onclick={() => void jumpSection('start')}
-    >|◀ Start</Button>
+    >|◀</Button>
     <Button
       variant="outline"
-      class="h-[3.25rem] text-lg"
+      class="h-[3.25rem] w-12 px-0 text-lg"
       aria-label="Jump to the last bar of the section"
       disabled={none}
       title={none ? NEED_BPM : undefined}
       onclick={() => void jumpSection('end')}
-    >End ▶|</Button>
+    >▶|</Button>
   </div>
-  <div class="flex items-center gap-x-4 gap-y-1">
-    <div class="flex flex-none items-center gap-2" role="group" aria-label="This section">
-      <span class="text-base">This section</span>
+  <div class="flex items-center gap-x-3 gap-y-1">
+    <div class="flex flex-none items-center gap-2" role="group" aria-label="This section" title="This section">
       <Button
         variant="outline"
         class="h-[3.25rem] text-lg {clicks && !none ? pressed : ''}"
@@ -125,7 +121,7 @@
         onclick={() => void setSectionFlags(clicks, !countIn)}
       >Count In</Button>
     </div>
-    <span class="min-h-5 min-w-0 flex-1 truncate text-sm {pl.sectionError ? 'text-destructive' : 'text-muted-foreground'}" role={pl.sectionError ? 'alert' : undefined} title={message || undefined} data-testid="section-message">{message}</span>
+    <span class="min-w-0 truncate text-base tabular-nums" data-testid="section-status">{status}</span>
   </div>
-  </div>
+  <span class="min-h-5 min-w-0 truncate text-sm {pl.sectionError ? 'text-destructive' : 'text-muted-foreground'}" role={pl.sectionError ? 'alert' : undefined} title={message || undefined} data-testid="section-message">{message}</span>
 </div>
