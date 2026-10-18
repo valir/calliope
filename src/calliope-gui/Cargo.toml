@@ -23,6 +23,7 @@ url = "2"
 claxon = "0.4"
 flacenc = { version = "0.5", default-features = false }
 cpal = "0.18"
+signalsmith-stretch = "0.1.3"
 calliope-lib = { path = "../calliope-lib", features = ["client"] }
 
 [build-dependencies]

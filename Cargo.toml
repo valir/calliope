@@ -15,3 +15,7 @@ opt-level = 3
 
 [profile.dev.package.flacenc]
 opt-level = 3
+
+# Signalsmith Stretch is C++ compiled by the crate's build script; unoptimised it is too slow for the tests.
+[profile.dev.package.signalsmith-stretch]
+opt-level = 3

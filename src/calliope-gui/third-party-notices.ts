@@ -26,12 +26,22 @@ interface Package {
   note?: string;
 }
 
+/** Crates that ship licence files in sub-folders (paths relative to the crate root). */
+const NESTED_LICENCES: Record<string, string[]> = {
+  'signalsmith-stretch': ['signalsmith-stretch/LICENSE.txt', 'signalsmith-linear/LICENSE.txt'],
+};
+
 const LICENCE_FILE = /^(licen[cs]e|copying|notice|unlicense|copyright)/i;
 
-function licenceFiles(dir: string, extra?: string | null): { name: string; text: string }[] {
+function licenceFiles(dir: string, extra?: string | null, nested: string[] = []): { name: string; text: string }[] {
   const names = readdirSync(dir).filter((f) => LICENCE_FILE.test(f) && statSync(join(dir, f)).isFile());
   if (extra && !names.includes(extra) && existsSync(join(dir, extra))) names.push(extra);
-  return names.sort().map((name) => ({ name, text: readFileSync(join(dir, name), 'utf8').trim() }));
+  const files = names.sort().map((name) => ({ name, text: readFileSync(join(dir, name), 'utf8').trim() }));
+  for (const rel of nested) {
+    if (!existsSync(join(dir, rel))) throw new Error(`licence file ${rel} is missing from ${dir}`);
+    files.push({ name: rel, text: readFileSync(join(dir, rel), 'utf8').trim() });
+  }
+  return files;
 }
 
 /** Standard text for a package that ships no licence file, with its authors as copyright holders. */
@@ -104,7 +114,7 @@ export function crates(root: string): Package[] {
           version: p.version,
           licence: p.license ?? `see ${p.license_file}`,
           source: p.repository ?? `https://crates.io/crates/${p.name}`,
-          files: licenceFiles(dirname(p.manifest_path), p.license_file),
+          files: licenceFiles(dirname(p.manifest_path), p.license_file, NESTED_LICENCES[p.name]),
         },
         holders,
       );

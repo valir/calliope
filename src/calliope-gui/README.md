@@ -15,6 +15,7 @@ this directory. Build output goes to the workspace's `target/` at the repository
   default device is the sound card itself, which PipeWire already holds, so Play fails
 * Node.js >= 22.12 with npm
 * For GUI tests: xorg-server-xvfb (or, as a fallback, Xorg with xf86-video-dummy), i3, xdotool, maim
+* `clang` (libclang, for the time-stretch binding): `sudo pacman -S clang`
 * For Import: `sudo pacman -S yt-dlp ffmpeg` (see "Import and stem extraction"; the app runs without them, Import then says what is missing)
 
 Run `npm ci` once after cloning and after `package-lock.json` changes.

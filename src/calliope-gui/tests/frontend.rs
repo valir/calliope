@@ -342,6 +342,9 @@ fn dist_ships_third_party_notices_for_every_linked_crate() {
         }
     }
     assert!(missing.is_empty(), "crates missing from THIRD-PARTY-NOTICES.txt: {missing:?}");
+    for needle in ["signalsmith-stretch", "Geraint Luff", "Signalsmith Audio"] {
+        assert!(notices.contains(needle), "{needle} missing from the notices");
+    }
     assert!(seen.len() > 100, "suspiciously few crates: {}", seen.len());
     for pkg in ["@tauri-apps/api", "@fontsource-variable/inter", "svelte", "bits-ui", "tailwindcss"] {
         assert!(notices.contains(&format!("\n{pkg} ")), "npm package {pkg} missing from the notices");
