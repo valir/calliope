@@ -889,6 +889,7 @@ fn player_phase3() {
     println!("LAYOUT 1280x800 tree folded: {l}");
     assert_eq!(field(&l, "loops_beside"), "1", "{l}");
     let overflow: i32 = field(&l, "overflow").parse().unwrap();
+    // the plan's phase-1 scroll target: about 14 px at 1280x800 with the tree folded
     assert!(overflow <= 14, "the Player pane scrolls by {overflow} px: {l}");
     shot("player-p3-layout");
 

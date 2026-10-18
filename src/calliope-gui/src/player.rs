@@ -636,6 +636,11 @@ impl Session {
         ((ms * f64::from(self.pcm.rate) / 1000.0).round().max(0.0) as u64).min(self.pcm.frames)
     }
 
+    /// The first frame at or after `ms` (a tolerance absorbs float noise on whole-frame times).
+    fn frame_at_or_after_ms(&self, ms: f64) -> u64 {
+        (((ms * f64::from(self.pcm.rate) / 1000.0) - 1e-6).ceil().max(0.0) as u64).min(self.pcm.frames)
+    }
+
     fn boundary_ms(&self, b: Boundary) -> f64 {
         match b {
             Boundary::Ms { ms } => ms,
@@ -1315,7 +1320,8 @@ impl PlayerManager {
         }
         let end_ms = s.pcm.frames as f64 * 1000.0 / f64::from(s.pcm.rate.max(1));
         let ms = s.state.tempo.section_jump_ms(index, edge, end_ms)?;
-        let f = s.frame_of_ms_f(ms);
+        // A Start jump must not land before the section start (the lookup would pick the previous section).
+        let f = if edge == Edge::Start { s.frame_at_or_after_ms(ms) } else { s.frame_of_ms_f(ms) };
         s.set_pos(f);
         s.send(Cmd::Jump(f));
         s.mark_dirty(now);

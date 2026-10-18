@@ -3122,7 +3122,6 @@ fn qa_p3_play_with_a_current_loop_uses_only_the_section_rule_and_loop_play_only_
 }
 
 #[test]
-#[ignore = "DEFECT: Start jump rounds a fractional section start to the nearest frame, which can be before the start, so Play counts in with the previous section"]
 fn qa_p3_start_jump_to_a_section_that_starts_between_two_frames_still_counts_in_with_that_section() {
     // 8500.01 ms is 187425.2 frames: the Start jump lands on frame 187425 = 8499.9977 ms
     let json = r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[

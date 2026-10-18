@@ -170,8 +170,8 @@
   wide, "Name this section"). Button row: six 48 px buttons, Add (+), Remove (-), x2, /2, "|<" (jump to the section
   start) and ">|" (jump to the start of its last bar); each disabled one has a title that says why. Third row: Click
   ("Metronome in this section"), Count In ("Count-in into this section") and the status ("Section 2 of 3 · 93 BPM", or
-  "No tempo"). The message line is a reserved slot below (single line, truncated with the full text as tooltip),
-  so nothing moves when it fills.
+  "No tempo"). The message line is an ordinary `min-h-5` span below (single line, truncated with the full text as tooltip);
+  the BPM note can change the height of the BPM group.
 - Section toggles: Click and Count In are filled amber when on. A new tempo map starts with Click on in every
   section and Count In off. Count In is enabled for every section, the first included (a count-in before the
   first section is three clicks at its tempo before the song starts); both are disabled when there is no BPM ("Type a

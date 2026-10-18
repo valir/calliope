@@ -117,7 +117,7 @@ the GUI crate, `src/calliope-gui/`.
     `speed-reset` | the section edits of gui-player-tempo-sections plan §2.5: `section-bpm` {index, at, bpm}, `scale-section`
     {index, at, factor: double|halve}, `add-change` {position, bpm}, `remove-change` {index, at}, `move-change` {index, at,
     steps}; phase 2: `section-flags` {index, at, metronome, count_in}, `section-name` {index, at, name}, `jump-section`
-    {index, at, edge: start|end}; `at` = the section's current `start_ms`, a mismatch is refused as stale), `player_metronome(id, on, count_in)`, `player_loop(id, action)` (tagged action: add, remove,
+    {index, at, edge: start|end}; `at` = the section's current `start_ms`, a mismatch is refused as stale), `player_loop(id, action)` (tagged action: add, remove,
     select, mark, set, flags, play, stop; loops may have no end yet). Actions are tagged objects to keep the command list
     short. BPM detection runs from the Editor (Autodetect BPM, stems-beat-autodetect); the Player has no Detect button.
     Types are in `src/ui/lib/ipc.ts` and in the plans (tracks-repository §2.7, stem-extraction §2.10,
@@ -164,7 +164,7 @@ the GUI crate, `src/calliope-gui/`.
   `editor tempo move index=<i> steps=<s> applied=<s'>`, `editor tempo reload segments=<k>`, `player reopen id=<id>`.
   Player: `player active id=<id> source=<key> sources=<n> mode=<bpm|time> loops=<n> position=<ms>`, `player inactive id=<id|none>`,
   `player source key=<key>`, `player play|pause position=<ms>`, `player seek position=<ms>`, `player skip delta=<ms>`,
-  `player bpm value=<v> position=<ms>`, `player metronome on=<b> count_in=<b>`,
+  `player bpm value=<v> position=<ms>`,
   `player loop <action> index=<n|none> count=<n> complete=<b>`, `player tree collapsed=<b>`, `player leave pause`,
   `player section <bpm|scale|add|remove|move> index=<i> …`, `player section flags index=<i> metronome=<b> count_in=<b>`,
   `player section name index=<i> length=<n>`, `player section jump index=<i> edge=<start|end> position=<ms>`,
@@ -286,7 +286,7 @@ the GUI crate, `src/calliope-gui/`.
   **Schema 4** (gui-player-tempo-sections plan §10.2): a segment may carry per-section settings, written only when not the
   default: `name` (trimmed, no control characters, ≤ 40 characters), `"metronome": false` (this section doesn't click) and
   `"count_in": true` (three clicks at this section's tempo replace the previous section's last clicks, never on the first
-  segment). In schema 4 the top-level `metronome.on` was the master switch for all clicks and `metronome.count_in` the
+  segment: schema 4 only, superseded by schema 5 below). In schema 4 the top-level `metronome.on` was the master switch for all clicks and `metronome.count_in` the
   Play / loop pre-roll. Schema 1-3 files read with every section clicking, no count-in and no names; schema-3 builds
   treat schema-4 files as newer and never overwrite them (their parser would drop the keys).
   **Schema 5** (gui-player-tempo-sections plan §18.3, owner decisions 2026-10-18): there is no global metronome;
@@ -294,7 +294,8 @@ the GUI crate, `src/calliope-gui/`.
   `count_in` is allowed on the first segment, where it means only the Play pre-roll. Play counts in when the section under
   the playhead has `count_in`; loop Play only with the loop's `count_in`. Schema 1-4 files are migrated on read: master
   `on` false (or missing) → every section `metronome: false` and `count_in: false`; master `on` true → the section flags
-  kept; then master `count_in` true → the first section's `count_in: true`. This build reads 1-5 and writes 5; schema-4
+  kept; then master `count_in` true → the first section's `count_in: true`. A v<=4 file with an empty tempo map has nothing to
+  migrate, so its old master state is dropped. This build reads 1-5 and writes 5; schema-4
   builds treat the file as newer and never overwrite it.
   **The track's one tempo map** (stems-beat-autodetect plan §2.2): `tempo` in `player.json` is also written by the Editor
   (Autodetect BPM, moving a detected change) through `TempoStore::replace`, entirely under the `PlayerHost` lock: if the
@@ -1061,7 +1062,7 @@ paths for the same thing, with no security gain once typed paths are accepted). 
 audio stream is used (`-map 0:a:0`, unchanged).
 
 ### 2026-10-11: Player settings live in `player.json` next to `track.json`   (feature: gui-play-backing-track; owner-confirmed)
-The Player saves every adjustment (source, tempo map, speed, metronome, loops, playback position) with no Save button. Writing
+The Player saves every adjustment (source, tempo map, speed, per-section Click / Count In flags, loops, playback position) with no Save button. Writing
 `track.json` that often would change its revision on each loop edit, so a Library edit in progress would hit a
 save conflict, and the Library would rescan "modified" tracks. Choice: a separate `player.json` in the track folder,
 debounced (500 ms) atomic writes, lenient read, unknown fields kept, a newer schema never overwritten, the name
