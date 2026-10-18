@@ -434,7 +434,7 @@ describe('QA phase 2: section name box, Home / End and the section toggles (gui-
     snap = bpmSnap();
     render(PlayerView);
     await openTrack(snap);
-    const b = btn('Sections', 'Jump to the last bar of the section');
+    const b = btn('Sections', 'Jump to the end of the section');
     b.focus();
     await fireEvent.keyDown(b, { key: 'End' });
     await fireEvent.keyDown(b, { key: 'Home' });

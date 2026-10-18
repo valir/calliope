@@ -170,7 +170,7 @@
 - Sections group (3 rows). Title row: "Sections", the BPM input with its V box (the section's BPM; the
   target section is the one selected on the waveform, else the one at the playhead) and the name box (10 rem
   wide, "Name this section"). Button row: six 48 px buttons, Add (+), Remove (-), x2, /2, "|<" (jump to the section
-  start) and ">|" (jump to the start of its last bar); each disabled one has a title that says why. Third row: Click
+  start) and ">|" (jump to its end: the last frame before the next section); each disabled one has a title that says why. Third row: Click
   ("Metronome in this section"), Count In ("Count-in into this section") and the status ("Section 2 of 3 · 93 BPM", or
   "No tempo"). The message line is an ordinary `min-h-5` span below (single line, truncated with the full text as tooltip);
   the BPM note can change the height of the BPM group.
@@ -190,7 +190,8 @@
   has the focus it keeps the section it was focused for (the playhead moving does not change it). An empty
   name removes the name. The Player's letter keys and Space type normally in it.
 - Start / End (and the Home / End keys, which also work with the focus on the waveform or the page): jump to
-  the section's first beat or to the start of its last bar; while playing, playback continues without a gap.
+  the section's first beat or to its last frame (still inside the section, so pressing End again
+  stays); while playing, playback continues without a gap.
 - Layout, measured by the `player layout` log (overflow = scrollHeight - clientHeight of the pane): at 1280x800 with
   the tree folded the pane is 965 px wide, Sections (496 px) and Loops (424 px) share row 1, Playback is the bottom
   row, and nothing scrolls (overflow 0; target at most 14 px). With the tree shown (668 px wide) Loops wraps below

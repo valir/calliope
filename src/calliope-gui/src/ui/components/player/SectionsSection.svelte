@@ -94,7 +94,7 @@
     <Button
       variant="outline"
       class="h-[3.25rem] w-12 px-0 text-lg"
-      aria-label="Jump to the last bar of the section"
+      aria-label="Jump to the end of the section"
       disabled={none}
       title={none ? NEED_BPM : undefined}
       onclick={() => void jumpSection('end')}

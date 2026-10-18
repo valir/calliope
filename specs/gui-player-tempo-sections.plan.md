@@ -898,6 +898,9 @@ jumps back to the loop start, at the old tempo. A common case is a loop over exa
 - **Target:** the section of 2.6 (the selection, else the section at the playhead).
 - **Start** jumps to the section's start: its `start_ms`, or 0 ms for section 1 (the waveform draws section 1 from the
   left edge).
+- **Owner change 2026-10-18 (replaces Q7):** End jumps to the section's **last frame**, the frame just before the
+  next change (or the last frame of the track), so the playhead stays in the section and End pressed again stays.
+  The text below is the original Q7 design.
 - **End** jumps to the **start of the section's last bar** (recommended answer Q7): the 4th beat (`beats_per_bar`) before
   the next change, or before the track end for the last section, but never before the section start.
   - The exact end is the next section's first beat, so jumping there would make the playhead (and the target) the

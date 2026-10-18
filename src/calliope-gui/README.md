@@ -54,7 +54,7 @@ Starts the Vite dev server with hot reload plus the debug app. It uses a dev-onl
 * Ctrl+B: collapse navigation
 * Player (Alt+5): Space play/pause, b / e mark the loop start / end, Left / Right previous / next loop,
   l or Shift+L loop on/off, Ctrl+L collapse the track tree, Ctrl+F search. The letter keys do nothing
-  while a field, button or the source dropdown has the focus. Home / End jump to the start / the last bar of
+  while a field, button or the source dropdown has the focus. Home / End jump to the start / the end of
   the selected section (also with the waveform focused, not while typing in the name box).
 * Player waveform (click it or Tab to it): Up / Down select a tempo section, Left / Right move the selected
   change by 1/64 beat, Shift+Left / Shift+Right by one beat (limit 4 beats from where it was detected or
@@ -129,7 +129,7 @@ Ctrl+L folds it to a narrow rail).
   and Count In (three clicks at this section's tempo just before it, replacing the end of the section
   before, and skipped where a repeating loop ends at the section; Play pressed anywhere in a section with
   Count In counts in at its tempo, also in the first section), and Start / End (jump to the section's
-  first beat / the start of its last bar; playing continues without a pause). There is no global
+  first beat / its last frame, just before the next section; playing continues without a pause). There is no global
   metronome switch: a section clicks only when its Click is on.
 * Playback: Rew / FF jump 5 s, the time field takes a time (the mouse wheel nudges by 100 ms), the
   slider seeks.

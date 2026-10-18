@@ -1323,8 +1323,10 @@ impl PlayerManager {
         }
         let end_ms = s.pcm.frames as f64 * 1000.0 / f64::from(s.pcm.rate.max(1));
         let ms = s.state.tempo.section_jump_ms(index, edge, end_ms)?;
-        // A Start jump must not land before the section start (the lookup would pick the previous section).
-        let f = if edge == Edge::Start { s.frame_at_or_after_ms(ms) } else { s.frame_of_ms_f(ms) };
+        // Start lands on the first frame of the section and End on its last frame: either way the
+        // playhead stays in the section (the lookup would otherwise pick the previous or next one).
+        let first = s.frame_at_or_after_ms(s.state.tempo.section_jump_ms(index, Edge::Start, end_ms)?);
+        let f = if edge == Edge::Start { first } else { s.frame_at_or_after_ms(ms).saturating_sub(1).max(first) };
         s.set_pos(f);
         s.send(Cmd::Jump(f));
         s.mark_dirty(now);

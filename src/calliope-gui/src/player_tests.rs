@@ -1106,10 +1106,13 @@ fn jump_section_is_instant_while_playing_and_moves_the_playhead_while_paused() {
     events.lock().unwrap().clear();
     let st = m.snapshot(&spec.id).unwrap();
     let end_ms = st.duration_ms as f64;
-    let target = m.session.as_ref().unwrap().state.tempo.section_jump_ms(1, Edge::End, end_ms).unwrap();
-    let s = m.jump_section(&spec.id, 1, 10500.0, Edge::End, t0).unwrap();
+    // End of section 0 (the last section's End would leave nothing to play)
+    let target = m.session.as_ref().unwrap().state.tempo.section_jump_ms(0, Edge::End, end_ms).unwrap();
+    assert_eq!(target, 10500.0);
+    let s = m.jump_section(&spec.id, 0, 500.0, Edge::End, t0).unwrap();
     assert!(s.transport.playing && !s.transport.resume_pending);
-    let f = (target * RATE as f64 / 1000.0).round() as usize;
+    // the last frame before the section end
+    let f = (target * RATE as f64 / 1000.0 - 1e-6).ceil() as usize - 1;
     assert_eq!(m.session.as_ref().unwrap().pos() as usize, f);
     let got = b.pull(2000);
     let mut want = expected(&pcm, f, 2000);

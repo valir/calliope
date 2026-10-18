@@ -57,3 +57,4 @@ report | fix round 2 added | orchestrator | done
 fix round 3 (owner manual test) | Start walked back a section per press: transport tempo_index/bpm used floored ms; now exact frame time. Selection drop also applied to snapshots (unchanged starts) | implementer | done
 report | fix round 3 added | orchestrator | done
 owner tweak | "Loops" label moved to the first line of the Loops group (line 1 tightened to fit); GUI click positions updated | orchestrator | done
+owner change | Section End jumps to the last frame before the next section (or the track end) instead of the start of the last bar (replaces Q7) | orchestrator | done

@@ -104,7 +104,7 @@
 - a **name box** next to "Section N of M · BPM";
 - **This section: Click** turns the metronome on or off for that section only;
 - **This section: Count In** gives a count-in into that section while playing through its start;
-- **Start / End** (also Home / End) jump to the section's first beat or its last bar.
+- **Start / End** (also Home / End) jump to the section's first beat or its last frame (just before the next section; owner change 2026-10-18).
 
 Names and toggles are saved in `player.json`, which is now schema 4.
 
@@ -323,7 +323,7 @@ Laptop only. Nothing changes on archserver.
   - (Phase 3: there is no global On/Off any more; see M17.)
 - [ ] **M10, practising one section.** Loop exactly one section whose next section has Count In, with Loop On. No count-in at the loop end; without the loop it plays.
 - [ ] **M11, Start / End.**
-  - While playing, End (or the End key) jumps to the section's last bar without a gap, and Start (Home) jumps back.
+  - While playing, End (or the End key) jumps to the section's last frame (right on the end, still in the section; pressing End again stays) without a gap, and Start (Home) jumps back.
   - Paused, they only move the playhead.
 - [ ] **M12, names.**
   - Name three sections. While playing, the name box follows the playhead, but not while you type.

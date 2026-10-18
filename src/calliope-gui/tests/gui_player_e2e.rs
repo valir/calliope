@@ -507,19 +507,14 @@ fn player_section_metronome() {
     app.wait_contains("player section name index=1 length=5");
     shot("player-section-name");
 
-    // 6. Start jumps to the section's first beat, End to the start of the last bar; with the focus off
-    // the buttons, Home jumps back.
+    // 6. Start jumps to the section's first beat, End to its last frame (the track end here); with the
+    // focus off the buttons, Home jumps back.
     at(&app, &wid, SEC_START);
     let l = app.wait_contains("player section jump index=1 edge=start");
     assert_eq!(position_of(&l), 8500, "{l}");
     at(&app, &wid, SEC_END);
     let l = app.wait_contains("player section jump index=1 edge=end");
-    let last_bar = position_of(&l);
-    // Four beats ending with the last beat that starts before the 20 s end, on the section's beat grid.
-    let beat = 60000.0 / 93.0;
-    let beats = (last_bar as f64 - 8500.0) / beat;
-    assert!((beats - beats.round()).abs() * beat <= 6.0, "{l}");
-    assert!(last_bar > 8500 && last_bar as f64 + 3.0 * beat < 20000.0 && last_bar as f64 + 4.0 * beat >= 20000.0, "{l}");
+    assert_eq!(position_of(&l), 19999, "{l}");
     at(&app, &wid, BLANK);
     app.skip_seen();
     app.key(&wid, "Home");

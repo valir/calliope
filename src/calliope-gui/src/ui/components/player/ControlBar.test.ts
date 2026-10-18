@@ -323,7 +323,7 @@ describe('Sections group', () => {
     it('Start and End send jump-section', async () => {
       await open(meta());
       await fireEvent.click(btn('Sections', 'Jump to the start of the section'));
-      await fireEvent.click(btn('Sections', 'Jump to the last bar of the section'));
+      await fireEvent.click(btn('Sections', 'Jump to the end of the section'));
       await flush();
       expect(tempoActions()).toEqual([
         { kind: 'jump-section', index: 1, at: 6000, edge: 'start' },

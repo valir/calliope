@@ -607,7 +607,7 @@ export function cancelSectionName(): void {
   pl.nameEdit = null;
 }
 
-/** Jumps to the start or the last bar of the target section. */
+/** Jumps to the start or the last frame (the end) of the target section. */
 export async function jumpSection(edge: 'start' | 'end'): Promise<void> {
   const index = targetSection();
   const at = index === null ? null : startOf(index);

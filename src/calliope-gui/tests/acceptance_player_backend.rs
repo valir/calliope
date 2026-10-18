@@ -2386,7 +2386,8 @@ fn ts14_jump_to_section_start_and_last_bar() {
     assert!(clicks(&got, &want, 200).is_empty(), "the audio is the source from the target on");
     assert!(r.snap().transport.playing);
     let s = r.m.jump_section(&r.id(), 0, 500.0, tempo_map::Edge::End, r.t0).unwrap();
-    assert_eq!(s.transport.position_ms, 6500);
+    assert_eq!(s.transport.position_ms, 8499, "the last frame before the 8500 ms change");
+    assert_eq!(s.transport.tempo_index, Some(0), "still in the first section");
     assert!(s.transport.playing);
     // paused: the position moves, nothing sounds
     r.m.pause(&r.id(), r.t0).unwrap();
@@ -2700,7 +2701,7 @@ fn qa_p2_flags_first_section_count_in_is_allowed_and_out_of_range_are_refused() 
 
 #[test]
 fn qa_p2_jump_edges_short_section_last_section_and_empty_map() {
-    // section 2 is only 2 beats long: End is its start; the last section's End uses the track end
+    // End lands on the last frame of the section; the last section's End uses the track end
     let mut r = rig_with(PRACTICE, r#"{"schema_version":4,"tempo":{"beats_per_bar":4,"segments":[
         {"start_ms":500,"bpm":120},{"start_ms":3000,"bpm":120,"on_beat":true,"name":"short"},{"start_ms":4000,"bpm":60,"on_beat":true}]}}"#);
     let dur = duration_ms(&r);
@@ -2709,10 +2710,12 @@ fn qa_p2_jump_edges_short_section_last_section_and_empty_map() {
         r.m.jump_section(&r.id(), i, at, e, r.t0).map(|s| s.transport.position_ms)
     };
     assert_eq!(to(&mut r, 0, tempo_map::Edge::Start), Ok(0), "section 1 starts at 0:00");
-    assert_eq!(to(&mut r, 1, tempo_map::Edge::End), Ok(3000), "shorter than a bar: its start");
+    assert_eq!(to(&mut r, 1, tempo_map::Edge::End), Ok(3999), "just before the 4000 ms change");
+    assert_eq!(r.snap().transport.tempo_index, Some(1));
+    assert_eq!(to(&mut r, 1, tempo_map::Edge::End), Ok(3999), "pressed again: stays");
     assert_eq!(to(&mut r, 1, tempo_map::Edge::Start), Ok(3000));
     let last = to(&mut r, 2, tempo_map::Edge::End).unwrap() as f64;
-    assert!((last - (dur - 4000.0)).abs() < 1500.0 && last >= 4000.0, "{last} of {dur}");
+    assert!(last < dur && last >= dur - 1.0, "{last} of {dur}");
     // a section keeps the same target after the jump: the selection is the caller's, the position is just moved
     let mut e = rig(STEMS_ONLY);
     let err = e.m.jump_section(&e.id(), 0, 0.0, tempo_map::Edge::Start, e.t0).unwrap_err();
@@ -2732,12 +2735,12 @@ fn qa_p2_jump_then_play_uses_the_normal_count_in_rule_and_a_jump_during_a_pre_ro
     r.b.pull(2000);
     let s = r.m.jump_section(&r.id(), 0, 500.0, tempo_map::Edge::End, r.t0).unwrap();
     assert!(s.transport.playing, "{:?}", s.transport);
-    assert_eq!(s.transport.position_ms, 6500);
+    assert_eq!(s.transport.position_ms, 8499);
     let n = frames_of(1000.0);
     let got = r.b.pull(n);
     assert!(!r.snap().transport.counting_in, "{:?}", r.snap().transport);
-    // the source plays on from the target; only the 120 BPM clicks (6500, 7000, 7500) differ from it
-    let want = expected(&r.pcm(), frames_of(6500.0), n);
+    // the source plays on from the target; only the 93 BPM clicks (8500, 9145) differ from it
+    let want = expected(&r.pcm(), frames_of(8500.0) - 1, n);
     let c = clicks(&got, &want, 200);
     assert!(c.len() <= 3, "{c:?}");
 }
@@ -3606,14 +3609,14 @@ fn qa_qd3_start_jump_at_or_past_the_track_end_is_clamped_without_panic() {
 }
 
 #[test]
-fn qa_qd3_end_jumps_are_unchanged_by_the_fix() {
-    // End of section 1 (120 BPM, 4/4, section 2 at 8500): last bar starts at 6500
+fn qa_qd3_end_jumps_land_on_the_last_frame_of_a_fractional_section() {
+    // End of section 1 (section 2 at 8500.01 ms): the last frame before 8500.01 is the 8500 ms one
     let mut r = rig_with(PRACTICE, &qd3_json("8500.01", false));
     let s = r.m.jump_section(&r.id(), 0, 500.0, tempo_map::Edge::End, r.t0).unwrap();
-    assert_eq!(s.transport.position_ms, 6500);
-    // landing frame is the rounded one: 6500 ms = 286650 frames
+    assert_eq!(s.transport.position_ms, 8500);
+    assert_eq!(s.transport.tempo_index, Some(0), "still in the first section");
     r.play();
     r.m.jump_section(&r.id(), 0, 500.0, tempo_map::Edge::End, r.t0).unwrap();
     let got = r.b.pull(1500);
-    assert_eq!(nearest_shift(&r, &got, frames_of(6500.0)), 0);
+    assert_eq!(nearest_shift(&r, &got, frames_of(8500.0)), 0);
 }

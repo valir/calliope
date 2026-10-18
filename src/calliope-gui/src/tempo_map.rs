@@ -483,26 +483,19 @@ impl TempoMap {
     }
 
     /// Where Start / End of section `index` jump to: the section start (0 for the first section),
-    /// or the start of its last bar (the `beats_per_bar`-th beat before the next change or
-    /// `end_ms`, never before the section start).
+    /// or its end (the next change, or `end_ms` for the last section). The player lands End on the
+    /// last frame before that end, so the playhead stays in the section.
     pub fn section_jump_ms(&self, index: usize, edge: Edge, end_ms: f64) -> Result<f64, String> {
         let seg = self.segments.get(index).ok_or_else(|| "There is no such section".to_string())?;
         let start = if index == 0 { 0.0 } else { seg.start_ms };
         if edge == Edge::Start {
             return Ok(start);
         }
-        let end = match self.segments.get(index + 1) {
-            Some(n) => n.start_ms,
-            None if end_ms.is_finite() => end_ms,
-            None => return Err("The track length is not known".to_string()),
-        };
-        let beats = self.beats_in(seg.start_ms - 1e-6, end);
-        let bar = self.beats_per_bar.max(1) as usize;
-        let from = seg.start_ms;
-        Ok(match beats.len().checked_sub(bar) {
-            Some(i) => beats[i].0.max(from),
-            None => from,
-        })
+        match self.segments.get(index + 1) {
+            Some(n) => Ok(n.start_ms),
+            None if end_ms.is_finite() => Ok(end_ms.max(start)),
+            None => Err("The track length is not known".to_string()),
+        }
     }
 }
 
@@ -1094,14 +1087,9 @@ mod tests {
         let ms = |i, e| m.section_jump_ms(i, e, 20000.0).unwrap();
         assert_eq!(ms(0, Edge::Start), 0.0);
         assert_eq!(ms(1, Edge::Start), 8500.0);
-        assert_eq!(ms(0, Edge::End), 6500.0);
-        let beats = m.beats_in(8500.0 - 1e-6, 20000.0);
-        assert_eq!(ms(1, Edge::End), beats[beats.len() - 4].0);
-        assert!(ms(1, Edge::End) > 17000.0 && ms(1, Edge::End) < 20000.0);
+        assert_eq!(ms(0, Edge::End), 8500.0, "the next change");
+        assert_eq!(ms(1, Edge::End), 20000.0, "the last section ends with the track");
         assert!(m.section_jump_ms(2, Edge::Start, 20000.0).is_err());
         assert!(m.section_jump_ms(1, Edge::End, f64::INFINITY).is_err());
-        // a section of two beats: End = its start
-        let short = map(&[(500.0, 120.0), (1500.0, 93.0)]);
-        assert_eq!(short.section_jump_ms(0, Edge::End, 20000.0).unwrap(), 500.0);
     }
 }
