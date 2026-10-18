@@ -46,12 +46,12 @@ impl Click {
 
 /// Output frames of the three audible count-in clicks and of the audio start (the silent 4th beat).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CountIn {
+pub struct CountIn {
     pub clicks: [u64; 3],
     pub start: u64,
 }
 
-pub(crate) fn count_in_plan(bpm: f64, rate: u32) -> CountIn {
+pub fn count_in_plan(bpm: f64, rate: u32) -> CountIn {
     let b = (rate as f64 * 60.0 / bpm).round() as u64;
     CountIn {
         clicks: [0, b, 2 * b],

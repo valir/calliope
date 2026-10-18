@@ -1209,7 +1209,7 @@ fn engine_callback_never_allocates() {
     let mut en = Engine::new(pcm.clone(), 0, shared.clone()).with_trash(tx);
     let grid: Vec<Beat> = (0..40).map(|k| (k * 11025, k % 4 == 1)).collect();
     let plan = count_in_plan(120.0, 22050);
-    let spec_loop = LoopSpec { start: 20000, end: 40000, repeat: true, count_in: Some(plan) };
+    let spec_loop = LoopSpec { start: 20000, end: 40000, repeat: true, count_in_bpm_milli: Some(120_000) };
     let g2 = Arc::new(grid.clone());
     let mut out = vec![0.0f32; 2 * 1024];
     let empty = Arc::new(Vec::new());
@@ -1341,4 +1341,272 @@ fn finish_open_installs_a_player_json_written_after_the_read() {
     let ticket = m.begin_open();
     let loaded = load(&spec, &ticket, &m.sink()).unwrap();
     assert_eq!(m.finish_open(&ticket, &spec, loaded).unwrap().tempo.segments.len(), 1);
+}
+
+// ------------------------------------------------------------- stretch mode (plan 2.4)
+
+const BEAT: usize = RATE / 2; // one beat at 120 BPM
+const PULL: usize = 64;
+
+fn pcm_of(f: impl Fn(usize) -> f32, frames: usize) -> Pcm {
+    Pcm { rate: RATE as u32, channels: 1, frames: frames as u64, samples: (0..frames).map(|i| (f(i) * 32767.0) as i16).collect() }
+}
+
+/// A 300 Hz burst of 10 ms (sine-squared envelope) on every beat of 120 BPM.
+fn burst_pcm(secs: usize) -> Pcm {
+    let len = RATE / 100;
+    pcm_of(
+        |i| {
+            let k = i % BEAT;
+            if k >= len {
+                return 0.0;
+            }
+            let env = (std::f32::consts::PI * k as f32 / len as f32).sin().powi(2);
+            0.8 * env * (std::f32::consts::TAU * 300.0 * i as f32 / RATE as f32).sin()
+        },
+        secs * RATE,
+    )
+}
+
+fn tone_pcm(secs: usize) -> Pcm {
+    pcm_of(|i| 0.5 * (std::f32::consts::TAU * 440.0 * i as f32 / RATE as f32).sin(), secs * RATE)
+}
+
+fn beat_grid(frames: usize) -> Arc<Vec<Beat>> {
+    Arc::new((0..frames / BEAT + 1).map(|k| ((k * BEAT) as u64, false)).collect())
+}
+
+/// Renders `total` frames in 64-frame pulls, applying each command before the first pull at or after its frame.
+/// Returns the left channel and the position after every pull.
+fn render_cmds(pcm: Pcm, cmds: &[(usize, Cmd)], total: usize) -> (Vec<f32>, Vec<u64>, Arc<Shared>) {
+    let shared = Arc::new(Shared::default());
+    let mut en = Engine::new(Arc::new(pcm), 0, shared.clone());
+    let (mut left, mut pos) = (Vec::new(), Vec::new());
+    let mut buf = vec![0.0f32; 2 * PULL];
+    let mut next = 0;
+    for k in 0..total / PULL {
+        while next < cmds.len() && cmds[next].0 <= k * PULL {
+            en.apply(cmds[next].1.clone());
+            next += 1;
+        }
+        en.render(&mut buf);
+        left.extend(buf.iter().step_by(2));
+        pos.push(shared.position.load(Ordering::Acquire));
+    }
+    (left, pos, shared)
+}
+
+/// RMS per 5 ms window.
+fn envelope(x: &[f32]) -> Vec<f32> {
+    let w = RATE / 200;
+    x.chunks(w).map(|c| (c.iter().map(|v| v * v).sum::<f32>() / c.len() as f32).sqrt()).collect()
+}
+
+/// Energy centres (in frames) of the clusters of 5 ms windows above 30 % of the maximum, i.e. the bursts.
+fn burst_peaks(x: &[f32]) -> Vec<usize> {
+    let env = envelope(x);
+    let top = env.iter().cloned().fold(0.0, f32::max);
+    let (mut out, mut sum, mut moment) = (Vec::new(), 0.0f64, 0.0f64);
+    for (k, &e) in env.iter().chain([&0.0]).enumerate() {
+        if e > 0.3 * top {
+            sum += f64::from(e * e);
+            moment += f64::from(e * e) * ((k * (RATE / 200) + RATE / 400) as f64);
+        } else if sum > 0.0 {
+            out.push((moment / sum) as usize);
+            (sum, moment) = (0.0, 0.0);
+        }
+    }
+    out
+}
+
+/// First non-zero frame of every sound that follows at least 50 ms of silence.
+fn onsets(x: &[f32]) -> Vec<usize> {
+    let gap = RATE / 20;
+    let mut out = Vec::new();
+    let mut last: Option<usize> = None;
+    for (i, v) in x.iter().enumerate() {
+        if v.abs() > 1e-6 {
+            if last.is_none_or(|l| i - l > gap) {
+                out.push(i);
+            }
+            last = Some(i);
+        }
+    }
+    out
+}
+
+fn tone_rms() -> f32 {
+    0.5 / 2f32.sqrt()
+}
+
+/// No 10 ms window of `x[from..to]` is below half the tone's RMS.
+fn assert_no_gap(x: &[f32], from: usize, to: usize, what: &str) {
+    let w = RATE / 100;
+    for (k, c) in x[from..to.min(x.len())].chunks_exact(w).enumerate() {
+        let rms = (c.iter().map(|v| v * v).sum::<f32>() / w as f32).sqrt();
+        assert!(rms >= 0.5 * tone_rms(), "{what}: window at frame {} has rms {rms}", from + k * w);
+    }
+}
+
+fn scenario(name: &str, pct: u32) -> (Vec<(usize, Cmd)>, usize) {
+    let sec = RATE;
+    let mut c = vec![(0, Cmd::SetMetronome(true))];
+    match name {
+        "play" => {
+            c.extend([(0, Cmd::SetSpeed(pct)), (0, Cmd::Play { count_in: None })]);
+            (c, 6 * sec)
+        }
+        "jump" => {
+            c.extend([(0, Cmd::SetSpeed(pct)), (0, Cmd::Play { count_in: None }), (3 * sec / 2, Cmd::Jump(72_765))]);
+            (c, 6 * sec)
+        }
+        "wrap" => {
+            let l = LoopSpec { start: 2 * sec as u64, end: 4 * sec as u64, repeat: true, count_in_bpm_milli: None };
+            c.extend([(0, Cmd::SetSpeed(pct)), (0, Cmd::SetLoop(Some(l))), (0, Cmd::Play { count_in: None })]);
+            (c, 12 * sec)
+        }
+        _ => {
+            // 100 % -> pct while playing, then on to another stretched speed
+            let other = if pct == 150 { 50 } else { 150 };
+            c.extend([(0, Cmd::Play { count_in: None }), (3 * sec / 2, Cmd::SetSpeed(pct)), (4 * sec, Cmd::SetSpeed(other))]);
+            (c, 8 * sec)
+        }
+    }
+}
+
+#[test]
+fn clicks_stay_on_the_beats_of_the_music_at_any_speed() {
+    for pct in [50u32, 85, 150] {
+        for name in ["play", "jump", "wrap", "change"] {
+            let (cmds, total) = scenario(name, pct);
+            let mut click_cmds = vec![(0, Cmd::SetGrid(beat_grid(30 * RATE)))];
+            click_cmds.extend(cmds.iter().cloned());
+            let (clicks, _, _) = render_cmds(pcm_of(|_| 0.0, 30 * RATE), &click_cmds, total);
+            let (music, _, _) = render_cmds(burst_pcm(30), &cmds, total);
+            let (on, pk) = (onsets(&clicks), burst_peaks(&music));
+            assert!(on.len() >= 5 && pk.len() >= 4, "{name} {pct}: {} clicks, {} bursts", on.len(), pk.len());
+            let tol = RATE / 100; // 10 ms
+            for &o in &on {
+                // the burst's peak is the middle of its 10 ms, stretched
+                let centre = o + (RATE as f64 / 200.0 * 100.0 / f64::from(pct)) as usize;
+                let near = pk.iter().map(|&p| p.abs_diff(centre)).min().unwrap();
+                assert!(near <= tol, "{name} {pct} %: click at {o} is {near} frames from the nearest burst peak");
+            }
+            if name == "play" {
+                for w in on.windows(2) {
+                    let want = BEAT as f64 * 100.0 / f64::from(pct);
+                    assert!((w[1] - w[0]) as f64 - want <= 1.0 && want - (w[1] - w[0]) as f64 <= 1.0, "{name} {pct}: spacing {}", w[1] - w[0]);
+                }
+            }
+            if name == "change" {
+                // 5.5 s on, the speed is `other`: spacing follows it
+                let other = if pct == 150 { 50.0 } else { 150.0 };
+                let tail: Vec<usize> = on.iter().cloned().filter(|&o| o > 5 * RATE + RATE / 2).collect();
+                for w in tail.windows(2) {
+                    let want = BEAT as f64 * 100.0 / other;
+                    assert!(((w[1] - w[0]) as f64 - want).abs() <= 1.0, "{name} {pct}: tail spacing {}", w[1] - w[0]);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn speed_100_with_set_speed_is_still_bit_exact() {
+    let pcm = decoded(&spec_of(PRACTICE).1, "backing:backing");
+    let want = expected(&pcm, 0, 4000);
+    let shared = Arc::new(Shared::default());
+    let mut en = Engine::new(Arc::new(pcm), 0, shared);
+    en.apply(Cmd::SetSpeed(100));
+    en.apply(Cmd::Play { count_in: None });
+    let mut got = vec![0.0f32; 2 * 4000];
+    en.render(&mut got);
+    // the 3 ms fade-in is the only difference from the source, as in the other exact tests
+    let f = fade_frames();
+    assert_eq!(got[2 * f..], want[2 * f..]);
+}
+
+#[test]
+fn speed_change_while_playing_has_no_gap_and_the_position_never_goes_back() {
+    let sec = RATE;
+    let cmds = [(0, Cmd::Play { count_in: None }), (sec, Cmd::SetSpeed(70))];
+    let (x, pos, shared) = render_cmds(tone_pcm(10), &cmds, 4 * sec);
+    assert_no_gap(&x, 0, 4 * sec, "100 -> 70 %");
+    assert!(pos.windows(2).all(|w| w[1] >= w[0]), "the position went back");
+    let at = |s: f64| pos[(s * sec as f64) as usize / PULL] as f64;
+    let rate = (at(3.5) - at(2.5)) / sec as f64;
+    assert!((rate - 0.7).abs() < 0.07, "advances {rate} s per second");
+    assert_eq!(shared.speed_pct.load(Ordering::Acquire), 70);
+}
+
+#[test]
+fn a_repeating_loop_at_80_percent_wraps_without_a_gap() {
+    let sec = RATE;
+    let l = LoopSpec { start: sec as u64, end: 2 * sec as u64, repeat: true, count_in_bpm_milli: None };
+    let cmds = [(0, Cmd::SetSpeed(80)), (0, Cmd::SetLoop(Some(l))), (0, Cmd::Seek(sec as u64)), (0, Cmd::Play { count_in: None }), (0, Cmd::Resume)];
+    let (x, pos, shared) = render_cmds(tone_pcm(10), &cmds, 5 * sec);
+    assert!(shared.wraps.load(Ordering::Acquire) >= 2);
+    // after the first wrap the heard position is back at the loop start
+    let first = pos.windows(2).position(|w| w[1] + 1000 < w[0]).expect("the position wrapped");
+    assert!(pos[first + 1].abs_diff(sec as u64) < 2000, "back at {}", pos[first + 1]);
+    assert!(pos.iter().all(|&p| p <= 2 * sec as u64 + 100));
+    assert_no_gap(&x, fade_frames() * 4, 5 * sec, "loop wrap");
+}
+
+#[test]
+fn loop_end_with_count_in_at_50_percent_counts_three_clicks_then_the_music() {
+    let sec = RATE;
+    let l = LoopSpec { start: 2 * BEAT as u64, end: 6 * BEAT as u64, repeat: true, count_in_bpm_milli: Some(120_000) };
+    let cmds = [(0, Cmd::SetSpeed(50)), (0, Cmd::SetLoop(Some(l))), (0, Cmd::PlayLoop { count_in: None })];
+    let total = 9 * sec;
+    let (clicks, _, shared) = render_cmds(pcm_of(|_| 0.0, 30 * sec), &cmds, total);
+    let (music, _, _) = render_cmds(burst_pcm(30), &cmds, total);
+    assert!(shared.wraps.load(Ordering::Acquire) >= 1);
+    let on = onsets(&clicks);
+    assert!(on.len() >= 3, "{on:?}");
+    for w in on[..3].windows(2) {
+        assert!(w[1].abs_diff(w[0] + sec) <= 2, "clicks {} frames apart", w[1] - w[0]);
+    }
+    // the burst on the silent fourth beat: the loop start is a beat
+    let after: Vec<usize> = burst_peaks(&music[on[2] + sec / 2..]).iter().map(|p| p + on[2] + sec / 2).collect();
+    let want = on[2] + sec + RATE / 100; // the middle of the burst, stretched to 20 ms
+    assert!(after[0].abs_diff(want) <= RATE / 100, "burst at {} want {want}", after[0]);
+}
+
+#[test]
+fn the_track_end_at_150_percent_plays_the_last_50ms_then_ends() {
+    let sec = RATE;
+    let cmds = [(0, Cmd::SetSpeed(150)), (0, Cmd::Seek(sec as u64)), (0, Cmd::Play { count_in: None })];
+    let shared = Arc::new(Shared::default());
+    let mut en = Engine::new(Arc::new(tone_pcm(3)), 0, shared.clone());
+    for (_, c) in cmds {
+        en.apply(c);
+    }
+    let (mut left, mut buf) = (Vec::new(), vec![0.0f32; 2 * PULL]);
+    while !shared.ended.load(Ordering::Acquire) && left.len() < 5 * sec {
+        en.render(&mut buf);
+        left.extend(buf.iter().step_by(2));
+    }
+    assert!(shared.ended.load(Ordering::Acquire));
+    let end = left.len();
+    // 50 ms of source are 33 ms of output
+    assert_no_gap(&left, end - 3 * RATE / 100 - PULL, end - PULL, "the tail");
+    assert!(end > 2 * sec / 3 * 2 - sec / 20, "ended after {end} frames");
+}
+
+#[test]
+fn seek_while_playing_at_85_percent_stays_silent_until_resume_then_plays_from_the_target() {
+    let t = 3 * BEAT + 3000; // the next burst is 8075 frames on
+    let cmds = [
+        (0, Cmd::SetSpeed(85)),
+        (0, Cmd::Play { count_in: None }),
+        (RATE, Cmd::Seek(t as u64)),
+        (RATE + 8 * RATE / 10, Cmd::Resume),
+    ];
+    let (x, _, _) = render_cmds(burst_pcm(30), &cmds, 3 * RATE);
+    let resume = RATE + 8 * RATE / 10;
+    assert!(x[RATE + PULL..resume].iter().all(|v| *v == 0.0), "not silent while scrubbing");
+    let pk = burst_peaks(&x[resume..]);
+    let want = (8075.0 / 0.85) as usize;
+    assert!(pk[0].abs_diff(want) <= RATE / 100, "burst at {} want {want}", pk[0]);
 }

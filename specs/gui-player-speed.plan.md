@@ -456,6 +456,12 @@ Never commit in a routine task.
 - **routine:** no
 
 ### Task 6: Training run in the engine
+- **orchestrator note (after Task 5):** the heard position is an unwrapped feed coordinate; the timeline holds linear
+  entries `{out, u, speed}` (pushed only at alignment and on a fed-speed change) and wraps/ends are separate
+  `FeedEvent`s (`Wrap{len}`, `CountIn{start, bpm_milli}`, `Once{start}`, `Track`). Put `pass` and the per-pass speed into
+  those events/entries; publish `Shared.pass` from `reached()` like `Shared.speed_pct`. `wrap_count()` must use the next
+  pass's speed, not `self.speed`. Known gap left by Task 5, fix it here if cheap: a Jump/alignment into the last ~120 ms
+  of a repeating loop (closer to the end than the output latency) ignores the loop end on the first pass.
 - **files:** `src/calliope-gui/src/player.rs`, `src/calliope-gui/src/player_tests.rs`
 - **does:** 2.6's engine part: `LoopSpec.training: Option<speed::Plan>` (start, end, step, repeats; `Copy`), the run on
   `PlayLoop`, the per-pass speed switched at the wrap on the feed side, `pass` and `speed` carried by the timeline and
@@ -475,6 +481,9 @@ Never commit in a routine task.
 - **routine:** no
 
 ### Task 7: Manager and IPC: speed actions, transport fields, training action, logs
+- **orchestrator note (after Task 5):** `loop_spec` already fills `LoopSpec.count_in_bpm_milli`; `plan_at` still uses
+  the old `state.speed` factor — switch it to `speed_pct`. `set_speed_pct`/`set_training` still carry
+  `#[allow(dead_code)]`; remove them.
 - **files:** `src/calliope-gui/src/player.rs`, `src/calliope-gui/src/player_ipc.rs`, `src/calliope-gui/src/player_tests.rs`,
   `src/calliope-gui/src/player_ipc_tests.rs`, `src/calliope-gui/tests/acceptance_player_backend.rs` (three lines only)
 - **does:**

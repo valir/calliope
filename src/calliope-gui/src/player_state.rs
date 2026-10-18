@@ -475,7 +475,6 @@ impl PlayerState {
     }
 
     /// The track speed in percent (25..=200).
-    #[allow(dead_code)] // used by the manager from Task 5/6 on
     pub fn speed_pct(&self) -> u32 {
         speed::pct_of_factor(self.speed)
     }

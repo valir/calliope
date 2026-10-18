@@ -38,15 +38,6 @@ impl Stretcher {
         self.pre_roll
     }
 
-    pub fn reset(&mut self) {
-        self.inner.reset();
-    }
-
-    /// Interleaved stereo pre-roll; does not move the stream position.
-    pub fn seek(&mut self, pre_roll: &[f32], speed: f64) {
-        self.inner.seek(pre_roll, speed);
-    }
-
     /// Interleaved stereo; `input` and `output` lengths set the speed (input/output).
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
         self.inner.process(input, output);

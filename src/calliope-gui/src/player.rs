@@ -3,6 +3,7 @@
 //! and persists `player.json` (debounced, plus a periodic position save while playing).
 //! The engine also mixes the metronome and count-in clicks and repeats loops (plans 2.4, 2.6).
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
@@ -15,6 +16,7 @@ use crate::audio_out::{OutputBackend, OutputHandle};
 use crate::metronome::{count_in_plan, section_clicks, Click, CountIn};
 use crate::player_source::{self, Pcm, Source, PEAK_BUCKETS};
 use crate::player_state::{self, LoopRec, Mark, PlayerState};
+use crate::stretch::Stretcher;
 use crate::tempo_map::{Boundary, Edge, Scale, Segment, TempoMap};
 use crate::transport::Transport;
 
@@ -36,22 +38,26 @@ pub(crate) const LOOP_INCOMPLETE: &str = "Set the loop end first";
 // ---------------------------------------------------------------------- engine
 
 /// A beat of the grid: (source frame, first beat of a bar). Every beat clicks in the same tone.
-pub(crate) type Beat = (u64, bool);
+#[doc(hidden)]
+pub type Beat = (u64, bool);
 
 /// The current complete loop, in source frames.
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct LoopSpec {
+pub struct LoopSpec {
     pub start: u64,
     pub end: u64,
     /// Loop On: playback reaching the end jumps back to the start.
     pub repeat: bool,
-    /// Count-in before every repeat (the loop's own Count-In).
-    pub count_in: Option<CountIn>,
+    /// Count-in before every repeat (the loop's own Count-In): the song BPM at the loop start times 1000.
+    /// The engine spaces the clicks by `60 / (bpm × speed)` of the coming pass.
+    pub count_in_bpm_milli: Option<u32>,
 }
 
 /// Commands from the manager to the callback.
+#[doc(hidden)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Cmd {
+pub enum Cmd {
     /// Start sound at the engine position (restarts from 0 at the end of the track), after
     /// the count-in when given.
     Play { count_in: Option<CountIn> },
@@ -68,12 +74,15 @@ pub(crate) enum Cmd {
     SetLoop(Option<LoopSpec>),
     SetGrid(Arc<Vec<Beat>>),
     SetMetronome(bool),
+    /// The track speed in percent (25..=200).
+    SetSpeed(u32),
 }
 
 /// Status written by the callback, read by the manager (atomics only).
+#[doc(hidden)]
 #[derive(Debug, Default)]
-pub(crate) struct Shared {
-    /// Position in frames. The manager also stores here when no output is open.
+pub struct Shared {
+    /// Position in frames (the song frame being heard). The manager also stores here when no output is open.
     pub position: AtomicU64,
     /// The source played to its end.
     pub ended: AtomicBool,
@@ -85,6 +94,8 @@ pub(crate) struct Shared {
     pub loop_stopped: AtomicBool,
     /// Loop repeats so far.
     pub wraps: AtomicU64,
+    /// The speed heard now, in percent.
+    pub speed_pct: AtomicU64,
 }
 
 struct CountState {
@@ -98,8 +109,71 @@ struct Voice {
     at: usize,
 }
 
+/// Output frames the stretch path processes at most at once.
+const SUB_BLOCK: usize = 256;
+/// Capacity of the timeline and the marks (no allocation after construction).
+const TIMELINE: usize = 64;
+const MARKS: usize = 16;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Today's per-frame code (bit-exact at 100 %).
+    Bypass,
+    /// Through the time-stretcher.
+    Stretch,
+}
+
+/// The heard song position is linear in the output frame between entries: `u + (out - entry.out) * speed`,
+/// in the unwrapped feed coordinate (the feed keeps counting past a loop end; see `EventKind::Wrap`).
+#[derive(Clone, Copy)]
+struct Entry {
+    out: u64,
+    u: f64,
+    speed: f64,
+}
+
+#[derive(Clone, Copy)]
+enum EventKind {
+    /// The feed wrapped here: the heard position goes back by `len`.
+    Wrap { len: u64 },
+    /// Loop end with count-in.
+    CountIn { start: u64, bpm_milli: u32 },
+    /// A loop played once ended.
+    Once { start: u64 },
+    /// The track ended.
+    Track,
+}
+
+/// Something the feed met at unwrapped position `u`; it happens when the heard position gets there.
+#[derive(Clone, Copy)]
+struct FeedEvent {
+    u: f64,
+    kind: EventKind,
+}
+
+/// Stereo f32 frames from song frame `from` (mono duplicated; zeros outside the track).
+fn frame_lr(pcm: &Pcm, f: u64) -> (f32, f32) {
+    if f >= pcm.frames {
+        return (0.0, 0.0);
+    }
+    let ch = pcm.channels.max(1) as usize;
+    let base = f as usize * ch;
+    let l = f32::from(pcm.samples[base]) / 32768.0;
+    let r = if ch >= 2 { f32::from(pcm.samples[base + 1]) / 32768.0 } else { l };
+    (l, r)
+}
+
+fn fill_stereo(pcm: &Pcm, from: u64, buf: &mut [f32]) {
+    for (k, fr) in buf.chunks_exact_mut(2).enumerate() {
+        let (l, r) = frame_lr(pcm, from + k as u64);
+        fr[0] = l;
+        fr[1] = r;
+    }
+}
+
 /// Pure render state; never allocates or locks.
-pub(crate) struct Engine {
+#[doc(hidden)]
+pub struct Engine {
     pcm: Arc<Pcm>,
     pos: u64,
     playing: bool,
@@ -117,6 +191,36 @@ pub(crate) struct Engine {
     lp: Option<LoopSpec>,
     loop_play: bool,
     trash: Option<SyncSender<Arc<Vec<Beat>>>>,
+    // stretch mode
+    mode: Mode,
+    /// Track speed in percent, and the ratio fed now.
+    base_pct: u32,
+    speed: f64,
+    stretch: Stretcher,
+    l_in: u64,
+    l_out: u64,
+    /// Input to the stretcher (and the alignment pre-roll).
+    scratch: Vec<f32>,
+    /// Stretcher output not yet heard.
+    stage: Vec<f32>,
+    stage_len: usize,
+    stage_at: usize,
+    /// Next song frame to feed, and the fraction of a frame fed ahead of it.
+    fpos: u64,
+    acc: f64,
+    /// Sum of the loop lengths the feed has wrapped / the heard side has passed.
+    woff: u64,
+    hoff: u64,
+    /// The feed ended (loop end with count-in, loop played once, track end): zeros follow.
+    feed_zero: bool,
+    feed_fade_left: u32,
+    /// Output frames heard in stretch mode.
+    out_count: u64,
+    timeline: VecDeque<Entry>,
+    events: VecDeque<FeedEvent>,
+    /// Crossfade from the bypass path (still at `xpos`) after a speed change away from 100 %.
+    xfade_left: u32,
+    xpos: u64,
 }
 
 impl Engine {
@@ -124,6 +228,9 @@ impl Engine {
         let fade_len = (pcm.rate * FADE_MS / 1000).max(1);
         let pos = pos.min(pcm.frames);
         let click = Click::new(pcm.rate);
+        let stretch = Stretcher::new(pcm.rate);
+        let scratch = vec![0.0; 2 * stretch.pre_roll_frames().max(2 * SUB_BLOCK + 8)];
+        shared.speed_pct.store(100, Ordering::Release);
         Engine {
             pcm,
             pos,
@@ -142,6 +249,27 @@ impl Engine {
             lp: None,
             loop_play: false,
             trash: None,
+            mode: Mode::Bypass,
+            base_pct: 100,
+            speed: 1.0,
+            l_in: stretch.input_latency() as u64,
+            l_out: stretch.output_latency() as u64,
+            stretch,
+            scratch,
+            stage: vec![0.0; 2 * SUB_BLOCK],
+            stage_len: 0,
+            stage_at: 0,
+            fpos: 0,
+            acc: 0.0,
+            woff: 0,
+            hoff: 0,
+            feed_zero: false,
+            feed_fade_left: 0,
+            out_count: 0,
+            timeline: VecDeque::with_capacity(TIMELINE),
+            events: VecDeque::with_capacity(MARKS),
+            xfade_left: 0,
+            xpos: 0,
         }
     }
 
@@ -161,6 +289,42 @@ impl Engine {
         self.voice = None;
     }
 
+    /// A discontinuity: chooses the path for the audio that follows from song frame `target`
+    /// (`pos` is already there). Exactly 100 % is the bypass; anything else aligns the stretcher.
+    fn enter(&mut self, target: u64) {
+        self.xfade_left = 0;
+        if self.base_pct == 100 {
+            self.mode = Mode::Bypass;
+            return;
+        }
+        let pcm = &*self.pcm;
+        let fed = self.stretch.align(|f, b| fill_stereo(pcm, f, b), target, self.speed, &mut self.scratch);
+        self.mode = Mode::Stretch;
+        self.fpos = fed;
+        self.acc = 0.0;
+        self.woff = 0;
+        self.hoff = 0;
+        self.feed_zero = false;
+        self.feed_fade_left = 0;
+        self.stage_len = 0;
+        self.stage_at = 0;
+        self.events.clear();
+        self.timeline.clear();
+        self.timeline.push_back(Entry { out: self.out_count, u: target as f64, speed: self.speed });
+        self.beat_dirty = true;
+        self.voice = None;
+        if fed >= self.pcm.frames {
+            self.push_event(FeedEvent { u: self.pcm.frames as f64, kind: EventKind::Track });
+            self.feed_zero = true;
+        }
+    }
+
+    fn push_event(&mut self, m: FeedEvent) {
+        if self.events.len() < MARKS {
+            self.events.push_back(m);
+        }
+    }
+
     fn begin(&mut self, count_in: Option<CountIn>) {
         self.playing = true;
         self.audible = true;
@@ -170,6 +334,7 @@ impl Engine {
         if self.count.is_none() {
             self.start_fade();
         }
+        self.enter(self.pos);
     }
 
     pub fn apply(&mut self, cmd: Cmd) {
@@ -208,12 +373,14 @@ impl Engine {
                 self.count = None;
                 if self.playing && self.audible {
                     self.start_fade();
+                    self.enter(self.pos);
                 }
             }
             Cmd::Resume => {
                 if self.playing {
                     self.audible = true;
                     self.start_fade();
+                    self.enter(self.pos);
                 }
             }
             Cmd::SetLoop(l) => {
@@ -233,6 +400,21 @@ impl Engine {
                 self.metronome = on;
                 self.beat_dirty = true;
             }
+            Cmd::SetSpeed(pct) => {
+                self.base_pct = pct;
+                self.speed = f64::from(pct) / 100.0;
+                if self.playing && self.count.is_some() {
+                    self.enter(self.pos); // before the music starts: align for the new speed
+                } else if self.playing && self.audible && self.mode == Mode::Bypass && pct != 100 {
+                    // bypass -> stretch: align here and crossfade the two paths
+                    let at = self.pos;
+                    self.enter(at);
+                    self.xpos = at;
+                    self.xfade_left = self.fade_len;
+                    self.fade_left = 0;
+                }
+                // stretch -> another speed: only the feed ratio changes (`self.speed`)
+            }
         }
     }
 
@@ -248,6 +430,204 @@ impl Engine {
                 self.voice = None;
             }
         }
+    }
+
+    /// The count-in of a loop wrap, spaced for the coming pass.
+    fn wrap_count(&self, bpm_milli: u32) -> CountState {
+        CountState { plan: count_in_plan(f64::from(bpm_milli) / 1000.0 * self.speed, self.pcm.rate), at: 0 }
+    }
+
+    /// The loop the feed wraps at, when it is in play.
+    fn wrapping(&self) -> Option<LoopSpec> {
+        self.lp.filter(|l| l.repeat || self.loop_play)
+    }
+
+    /// Feeds the stretcher one sub-block and leaves its output in the stage.
+    fn fill_stage(&mut self) {
+        let s = self.speed;
+        let frames = self.pcm.frames;
+        let wraps = self.wrapping();
+        // where the feed has to stop: a loop end the feed is before, else the track end
+        let event = if self.feed_zero || self.fpos >= frames {
+            None
+        } else {
+            match wraps.filter(|l| self.fpos < l.end && l.end <= frames) {
+                Some(l) => Some((l.end, Some(l))),
+                None => Some((frames, None)),
+            }
+        };
+        let u0 = (self.fpos + self.woff) as f64 + self.acc - self.l_in as f64;
+        if self.timeline.back().is_none_or(|e| e.speed != s) && self.timeline.len() < TIMELINE {
+            self.timeline.push_back(Entry { out: self.out_count + self.l_out, u: u0, speed: s });
+        }
+        let exact = self.acc + SUB_BLOCK as f64 * s;
+        let mut m = exact as usize;
+        let mut n = SUB_BLOCK;
+        let mut hit = false;
+        if let Some((e, _)) = event {
+            let r = (e - self.fpos) as usize;
+            if m >= r {
+                // cut here so the event falls on the block boundary
+                m = r;
+                n = (((m as f64 - self.acc) / s).round() as usize).clamp(1, SUB_BLOCK);
+                hit = true;
+            }
+        }
+        // the source, with the 3 ms fades at the loop edges
+        let input = &mut self.scratch[..2 * m];
+        if self.feed_zero {
+            input.fill(0.0);
+        } else {
+            let pcm = &*self.pcm;
+            let mut ffl = self.feed_fade_left;
+            let fade = self.fade_len;
+            for (k, fr) in input.chunks_exact_mut(2).enumerate() {
+                let f = self.fpos + k as u64;
+                let (l, r) = frame_lr(pcm, f);
+                let mut g = 1.0f32;
+                if ffl > 0 {
+                    g = (fade - ffl) as f32 / fade as f32;
+                    ffl -= 1;
+                }
+                if let Some(lp) = wraps {
+                    if f < lp.end && f >= lp.start && lp.end - f <= u64::from(fade) {
+                        g *= (lp.end - f) as f32 / fade as f32;
+                    }
+                }
+                fr[0] = l * g;
+                fr[1] = r * g;
+            }
+            self.feed_fade_left = ffl;
+        }
+        self.stretch.process(&self.scratch[..2 * m], &mut self.stage[..2 * n]);
+        self.stage_len = n;
+        self.stage_at = 0;
+        self.fpos += m as u64;
+        if !hit {
+            self.acc = exact - m as f64;
+            return;
+        }
+        self.acc = 0.0;
+        let at = (self.fpos + self.woff) as f64;
+        match event.and_then(|e| e.1) {
+            Some(l) if l.repeat && l.count_in_bpm_milli.is_none() => {
+                self.push_event(FeedEvent { u: at, kind: EventKind::Wrap { len: l.end - l.start } });
+                self.woff += l.end - l.start;
+                self.fpos = l.start;
+                self.feed_fade_left = self.fade_len;
+            }
+            Some(l) if l.repeat => {
+                let bpm_milli = l.count_in_bpm_milli.unwrap_or(0);
+                self.push_event(FeedEvent { u: at, kind: EventKind::CountIn { start: l.start, bpm_milli } });
+                self.feed_zero = true;
+            }
+            Some(l) => {
+                self.push_event(FeedEvent { u: at, kind: EventKind::Once { start: l.start } });
+                self.feed_zero = true;
+            }
+            _ => {
+                self.push_event(FeedEvent { u: at, kind: EventKind::Track });
+                self.feed_zero = true;
+            }
+        }
+    }
+
+    /// The heard position reached a mark. True when it stopped or restarted the audio (no frame this time).
+    fn reached(&mut self, kind: EventKind) -> bool {
+        match kind {
+            EventKind::Wrap { len } => {
+                self.hoff += len;
+                self.beat_dirty = true;
+                self.shared.wraps.fetch_add(1, Ordering::AcqRel);
+                false
+            }
+            EventKind::CountIn { start, bpm_milli } => {
+                self.shared.wraps.fetch_add(1, Ordering::AcqRel);
+                self.pos = start;
+                self.beat_dirty = true;
+                self.count = Some(self.wrap_count(bpm_milli));
+                self.enter(start);
+                true
+            }
+            EventKind::Once { start } => {
+                self.pos = start; // played once: back to the loop start
+                self.playing = false;
+                self.audible = false;
+                self.loop_play = false;
+                self.voice = None;
+                self.shared.loop_stopped.store(true, Ordering::Release);
+                true
+            }
+            EventKind::Track => {
+                self.pos = self.pcm.frames;
+                self.playing = false;
+                self.audible = false;
+                self.loop_play = false;
+                self.shared.ended.store(true, Ordering::Release);
+                true
+            }
+        }
+    }
+
+    /// One output frame of the stretch path into `out[i]`; false when the frame was spent on an event.
+    fn stretch_frame(&mut self, out: &mut [f32], i: usize) -> bool {
+        if self.stage_at >= self.stage_len {
+            self.fill_stage();
+        }
+        let o = self.out_count;
+        while self.timeline.len() > 1 && self.timeline[1].out <= o {
+            self.timeline.pop_front();
+        }
+        let e = self.timeline[0];
+        let u = e.u + o.saturating_sub(e.out) as f64 * e.speed;
+        while let Some(mk) = self.events.front().copied() {
+            if u < mk.u {
+                break;
+            }
+            self.events.pop_front();
+            if self.reached(mk.kind) {
+                return false;
+            }
+        }
+        let song = (u - self.hoff as f64).max(0.0);
+        if self.metronome {
+            if self.beat_dirty {
+                self.beat_idx = self.grid.partition_point(|b| (b.0 as f64) < song);
+                self.beat_dirty = false;
+            }
+            while let Some(&(f, _)) = self.grid.get(self.beat_idx) {
+                if f as f64 > song {
+                    break;
+                }
+                self.voice = Some(Voice { at: 0 });
+                self.beat_idx += 1;
+            }
+        }
+        let (mut l, mut r) = (self.stage[2 * self.stage_at], self.stage[2 * self.stage_at + 1]);
+        self.stage_at += 1;
+        self.out_count += 1;
+        if self.xfade_left > 0 {
+            let w = (self.fade_len - self.xfade_left) as f32 / self.fade_len as f32;
+            let (bl, br) = frame_lr(&self.pcm, self.xpos);
+            l = l * w + bl * (1.0 - w);
+            r = r * w + br * (1.0 - w);
+            self.xfade_left -= 1;
+            self.xpos += 1;
+        }
+        let g = if self.fade_left > 0 {
+            let g = (self.fade_len - self.fade_left) as f32 / self.fade_len as f32;
+            self.fade_left -= 1;
+            g
+        } else {
+            1.0
+        };
+        out[2 * i] = l * g;
+        out[2 * i + 1] = r * g;
+        self.mix_voice(out, i);
+        out[2 * i] = out[2 * i].clamp(-1.0, 1.0);
+        out[2 * i + 1] = out[2 * i + 1].clamp(-1.0, 1.0);
+        self.pos = (song as u64).min(self.pcm.frames);
+        true
     }
 
     /// Fills an interleaved stereo block.
@@ -278,6 +658,12 @@ impl Engine {
             if !self.audible {
                 break;
             }
+            if self.mode == Mode::Stretch {
+                if self.stretch_frame(out, i) {
+                    i += 1;
+                }
+                continue;
+            }
             if self.metronome {
                 if self.beat_dirty {
                     self.beat_idx = self.grid.partition_point(|b| b.0 < self.pos);
@@ -303,7 +689,7 @@ impl Engine {
             } else {
                 1.0
             };
-            let wraps = self.lp.filter(|l| l.repeat || self.loop_play);
+            let wraps = self.wrapping();
             if let Some(l) = wraps {
                 if self.pos < l.end && self.pos >= l.start && l.end - self.pos <= u64::from(self.fade_len) {
                     g *= (l.end - self.pos) as f32 / self.fade_len as f32;
@@ -321,7 +707,7 @@ impl Engine {
                     self.pos = l.start;
                     self.beat_dirty = true;
                     self.shared.wraps.fetch_add(1, Ordering::AcqRel);
-                    self.count = l.count_in.map(|plan| CountState { plan, at: 0 });
+                    self.count = l.count_in_bpm_milli.map(|b| self.wrap_count(b));
                     if self.count.is_none() {
                         self.start_fade();
                     }
@@ -345,6 +731,11 @@ impl Engine {
         if !self.playing {
             self.count = None;
         }
+        let heard = match self.timeline.front() {
+            Some(e) if self.mode == Mode::Stretch && self.playing && self.audible => (e.speed * 100.0).round() as u64,
+            _ => u64::from(self.base_pct),
+        };
+        self.shared.speed_pct.store(heard, Ordering::Release);
         self.shared.counting_in.store(self.count.is_some(), Ordering::Release);
         self.shared.loop_playing.store(self.playing && self.loop_play, Ordering::Release);
         self.shared.position.store(self.pos, Ordering::Release);
@@ -689,8 +1080,10 @@ impl Session {
         if end <= start {
             return None;
         }
-        let count_in = if l.count_in { self.plan_at(self.boundary_ms(l.start)) } else { None };
-        Some(LoopSpec { start, end, repeat: l.repeat, count_in })
+        let count_in_bpm_milli = (l.count_in && !self.state.tempo.is_empty())
+            .then(|| (self.state.tempo.bpm_at(self.boundary_ms(l.start)) * 1000.0).round() as u32)
+            .filter(|&b| b > 0);
+        Some(LoopSpec { start, end, repeat: l.repeat, count_in_bpm_milli })
     }
 
     fn sync_loop(&mut self) {
@@ -1133,6 +1526,7 @@ impl PlayerManager {
         match self.session.as_mut() {
             Some(s) if s.output.is_none() && Arc::ptr_eq(&s.shared, &o.shared) => {
                 s.output = Some(o.output);
+                s.send(Cmd::SetSpeed(s.state.speed_pct()));
                 s.send(Cmd::Seek(s.pos())); // the position may have moved since the request
                 s.sync_grid();
                 s.sync_loop();
