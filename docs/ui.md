@@ -185,7 +185,31 @@
 - Loops group (3 short lines, about 430 px): the "Loops" title, Prev, `+`, the loop box, `-`, Next (4 px gaps so
   the line fits); `>`, bar1, the progress slider, bar2, `<`; then Play/Stop, Loop On and Count-In. `+` at the playhead makes a complete loop
   at once: it ends at the next section change, or at the track end in the last section (or when nothing follows),
-  so Play works straight away; `<` at or before the loop start is refused with a message.
+  so Play works straight away; `<` at or before the loop start is refused with a message. The third line also holds
+  the training button (below); during a speed-training run the status line of the pane shows "Training 70 % · 2/4"
+  (speed and repeat of the pass, "· 3" without a total at the end speed).
+- Speed group (gui-player-speed), the Playback pane's second line: the label "Speed", `-` ("Slower") and `+`
+  ("Faster") buttons (3.5 rem wide, 5 % steps through 25, 30 ... 200), the percent box ("Speed in percent",
+  4 rem), "%", Reset (back to 100 %, disabled at 100 %) and the readout of the BPM being played ("120 BPM"; the
+  tempo of the section under the playhead times the speed; empty without a tempo). The box takes a whole number from 25
+  to 200: Enter commits, Escape or leaving with a bad value drops the edit; a bad value (20, 250, text) is refused,
+  the box gets a red border and the readout place shows "25-200 %" (nothing moves). The keys `[` and `]` step
+  slower and faster (ignored while a form control has the focus, like the other Player keys). All of it is disabled
+  with a title that says why while a speed-training run is active (stop the loop first). The pitch stays the same.
+  Narrow panes (1024x640 with the tree shown, 412 px) wrap the group onto a second line inside the pane rather than
+  clip it.
+- Training button and popover (gui-player-speed): the third Loops line ends with a button whose visible label is
+  "Train..." (the plan's "Training..." wrapped at the button's width; its accessible name is "Speed training
+  settings"). It is disabled until the current loop is complete (title: "Set the loop end first") and filled amber
+  while the loop's Training is on. It opens a non-modal popover (role "dialog", "Speed training": the Training on
+  switch, Start %, End %, Step %, Repeats, a summary line, a message line and Close), 20 rem wide, to the left of
+  the button (it was planned above the button, but at 1024x640 with the tree folded the 418 px popover fits neither
+  above nor below the button; to the left, floating-ui only has to shift it up or down). The focus goes to the switch
+  on opening; Tab order: switch, Start, End, Step, Repeats, Close, and Tab from Close closes it. A box commits on
+  Enter, Tab or leaving it (a bad value shows its message and keeps the text); Escape closes the whole popover and
+  drops an uncommitted edit, so does a click outside; closing by Escape, Close or Tab puts the focus back on the button.
+  The frontend logs `player training-popover open ... rect=... viewport=...` (after it is placed) and
+  `close via=<escape|outside|button|tab>`.
 - Name box: text up to 40 characters, trimmed. Enter or leaving the box saves, Escape drops the edit. While it
   has the focus it keeps the section it was focused for (the playhead moving does not change it). An empty
   name removes the name. The Player's letter keys and Space type normally in it.
@@ -194,10 +218,15 @@
   stays); while playing, playback continues without a gap.
 - Layout, measured by the `player layout` log (overflow = scrollHeight - clientHeight of the pane): at 1280x800 with
   the tree folded the pane is 965 px wide, Sections (496 px) and Loops (424 px) share row 1, Playback is the bottom
-  row, and nothing scrolls (overflow 0; target at most 14 px). With the tree shown (668 px wide) Loops wraps below
-  Sections and the pane scrolls by about 122 px; at 1024x640 it scrolls by about 237 px (tree folded) and 373 px
-  (tree shown, 412 px wide, where the Sections row is clipped on the right: the name box and the last button are
-  cut). The groups never overflow sideways except in that last case.
+  row (two lines since the Speed group), and nothing scrolls (overflow 0; target at most 14 px; log
+  `overflow=0 width=965 loops_beside=1 sections_w=496 loops_w=424`). Measured positions there (window coordinates):
+  Sections/Loops top edge y 325, Loops lines y 368 / 436 / 503 (Play/Stop x 889, Loop On 981, Count-In 1090,
+  Train... 1194), Rew/Play/FF row y 628, Speed row y 695 (`-` x 451, box 528, `+` 633, Reset 713, readout from 763).
+  With the tree shown (668 px wide) Loops wraps below Sections and the pane scrolls by about 189 px; at 1024x640 it
+  scrolls by about 304 px (tree folded) and 785 px (tree shown, 412 px wide, where the Sections row is clipped on
+  the right: the name box and the last button are cut). The groups never overflow sideways except in that last case.
+  The training popover at 1280x800 tree folded is at x 785-1142, y 109-532; at 1024x640 (tree folded or shown, the pane
+  scrolled to its end) at x 283-636, y 15-434: inside the window in all four size/tree cases.
 - (gui-play-backing-track, task 17) Player layout. Left the shared track tree (20 rem, Ctrl+L folds it to
   a rail), right the pane: source row ("Play:" dropdown 15 rem wide, then the title), the dashed
   tablature placeholder (it gives way first), the waveform (5 rem), then the control bar described above.
@@ -206,7 +235,7 @@
   with dark text in both themes. The `bg-amber-500!` form is needed because the outline button variant
   sets its own dark-theme fill. Waveform marks use `--primary` (amber); the current loop is solid, the
   others 55% opacity, a loop without an end is a start line only; the playhead is a 1 px foreground line.
-- Player keys: Space, b, e, Left, Right, l / Shift+L, Home / End, Ctrl+L, Ctrl+F; they are ignored while a form
+- Player keys: Space, b, e, Left, Right, l / Shift+L, Home / End, `[` / `]` (speed), Ctrl+L, Ctrl+F; they are ignored while a form
   control or the select has the focus, so Space still presses a focused button. The waveform is the
   exception: focused, it keeps Space, b, e, l and Shift+L, and uses the section keys above (Left and
   Right move the selected change there, not the loop).

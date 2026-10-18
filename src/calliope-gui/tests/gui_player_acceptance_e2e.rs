@@ -13,14 +13,14 @@ fn ready() -> bool {
     have_display() && have("xdotool") && have("i3-msg")
 }
 const BLANK: (i32, i32) = (356, 47);
-const PLAY: (i32, i32) = (477, 696);
-const BPM: (i32, i32) = (534, 427);
-const TIME: (i32, i32) = (669, 695);
-const SEC_CLICK: (i32, i32) = (384, 544);
-const SEC_COUNT_IN: (i32, i32) = (481, 544);
-const LOOP_ADD: (i32, i32) = (1009, 436);
-const MARK_END: (i32, i32) = (1222, 502);
-const LOOP_PLAY: (i32, i32) = (898, 571);
+const PLAY: (i32, i32) = (477, 629);
+const BPM: (i32, i32) = (534, 359);
+const TIME: (i32, i32) = (669, 628);
+const SEC_CLICK: (i32, i32) = (384, 476);
+const SEC_COUNT_IN: (i32, i32) = (481, 476);
+const LOOP_ADD: (i32, i32) = (1009, 368);
+const MARK_END: (i32, i32) = (1219, 436);
+const LOOP_PLAY: (i32, i32) = (889, 503);
 
 fn secs(s: u64) -> Duration {
     Duration::from_secs(s)

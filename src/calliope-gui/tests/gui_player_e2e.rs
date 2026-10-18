@@ -27,30 +27,37 @@ const BLANK: (i32, i32) = (356, 47); // the "Play:" label: a click there only re
 const TRIGGER: (i32, i32) = (555, 47);
 const ITEM_X: i32 = 500;
 const ITEM_Y: [i32; 4] = [113, 167, 221, 275]; // Backing, Original mix, Vocals, Guitar
-const BPM: (i32, i32) = (534, 427);
-const PLAY: (i32, i32) = (477, 696);
-const TIME: (i32, i32) = (669, 695);
+const BPM: (i32, i32) = (534, 359);
+const PLAY: (i32, i32) = (477, 629);
+const TIME: (i32, i32) = (669, 628);
+// Speed group (the Playback pane's second line) and the Loops group's training button ("Train...").
+const SPEED_MINUS: (i32, i32) = (451, 696);
+const SPEED_BOX: (i32, i32) = (528, 696);
+const SPEED_PLUS: (i32, i32) = (633, 696);
+const SPEED_RESET: (i32, i32) = (713, 696);
+const TRAIN_OPEN: (i32, i32) = (1194, 503);
+const TRAIN_OPEN_1024: (i32, i32) = (689, 175); // 1024x640, tree shown, the Player pane scrolled to its end
 // Loops group: the label, `+` (line 1), `>` and `<` (line 2), Play, Loop On and Count-In (line 3).
-const LOOP_ADD: (i32, i32) = (1009, 436);
-const MARK_START: (i32, i32) = (881, 502);
-const MARK_END: (i32, i32) = (1222, 502);
-const LOOP_PLAY: (i32, i32) = (898, 571);
-const LOOP_ON: (i32, i32) = (1004, 571);
-const LOOP_COUNT_IN: (i32, i32) = (1122, 571);
+const LOOP_ADD: (i32, i32) = (1009, 368);
+const MARK_START: (i32, i32) = (881, 436);
+const MARK_END: (i32, i32) = (1219, 436);
+const LOOP_PLAY: (i32, i32) = (889, 503);
+const LOOP_ON: (i32, i32) = (981, 503);
+const LOOP_COUNT_IN: (i32, i32) = (1090, 503);
 // The Sections group (name box next to the BPM in the title row, six icon-sized buttons, then Click and
 // Count In), the waveform (section 0 | the change bar at 8500 ms | section 1) and its labels.
-const SEC_NAME: (i32, i32) = (723, 427);
-const SEC_ADD: (i32, i32) = (376, 485);
-const SEC_REMOVE: (i32, i32) = (438, 485);
-const SEC_DOUBLE: (i32, i32) = (501, 485);
-const SEC_START: (i32, i32) = (628, 485);
-const SEC_END: (i32, i32) = (691, 485);
-const SEC_CLICK: (i32, i32) = (384, 544);
-const SEC_COUNT_IN: (i32, i32) = (481, 544);
-const WAVE_BAR: (i32, i32) = (729, 337);
-const WAVE_SECTION0: (i32, i32) = (450, 337);
-const WAVE_SECTION1: (i32, i32) = (1000, 337);
-const WAVE_LABEL0: (i32, i32) = (370, 372);
+const SEC_NAME: (i32, i32) = (723, 359);
+const SEC_ADD: (i32, i32) = (376, 413);
+const SEC_REMOVE: (i32, i32) = (438, 413);
+const SEC_DOUBLE: (i32, i32) = (501, 413);
+const SEC_START: (i32, i32) = (628, 413);
+const SEC_END: (i32, i32) = (691, 413);
+const SEC_CLICK: (i32, i32) = (384, 476);
+const SEC_COUNT_IN: (i32, i32) = (481, 476);
+const WAVE_BAR: (i32, i32) = (729, 270);
+const WAVE_SECTION0: (i32, i32) = (450, 270);
+const WAVE_SECTION1: (i32, i32) = (1000, 270);
+const WAVE_LABEL0: (i32, i32) = (370, 304);
 
 fn secs(s: u64) -> Duration {
     Duration::from_secs(s)
@@ -238,7 +245,7 @@ fn play_and_change_source() {
     assert_eq!(app.count("player seek"), 0, "playing or pausing caused a seek");
 
     // Clicking the position slider seeks (its middle is about 10 s of the 20 s).
-    app.click(&wid, 999, 696);
+    app.click(&wid, 999, 628); // the position slider
     let l = app.wait_contains("calliope-ui: player seek position=");
     assert!((8500..11500).contains(&position_of(&l)), "{l}");
     finish(&app);
@@ -729,8 +736,19 @@ fn wave_box(w: u32, h: u32, collapsed: bool) -> (i32, i32, i32, i32) {
     let down = if !collapsed && w < 1280 { 35 } else { 0 };
     // at 800 px with the tree collapsed the tablature placeholder is as tall as the pane allows
     // and the waveform sits just above the Sections and Loops row
-    let tall = if collapsed && h >= 800 { 157 } else { 0 };
+    let tall = if collapsed && h >= 800 { 90 } else { 0 };
     (left, w as i32 - 19, 180 + down + tall, 216 + down + tall)
+}
+
+/// The "Train..." button when the Player pane is scrolled to its end (read from the `scrolled-end` screenshots).
+fn train_pos(w: u32, h: u32, collapsed: bool) -> Option<(i32, i32)> {
+    match (w, h, collapsed) {
+        (1280, 800, true) => Some(TRAIN_OPEN),
+        (1280, 800, false) => Some((985, 459)),
+        (1024, 640, true) => Some((688, 344)),
+        (1024, 640, false) => Some(TRAIN_OPEN_1024),
+        _ => None,
+    }
 }
 
 /// The last `player layout overflow=... width=... loops_beside=...` line (logged 300 ms after the pane's size changed).
@@ -832,7 +850,32 @@ fn visual_review() {
                     ms(400);
                     shot(&name(&sz, tree, "scrolled"));
                     app.wheel(&wid, 900, 450, true, 15);
-                    ms(200);
+                    ms(400);
+                    // The Speed box refuses 20 (nothing may move), then the training popover, with the
+                    // pane scrolled to its end where the button is out of sight otherwise.
+                    if w == 1280 && tree == "rail" {
+                        enter(&app, &wid, SPEED_BOX, "20");
+                        app.wait_line(|l| l.contains("player speed refused text=20"), secs(5));
+                        ms(300);
+                        shot(&name(&sz, tree, "speed-invalid"));
+                        at(&app, &wid, BLANK);
+                        ms(200);
+                    }
+                    app.wheel(&wid, 900, 450, false, 40);
+                    ms(400);
+                    shot(&name(&sz, tree, "scrolled-end"));
+                    if let Some(p) = train_pos(w, h, collapsed) {
+                        app.skip_seen();
+                        at(&app, &wid, p);
+                        let l = app.wait_line(|l| l.contains("player training-popover open"), secs(5));
+                        println!("POPOVER {theme} {sz} tree={tree}: {}", popover_rect(&l));
+                        ms(300);
+                        shot(&name(&sz, tree, "training-popover"));
+                        app.key(&wid, "Escape");
+                        app.wait_line(|l| l.contains("player training-popover close"), secs(5));
+                    }
+                    app.wheel(&wid, 900, 450, true, 40);
+                    ms(300);
                 }
                 // Count-in: the focus must be off the controls for Space; the label is at x=355 (rail) or 655.
                 let blank = if collapsed { BLANK } else { (655, 47) };
@@ -959,6 +1002,191 @@ fn player_phase3() {
     assert!(v.get("metronome").is_none(), "{v}");
     let tick = v["loops"][0]["end"]["tick"].as_i64().expect("a tick end");
     assert_eq!(tick, 256, "{v}"); // (8500 - 500) ms at 120 BPM, 16 ticks per beat (31.25 ms)
+    finish(&app);
+}
+
+/// The `rect=l,t,r,b viewport=WxH` of a `player training-popover open` line: inside the viewport.
+fn popover_rect(l: &str) -> String {
+    let r: Vec<i32> = field(l, "rect").split(',').map(|n| n.parse().unwrap()).collect();
+    let (w, h) = field(l, "viewport").split_once('x').map(|(w, h)| (w.parse::<i32>().unwrap(), h.parse::<i32>().unwrap())).unwrap();
+    assert!(r[0] >= 0 && r[1] >= 0 && r[2] <= w && r[3] <= h, "the popover is not inside the window: {l}");
+    format!("rect={} viewport={}", field(l, "rect"), field(l, "viewport"))
+}
+
+/// Speed and speed training: the Speed group (steps, typing, refusals, keys, Reset), the BPM
+/// readout and the heard tempo, the training popover (keyboard, open/close rules, placement) and a run.
+#[test]
+#[ignore]
+fn player_speed() {
+    if !ready() {
+        return;
+    }
+    let dirs = player_dirs("player_speed");
+    // With Tempo (120 BPM from 0.5 s, 90 BPM from 10.5 s) as schema 6, clicking, the 440 Hz vocals.
+    std::fs::write(
+        dirs.player_json(PL_TEMPO),
+        r#"{"schema_version":6,"source":"stem:vocals","position_ms":0,"speed":1.0,"tempo":{"beats_per_bar":4,"segments":[
+            {"start_ms":500,"bpm":120,"metronome":true},{"start_ms":10500,"bpm":90,"metronome":true}]},"loops":[]}"#,
+    )
+    .unwrap();
+    let (mut app, wid) = start_player(&dirs);
+    let mut collapsed = false;
+    pick(&mut app, &wid, &mut collapsed, "with tempo", PL_TEMPO);
+    let cap = dirs.capture();
+
+    // 1. Layout.
+    ms(800);
+    let l = last_layout(&app);
+    println!("LAYOUT 1280x800 tree folded: {l}");
+    assert_eq!(field(&l, "loops_beside"), "1", "{l}");
+    assert!(field(&l, "overflow").parse::<i32>().unwrap() <= 14, "{l}");
+    shot("player-speed-layout");
+
+    // 2. Three steps down: 95, 90, 85; play 3 s from 1.0 s: 2.55 s of song, the pitch unchanged.
+    for pct in [95, 90, 85] {
+        at(&app, &wid, SPEED_MINUS);
+        app.wait_contains(&format!("player speed percent={pct} via=minus"));
+    }
+    enter(&app, &wid, TIME, "0:01.0");
+    app.wait_line(|l| l.contains("player seek position=1000"), secs(10));
+    let start = mark(&app, &cap);
+    app.skip_seen();
+    at(&app, &wid, PLAY);
+    app.wait_contains("audio backend=capture");
+    app.wait_contains("player play");
+    let rate = rate_of(&app);
+    ms(3000);
+    at(&app, &wid, PLAY);
+    let l = app.wait_contains("player pause position=");
+    let advanced = position_of(&l) - 1000;
+    assert!((advanced - 2550).abs() <= 150, "the position advanced {advanced} ms: {l}");
+    let heard = since(&app, &cap, start);
+    let at440 = tone_power(&heard, rate, 440.0);
+    for off in [-3.0, 3.0] {
+        assert!(db(at440, tone_power(&heard, rate, 440.0 + off)) > 6.0, "the tone is not at 440 Hz (offset {off})");
+    }
+    assert!(db(at440, tone_power(&heard, rate, 440.0 * 0.85)) > 20.0, "the pitch followed the speed");
+
+    // 3. 50 %: 60 BPM heard, the clicks 1000 ms apart.
+    enter(&app, &wid, SPEED_BOX, "50");
+    app.wait_contains("player speed percent=50 via=typed");
+    app.wait_contains("player readout bpm=60 BPM speed=50");
+    enter(&app, &wid, TIME, "0:01.0");
+    app.wait_line(|l| l.contains("player seek position=1000"), secs(10));
+    let start = mark(&app, &cap);
+    at(&app, &wid, PLAY);
+    app.wait_contains("player play");
+    ms(4500);
+    shot("player-speed-50");
+    at(&app, &wid, PLAY);
+    app.wait_contains("player pause position=");
+    let heard = since(&app, &cap, start);
+    let on = click_onsets_ms(&heard, rate);
+    assert!(on.len() >= 3, "click onsets: {on:?}");
+    for w in on.windows(2) {
+        assert!((w[1] - w[0] - 1000.0).abs() <= 5.0, "clicks are not 1000 ms apart: {on:?}");
+    }
+
+    // 4. 20 and 250 are refused; the speed stays 50.
+    enter(&app, &wid, SPEED_BOX, "20");
+    app.wait_contains("player speed refused text=20");
+    ms(300);
+    shot("player-speed-refused");
+    enter(&app, &wid, SPEED_BOX, "250");
+    app.wait_contains("player speed refused text=250");
+    ms(1000);
+    let v = wait_json(&dirs, PL_TEMPO, |v| v["speed"].as_f64().is_some());
+    assert_eq!(v["speed"].as_f64(), Some(0.5), "{v}");
+
+    // 5. `]` (the focus off the box) and Reset.
+    at(&app, &wid, BLANK);
+    app.key(&wid, "bracketright");
+    app.wait_contains("player speed percent=55 via=key");
+    at(&app, &wid, SPEED_RESET);
+    app.wait_contains("player speed percent=100 via=reset");
+
+    // 6. A loop of bar 2 (2.5 s to 4.5 s) and its training popover.
+    enter(&app, &wid, TIME, "0:02.5");
+    app.wait_line(|l| l.contains("player seek position=2500"), secs(10));
+    at(&app, &wid, LOOP_ADD);
+    app.wait_contains("player loop add");
+    enter(&app, &wid, TIME, "0:04.5");
+    app.wait_line(|l| l.contains("player seek position=4500"), secs(10));
+    at(&app, &wid, MARK_END);
+    let l = app.wait_contains("player loop mark-end");
+    assert!(l.contains("complete=true"), "{l}");
+    at(&app, &wid, TRAIN_OPEN);
+    let l = app.wait_contains("player training-popover open");
+    let rect = popover_rect(&l);
+    println!("popover at 1280x800: {rect}");
+    ms(300);
+    shot("player-training-popover");
+    app.key(&wid, "space");
+    app.wait_contains("player training index=0 on=true start=70 end=100 step=5 repeats=2");
+    for text in ["60", "70", "10", "1"] {
+        app.key(&wid, "Tab ctrl+a");
+        app.typ(&wid, text);
+    }
+    app.key(&wid, "Tab"); // commits the last field, the focus goes to Close
+    app.wait_contains("player training index=0 on=true start=60 end=70 step=10 repeats=1");
+    app.key(&wid, "Escape");
+    app.wait_contains("player training-popover close via=escape");
+    app.key(&wid, "space");
+    app.wait_contains("player training-popover open"); // the focus is back on the button
+    ms(300);
+    at(&app, &wid, WAVE_SECTION0); // the popover covers the waveform's right half
+    app.wait_contains("player training-popover close via=outside");
+
+    // 7. A run: 60 % once, then 70 % until stopped. Loop Play sits under the closed popover: let its
+    // close animation finish first, or the click can land on the fading popover.
+    ms(400);
+    app.skip_seen();
+    at(&app, &wid, LOOP_PLAY);
+    app.wait_contains("calliope: player training loop=0 pass=1 speed=60 repeat=1/1");
+    app.wait_contains("calliope: player training loop=0 pass=2 speed=70 repeat=1/end");
+    ms(500);
+    shot("player-training-run");
+    at(&app, &wid, LOOP_PLAY);
+    app.wait_contains("player training end loop=0 speed=100");
+
+    // 8. 80 % and the training survive a restart; the popover shows the saved plan.
+    enter(&app, &wid, SPEED_BOX, "80");
+    app.wait_contains("player speed percent=80 via=typed");
+    let v = wait_json(&dirs, PL_TEMPO, |v| v["speed"].as_f64() == Some(0.8));
+    let t = &v["loops"][0]["training"];
+    assert_eq!((t["on"].as_bool(), t["start"].as_u64(), t["end"].as_u64()), (Some(true), Some(60), Some(70)), "{v}");
+    app.close_gracefully(&wid);
+    app.wait_exit(secs(5));
+    let (mut app, wid) = start_player(&dirs);
+    let mut collapsed = false;
+    let l = pick(&mut app, &wid, &mut collapsed, "with tempo", PL_TEMPO);
+    assert_eq!(field(&l, "speed"), "80", "{l}");
+    app.skip_seen();
+    at(&app, &wid, TRAIN_OPEN);
+    app.wait_contains("player training-popover open");
+    ms(300);
+    shot("player-training-restored");
+    app.key(&wid, "Escape");
+    app.wait_contains("player training-popover close via=escape");
+
+    // 1024x640 with the track tree shown.
+    size(&wid, 1024, 640);
+    app.key(&wid, "ctrl+l");
+    app.wait_contains("player tree collapsed=false");
+    settle();
+    ms(600);
+    shot("player-training-1024-closed");
+    app.wheel(&wid, 800, 400, false, 40); // the pane scrolls to its end: the Loops pane is at the bottom
+    ms(500);
+    shot("player-training-1024-scrolled");
+    let l = last_layout(&app);
+    println!("LAYOUT 1024x640 tree shown: {l}");
+    app.skip_seen();
+    at(&app, &wid, TRAIN_OPEN_1024);
+    let l = app.wait_contains("player training-popover open");
+    println!("popover at 1024x640: {}", popover_rect(&l));
+    ms(300);
+    shot("player-training-popover-1024");
     finish(&app);
 }
 

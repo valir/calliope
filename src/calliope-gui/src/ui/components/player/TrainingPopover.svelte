@@ -146,7 +146,7 @@
   </Popover.Trigger>
   <Popover.Content
     bind:ref={contentRef}
-    side="top"
+    side="left"
     align="end"
     sideOffset={8}
     collisionPadding={8}

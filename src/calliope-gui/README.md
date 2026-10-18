@@ -139,7 +139,7 @@ Ctrl+L folds it to a narrow rail).
   button plays the current loop; Loop On repeats it, Count-In counts in before every pass.
 * Speed (Playback pane): "-" and "+" change the speed in 5 % steps from 25 % to 200 % (keys "[" and "]"), the
   box takes a whole number, Reset returns to 100 %. The pitch stays the same, positions and loops stay in song
-  time, and the metronome follows. With a tempo the pane shows the BPM being played. Speed training ("Train…"
+  time, and the metronome follows. With a tempo the pane shows the BPM being played. Speed training ("Train..."
   in the Loops pane): set start %, end %, step % and repeats for a loop and switch Training on; the loop's Play
   then plays it at the start speed and moves one step after the given repeats until the end speed. Stopping the
   loop returns to the track speed. Both are saved with the track.

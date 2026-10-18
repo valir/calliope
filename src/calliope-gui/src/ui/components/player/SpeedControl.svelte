@@ -46,7 +46,7 @@
   }
 </script>
 
-<div class="flex flex-none items-center gap-2" role="group" aria-label="Speed">
+<div class="flex max-w-full flex-wrap items-center gap-2" role="group" aria-label="Speed">
   <span class="text-lg font-semibold">Speed</span>
   <Button variant="outline" class="h-[3.25rem] w-14 text-xl" aria-label="Slower" disabled={noSlower}
     title={why ?? (noSlower ? `The slowest speed is ${MIN_SPEED} %` : undefined)}
