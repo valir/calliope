@@ -559,6 +559,12 @@ open a real dialog, never use the real `calliope-stems` on `0.0.0.0:8765` or any
 - **done when:** `npx vitest run src/ui/lib/import-state.test.ts` passes, and `npm run check` is clean.
 - **routine:** no
 
+- **Orchestrator note (after tasks 5-6):** after Cancel the snapshot has phase `Cancelled`, `over`,
+  `batch.current = None` and keeps `batch.files` and `batch.items`; the `Cancelled{back_to: Source}`
+  event carries no counts, so build "<s> of <n> files saved" from the items. A Cancel that arrives
+  while the last file is saving lets it save and the batch ends `Finished`. `start_batch` also
+  refuses an empty list ("There are no files to import") and non-absolute paths.
+
 ### Task 10: Source page, batch progress and summary
 - **files:** `src/calliope-gui/src/ui/components/import/SourcePage.svelte`,
   `src/calliope-gui/src/ui/components/import/BatchProgress.svelte` (new),

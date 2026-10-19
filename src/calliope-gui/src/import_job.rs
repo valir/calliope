@@ -60,6 +60,8 @@ pub enum Phase {
     Saved,
     Failed,
     Cancelled,
+    /// A directory import ended after trying every file.
+    Finished,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -86,6 +88,8 @@ pub enum SourceKind {
     AudioFile,
     #[serde(rename = "video-file")]
     VideoFile,
+    #[serde(rename = "directory")]
+    Directory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +136,37 @@ pub struct JobSnapshot {
     pub error: Option<JobError>,
     pub track: Option<TrackRecord>,
     pub dropped: Vec<DroppedStem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch: Option<BatchSnapshot>,
+}
+
+/// The state of a directory import (plan section 2.5).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BatchSnapshot {
+    /// The folder as resolved (display form).
+    pub dir: String,
+    /// File names in import order.
+    pub files: Vec<String>,
+    /// 0-based index of the file being imported; `None` once the batch has ended.
+    pub current: Option<usize>,
+    /// Finished files, in order.
+    pub items: Vec<BatchItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BatchItem {
+    pub index: usize,
+    pub name: String,
+    #[serde(flatten)]
+    pub outcome: BatchOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "result", rename_all = "lowercase")]
+#[allow(clippy::large_enum_variant)] // short-lived values, serialised at once
+pub enum BatchOutcome {
+    Saved { track: TrackRecord, dropped: Vec<DroppedStem> },
+    Failed { stage: Stage, message: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -149,6 +184,11 @@ pub enum ImportEvent {
     Saved { track: TrackRecord, dropped: Vec<DroppedStem> },
     Failed { stage: Stage, message: String, http_status: Option<u16> },
     Cancelled { back_to: BackTo },
+    #[serde(rename = "batch-file")]
+    BatchFile { index: usize, total: usize, name: String },
+    #[serde(rename = "batch-item")]
+    BatchItem { item: BatchItem },
+    Finished { batch: BatchSnapshot },
 }
 
 impl ImportEvent {
@@ -312,6 +352,7 @@ fn new_snapshot(job: String, kind: SourceKind, label: String, phase: Phase) -> J
         error: None,
         track: None,
         dropped: Vec::new(),
+        batch: None,
     }
 }
 
@@ -554,18 +595,7 @@ impl ImportState {
         eprintln!("calliope: import job={} phase=uploading", job);
         let spawned = std::thread::Builder::new().name("import-job".into()).spawn(move || {
             ctx.emit(ImportEvent::Uploading { sent: 0, total: 0 });
-            let mut staging: Option<Staging> = None;
-            let mut server_job: Option<String> = None;
-            let r = run_extract(&ctx, &dir, &audio, &edits, &url, keep_original, &mut staging, &mut server_job);
-            // cleanup first, then publish the outcome
-            if let Some(s) = staging.take() {
-                if let Err(e) = s.abandon() {
-                    eprintln!("calliope: import cleanup: {e}");
-                }
-            }
-            if let Some(id) = server_job.take() {
-                StemsClient::new(&url).delete(&id);
-            }
+            let r = extract_cleaned(&ctx, &dir, &audio, &edits, &url, keep_original);
             finish_extract(&ctx, r);
         });
         match spawned {
@@ -801,7 +831,8 @@ fn run_url(ctx: &Ctx, dir: &Path, url: &str, resume: bool) -> R<()> {
     Ok(())
 }
 
-fn run_file(ctx: &Ctx, dir: &Path, path: &Path, name: &str) -> R<()> {
+/// Probes and converts a local file; everything `run_file` does except publishing `ready`.
+fn prepare_file(ctx: &Ctx, dir: &Path, path: &Path, name: &str) -> R<(PathBuf, TrackEdits, Option<f64>)> {
     let ffprobe = ctx.tool(ToolName::Ffprobe)?;
     let ffmpeg = ctx.tool(ToolName::Ffmpeg)?;
     ctx.check_cancel()?;
@@ -809,7 +840,12 @@ fn run_file(ctx: &Ctx, dir: &Path, path: &Path, name: &str) -> R<()> {
     media::check_duration(&probe, name).map_err(|e| media_stop(e, None))?;
     let audio = media::to_flac(&ffmpeg, path, &probe, dir, &ctx.cancel).map_err(|e| media_stop(e, None))?;
     ctx.check_cancel()?;
-    set_ready(ctx, audio, media::edits_from_tags(&probe, name), probe.duration_s);
+    Ok((audio, media::edits_from_tags(&probe, name), probe.duration_s))
+}
+
+fn run_file(ctx: &Ctx, dir: &Path, path: &Path, name: &str) -> R<()> {
+    let (audio, edits, duration_s) = prepare_file(ctx, dir, path, name)?;
+    set_ready(ctx, audio, edits, duration_s);
     Ok(())
 }
 
@@ -1003,6 +1039,30 @@ fn run_extract(
     Ok((record, dropped))
 }
 
+/// `run_extract` plus the cleanup that follows it, whatever the outcome: abandons an
+/// uncommitted staging folder and deletes the server job.
+fn extract_cleaned(
+    ctx: &Ctx,
+    dir: &Path,
+    audio: &Path,
+    edits: &TrackEdits,
+    edge_url: &str,
+    keep_original: bool,
+) -> R<(TrackRecord, Vec<DroppedStem>)> {
+    let mut staging: Option<Staging> = None;
+    let mut server_job: Option<String> = None;
+    let r = run_extract(ctx, dir, audio, edits, edge_url, keep_original, &mut staging, &mut server_job);
+    if let Some(s) = staging.take() {
+        if let Err(e) = s.abandon() {
+            eprintln!("calliope: import cleanup: {e}");
+        }
+    }
+    if let Some(id) = server_job.take() {
+        StemsClient::new(edge_url).delete(&id);
+    }
+    r
+}
+
 fn finish_extract(ctx: &Ctx, r: R<(TrackRecord, Vec<DroppedStem>)>) {
     match r {
         Ok((track, dropped)) => {
@@ -1046,6 +1106,9 @@ fn finish_extract(ctx: &Ctx, r: R<(TrackRecord, Vec<DroppedStem>)>) {
     }
 }
 
+
+#[path = "import_batch.rs"]
+mod batch;
 
 #[cfg(test)]
 #[path = "import_job_tests.rs"]

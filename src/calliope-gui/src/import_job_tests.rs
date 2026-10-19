@@ -66,6 +66,29 @@ impl Rig {
         self.state.start_file(&self.root, kind, &self.sources.join(name), self.sink.clone())
     }
 
+    /// Copies fixtures into `sources/batch/` under the given names (`(name, fixture)`, in
+    /// import order) and starts a directory import of them.
+    fn batch(&self, files: &[(&str, &str)], server: &TestServer) -> Result<JobSnapshot, String> {
+        self.batch_to(files, Some(&server.url))
+    }
+
+    fn batch_to(&self, files: &[(&str, &str)], url: Option<&str>) -> Result<JobSnapshot, String> {
+        let dir = self.sources.join("batch");
+        fs::create_dir_all(&dir).unwrap();
+        let paths: Vec<PathBuf> = files
+            .iter()
+            .map(|(name, fix)| {
+                fs::copy(fixture(fix), dir.join(name)).unwrap();
+                dir.join(name)
+            })
+            .collect();
+        self.state.start_batch(&self.root, &dir, paths, url, false, self.sink.clone())
+    }
+
+    fn batch_items(&self) -> Vec<BatchItem> {
+        self.state.snapshot().and_then(|s| s.batch).map(|b| b.items).unwrap_or_default()
+    }
+
     fn wait(&self, what: &str, pred: impl Fn(&JobSnapshot) -> bool) -> JobSnapshot {
         let end = Instant::now() + Duration::from_secs(60);
         loop {
@@ -500,6 +523,136 @@ fn shutdown_during_extraction_deletes_the_server_job() {
     rig.check_clean();
 }
 
+const AB: [(&str, &str); 2] = [("a.flac", "untagged.flac"), ("b.mp3", "tagged.mp3")];
+
+#[test]
+fn batch_imports_each_file_in_order() {
+    let server = TestServer::start("ok");
+    let rig = Rig::new();
+    let snap = rig.batch(&AB, &server).unwrap();
+    assert_eq!((snap.source.kind, snap.phase), (SourceKind::Directory, Phase::Preparing));
+    assert_eq!(snap.source.label, "batch");
+    let b = snap.batch.unwrap();
+    assert_eq!((b.files.clone(), b.current, b.items.len()), (vec!["a.flac".to_string(), "b.mp3".to_string()], Some(0), 0));
+    assert!(rig.state.is_active());
+    let done = rig.wait_idle("the batch to end");
+    assert_eq!(done.phase, Phase::Finished);
+    let batch = done.batch.clone().unwrap();
+    assert_eq!(batch.current, None);
+    assert_eq!(batch.items.len(), 2);
+    assert!(!rig.state.is_active());
+    let ev = rig.last_event_where("finished", |e| matches!(e, ImportEvent::Finished { .. }));
+    assert_eq!(ev, ImportEvent::Finished { batch: batch.clone() });
+    // queued/working depend on timing
+    let phases: Vec<String> = rig.phases().into_iter().filter(|p| p != "queued" && p != "working").collect();
+    let file = ["batch-file", "preparing", "uploading", "receiving", "saving", "batch-item"];
+    let expected: Vec<&str> = file.iter().chain(file.iter()).copied().chain(["finished"]).collect();
+    assert_eq!(phases, expected);
+    let tracks = Repository::new(&rig.root).scan();
+    assert!(tracks.problems.is_empty(), "{:?}", tracks.problems);
+    let mut titles: Vec<&str> = tracks.tracks.iter().map(|t| t.title.as_str()).collect();
+    titles.sort();
+    assert_eq!(titles, ["Glass Harbour", "a"]);
+    for (i, item) in batch.items.iter().enumerate() {
+        assert_eq!((item.index, item.name.as_str()), (i, ["a.flac", "b.mp3"][i]));
+        assert!(matches!(&item.outcome, BatchOutcome::Saved { track, dropped } if dropped.is_empty() && tracks.tracks.contains(track)));
+    }
+    assert!(Rig::names_in(&rig.root.join("import-tmp")).is_empty());
+    assert_eq!(hashes(&rig.sources.join("batch")), AB.iter().map(|(n, f)| (n.to_string(), fs::read(fixture(f)).unwrap())).collect());
+    rig.check_clean();
+}
+
+#[test]
+fn batch_failures_go_on() {
+    let server = TestServer::start("ok");
+    let rig = Rig::new();
+    rig.batch(&[("1.flac", "untagged.flac"), ("2.mp3", "not-audio.mp3"), ("3.ogg", "tagged.ogg")], &server).unwrap();
+    rig.wait_idle("the batch to end");
+    rig.last_event_where("finished", |e| matches!(e, ImportEvent::Finished { .. }));
+    let items = rig.batch_items();
+    assert!(matches!(items[0].outcome, BatchOutcome::Saved { .. }), "{items:?}");
+    assert!(matches!(&items[1].outcome, BatchOutcome::Failed { stage: Stage::Prepare, message } if message.contains("2.mp3")), "{items:?}");
+    assert!(matches!(items[2].outcome, BatchOutcome::Saved { .. }), "{items:?}");
+    assert_eq!(Repository::new(&rig.root).scan().tracks.len(), 2);
+    assert!(Rig::names_in(&rig.root.join("import-tmp")).is_empty());
+
+    // a server failure on the second file only
+    let server = TestServer::start("seq:ok,fail,ok");
+    rig.events.lock().unwrap().clear();
+    rig.batch(&[("4.flac", "untagged.flac"), ("5.flac", "untagged.flac"), ("6.flac", "untagged.flac")], &server).unwrap();
+    rig.wait_idle("the batch to end");
+    rig.last_event_where("finished", |e| matches!(e, ImportEvent::Finished { .. }));
+    let items = rig.batch_items();
+    assert!(matches!(items[0].outcome, BatchOutcome::Saved { .. }), "{items:?}");
+    assert!(matches!(items[1].outcome, BatchOutcome::Failed { stage: Stage::Server, .. }), "{items:?}");
+    assert!(matches!(items[2].outcome, BatchOutcome::Saved { .. }), "{items:?}");
+    assert!(
+        rig.events.lock().unwrap().iter().all(|e| !matches!(e, ImportEvent::Failed { .. } | ImportEvent::Ready { .. } | ImportEvent::Saved { .. })),
+        "single-import events in a batch: {:?}",
+        rig.phases()
+    );
+    assert_eq!(Repository::new(&rig.root).scan().tracks.len(), 4);
+    assert!(Rig::names_in(&rig.root.join("import-tmp")).is_empty());
+    rig.check_clean();
+}
+
+#[test]
+fn batch_cancel_on_the_second_file() {
+    let server = TestServer::start("seq:ok,hang");
+    let rig = Rig::new();
+    let snap = rig.batch(&AB, &server).unwrap();
+    rig.wait("the second file working", |s| s.phase == Phase::Working && s.batch.as_ref().is_some_and(|b| b.current == Some(1)));
+    rig.state.cancel(&snap.job).unwrap();
+    let s = rig.wait_idle("cancel");
+    assert_eq!(s.phase, Phase::Cancelled);
+    assert!(!rig.state.is_active());
+    let b = s.batch.unwrap();
+    assert_eq!((b.current, b.items.len(), b.files.len()), (None, 1, 2));
+    assert!(matches!(b.items[0].outcome, BatchOutcome::Saved { .. }));
+    rig.last_event_where("cancelled", |e| matches!(e, ImportEvent::Cancelled { back_to: BackTo::Source }));
+    assert_eq!(Repository::new(&rig.root).scan().tracks.len(), 1);
+    let end = Instant::now() + Duration::from_secs(10);
+    while server.job_dirs() > 0 && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(server.job_dirs(), 0, "the server job was not removed");
+    assert!(server.log.lock().unwrap().iter().filter(|l| l.contains("method=DELETE")).count() >= 2, "one delete per file at least");
+    assert!(Rig::names_in(&rig.root.join("import-tmp")).is_empty());
+    rig.check_clean();
+}
+
+#[test]
+fn batch_refusals_start_nothing() {
+    let server = TestServer::start("hang");
+    let rig = Rig::new();
+    assert!(rig.state.start_batch(&rig.root, &rig.sources, Vec::new(), Some(&server.url), false, rig.sink.clone()).is_err());
+    assert_eq!(rig.batch_to(&AB, None).unwrap_err(), NOT_CONFIGURED_MESSAGE);
+    assert_eq!(rig.batch_to(&AB, Some("  ")).unwrap_err(), NOT_CONFIGURED_MESSAGE);
+    assert!(rig.state.snapshot().is_none());
+    assert!(!rig.root.join("import-tmp").exists() || Rig::names_in(&rig.root.join("import-tmp")).is_empty());
+
+    let snap = rig.batch(&AB, &server).unwrap();
+    assert_eq!(rig.batch(&AB, &server).unwrap_err(), BUSY_MESSAGE);
+    assert_eq!(rig.file("tagged.mp3").unwrap_err(), BUSY_MESSAGE);
+    assert_eq!(rig.state.snapshot().unwrap().job, snap.job);
+    rig.state.cancel(&snap.job).unwrap();
+    assert_eq!(rig.wait_idle("cancel").phase, Phase::Cancelled);
+    assert!(Rig::names_in(&rig.root.join("import-tmp")).is_empty());
+    rig.check_clean();
+}
+
+#[test]
+fn shutdown_during_a_batch() {
+    let server = TestServer::start("seq:hang");
+    let rig = Rig::new();
+    rig.batch(&AB, &server).unwrap();
+    rig.wait("working", |s| s.phase == Phase::Working);
+    assert!(rig.state.shutdown(Duration::from_secs(3)));
+    assert!(server.wait_for("method=DELETE"));
+    assert!(Rig::names_in(&rig.root.join("import-tmp")).is_empty());
+    rig.check_clean();
+}
+
 #[test]
 fn leftover_staging_folders_are_cleaned_at_start_but_only_marked_ones() {
     let rig = Rig::new();
@@ -624,6 +777,25 @@ fn event_json_shapes() {
     assert_eq!(v, serde_json::json!({"phase": "downloading", "downloaded": 1, "total": null}));
     let s = serde_json::to_value(new_snapshot("j".into(), SourceKind::AudioFile, "a.mp3".into(), Phase::Preparing)).unwrap();
     assert_eq!(s["source"], serde_json::json!({"kind": "audio-file", "label": "a.mp3"}));
+    assert!(s.get("batch").is_none(), "a single job has no batch key: {s}");
+    let d = serde_json::to_value(new_snapshot("j".into(), SourceKind::Directory, "songs".into(), Phase::Finished)).unwrap();
+    assert_eq!((d["source"]["kind"].as_str(), d["phase"].as_str()), (Some("directory"), Some("finished")));
+
+    let v = serde_json::to_value(ImportEvent::BatchFile { index: 0, total: 2, name: "a.flac".into() }).unwrap();
+    assert_eq!(v, serde_json::json!({"phase": "batch-file", "index": 0, "total": 2, "name": "a.flac"}));
+    let failed = BatchItem { index: 1, name: "b.mp3".into(), outcome: BatchOutcome::Failed { stage: Stage::Prepare, message: "bad".into() } };
+    let v = serde_json::to_value(ImportEvent::BatchItem { item: failed.clone() }).unwrap();
+    assert_eq!(v, serde_json::json!({"phase": "batch-item", "item": {"index": 1, "name": "b.mp3", "result": "failed", "stage": "prepare", "message": "bad"}}));
+    let batch = BatchSnapshot { dir: "/m".into(), files: vec!["a.flac".into(), "b.mp3".into()], current: None, items: vec![failed] };
+    let v = serde_json::to_value(ImportEvent::Finished { batch: batch.clone() }).unwrap();
+    assert_eq!(
+        v,
+        serde_json::json!({"phase": "finished", "batch": {"dir": "/m", "files": ["a.flac", "b.mp3"], "current": null,
+            "items": [{"index": 1, "name": "b.mp3", "result": "failed", "stage": "prepare", "message": "bad"}]}})
+    );
+    let mut snap = new_snapshot("j".into(), SourceKind::Directory, "m".into(), Phase::Preparing);
+    snap.batch = Some(batch);
+    assert_eq!(serde_json::to_value(snap).unwrap()["batch"]["dir"], "/m");
 }
 
 #[test]
