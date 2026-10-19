@@ -2,6 +2,7 @@ import {
   cancelImport,
   discardImport,
   frontendLog,
+  importDirectory,
   importPath,
   pickImportFile,
   prepareUrlImport,
@@ -10,6 +11,7 @@ import {
   watchImport,
   type ImportEvent,
   type ImportKind,
+  type PickKind,
   type JobSnapshot,
 } from './ipc';
 import { buildTree } from './library-tree';
@@ -18,7 +20,7 @@ import { ui } from './app-state.svelte';
 import { draftFromEdits, toEdits, validate, type DraftField, type DraftFields } from './track-draft';
 import { checkUrl } from './url-check';
 
-export type SourceChoice = 'url' | 'audio' | 'video';
+export type SourceChoice = 'url' | 'audio' | 'video' | 'directory';
 export type Step = 'menu' | 'source' | 'edit' | 'extract' | 'done';
 
 export const imp = $state({
@@ -29,6 +31,8 @@ export const imp = $state({
   path: '',
   /** The accent-colour label under the URL box / Browse button. */
   error: '',
+  /** A muted note under the source controls (the directory import cancel note). */
+  notice: '',
   /** The "Incomplete download file" prompt (a partial download of this URL exists). */
   prompt: null as { bytes: number } | null,
   /** A request (prepare, start, file dialog) is in flight. */
@@ -49,6 +53,7 @@ export function resetImport(): void {
   imp.url = '';
   imp.path = '';
   imp.error = '';
+  imp.notice = '';
   imp.prompt = null;
   imp.starting = false;
   imp.job = null;
@@ -70,6 +75,10 @@ export function step(): Step {
   if (imp.mode === 'menu') return 'menu';
   const j = imp.job;
   if (!j) return 'source';
+  if (j.batch) {
+    if (j.phase === 'finished') return 'done';
+    return j.phase === 'cancelled' ? 'source' : 'extract';
+  }
   switch (j.phase) {
     case 'downloading':
     case 'preparing':
@@ -79,6 +88,7 @@ export function step(): Step {
     case 'failed':
       return 'edit';
     case 'saved':
+    case 'finished':
       return 'done';
     default:
       return 'extract';
@@ -101,20 +111,27 @@ const PHASE_TEXT: Record<string, string> = {
   receiving: 'Receiving stems',
   saving: 'Saving the track',
   saved: 'Import finished',
+  finished: 'Import finished',
   failed: 'Import failed',
 };
 
 /** The footer's left text. */
 export function footerText(): string {
   const j = imp.job;
-  return j ? (PHASE_TEXT[j.phase] ?? 'Ready') : 'Ready';
+  if (!j) return 'Ready';
+  const text = PHASE_TEXT[j.phase] ?? 'Ready';
+  const b = j.batch;
+  if (b && j.phase !== 'finished' && b.current !== null) {
+    return `File ${b.current + 1} of ${b.files.length}: ${text}`;
+  }
+  return text;
 }
 
 function stubJob(): JobSnapshot {
   return {
     job: '', source: { kind: 'url', label: '' }, phase: 'downloading', downloaded: 0, total: null,
     sent: 0, stems_done: 0, stems_total: 0, progress: null, duration_s: null, metadata: null,
-    error: null, track: null, dropped: [],
+    error: null, track: null, dropped: [], batch: null,
   };
 }
 
@@ -195,8 +212,42 @@ export function applyEvent(e: ImportEvent): void {
         imp.extractError = e.message;
       }
       break;
+    case 'batch-file':
+      if (!j.batch) j.batch = { dir: '', files: Array<string>(e.total).fill(''), current: e.index, items: [] };
+      j.batch.files[e.index] = e.name;
+      j.batch.current = e.index;
+      log(`batch file=${e.index + 1}/${e.total} name=${e.name}`);
+      break;
+    case 'batch-item': {
+      const it = e.item;
+      if (!j.batch) j.batch = { dir: '', files: [], current: it.index, items: [] };
+      j.batch.items.push(it);
+      if (it.result === 'saved') {
+        log(`batch item=${it.index + 1} result=saved id=${it.track.id} dropped=${droppedNames(it.dropped)}`);
+        void load();
+      } else {
+        log(`batch item=${it.index + 1} result=failed stage=${it.stage} message=${it.message}`);
+      }
+      break;
+    }
+    case 'finished': {
+      j.batch = e.batch;
+      j.phase = 'finished';
+      const saved = e.batch.items.filter((x) => x.result === 'saved').length;
+      log(`batch finished saved=${saved} failed=${e.batch.items.length - saved}`);
+      void load();
+      break;
+    }
     case 'cancelled':
-      if (e.back_to === 'edit') {
+      if (j.batch) {
+        const saved = j.batch.items.filter((x) => x.result === 'saved').length;
+        const n = j.batch.files.length;
+        imp.notice = `Directory import cancelled: ${saved} of ${n} files saved.`;
+        log(`batch cancelled saved=${saved} of=${n}`);
+        imp.job = null;
+        imp.error = '';
+        void load();
+      } else if (e.back_to === 'edit') {
         j.phase = 'ready';
         j.sent = 0;
         j.progress = null;
@@ -218,6 +269,8 @@ function adopt(snap: JobSnapshot, seqBefore: number): void {
   if (imp.job && imp.job.job === '') {
     imp.job.job = snap.job;
     imp.job.source = snap.source;
+    if (!imp.job.batch) imp.job.batch = snap.batch ?? null;
+    else if (snap.batch && !imp.job.batch.dir) imp.job.batch.dir = snap.batch.dir;
   } else if (eventSeq === seqBefore) {
     imp.job = snap;
     setDraftFrom(snap);
@@ -234,6 +287,7 @@ export function backToMenu(): void {
   imp.mode = 'menu';
   imp.source = null;
   imp.error = '';
+  imp.notice = '';
   imp.prompt = null;
 }
 
@@ -242,6 +296,7 @@ export function chooseSource(s: SourceChoice): void {
   if (imp.source !== s) imp.path = '';
   imp.source = s;
   imp.error = '';
+  imp.notice = '';
   imp.prompt = null;
   log(`source=${s}`);
 }
@@ -258,6 +313,7 @@ async function begin(url: string, resume: boolean): Promise<void> {
 export async function extractUrl(): Promise<void> {
   if (imp.starting || imp.job) return;
   imp.error = '';
+  imp.notice = '';
   imp.prompt = null;
   const bad = checkUrl(imp.url);
   if (bad) {
@@ -293,12 +349,13 @@ export async function answerPrompt(resume: boolean): Promise<void> {
 }
 
 /** Opens the file dialog and fills the path box; true when a file was picked. */
-export async function browse(kind: ImportKind): Promise<boolean> {
+export async function browse(kind: PickKind): Promise<boolean> {
   if (imp.starting || imp.job) return false;
   imp.error = '';
+  imp.notice = '';
   imp.starting = true;
   try {
-    const pick = await pickImportFile(kind);
+    const pick = await pickImportFile(kind, imp.path);
     if (!pick) return false;
     imp.path = pick.path;
     log(`path-picked kind=${kind}`);
@@ -315,6 +372,7 @@ export async function browse(kind: ImportKind): Promise<boolean> {
 export async function extractPath(kind: ImportKind): Promise<void> {
   if (imp.starting || imp.job) return;
   imp.error = '';
+  imp.notice = '';
   if (imp.path.trim() === '') {
     showError('Enter the path of a file or choose one with Browse');
     return;
@@ -323,6 +381,27 @@ export async function extractPath(kind: ImportKind): Promise<void> {
   try {
     const before = eventSeq;
     const snap = await importPath(kind, imp.path, applyEvent);
+    if (snap) adopt(snap, before);
+  } catch (err) {
+    showError(String(err));
+  } finally {
+    imp.starting = false;
+  }
+}
+
+/** Starts the import of every audio file in the folder named in the path box. */
+export async function extractDirectory(): Promise<void> {
+  if (imp.starting || imp.job) return;
+  imp.error = '';
+  imp.notice = '';
+  if (imp.path.trim() === '') {
+    showError('Enter the path of a folder or choose one with Browse');
+    return;
+  }
+  imp.starting = true;
+  try {
+    const before = eventSeq;
+    const snap = await importDirectory(imp.path, applyEvent);
     if (snap) adopt(snap, before);
   } catch (err) {
     showError(String(err));
@@ -389,14 +468,32 @@ export function importAnother(): void {
   imp.fieldErrors = {};
   imp.extractError = '';
   imp.error = '';
+  imp.notice = '';
   imp.url = '';
   imp.path = '';
   imp.source = null;
 }
 
 export function showInLibrary(): void {
+  const b = imp.job?.batch;
+  if (b) {
+    const first = b.items.find((x) => x.result === 'saved');
+    if (!first || first.result !== 'saved') {
+      importAnother();
+      imp.mode = 'menu';
+      ui.view = 'library';
+      return;
+    }
+    selectInLibrary(first.track.id);
+    return;
+  }
   const t = imp.job?.track;
   if (!t) return;
+  selectInLibrary(t.id);
+}
+
+function selectInLibrary(id: string): void {
+  const t = { id };
   const node = buildTree(lib.library?.tracks ?? []).find((b) => b.albums.some((a) => a.tracks.some((x) => x.id === t.id)));
   if (node) {
     lib.expanded[node.key] = true;
@@ -436,7 +533,7 @@ export async function attach(): Promise<void> {
         imp.extractError = snap.error.message;
       }
     }
-    if (snap.phase === 'saved') void load();
+    if (snap.phase === 'saved' || snap.phase === 'finished') void load();
     log(`attached phase=${snap.phase} job=${snap.job}`);
   } catch (err) {
     log(`error watch_import: ${String(err)}`);

@@ -9,6 +9,7 @@
     browse,
     cancelRunning,
     chooseSource,
+    extractDirectory,
     extractPath,
     extractUrl,
     imp,
@@ -38,6 +39,7 @@
     { value: 'url', label: 'URL' },
     { value: 'audio', label: 'Local Audio File' },
     { value: 'video', label: 'Local Video File' },
+    { value: 'directory', label: 'Local Directory' },
   ];
 
   function onUrlKey(e: KeyboardEvent): void {
@@ -47,8 +49,15 @@
     }
   }
 
-  async function onBrowse(kind: 'audio' | 'video'): Promise<void> {
+  async function onBrowse(kind: 'audio' | 'video' | 'directory'): Promise<void> {
     if (await browse(kind)) extractBtn?.focus();
+  }
+
+  function onDirectoryKey(e: KeyboardEvent): void {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void extractDirectory();
+    }
   }
 
   function onPathKey(e: KeyboardEvent, kind: 'audio' | 'video'): void {
@@ -114,10 +123,33 @@
         <Button bind:ref={extractBtn} disabled={locked} onclick={() => void extractPath(kind)}>Extract</Button>
       </div>
     </div>
+  {:else if imp.source === 'directory'}
+    <div class="flex flex-col gap-2">
+      <div class="flex gap-2">
+        <Input
+          id="import-path"
+          type="text"
+          aria-label="directory path"
+          placeholder="/path/to/folder"
+          autocomplete="off"
+          spellcheck={false}
+          disabled={locked}
+          aria-describedby={imp.error ? 'import-error' : undefined}
+          bind:value={imp.path}
+          onkeydown={onDirectoryKey}
+        />
+        <Button variant="outline" disabled={locked} onclick={() => void onBrowse('directory')}>Browse</Button>
+        <Button bind:ref={extractBtn} disabled={locked} onclick={() => void extractDirectory()}>Extract</Button>
+      </div>
+    </div>
   {/if}
 
   {#if imp.error}
     <p id="import-error" role="alert" class="text-sm text-amber-700 dark:text-primary">{imp.error}</p>
+  {/if}
+
+  {#if imp.notice}
+    <p id="import-notice" role="status" class="text-sm text-muted-foreground">{imp.notice}</p>
   {/if}
 
   {#if imp.prompt}

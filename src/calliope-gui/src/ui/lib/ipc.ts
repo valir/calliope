@@ -6,6 +6,7 @@ export interface Settings {
   repository_root: string | null;
   edge_ai_url: string | null;
   keep_original: boolean;
+  last_import_dir?: string | null;
 }
 
 export const appVersion = (): Promise<string> => invoke<string>('app_version');
@@ -99,14 +100,19 @@ export interface ToolsInfo { yt_dlp: ToolInfo; ffmpeg: ToolInfo; ffprobe: ToolIn
 export type UrlPrepStatus = 'invalid' | 'ready' | 'partial' | 'busy';
 export interface UrlPrep { status: UrlPrepStatus; message: string; partial_bytes: number }
 export type ImportKind = 'audio' | 'video';
+export type PickKind = ImportKind | 'directory';
 export type JobPhase =
   | 'downloading' | 'preparing' | 'ready' | 'uploading' | 'queued' | 'working'
-  | 'receiving' | 'saving' | 'saved' | 'failed' | 'cancelled';
+  | 'receiving' | 'saving' | 'saved' | 'failed' | 'cancelled' | 'finished';
 export type JobStage = 'download' | 'prepare' | 'server' | 'save';
-export interface JobSource { kind: 'url' | 'audio-file' | 'video-file'; label: string }
+export interface JobSource { kind: 'url' | 'audio-file' | 'video-file' | 'directory'; label: string }
 export interface JobError { stage: JobStage; message: string; http_status: number | null }
 /** A stem the server returned but the import dropped as empty (audible < 15 s); `audible_ms` is its audible time. */
 export interface DroppedStem { name: string; audible_ms: number }
+export type BatchItem = { index: number; name: string } & (
+  | { result: 'saved'; track: TrackRecord; dropped: DroppedStem[] }
+  | { result: 'failed'; stage: JobStage; message: string });
+export interface BatchSnapshot { dir: string; files: string[]; current: number | null; items: BatchItem[] }
 export interface JobSnapshot {
   job: string;
   source: JobSource;
@@ -122,6 +128,7 @@ export interface JobSnapshot {
   error: JobError | null;
   track: TrackRecord | null;
   dropped: DroppedStem[];
+  batch?: BatchSnapshot | null;
 }
 export type ImportEvent =
   | { phase: 'downloading'; downloaded: number; total: number | null }
@@ -134,7 +141,10 @@ export type ImportEvent =
   | { phase: 'saving' }
   | { phase: 'saved'; track: TrackRecord; dropped: DroppedStem[] }
   | { phase: 'failed'; stage: JobStage; message: string; http_status: number | null }
-  | { phase: 'cancelled'; back_to: 'source' | 'edit' };
+  | { phase: 'cancelled'; back_to: 'source' | 'edit' }
+  | { phase: 'batch-file'; index: number; total: number; name: string }
+  | { phase: 'batch-item'; item: BatchItem }
+  | { phase: 'finished'; batch: BatchSnapshot };
 
 /** Wraps a callback in the Tauri Channel the Rust side streams ImportEvent values into. */
 function channel(onEvent: (e: ImportEvent) => void): Channel<ImportEvent> {
@@ -144,12 +154,14 @@ function channel(onEvent: (e: ImportEvent) => void): Channel<ImportEvent> {
 }
 
 export interface PickedFile { path: string; name: string }
-export const pickImportFile = (kind: ImportKind): Promise<PickedFile | null> =>
-  invoke<PickedFile | null>('pick_import_file', { kind });
+export const pickImportFile = (kind: PickKind, typed: string): Promise<PickedFile | null> =>
+  invoke<PickedFile | null>('pick_import_file', { kind, typed });
 export const importPath = (
   kind: ImportKind, path: string, onEvent: (e: ImportEvent) => void,
 ): Promise<JobSnapshot> =>
   invoke<JobSnapshot>('import_path', { kind, path, events: channel(onEvent) });
+export const importDirectory = (path: string, onEvent: (e: ImportEvent) => void): Promise<JobSnapshot> =>
+  invoke<JobSnapshot>('import_directory', { path, events: channel(onEvent) });
 
 export const setEdgeAiUrl = (url: string | null): Promise<Settings> =>
   invoke<Settings>('set_edge_ai_url', { url });

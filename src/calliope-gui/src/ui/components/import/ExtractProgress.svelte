@@ -5,6 +5,9 @@
   import { cancelRunning, imp } from '$lib/import-state.svelte';
   import { formatMb } from '$lib/format';
 
+  /** Inside the batch progress: no heading and no Cancel of its own. */
+  let { embedded = false }: { embedded?: boolean } = $props();
+
   const job = $derived(imp.job);
   const phase = $derived(job?.phase);
 
@@ -16,7 +19,7 @@
 </script>
 
 <section class="flex max-w-xl flex-col gap-4" aria-label="Stem extraction progress">
-  <h3 class="text-lg font-medium">Extracting stems</h3>
+  {#if !embedded}<h3 class="text-lg font-medium">Extracting stems</h3>{/if}
 
   {#if phase === 'uploading'}
     <div class="flex flex-col gap-2" role="group" aria-label="Upload">
@@ -51,7 +54,7 @@
     </div>
   {/if}
 
-  {#if phase !== 'saving'}
+  {#if !embedded && phase !== 'saving'}
     <div><Button variant="outline" onclick={() => void cancelRunning()}>Cancel</Button></div>
   {/if}
 </section>

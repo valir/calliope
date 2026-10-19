@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import {
-  cancelImport, checkEdgeAi, checkTools, discardImport, getImportJob, pickImportFile, importPath,
+  cancelImport, checkEdgeAi, checkTools, discardImport, getImportJob, pickImportFile, importPath, importDirectory,
   prepareUrlImport, setEdgeAiUrl, setKeepOriginal, startStemExtraction, startUrlImport, watchImport,
   type ImportEvent, type JobSnapshot, type TrackEdits,
 } from './ipc';
@@ -28,9 +28,10 @@ describe('import ipc wrappers', () => {
     await checkTools();
     await prepareUrlImport('https://x.example/a');
     await startUrlImport('https://x.example/a', true, () => {});
-    await pickImportFile('audio');
+    await pickImportFile('audio', '/m/x.mp3');
     await importPath('audio', '/path/to/file.mp3', () => {});
     await startStemExtraction('j1', edits);
+    await importDirectory('/m/album', () => {});
     await cancelImport('j1');
     await discardImport('j1');
     await getImportJob();
@@ -42,20 +43,21 @@ describe('import ipc wrappers', () => {
     expect(calls.map((c) => c[0])).toEqual([
       'set_edge_ai_url', 'set_edge_ai_url', 'set_keep_original', 'check_edge_ai', 'check_tools',
       'prepare_url_import', 'start_url_import', 'pick_import_file', 'import_path', 'start_stem_extraction',
-      'cancel_import', 'discard_import', 'get_import_job', 'watch_import',
+      'import_directory', 'cancel_import', 'discard_import', 'get_import_job', 'watch_import',
     ]);
     expect(calls[0][1]).toEqual({ url: 'http://archserver:8765' });
     expect(calls[1][1]).toEqual({ url: null });
     expect(calls[2][1]).toEqual({ keep: true });
     expect(calls[5][1]).toEqual({ url: 'https://x.example/a' });
     expect(plain(6)).toEqual(['start_url_import', { url: 'https://x.example/a', resume: true }]);
-    expect(plain(7)).toEqual(['pick_import_file', { kind: 'audio' }]);
+    expect(plain(7)).toEqual(['pick_import_file', { kind: 'audio', typed: '/m/x.mp3' }]);
     expect(plain(8)).toEqual(['import_path', { kind: 'audio', path: '/path/to/file.mp3' }]);
     expect(calls[9][1]).toEqual({ job: 'j1', edits });
-    expect(calls[10][1]).toEqual({ job: 'j1' });
+    expect(plain(10)).toEqual(['import_directory', { path: '/m/album' }]);
     expect(calls[11][1]).toEqual({ job: 'j1' });
-    expect(plain(13)).toEqual(['watch_import', {}]);
-    for (const i of [6, 8, 13]) expect(JSON.stringify(calls[i][1].events)).toMatch(/^"__CHANNEL__:\d+"$/);
+    expect(calls[12][1]).toEqual({ job: 'j1' });
+    expect(plain(14)).toEqual(['watch_import', {}]);
+    for (const i of [6, 8, 10, 14]) expect(JSON.stringify(calls[i][1].events)).toMatch(/^"__CHANNEL__:\d+"$/);
   });
 
   it('returns the snapshots, null for a cancelled dialog and the typed results', async () => {
@@ -66,7 +68,7 @@ describe('import ipc wrappers', () => {
     });
     expect((await startUrlImport('https://x.example/a', false, () => {})).job).toBe('j1');
     expect((await prepareUrlImport('https://x.example/a')).status).toBe('partial');
-    expect(await pickImportFile('video')).toBeNull();
+    expect(await pickImportFile('video', '')).toBeNull();
     expect(await getImportJob()).toBeNull();
     expect((await cancelImport('j1')).source.kind).toBe('url');
   });

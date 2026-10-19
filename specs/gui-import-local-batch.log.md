@@ -7,3 +7,6 @@ task 4 | local_source: starting folder, directory checks, audio listing | implem
 task 5 | Import job: helpers and batch types (no behaviour change) | implementer | done (committed with task 6: shared files)
 task 6 | The batch runner | implementer | done (note for tasks 9-10 added to the plan)
 task 7 | IPC: start folder, remembering, import_directory | implementer | done
+task 8 | TS IPC types and wrappers | implementer (local model deleted 128 lines of ipc.ts, discarded) | done (committed with tasks 9-10)
+task 9 | Import state: directory source and batch events | implementer | done
+task 10 | Source page, batch progress and summary | implementer | done (UI names noted in the plan for tasks 11-12)

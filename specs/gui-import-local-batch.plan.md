@@ -587,6 +587,16 @@ open a real dialog, never use the real `calliope-stems` on `0.0.0.0:8765` or any
 - **done when:** `npm run test:ui` passes, and `npm run check` and `npm run build` are clean.
 - **routine:** no
 
+- **Orchestrator note (after tasks 8-10), UI names for tasks 11-12:** radio "Local Directory" (last); directory
+  row: input `#import-path` `aria-label="directory path"`, Browse, Extract (Enter also starts); empty box error
+  "Enter the path of a folder or choose one with Browse" in `#import-error`. Cancel notice `#import-notice`
+  (`role=status`). Progress section `aria-label="Directory import progress"`, heading "Importing a directory",
+  `data-testid="batch-current"` "File i of n: name", embedded progress, Cancel, `<ul aria-label="Files done">`. Summary
+  `aria-label="Import finished"`, "Imported s of n files from <dir>.", lists "Saved tracks"/"Failed files", Show in
+  Library, Import another track. Footer "File i of n: <phase>" / "Import finished". Frontend log lines: `import
+  batch file=i/n name=…`, `import batch item=i result=saved|failed …`, `import batch finished saved=a failed=b`,
+  `import batch cancelled saved=a of=n`. The Back button stays rendered (disabled) on the batch page.
+
 ### Task 11: Headless acceptance tests
 - **files:** `src/calliope-gui/tests/acceptance_existing_track_import.rs`
 - **does:** extends the file (the local-import acceptance suite, with its real stub server

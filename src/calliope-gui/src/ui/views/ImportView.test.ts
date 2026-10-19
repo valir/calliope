@@ -18,6 +18,7 @@ let watchResult: JobSnapshot | null = null;
 let watchFailures = 0;
 let startError = '';
 let importError = '';
+let dirError = '';
 
 const URL_OK = 'https://video.example/watch?v=1';
 const META: TrackEdits = {
@@ -49,6 +50,7 @@ beforeEach(() => {
   watchFailures = 0;
   startError = '';
   importError = '';
+  dirError = '';
   resetImport();
   resetLibrary();
   ui.view = 'import';
@@ -62,7 +64,11 @@ beforeEach(() => {
         if (startError) throw new Error(startError);
         return snap();
       case 'pick_import_file':
+        if (a.kind === 'directory') return { path: '/music/album', name: 'album' };
         return fileResult ? { path: `/music/${fileResult.source.label}`, name: fileResult.source.label } : null;
+      case 'import_directory':
+        if (dirError) throw dirError;
+        return snap({ source: { kind: 'directory', label: 'album' }, phase: 'preparing' });
       case 'import_path':
         if (importError) throw importError;
         return fileResult;
@@ -128,9 +134,9 @@ describe('Import view: menu and source page', () => {
     expect(screen.queryByText(/This view will be filled by/)).toBeNull();
   });
 
-  it('click opens the source page with the three sources and no box yet', async () => {
+  it('click opens the source page with the four sources and no box yet', async () => {
     await toSource();
-    for (const n of ['URL', 'Local Audio File', 'Local Video File']) expect(screen.getByRole('radio', { name: n })).toBeTruthy();
+    for (const n of ['URL', 'Local Audio File', 'Local Video File', 'Local Directory']) expect(screen.getByRole('radio', { name: n })).toBeTruthy();
     expect(screen.queryByRole('textbox', { name: 'enter url' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Browse' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Stem Extraction' })).toBeNull();
@@ -563,5 +569,118 @@ describe('Import view: re-attach and footer', () => {
     await waitFor(() => expect(footer()).toContain('Working...'));
     imp.job = null;
     await waitFor(() => expect(footer()).toMatch(/^Ready/));
+  });
+
+  describe('directory import', () => {
+    const mk = (i: number, name: string, extra: object): ImportEvent =>
+      ({ phase: 'batch-item', item: { index: i, name, ...extra } }) as ImportEvent;
+    const saved = (i: number, name: string, title: string, dropped: { name: string; audible_ms: number }[] = []) =>
+      mk(i, name, { result: 'saved', track: { ...stemTrack, id: i === 0 ? stemTrack.id : `t${i}`, title }, dropped });
+    const failed = mk(1, 'b.mp3', { result: 'failed', stage: 'prepare', message: 'Not an audio file' });
+    const dirBox = async () => {
+      await toSource();
+      await click('radio', 'Local Directory');
+      return screen.getByRole('textbox', { name: 'directory path' }) as HTMLInputElement;
+    };
+    async function startBatch(): Promise<void> {
+      const box = await dirBox();
+      await fireEvent.input(box, { target: { value: '/music/album' } });
+      await click('button', 'Extract');
+      await waitFor(() => expect(callsOf('import_directory')).toHaveLength(1));
+      await emit({ phase: 'batch-file', index: 0, total: 3, name: 'a.flac' });
+    }
+
+    it('shows the folder row; Browse sends kind and the typed text and fills the box', async () => {
+      const box = await dirBox();
+      expect(box.placeholder).toBe('/path/to/folder');
+      await fireEvent.input(box, { target: { value: '/mus' } });
+      await click('button', 'Browse');
+      await waitFor(() => expect(box.value).toBe('/music/album'));
+      expect(callsOf('pick_import_file')).toEqual([{ kind: 'directory', typed: '/mus' }]);
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Extract' }));
+    });
+
+    it('an empty box shows the folder message; a rejected folder shows the error', async () => {
+      const box = await dirBox();
+      await click('button', 'Extract');
+      expect(alertText()).toBe('Enter the path of a folder or choose one with Browse');
+      expect(names()).not.toContain('import_directory');
+      dirError = 'There are no audio files in /x';
+      await fireEvent.input(box, { target: { value: '/x' } });
+      await fireEvent.keyDown(box, { key: 'Enter' });
+      await waitFor(() => expect(alertText()).toBe('There are no audio files in /x'));
+      expect(callsOf('import_directory')).toEqual([{ path: '/x', events: expect.anything() }]);
+      expect(box.value).toBe('/x');
+    });
+
+    it('batch events show the current file and the done list; Cancel calls cancel_import', async () => {
+      await startBatch();
+      expect((await screen.findByTestId('batch-current')).textContent).toBe('File 1 of 3: a.flac');
+      await emit(saved(0, 'a.flac', 'Song A', [{ name: 'piano', audible_ms: 0 }]));
+      await emit({ phase: 'batch-file', index: 1, total: 3, name: 'b.mp3' });
+      await emit({ phase: 'working', progress: null });
+      await emit(failed);
+      await emit({ phase: 'batch-file', index: 2, total: 3, name: 'c.ogg' });
+      expect(screen.getByTestId('batch-current').textContent).toBe('File 3 of 3: c.ogg');
+      const done = within(screen.getByRole('list', { name: 'Files done' })).getAllByRole('listitem');
+      expect(done.map((x) => x.textContent?.trim())).toEqual([
+        'a.flac: saved as Song A (dropped empty stems: piano)',
+        'b.mp3: failed: Not an audio file',
+      ]);
+      await click('button', 'Cancel');
+      expect(screen.getAllByRole('button').filter((b) => !(b as HTMLButtonElement).disabled)).toHaveLength(1);
+      await waitFor(() => expect(callsOf('cancel_import')).toEqual([{ job: 'job-1' }]));
+    });
+
+    it('the summary lists saved titles with dropped stems and failed files; Show in Library selects the first saved', async () => {
+      await startBatch();
+      await emit(saved(0, 'a.flac', 'Song A', [{ name: 'piano', audible_ms: 0 }, { name: 'other', audible_ms: 0 }]));
+      await emit(failed);
+      await emit(saved(2, 'c.ogg', 'Song C'));
+      const items = [
+        { index: 0, name: 'a.flac', result: 'saved', track: { ...stemTrack, id: stemTrack.id, title: 'Song A' }, dropped: [{ name: 'piano', audible_ms: 0 }, { name: 'other', audible_ms: 0 }] },
+        { index: 1, name: 'b.mp3', result: 'failed', stage: 'prepare', message: 'Not an audio file' },
+        { index: 2, name: 'c.ogg', result: 'saved', track: { ...stemTrack, id: 't2', title: 'Song C' }, dropped: [] },
+      ] as never;
+      await emit({ phase: 'finished', batch: { dir: '/music/album', files: ['a.flac', 'b.mp3', 'c.ogg'], current: null, items } });
+      const sum = screen.getByRole('region', { name: 'Import finished' });
+      expect(within(sum).getByRole('status').textContent?.trim()).toBe('Imported 2 of 3 files from /music/album.');
+      expect(within(within(sum).getByRole('list', { name: 'Saved tracks' })).getAllByRole('listitem').map((x) => x.textContent?.trim()))
+        .toEqual(['Song A: dropped empty stems: piano, other', 'Song C']);
+      expect(within(sum).getByRole('list', { name: 'Failed files' }).textContent?.trim()).toBe('b.mp3: Not an audio file');
+      expect(frontendLogs()).toContain('import batch finished saved=2 failed=1');
+      expect(frontendLogs()).toContain(`import batch item=1 result=saved id=${stemTrack.id} dropped=piano,other`);
+      expect(frontendLogs()).toContain('import batch item=2 result=failed stage=prepare message=Not an audio file');
+      expect(screen.getByRole('button', { name: 'Import another track' })).toBeTruthy();
+      await click('button', 'Show in Library');
+      expect(ui.view).toBe('library');
+      expect(lib.selectedId).toBe(stemTrack.id);
+    });
+
+    it('Show in Library with no saved track only opens the Library', async () => {
+      await startBatch();
+      await emit({ phase: 'finished', batch: { dir: '/d', files: ['a.flac'], current: null, items: [] } });
+      expect(screen.queryByRole('list', { name: 'Saved tracks' })).toBeNull();
+      await click('button', 'Show in Library');
+      expect(ui.view).toBe('library');
+      expect(lib.selectedId).not.toBe(stemTrack.id);
+    });
+
+    it('a cancelled event returns to the source page with the notice and the path kept', async () => {
+      await startBatch();
+      await emit(saved(0, 'a.flac', 'Song A'));
+      await emit({ phase: 'cancelled', back_to: 'source' });
+      expect((await screen.findByRole('status')).textContent).toBe('Directory import cancelled: 1 of 3 files saved.');
+      expect((screen.getByRole('textbox', { name: 'directory path' }) as HTMLInputElement).value).toBe('/music/album');
+      expect(frontendLogs()).toContain('import batch cancelled saved=1 of=3');
+      await click('radio', 'URL');
+      expect(screen.queryByText(/Directory import cancelled/)).toBeNull();
+    });
+
+    it('the footer shows the file number during a batch', async () => {
+      render(StatusFooter);
+      imp.job = snap({ phase: 'working', batch: { dir: '/d', files: ['a', 'b', 'c'], current: 1, items: [] } });
+      await waitFor(() => expect(screen.getByRole('contentinfo').textContent).toContain('File 2 of 3: Working...'));
+    });
   });
 });

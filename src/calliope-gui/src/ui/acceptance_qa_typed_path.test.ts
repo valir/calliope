@@ -79,7 +79,7 @@ describe('req 1 and 2: path box + Browse per kind', () => {
     pick = { path: '/home/me/My Music/a b.mp3', name: 'a b.mp3' };
     await click('button', 'Browse');
     await waitFor(() => expect(box.value).toBe('/home/me/My Music/a b.mp3'));
-    expect(of('pick_import_file')).toEqual([{ kind }]);
+    expect(of('pick_import_file')).toEqual([{ kind, typed: '' }]);
     expect(names()).not.toContain('import_path');
     expect(document.activeElement?.textContent?.trim()).toBe('Extract');
     expect(imp.job).toBeNull();
