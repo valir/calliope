@@ -17,6 +17,7 @@ pub enum DialogKind {
     ExportTablature,
     ImportAudio,
     ImportVideo,
+    ImportDirectory,
 }
 
 impl DialogKind {
@@ -29,6 +30,7 @@ impl DialogKind {
             DialogKind::ExportTablature => "export-tablature",
             DialogKind::ImportAudio => "import-audio",
             DialogKind::ImportVideo => "import-video",
+            DialogKind::ImportDirectory => "import-directory",
         }
     }
 
@@ -41,6 +43,7 @@ impl DialogKind {
             DialogKind::ExportTablature,
             DialogKind::ImportAudio,
             DialogKind::ImportVideo,
+            DialogKind::ImportDirectory,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -105,6 +108,18 @@ pub trait Picker: Send + Sync {
     fn pick_file(&self, req: &FileReq) -> Option<PathBuf>;
     fn pick_folder(&self, req: &FolderReq) -> Option<PathBuf>;
     fn save_file(&self, req: &SaveReq) -> Option<PathBuf>;
+}
+
+impl<P: Picker + ?Sized> Picker for std::sync::Arc<P> {
+    fn pick_file(&self, req: &FileReq) -> Option<PathBuf> {
+        (**self).pick_file(req)
+    }
+    fn pick_folder(&self, req: &FolderReq) -> Option<PathBuf> {
+        (**self).pick_folder(req)
+    }
+    fn save_file(&self, req: &SaveReq) -> Option<PathBuf> {
+        (**self).save_file(req)
+    }
 }
 
 /// Token -> (kind, path). Tokens are `p<counter>` and live until taken or the app exits.
@@ -225,11 +240,12 @@ impl Picker for TauriPicker {
 pub struct ScriptedPicker {
     answers: std::path::PathBuf,
     lock: Mutex<()>,
+    starts: Mutex<Vec<(DialogKind, Option<PathBuf>)>>,
 }
 
 impl ScriptedPicker {
     pub fn new(answers: PathBuf) -> Self {
-        Self { answers, lock: Mutex::new(()) }
+        Self { answers, lock: Mutex::new(()), starts: Mutex::new(Vec::new()) }
     }
 
     #[cfg(feature = "e2e-hooks")]
@@ -242,7 +258,13 @@ impl ScriptedPicker {
         Some(Self::new(PathBuf::from(v)))
     }
 
-    fn answer(&self, kind: DialogKind) -> Option<PathBuf> {
+    /// The (kind, start folder) of every request so far, in order.
+    pub fn starts(&self) -> Vec<(DialogKind, Option<PathBuf>)> {
+        self.starts.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn answer(&self, kind: DialogKind, start_dir: &Option<PathBuf>) -> Option<PathBuf> {
+        self.starts.lock().unwrap_or_else(|e| e.into_inner()).push((kind, start_dir.clone()));
         let r = self.pop(kind);
         log_dialog(kind, r.is_some());
         r
@@ -286,13 +308,13 @@ impl ScriptedPicker {
 
 impl Picker for ScriptedPicker {
     fn pick_file(&self, req: &FileReq) -> Option<PathBuf> {
-        self.answer(req.kind)
+        self.answer(req.kind, &req.start_dir)
     }
     fn pick_folder(&self, req: &FolderReq) -> Option<PathBuf> {
-        self.answer(req.kind)
+        self.answer(req.kind, &req.start_dir)
     }
     fn save_file(&self, req: &SaveReq) -> Option<PathBuf> {
-        self.answer(req.kind)
+        self.answer(req.kind, &req.start_dir)
     }
 }
 
@@ -352,6 +374,33 @@ mod tests {
         let p = ScriptedPicker::new(f);
         assert_eq!(p.pick_file(&file_req(DialogKind::ImportAudio)), Some("/tmp/a.mp3".into()));
         assert_eq!(p.pick_file(&file_req(DialogKind::ImportVideo)), None);
+    }
+
+    #[test]
+    fn scripted_records_start_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("answers");
+        std::fs::write(&f, "import-audio CANCEL\nimport-audio CANCEL\nimport-directory /m/album\n")
+            .unwrap();
+        let p = std::sync::Arc::new(ScriptedPicker::new(f));
+        let with_start = FileReq { start_dir: Some("/m".into()), ..file_req(DialogKind::ImportAudio) };
+        assert_eq!(p.pick_file(&with_start), None);
+        let b: Box<dyn Picker> = Box::new(p.clone());
+        assert_eq!(b.pick_file(&file_req(DialogKind::ImportAudio)), None);
+        let folder = FolderReq {
+            kind: DialogKind::ImportDirectory,
+            title: "t".into(),
+            start_dir: Some("/m/x".into()),
+        };
+        assert_eq!(b.pick_folder(&folder), Some("/m/album".into()));
+        assert_eq!(
+            p.starts(),
+            vec![
+                (DialogKind::ImportAudio, Some("/m".into())),
+                (DialogKind::ImportAudio, None),
+                (DialogKind::ImportDirectory, Some("/m/x".into())),
+            ]
+        );
     }
 
     fn file_req(kind: DialogKind) -> FileReq {
