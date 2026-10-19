@@ -20,17 +20,17 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (version) | build time + Laptop | Formats the `YY.MM.BBBB` version; shared by `build.rs` and the crate | Rust, no deps | `src/version.rs`, `build.rs` |
 | calliope-gui (GUI shell) | Laptop | Tauri 2 app: main window, plugins, managed state, IPC handler registration | Rust + Tauri 2 (webkit2gtk-4.1 on Linux), `tauri-plugin-window-state` | `src/gui.rs`, `tauri.conf.json` |
 | calliope-gui (IPC commands) | Laptop | All `#[tauri::command]` functions; thin wrappers over pure modules. The Player's commands are in their own file | Rust | `src/ipc.rs`, `src/player_ipc.rs` |
-| calliope-gui (settings) | Laptop | Loads/saves user settings (theme, repository root, edge-AI server URL, keep-original switch; MIDI/audio later) as JSON | Rust + serde | `src/settings.rs` |
+| calliope-gui (settings) | Laptop | Loads/saves user settings (theme, repository root, edge-AI server URL, keep-original switch, the last local import folder; MIDI/audio later) as JSON | Rust + serde | `src/settings.rs` |
 | calliope-gui (fs helpers) | Laptop | Atomic writes, no-clobber copies, file-name validation, moving to the repository trash, FNV-1a revisions | Rust, std only | `src/fsutil.rs` |
 | calliope-gui (track metadata) | Laptop | `track.json` schema (version 2: track type, stems), validation, v1→v2 migration in memory, ids (UUIDv7), RFC 3339 timestamps | Rust + serde, `uuid` | `src/track_meta.rs` |
 | calliope-gui (track repository) | Laptop | Repository layout, scan, save transaction, delete-to-trash, export, staged (atomic) creation of new tracks | Rust, pure (no Tauri) | `src/repository.rs` (+ `src/repository_tests.rs`) |
-| calliope-gui (file dialogs) | Laptop | Native open/folder/save dialogs opened from Rust (tablatures, repository root, exports, import audio/video); pick tokens; scripted picker for e2e (`e2e-hooks` feature) | Rust + `tauri-plugin-dialog` | `src/picker.rs` |
-| calliope-gui (local source paths) | Laptop | Typed/pasted local-file paths for the import (trim, quotes, `~/`, `file://`), the file checks with exact messages, and the audio/video extension lists | Rust, pure (std + `url`) | `src/local_source.rs` |
+| calliope-gui (file dialogs) | Laptop | Native open/folder/save dialogs opened from Rust (tablatures, repository root, exports, import audio/video/directory); pick tokens; scripted picker for e2e (`e2e-hooks` feature) that also records each request's start folder | Rust + `tauri-plugin-dialog` | `src/picker.rs` |
+| calliope-gui (local source paths) | Laptop | Typed/pasted local paths for the import (trim, quotes, `~/`, `file://`), the file and folder checks with exact messages, the audio/video extension lists, the dialog's start folder (`browse_start`: typed path's folder > last import folder > home) and the audio files directly inside a folder (`list_audio_files`, name order) | Rust, pure (std + `url`) | `src/local_source.rs` |
 | calliope-gui (import temp space) | Laptop | `<root>/import-tmp/` job folders, resume lookup, safe cleanup | Rust, pure | `src/import_tmp.rs` |
 | calliope-gui (external tools) | Laptop | Finds `yt-dlp`/`ffmpeg`/`ffprobe` on `PATH`, version checks; runs them with `calliope_lib::process` | Rust | `src/tools.rs` |
 | calliope-gui (media) | Laptop | ffprobe JSON → audio check/duration/tags → `TrackEdits`; ffmpeg → FLAC 44.1 kHz stereo | Rust, pure | `src/media.rs` |
 | calliope-gui (download) | Laptop | URL validation/normalisation (`url` crate), yt-dlp args, progress/error parsing, `info.json` mapping | Rust | `src/download.rs` |
-| calliope-gui (import job) | Laptop | The single import job: state machine, events, cancel, shutdown | Rust, pure (std threads) | `src/import_job.rs` |
+| calliope-gui (import job) | Laptop | The single import job: state machine, events, cancel, shutdown; the directory batch (one job in the same slot that runs each file's preparation + extraction in turn, without the edit pane) | Rust, pure (std threads) | `src/import_job.rs`, `src/import_batch.rs` (child module) |
 | calliope-gui (stem audio) | Laptop | FLAC stem probing/compatibility rules, decoding into memory as 16-bit for playback, full-precision streaming reader for rendering, the empty-stem decision for imports (`check_stem` over `calliope_lib::flac_level` with early stop at 15 s, `check_reported` for server-reported audible time, `EMPTY_STEM_MIN_AUDIBLE_MS = 15_000`) | Rust, `claxon`, `calliope-lib` | `src/stem_audio.rs` |
 | calliope-gui (mixer) | Laptop | Pure mixing shared by playback and Save: dB gains (-60 = Off .. +12), unmuted, mono->stereo, sum, hard clip with clipped-sample count, quantise | Rust, std only | `src/mixer.rs` |
 | calliope-gui (transport) | Laptop | Play/pause/stop/seek state machine with the 0.3 s scrub-resume rule; time injected | Rust, pure | `src/transport.rs` |
@@ -101,8 +101,10 @@ the GUI crate, `src/calliope-gui/`.
     `export_track(id) -> Option<String>`, `export_tablature(id, name) -> Option<String>`;
     edge-AI and import (gui-stem-extraction plan §2.10): `set_edge_ai_url(url)`, `set_keep_original(keep)`,
     `check_edge_ai()`, `check_tools()`, `prepare_url_import(url)`,
-    `start_url_import(url, resume, events)`, `pick_import_file(kind) -> Option<PickedFile{path, name}>`,
-    `import_path(kind, path, events)` (gui-existing-track-import plan §2.4),
+    `start_url_import(url, resume, events)`, `pick_import_file(kind: audio|video|directory, typed) -> Option<PickedFile{path, name}>`
+    (the start folder comes from `typed`, the last import folder or home; gui-import-local-batch plan §2.3),
+    `import_path(kind, path, events)` (gui-existing-track-import plan §2.4), `import_directory(path, events)` (a batch job,
+    gui-import-local-batch plan §2.4-2.5),
     `start_stem_extraction(job, edits)`, `cancel_import(job)`, `discard_import(job)`,
     `get_import_job()`, `watch_import(events)`; editor (gui-backing-track-editor plan §2.7):
     `open_editor(id, events)`, `close_editor()`, `get_editor()`, `watch_editor(events)`, `editor_play(id)`,
@@ -142,8 +144,12 @@ the GUI crate, `src/calliope-gui/`.
     source is a path box (typed, pasted or filled by Browse via `pick_import_file`, which returns
     the full path for display), and `import_path(kind, path, events)` takes that text. It only
     reads: `local_source::resolve` requires an absolute path to a regular, readable file with an
-    audio/video extension, and the file then goes through ffprobe/ffmpeg exactly as before. No
-    other command accepts a path. Track ids and file names sent by the
+    audio/video extension, and the file then goes through ffprobe/ffmpeg exactly as before.
+    `import_directory(path, events)` (gui-import-local-batch) is the same exception for a folder:
+    `local_source::resolve_dir` + `list_audio_files` read the folder's direct entries only, and each
+    audio file goes through the same read-only preparation. `pick_import_file`'s `typed` text is only
+    used to choose the dialog's start folder (metadata only). No other command accepts a path, and
+    no path from the frontend is ever written, created or deleted. Track ids and file names sent by the
     frontend are validated and resolved strictly inside `<root>/tracks/<id>/`.
   - The frontend never keeps time. Audio/MIDI/sync logic stays in Rust; the frontend displays
     state and sends commands. Audio is played by Rust (`cpal`), never by the webview (no Web
@@ -157,9 +163,11 @@ the GUI crate, `src/calliope-gui/`.
   `library root=<p> status=<s> tracks=<n> problems=<m>`, `select id=<id>`, `mode=edit|view id=<id>`,
   `saved id=<id> tablatures=<n> warnings=<w>`, `deleted id=<id>`, `exported id=<id>`,
   `tab-staged <add|update|remove> name=<n>`, `repository root=<p> default=<bool>`.
-  Import: `import mode=stem-extraction`, `import source=url|audio|video`, `import path-picked kind=<audio|video>`,
+  Import: `import mode=stem-extraction`, `import source=url|audio|video|directory`, `import path-picked kind=<audio|video|directory>`,
   `import phase=<phase> job=<job>`, `import error stage=<s> message=<m>`,
-  `import saved id=<id> stems=<n> original=<b> dropped=<a,b|none>`.
+  `import saved id=<id> stems=<n> original=<b> dropped=<a,b|none>`; directory batch: `import batch file=<i>/<n> name=<name>`,
+  `import batch item=<i> result=saved id=<id> dropped=<..>|failed stage=<s> message=<m>`, `import batch finished saved=<a> failed=<b>`,
+  `import batch cancelled saved=<a> of=<n>`.
   Editor: `editor active id=<id> stems=<n>`, `editor inactive id=<id|none>`,
   `editor play|pause|stop position=<ms>`, `editor solo name=<n|none>`, `editor leave stop`,
   `editor seek position=<ms>`, `editor nudge delta=<ms>`,
@@ -177,8 +185,12 @@ the GUI crate, `src/calliope-gui/`.
   `player training index=<i> on=<b> start=<s> end=<e> step=<t> repeats=<r>`, `player readout bpm=<text|none> speed=<pct>`
   (`player active` ends with ` speed=<pct>`),
   `player sections segments=<k> bpm=<a,b,..> starts=<ms,..> metronome=<1|0,..> count_in=<1|0,..> named=<n>`.
-  Rust lines (prefix `calliope: `): `dialog kind=<add-tablature|update-tablature|repository-root|export-track|export-tablature|import-audio|import-video> result=<picked|cancelled>`,
+  Rust lines (prefix `calliope: `): `dialog kind=<add-tablature|update-tablature|repository-root|export-track|export-tablature|import-audio|import-video|import-directory> result=<picked|cancelled>`,
+  `dialog start kind=<import-audio|import-video|import-directory> from=<typed|last|home|none> dir=<p|none>`, `import last-location dir=<p>`, `import last-location forgotten`,
   `import job=<job> phase=<phase>`, `import path kind=<audio|video> result=<accepted|rejected>[ reason=<empty|invalid|relative|missing|folder|not-file|unreadable|extension>]`,
+  `import path kind=directory result=accepted files=<n>|rejected reason=<empty|invalid|relative|missing|unreadable|not-folder|no-audio>`,
+  `import batch job=<j> files=<n>`, `import batch job=<j> file=<i>/<n> name=<name> result=started|saved id=<id> dropped=<..>|failed stage=<s> message=<m>|cancelled`,
+  `import batch job=<j> finished saved=<a> failed=<b>`, `import batch job=<j> cancelled saved=<a> skipped=<k>`,
   `tool <name> found=<bool> version=<v>`,
   `audio backend=<cpal|null|capture> rate=<hz>`, `editor open id=<id> stems=<n> duration_ms=<ms>`,
   `editor transport playing=<b> audible=<b> position_ms=<ms> solo=<n|none> clipping=<b>` (changes only),
@@ -193,10 +205,12 @@ the GUI crate, `src/calliope-gui/`.
   `player section jump id=<id> index=<i> edge=<start|end> position_ms=<ms>`, `player speed id=<id> percent=<n>`,
   `player training loop=<i> pass=<n> speed=<pct> repeat=<r>/<of|end>`, `player training end loop=<i> speed=<pct>`.
 - **Settings file**: `$XDG_CONFIG_HOME/app.calliope.gui/settings.json` (Tauri
-  `app_config_dir()`), e.g. `{"theme": "dark", "repository_root": null, "edge_ai_url": null, "keep_original": false}`
+  `app_config_dir()`), e.g. `{"theme": "dark", "repository_root": null, "edge_ai_url": null, "keep_original": false, "last_import_dir": "/music/rock"}`
   (`repository_root`: `null`/absent = the default root, must be an absolute path;
   `edge_ai_url`: `null` = not configured, else `http://host[:port][/path]`, no TLS/userinfo/query;
-  `keep_original`: keep the original full mix as `original.flac` with imported stems). Missing or invalid files give the defaults;
+  `keep_original`: keep the original full mix as `original.flac` with imported stems;
+  `last_import_dir`: `null` or an absolute path, the folder of the last accepted local import (a file's folder; an imported
+  directory itself), shared by audio, video and directory Browse, cleared when Browse finds it missing). Missing or invalid files give the defaults;
   writes are atomic (tmp + rename); unknown fields are ignored. Window geometry is in
   `.window-state.json` in the same directory (written by `tauri-plugin-window-state` on
   graceful exit).
@@ -401,15 +415,15 @@ src/                      ALL source (owner requirement), one folder per crate
     src/lib.rs            declares all modules (library crate `calliope_gui`); main.rs is the thin binary
     src/*.rs              Rust modules (cli, version, gui, ipc, settings, fsutil,
                           track_meta, repository (+ repository_tests), picker, local_source, import_tmp,
-                          tools, media, download, import_job, stem_audio, mixer, transport,
+                          tools, media, download, import_job (+ import_batch), stem_audio, mixer, transport,
                           audio_out, editor (+ editor_tests), backing_render, tempo_map,
                           player_state, player_source, metronome, player (+ player_tests),
                           player_ipc, mix_waveform, tempo_detect, tempo_store,
                           beat_detect (+ beat_detect_tests), speed, stretch, ...)
     src/ui/               frontend: index.html, main.ts, app.css, App.svelte,
                           components/ (library/ = tree, pane, tablature panel;
-                          import/ = source page (URL box, or local path box + Browse +
-                          Extract), edit pane, extraction progress;
+                          import/ = source page (URL box, or local file/folder path box + Browse +
+                          Extract), edit pane, extraction progress, batch progress (BatchProgress);
                           editor/ = EditorPane, StemLane, MixLane, TimeField (also used by the Player);
                           player/ = PlayerPane, SourceSelect, WaveformView (shared with the Editor's Mix lane, props-driven;
                           Player mode `freeMove` edits sections), SectionBpmInput (BPM overlay), BpmSection, SectionsSection,
@@ -532,7 +546,9 @@ the server out of the GUI.
 - Native file dialogs in GUI tests: the cargo feature `e2e-hooks` (only `npm run test:gui`
   enables it) plus the env var `CALLIOPE_E2E_DIALOG_ANSWERS=<file>` replace the dialogs with a
   scripted picker (one line per dialog: `<kind> <abs path>|CANCEL`; kinds include
-  `import-audio`, `import-video`). Without the env var the
+  `import-audio`, `import-video`, `import-directory`). The scripted picker records each request's start folder
+  (`ScriptedPicker::starts()`, used through `Arc<ScriptedPicker>` in Rust tests); GUI tests assert the start folder from
+  the `calliope: dialog start` log line. Without the env var the
   real GTK dialogs open; one test checks a real dialog by screenshot and Escape. `build.rs`
   fails a release build with `e2e-hooks`, and a static test keeps it out of the release npm
   scripts and the default features.
@@ -593,7 +609,8 @@ the server out of the GUI.
   bursts (9.5 s audible, peak -8 dBFS), guitar = eight 2 s phrases (16 s audible), from
   `tests/fixtures/import/stems-quiet/` and `stems-activity/`; `boundary`: guitar 15.0 s, other 14.9 s,
   piano bursts; `silent`: all six all zeroes; `undecodable`: piano is `fLaC` + junk, so the server
-  cannot measure it, other is a 1 s quiet tone) via
+  cannot measure it, other is a 1 s quiet tone; `seq:M1,M2,..`: run n (counted in `<work dir>/stub-runs`) uses the n-th
+  mode, the last repeats, so one file of a directory batch fails (`seq:ok,fail,ok`) or hangs (`seq:ok,hang`)) via
   `STUB_SEPARATOR_MODE` or `<work dir>/stub-mode`; argv logged to `$STUB_SEPARATOR_LOG`). The
   real adapter is only syntax-checked (`bash -n`); no test runs audio-separator or the model.
   The conformance suite `src/calliope-stems/tests/conformance.rs` checks every endpoint with
@@ -607,9 +624,12 @@ the server out of the GUI.
   GUI tests put `tests/support/bin` first on `PATH`.
 - ffmpeg/ffprobe are the real local tools (no network) on self-generated fixtures.
 - **Typed local paths**: `local_source` is tested on temp files (FIFO, dangling symlink,
-  `chmod 000`, folders, wrong extensions) with an injected home (no test reads the real `~`);
+  `chmod 000`, folders, wrong extensions) with an injected home (no test reads the real `~`); the same for the start-folder
+  rules and the folder listing (hidden files, subfolders, symlinks, FIFOs, name order);
   `tests/acceptance_existing_track_import.rs` drives typed paths (plain, quoted, `file://`) through
-  the real import with the stub server; GUI tests type absolute paths under `target/` only.
+  the real import with the stub server, and also holds the directory-batch and Browse start-folder acceptance tests
+  (`ac_*`; an app restart = reopening the `SettingsStore` from the same file); GUI tests type absolute paths under
+  `target/` only (`media/album/`, `media/three/`, `media/no-songs/` are created by `import_dirs`).
 - **No test reaches the internet or the LAN.** Import GUI tests run the app under
   `unshare -rn` with only loopback up, and `calliope-stems` (stub separator) inside the same
   namespace on 127.0.0.1:8765; tests use `127.0.0.1` and `.example` URLs only. Agents never
@@ -1288,3 +1308,32 @@ The settings are edited in a non-modal popover from a "Training…" button in th
 click outside or Close close it, keyboard reachable), so the Loops pane keeps three lines.
 Alternatives: the manager sending `SetSpeed` on each wrap (late by up to a tick), relative percentages (what is heard
 differs from what is shown), training by any playback that wraps the loop (surprising speed changes during normal play).
+
+### 2026-10-19: Browse starts in the typed path's folder, else the last import folder, else home; one shared `last_import_dir` setting   (feature: gui-import-local-batch; plan §2.3; spec Q2, Q3: proposed defaults)
+Browse used to open the dialog in home every time. The starting folder is now chosen in Rust by the pure
+`local_source::browse_start(typed, last, home)`: the box text goes through the same `normalise` as Extract, then an existing
+folder gives itself and any other existing entry its parent; invalid text falls through silently. Next comes
+`settings.last_import_dir` if it is still a folder (otherwise it is cleared), then home. `pick_import_file` takes the box text
+(`typed`) for this only. The folder is remembered when a local import is *accepted* (the job started): a file's folder, or the
+imported directory itself (owner answer to open question 1 of the plan). One field is shared by audio, video
+and directory Browse (spec Q2). The dialog only opens the folder and never preselects the file (spec Q3). Alternatives:
+keeping the start folder in the frontend (rejected: the webview would have to send and receive paths for this, and
+`settings.json` is Rust's), and one last folder per kind (rejected by the spec's proposed default: three settings for one
+habit). Tests read the start folder from the scripted picker's recorded requests and from the `calliope: dialog start` log line.
+
+### 2026-10-19: A directory import is one batch job in the import slot; each file reuses the single-file steps without the edit pane   (feature: gui-import-local-batch; plan §2.4-2.5; spec Q1: proposed default)
+"Several imports at the same time" is out of scope, and the GPU does one song at a time, so the batch is **one** job
+(`SourceKind::Directory`) in the existing single job slot. It is active until it ends (blocking other imports and
+root changes) and shares one `Cancel`. Its thread runs, for each audio file directly inside the folder (`list_audio_files`:
+`AUDIO_EXTENSIONS`, case-insensitive, no subfolders, no hidden files, case-insensitive name order), the
+same `prepare_file` + `extract_cleaned` code as a single Local Audio File import, in its own `import-tmp/file-<uuid>/`.
+The tags give the metadata (the file name is the title fallback), with **no edit pane** (spec Q1), so the batch runs
+unattended. A file's failure becomes a `BatchItem` with `result: failed` and the batch goes on. Cancel stops the current
+file through the existing paths (killed tools, deleted server job, abandoned staging) and skips the rest, and committed
+tracks stay. The snapshot gains `batch {dir, files, current, items}` (omitted for single jobs, whose JSON is
+unchanged), and the events gain `batch-file`, `batch-item` and `finished`. The single-import `ready`/`saved`/`failed` events
+are never sent in a batch. `import_directory(path)` is the second command that takes a path (read-only, like
+`import_path`). Alternatives: a frontend-driven loop over `import_path` + `start_stem_extraction` (rejected: the frontend
+would orchestrate a long job, a webview reload would stop the batch, and the files would have to be listed to the webview),
+and a queue of separate jobs (rejected: two job concepts, and "one import at a time" would need new rules). Tests use the
+stub separator's new `seq:` mode to fail or hang one file of a batch.
