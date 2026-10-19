@@ -135,6 +135,105 @@ fn unreadable(p: &std::path::Display<'_>, e: &std::io::Error) -> PathProblem {
     }
 }
 
+/// Where the Browse dialog opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartFrom {
+    Typed,
+    Last,
+    Home,
+    None,
+}
+
+impl StartFrom {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StartFrom::Typed => "typed",
+            StartFrom::Last => "last",
+            StartFrom::Home => "home",
+            StartFrom::None => "none",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowseStart {
+    pub dir: Option<PathBuf>,
+    pub from: StartFrom,
+    /// The remembered folder was consulted and is gone: the caller should clear it.
+    pub forget_last: bool,
+}
+
+/// The dialog's starting folder: the typed path (its folder, or itself when it is a folder),
+/// else the remembered folder, else home. Only reads metadata; typed errors fall through.
+pub fn browse_start(typed: &str, last: Option<&Path>, home: Option<&Path>) -> BrowseStart {
+    if let Ok(path) = normalise(typed, home) {
+        if let Ok(meta) = fs::metadata(&path) {
+            let dir = if meta.is_dir() {
+                Some(path)
+            } else {
+                path.parent().filter(|p| !p.as_os_str().is_empty()).map(Path::to_path_buf)
+            };
+            if dir.is_some() {
+                return BrowseStart { dir, from: StartFrom::Typed, forget_last: false };
+            }
+        }
+    }
+    let mut forget_last = false;
+    if let Some(p) = last {
+        if fs::metadata(p).is_ok_and(|m| m.is_dir()) {
+            return BrowseStart { dir: Some(p.to_path_buf()), from: StartFrom::Last, forget_last };
+        }
+        forget_last = true;
+    }
+    match home {
+        Some(h) => BrowseStart { dir: Some(h.to_path_buf()), from: StartFrom::Home, forget_last },
+        None => BrowseStart { dir: None, from: StartFrom::None, forget_last },
+    }
+}
+
+/// `normalise` plus the folder checks, in the documented order.
+pub fn resolve_dir(input: &str, home: Option<&Path>) -> Result<PathBuf, PathProblem> {
+    let path = normalise(input, home).map_err(|e| {
+        if e.reason == "empty" {
+            problem("empty", "Enter the path of a folder or choose one with Browse")
+        } else {
+            e
+        }
+    })?;
+    let p = path.display();
+    match fs::metadata(&path) {
+        Ok(m) if m.is_dir() => Ok(path),
+        Ok(_) => Err(problem("not-folder", format!("{p} is not a folder"))),
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            Err(problem("missing", format!("No folder found at {p}")))
+        }
+        Err(e) => Err(unreadable(&p, &e)),
+    }
+}
+
+/// The audio files directly inside `dir` (no subfolders, no hidden names), sorted by lowercase
+/// name and then by raw name. Entries that can't be read are skipped.
+pub fn list_audio_files(dir: &Path) -> Result<Vec<PathBuf>, PathProblem> {
+    let entries = fs::read_dir(dir).map_err(|e| unreadable(&dir.display(), &e))?;
+    let mut found: Vec<(String, String, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || !is_audio_name(&name) {
+            continue;
+        }
+        let path = entry.path();
+        if fs::metadata(&path).is_ok_and(|m| m.is_file()) {
+            found.push((name.to_lowercase(), name, path));
+        }
+    }
+    found.sort();
+    Ok(found.into_iter().map(|(_, _, p)| p).collect())
+}
+
+pub fn no_audio_message(dir: &Path) -> String {
+    format!("Directory {} has no audio files", dir.display())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,5 +417,109 @@ mod tests {
     #[test]
     fn dotdot_is_kept_as_typed() {
         assert_eq!(normalise("/a/../b.mp3", None).unwrap(), PathBuf::from("/a/../b.mp3"));
+    }
+
+    #[test]
+    fn browse_start_rules() {
+        let d = tempfile::tempdir().unwrap();
+        let f = touch(d.path(), "x.mp3");
+        let sub = d.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        let gone = d.path().join("gone");
+        let home = d.path().join("home");
+        fs::create_dir(&home).unwrap();
+        touch(&home, "x.mp3");
+        let typed = |s: &str, last: Option<&Path>, h: Option<&Path>| browse_start(s, last, h);
+        let want = |dir: &Path, from| BrowseStart { dir: Some(dir.to_path_buf()), from, forget_last: false };
+        // file -> its folder; folder -> itself; the typed path wins over a missing `last`
+        let r = typed(f.to_str().unwrap(), Some(&gone), None);
+        assert_eq!(r, want(d.path(), StartFrom::Typed));
+        assert_eq!(typed(sub.to_str().unwrap(), None, None), want(&sub, StartFrom::Typed));
+        // tilde, quotes, file://
+        assert_eq!(typed("~/x.mp3", None, Some(&home)), want(&home, StartFrom::Typed));
+        let q = format!("'{}'", f.display());
+        assert_eq!(typed(&q, None, None), want(d.path(), StartFrom::Typed));
+        let u = format!("file://{}", f.display());
+        assert_eq!(typed(&u, None, None), want(d.path(), StartFrom::Typed));
+        // fall through to last: missing, relative, empty, blank, dangling symlink
+        let dangling = d.path().join("dangling.mp3");
+        symlink(&gone, &dangling).unwrap();
+        for s in [gone.to_str().unwrap(), "rel/x.mp3", "", "  ", dangling.to_str().unwrap()] {
+            assert_eq!(typed(s, Some(&sub), Some(&home)), want(&sub, StartFrom::Last), "{s:?}");
+        }
+        // last missing: forget it and use home, or nothing
+        let r = typed("", Some(&gone), Some(&home));
+        assert_eq!(r, BrowseStart { dir: Some(home.clone()), from: StartFrom::Home, forget_last: true });
+        let r = typed("", Some(&f), None);
+        assert_eq!(r, BrowseStart { dir: None, from: StartFrom::None, forget_last: true });
+        let r = typed("", None, None);
+        assert_eq!(r, BrowseStart { dir: None, from: StartFrom::None, forget_last: false });
+        assert_eq!(typed("", None, Some(&home)), want(&home, StartFrom::Home));
+        assert_eq!(StartFrom::Typed.as_str(), "typed");
+        assert_eq!(StartFrom::None.as_str(), "none");
+    }
+
+    #[test]
+    fn resolve_dir_reasons_and_messages() {
+        let d = tempfile::tempdir().unwrap();
+        let e = resolve_dir("  ", None).unwrap_err();
+        assert_eq!(
+            (e.reason, e.message.as_str()),
+            ("empty", "Enter the path of a folder or choose one with Browse")
+        );
+        assert_eq!(reason(resolve_dir("rel/dir", None)), "relative");
+        let gone = d.path().join("gone");
+        let e = resolve_dir(gone.to_str().unwrap(), None).unwrap_err();
+        assert_eq!((e.reason, e.message), ("missing", format!("No folder found at {}", gone.display())));
+        let f = touch(d.path(), "a.mp3");
+        let e = resolve_dir(f.to_str().unwrap(), None).unwrap_err();
+        assert_eq!((e.reason, e.message), ("not-folder", format!("{} is not a folder", f.display())));
+        // symlink to a folder, and ~
+        let sub = d.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        let l = d.path().join("link");
+        symlink(&sub, &l).unwrap();
+        assert_eq!(resolve_dir(l.to_str().unwrap(), None).unwrap(), l);
+        assert_eq!(resolve_dir("~/sub", Some(d.path())).unwrap(), sub);
+        if !is_root() {
+            let locked = d.path().join("locked");
+            fs::create_dir_all(locked.join("in")).unwrap();
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+            let inner = locked.join("in");
+            let e = resolve_dir(inner.to_str().unwrap(), None).unwrap_err();
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(e.reason, "unreadable");
+            assert_eq!(e.message, format!("Cannot read {} (permission denied)", inner.display()));
+        }
+    }
+
+    #[test]
+    fn list_audio_files_filters_and_sorts() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path();
+        for n in ["b.mp3", "a.flac", "C.OGG", "cover.jpg", ".hidden.mp3", "clip.mp4"] {
+            touch(p, n);
+        }
+        fs::create_dir(p.join("sub")).unwrap();
+        touch(&p.join("sub"), "c.mp3");
+        fs::create_dir(p.join("x.mp3")).unwrap();
+        assert!(Command::new("mkfifo").arg(p.join("pipe.wav")).status().unwrap().success());
+        symlink(p.join("b.mp3"), p.join("link.wav")).unwrap();
+        symlink(p.join("nothing"), p.join("dead.mp3")).unwrap();
+        let names: Vec<String> = list_audio_files(p)
+            .unwrap()
+            .iter()
+            .map(|f| f.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["a.flac", "b.mp3", "C.OGG", "link.wav"]);
+        let e = tempfile::tempdir().unwrap();
+        assert_eq!(list_audio_files(e.path()).unwrap(), Vec::<PathBuf>::new());
+        if !is_root() {
+            fs::set_permissions(e.path(), fs::Permissions::from_mode(0o000)).unwrap();
+            let r = list_audio_files(e.path());
+            fs::set_permissions(e.path(), fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(r.unwrap_err().reason, "unreadable");
+        }
+        assert_eq!(no_audio_message(Path::new("/m/x")), "Directory /m/x has no audio files");
     }
 }
