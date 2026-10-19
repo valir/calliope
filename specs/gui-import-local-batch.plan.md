@@ -652,8 +652,8 @@ open a real dialog, never use the real `calliope-stems` on `0.0.0.0:8765` or any
       `phase=working`, then waits for `batch item=1 result=saved`, `batch file=2/2 name=b.mp3` and
       `batch finished saved=2 failed=0` (screenshot `import-batch-summary`). It checks 2 new
       tracks (titles `a`, `Glass Harbour`), `check_disk`, and `settings.json` `last_import_dir`
-      = `{media}`. Then Import another, Local Audio File, Browse with an empty box →
-      `from=last dir={media}`.
+      = `{media}/album` (owner answer: the directory itself). Then Import another, Local Audio File,
+      Browse with an empty box → `from=last dir={media}/album`.
     - `import_directory_one_fails`: stub `seq:ok,fail,ok` on `{media}/three` (typed path);
       `batch item=2 result=failed stage=server`; `finished saved=2 failed=1`; screenshot
       `import-batch-failed-summary`; 2 new tracks.

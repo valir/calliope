@@ -441,6 +441,23 @@ pub fn import_dirs(test: &str) -> Dirs {
     for f in ["tagged.mp3", "tagged.ogg", "untagged.flac", "with-audio.mp4", "no-audio.mp4", "long.flac"] {
         std::fs::copy(root().join("tests/fixtures/import").join(f), media.join(f)).unwrap();
     }
+    // Folders for the directory imports (copied before the tests snapshot `media`).
+    let fx = root().join("tests/fixtures/import");
+    let put = |dir: &str, name: &str, from: &str| {
+        let d = media.join(dir);
+        std::fs::create_dir_all(d.join(Path::new(name).parent().unwrap())).unwrap();
+        std::fs::copy(fx.join(from), d.join(name)).unwrap();
+    };
+    put("album", "a.flac", "untagged.flac");
+    put("album", "b.mp3", "tagged.mp3");
+    put("album", "sub/c.mp3", "tagged.mp3");
+    std::fs::write(media.join("album/cover.jpg"), b"not an image").unwrap();
+    put("three", "1.flac", "untagged.flac");
+    put("three", "2.ogg", "tagged.ogg");
+    put("three", "3.mp3", "tagged.mp3");
+    std::fs::create_dir_all(media.join("no-songs")).unwrap();
+    std::fs::write(media.join("no-songs/cover.jpg"), b"not an image").unwrap();
+    std::fs::write(media.join("no-songs/notes.txt"), b"notes").unwrap();
     std::fs::create_dir_all(dirs.base().join("stems-work")).unwrap();
     std::fs::create_dir_all(dirs.base().join("home")).unwrap();
     dirs
