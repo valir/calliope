@@ -156,8 +156,16 @@ FLAC stems (vocals, drums, bass, guitar, piano, other):
 1. Pick the source: a URL (anything `yt-dlp` supports), a local audio file or a local video file
    (its first audio track is used). Tracks longer than 15 minutes are refused. For a local file,
    type or paste its full path (`/...`, `~/...`, a quoted path or a `file://` link) in the path box,
-   or let Browse fill it in, then press Extract or Enter. A path that cannot be used is reported
-   under the box and nothing is imported:
+   or let Browse fill it in, then press Extract or Enter. Browse opens in the folder of the path in
+   the box (a file's folder, or the folder itself), else in the folder of your last local import,
+   else in your home folder. **Local Directory** imports every audio file directly inside a
+   folder (not its subfolders, not videos), one after another in file-name order, each with its
+   own tags (the file name is the title when there is none) and without the edit step. The page
+   shows `File N of M: name`, the current file's progress and the files done. A file that fails
+   is listed and the next one starts. Cancel stops the current file and skips the rest; tracks
+   already saved stay. At the end a summary lists the saved tracks and the failed files. A folder
+   without audio files gives `Directory <dir> has no audio files`. A path that cannot be used is
+   reported under the box and nothing is imported:
    * empty box: `Enter the path of a file or choose one with Browse`
    * relative path: `Enter the full path, starting with / or ~/`
    * `No file found at <path>`
@@ -190,7 +198,7 @@ external tools: [`docs/licences.md`](../../docs/licences.md).
 
 ## Settings files
 
-* `~/.config/app.calliope.gui/settings.json` (theme, repository folder, edge-AI address, keep-original)
+* `~/.config/app.calliope.gui/settings.json` (theme, repository folder, edge-AI address, keep-original, last import folder)
 * `~/.config/app.calliope.gui/.window-state.json`
 * `~/.local/share/calliope/`: default track repository (see above)
 

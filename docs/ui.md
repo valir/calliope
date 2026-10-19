@@ -122,6 +122,13 @@
   Buttons and badges keep amber-500 fill with dark text in both themes. A failed extraction
   scrolls its message into view (it sits below the fold at 1024x640). The switch's off state has a
   muted border so it stays visible on dark cards.
+- (gui-import-local-batch) Import source page: four radios (URL, Local Audio File, Local
+  Video File, Local Directory; the new one last so the keyboard order stays). A directory
+  import shows `File N of M: name`, the current file's progress, a scrolling list of the files
+  done and one Cancel (the only focusable control); the summary lists the saved tracks (with
+  dropped stems) and the failed files (accent colour), then Show in Library (the first saved
+  track) and Import another track. A cancelled batch returns to the source page with a status
+  line.
 - (gui-backing-track-editor, task 19) Editor layout. Each stem lane is one row (name, Play,
   Unmute, volume slider that takes the remaining width, dB value) when the pane is wide enough
   (1280x800) and two rows (slider and dB value below) at 1024x640, where the pane is only about
