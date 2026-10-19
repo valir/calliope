@@ -23,6 +23,8 @@ pub struct Settings {
     pub edge_ai_url: Option<String>,
     /// Keep the original mix (as FLAC) next to the extracted stems.
     pub keep_original: bool,
+    /// Folder of the last accepted local import (file or directory), where Browse starts; `None` = none yet.
+    pub last_import_dir: Option<PathBuf>,
 }
 
 /// Longest accepted `edge_ai_url`.
@@ -143,6 +145,16 @@ pub fn load(path: &Path) -> Settings {
         Some(serde_json::Value::Bool(b)) => s.keep_original = *b,
         Some(v) => eprintln!("calliope: invalid keep_original {v} in {} (not a boolean); using default", path.display()),
     }
+    match obj.get("last_import_dir") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::String(d)) if Path::new(d).is_absolute() => {
+            s.last_import_dir = Some(PathBuf::from(d));
+        }
+        Some(v) => eprintln!(
+            "calliope: invalid last_import_dir {v} in {} (not an absolute path string); using none",
+            path.display()
+        ),
+    }
     s
 }
 
@@ -204,6 +216,15 @@ impl SettingsStore {
         *cur = next.clone();
         Ok(next)
     }
+
+    pub fn set_last_import_dir(&self, dir: Option<PathBuf>) -> std::io::Result<Settings> {
+        let mut cur = self.current.lock().unwrap_or_else(|e| e.into_inner());
+        let mut next = cur.clone();
+        next.last_import_dir = dir;
+        save(&self.path, &next)?;
+        *cur = next.clone();
+        Ok(next)
+    }
 }
 
 #[cfg(test)]
@@ -221,7 +242,7 @@ mod tests {
 
     #[test]
     fn json_shape() {
-        assert_eq!(serde_json::to_string(&light()).unwrap(), r#"{"theme":"light","repository_root":null,"edge_ai_url":null,"keep_original":false}"#);
+        assert_eq!(serde_json::to_string(&light()).unwrap(), r#"{"theme":"light","repository_root":null,"edge_ai_url":null,"keep_original":false,"last_import_dir":null}"#);
         let s: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
         assert_eq!(s, light());
     }
@@ -400,5 +421,38 @@ mod tests {
         assert!(again.keep_original);
         assert_eq!(again.edge_ai_url.as_deref(), Some("http://a:1"));
         assert_eq!(store.set_edge_ai_url("").unwrap().edge_ai_url, None);
+    }
+
+    #[test]
+    fn last_import_dir_roundtrip_and_lenient() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("s.json");
+
+        // 1. Save with Some("/music/rock") and load
+        let mut s = light();
+        s.last_import_dir = Some(PathBuf::from("/music/rock"));
+        save(&p, &s).unwrap();
+        assert_eq!(load(&p).last_import_dir, s.last_import_dir);
+
+        // 2. A file with "last_import_dir":"rel/x" loads as None and keeps "theme":"light"
+        std::fs::write(&p, r#"{"theme":"light","last_import_dir":"rel/x"}"#).unwrap();
+        let loaded = load(&p);
+        assert_eq!(loaded.theme, Theme::Light);
+        assert_eq!(loaded.last_import_dir, None);
+
+        // 3. A file with "last_import_dir":5 loads as None
+        std::fs::write(&p, r#"{"theme":"light","last_import_dir":5}"#).unwrap();
+        let loaded2 = load(&p);
+        assert_eq!(loaded2.theme, Theme::Light);
+        assert_eq!(loaded2.last_import_dir, None);
+
+        // 4. SettingsStore::set_last_import_dir(Some(..)) persists across SettingsStore::open
+        let store = SettingsStore::open(p.clone());
+        store.set_last_import_dir(Some(PathBuf::from("/abs/dir"))).unwrap();
+        assert_eq!(SettingsStore::open(p.clone()).get().last_import_dir, Some(PathBuf::from("/abs/dir")));
+
+        // 5. set_last_import_dir(None) clears it
+        store.set_last_import_dir(None).unwrap();
+        assert_eq!(SettingsStore::open(p.clone()).get().last_import_dir, None);
     }
 }
