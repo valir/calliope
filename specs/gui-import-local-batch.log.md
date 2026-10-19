@@ -14,3 +14,5 @@ task 11 | Headless acceptance tests | implementer | done
 task 12 | GUI end-to-end and visual review | implementer | done (plan text fixed: the remembered folder is the directory itself; progress screenshot uses seq:slow,ok)
 task 13 | README and UI guide | implementer (moved from local after its failures in this build) | done
 gui suite | all binaries green except one start-up stall in acceptance_stem_extraction_gui (qa_malicious_server..., app never got past start-up under parallel load); passes alone; pre-existing flake | orchestrator | done
+reviewer | APPROVED; 3 minor (no file-count cap, stale phase at batch-file in snapshot, frontend per-file fields not reset at batch-file), 2 nit (verbatim file names in log lines, remember after start) | reviewer | done
+tester | all criteria PASS; added 5 acceptance tests (tilde/relative/deleted last folder, spaces/uppercase/hidden, rejections, cancel on the last file + busy, req. 10 log lines); no defects | tester | done

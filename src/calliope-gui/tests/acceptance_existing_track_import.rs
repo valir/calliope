@@ -698,3 +698,158 @@ fn ac_progress_names_the_current_file() {
     rig.state.cancel(&snap.job).unwrap();
     ipc.wait_batch_over();
 }
+
+// ------------------------------------------------------------------ QA additions
+
+/// Browse with a `~` path, a relative path and a remembered folder that was deleted: no error,
+/// silent fall-back, and the stale setting is forgotten (also on disk).
+#[test]
+fn ac_browse_tilde_relative_and_deleted_last_folder() {
+    let rig = Rig::new();
+    let (rock, song) = music_tree(&rig);
+    let answers = "import-audio CANCEL\n".repeat(5);
+    let ipc = Ipc::new(&rig, &answers, None);
+    // `~/..` is understood like for Extract
+    fs::create_dir_all(ipc.home.join("Songs")).unwrap();
+    fs::copy(fixture("tagged.mp3"), ipc.home.join("Songs/t.mp3")).unwrap();
+    ipc.browse(PickKind::Audio, "~/Songs/t.mp3");
+    assert_eq!(ipc.last_start(), (DialogKind::ImportAudio, Some(ipc.home.join("Songs"))));
+    ipc.browse(PickKind::Audio, "~/Songs");
+    assert_eq!(ipc.last_start().1, Some(ipc.home.join("Songs")));
+    // accepted import remembers rock; a relative typed path falls back to it
+    ipc.import_file(&song).unwrap();
+    rig.ready();
+    ipc.browse(PickKind::Audio, "music/rock/song.mp3");
+    assert_eq!(ipc.last_start().1, Some(rock.clone()), "relative paths are not resolved");
+    // the folder disappears: home is used, the setting is forgotten, nothing is an error
+    fs::remove_dir_all(&rock).unwrap();
+    assert!(ipc.browse(PickKind::Audio, "").is_none());
+    assert_eq!(ipc.last_start().1, Some(ipc.home.clone()));
+    assert_eq!(ipc.store.get().last_import_dir, None);
+    let on_disk: serde_json::Value = serde_json::from_slice(&fs::read(&ipc.settings_file).unwrap()).unwrap();
+    assert!(on_disk["last_import_dir"].is_null(), "{on_disk}");
+}
+
+/// Directory with spaces in its path, typed with `~`; upper/mixed-case extensions; hidden
+/// files and video files skipped; names sorted case-insensitively.
+#[test]
+fn ac_directory_with_spaces_uppercase_extensions_and_hidden_files() {
+    let server = RealServer::start("ok");
+    let rig = Rig::new();
+    let ipc = Ipc::new(&rig, "", Some(&server));
+    let dir = ipc.home.join("My Music/Rock Album");
+    fs::create_dir_all(&dir).unwrap();
+    fs::copy(fixture("untagged.flac"), dir.join("Song One.FLAC")).unwrap();
+    fs::copy(fixture("tagged.mp3"), dir.join("B.Mp3")).unwrap();
+    fs::copy(fixture("tagged.mp3"), dir.join("._B.mp3")).unwrap();
+    fs::copy(fixture("tagged.mp3"), dir.join(".hidden.mp3")).unwrap();
+    fs::copy(fixture("with-audio.mp4"), dir.join("clip.MP4")).unwrap();
+    let before = fingerprint(&dir);
+    let typed = "~/My Music/Rock Album";
+    do_import_directory(&ipc.st, &rig.state, &ipc.store, typed, Some(ipc.home.clone()), ipc.sink.clone()).unwrap();
+    let done = ipc.wait_batch_over();
+    assert_eq!(done.phase, Phase::Finished, "{:?}", done.error);
+    assert_eq!(ipc.batch_file_names(), ["B.Mp3", "Song One.FLAC"]);
+    assert_eq!(done.batch.as_ref().unwrap().dir, dir.display().to_string());
+    assert_eq!(rig.tracks().len(), 2);
+    assert_eq!(ipc.store.get().last_import_dir, Some(dir.clone()));
+    assert_eq!(fingerprint(&dir), before, "sources changed");
+    assert_eq!(rig.import_tmp(), Vec::<String>::new());
+}
+
+/// A directory of only hidden / uppercase-non-audio files has no audio; bad paths are
+/// rejected with the exact texts and never change the remembered folder.
+#[test]
+fn ac_directory_rejections_do_not_touch_the_remembered_folder() {
+    let rig = Rig::new();
+    let (rock, song) = music_tree(&rig);
+    let ipc = Ipc::new(&rig, "", None);
+    ipc.store.set_last_import_dir(Some(rock.clone())).unwrap();
+    let hidden = rig.dir.path().join("music/hidden");
+    fs::create_dir_all(&hidden).unwrap();
+    fs::copy(fixture("tagged.mp3"), hidden.join(".song.mp3")).unwrap();
+    fs::write(hidden.join("README.TXT"), b"x").unwrap();
+    assert_eq!(ipc.import_dir(&hidden).unwrap_err(), format!("Directory {} has no audio files", hidden.display()));
+    let missing = rig.dir.path().join("music/nope");
+    assert_eq!(ipc.import_dir(&missing).unwrap_err(), format!("No folder found at {}", missing.display()));
+    assert_eq!(ipc.import_dir(&song).unwrap_err(), format!("{} is not a folder", song.display()));
+    assert_eq!(ipc.import_dir(Path::new("")).unwrap_err(), "Enter the path of a folder or choose one with Browse");
+    assert!(ipc.import_dir(Path::new("music/rock")).is_err(), "relative");
+    assert_eq!(ipc.store.get().last_import_dir, Some(rock));
+    assert!(rig.state.snapshot().is_none());
+    assert!(ipc.events().is_empty());
+}
+
+/// Cancel while the LAST file works: the first two are kept; a second directory import while
+/// the batch runs is refused as busy and is not remembered.
+#[test]
+fn ac_cancel_on_the_last_file_and_busy_refusal() {
+    let server = RealServer::start("seq:ok,ok,hang");
+    let rig = Rig::new();
+    let dir = rig.dir.path().join("music/three");
+    fs::create_dir_all(&dir).unwrap();
+    fs::copy(fixture("untagged.flac"), dir.join("1.flac")).unwrap();
+    fs::copy(fixture("tagged.ogg"), dir.join("2.ogg")).unwrap();
+    fs::copy(fixture("tagged.mp3"), dir.join("3.mp3")).unwrap();
+    let other = album(&rig);
+    let ipc = Ipc::new(&rig, "", Some(&server));
+    let snap = ipc.import_dir(&dir).unwrap();
+    until("file 3 working", 90, || {
+        rig.state.snapshot().is_some_and(|s| s.phase == Phase::Working && s.batch.is_some_and(|b| b.current == Some(2)))
+    });
+    assert_eq!(ipc.import_dir(&other).unwrap_err(), "An import is already running");
+    assert_eq!(ipc.store.get().last_import_dir, Some(dir.clone()), "a refused import is not remembered");
+    rig.state.cancel(&snap.job).unwrap();
+    let s = ipc.wait_batch_over();
+    assert_eq!(s.phase, Phase::Cancelled);
+    let b = s.batch.unwrap();
+    assert_eq!((b.current, b.items.len(), b.files.len()), (None, 2, 3));
+    assert!(b.items.iter().all(|i| matches!(i.outcome, BatchOutcome::Saved { .. })));
+    assert_eq!(rig.tracks().len(), 2);
+    assert!(ipc.events().iter().any(|e| matches!(e, ImportEvent::Cancelled { .. })));
+    assert!(!ipc.events().iter().any(|e| matches!(e, ImportEvent::Finished { .. })));
+    until("the server job to be deleted", 10, || server.job_dirs().is_empty());
+    assert_eq!(rig.import_tmp(), Vec::<String>::new());
+    // the slot is free again
+    assert!(!rig.state.is_active());
+}
+
+/// Requirement 10: started / saved / failed / cancelled lines for every file, and the batch
+/// totals, are written to the log. The scenario runs in a child copy of this test binary so
+/// its stderr can be captured.
+#[test]
+fn ac_batch_log_lines_for_started_saved_failed_cancelled() {
+    if std::env::var("ACQ_BATCH_LOG_CHILD").is_ok() {
+        let server = RealServer::start("seq:ok,fail,hang");
+        let rig = Rig::new();
+        let dir = rig.dir.path().join("music/three");
+        fs::create_dir_all(&dir).unwrap();
+        fs::copy(fixture("untagged.flac"), dir.join("1.flac")).unwrap();
+        fs::copy(fixture("tagged.ogg"), dir.join("2.ogg")).unwrap();
+        fs::copy(fixture("tagged.mp3"), dir.join("3.mp3")).unwrap();
+        let ipc = Ipc::new(&rig, "", Some(&server));
+        let snap = ipc.import_dir(&dir).unwrap();
+        until("file 3 working", 90, || {
+            rig.state.snapshot().is_some_and(|s| s.phase == Phase::Working && s.batch.is_some_and(|b| b.current == Some(2)))
+        });
+        rig.state.cancel(&snap.job).unwrap();
+        ipc.wait_batch_over();
+        return;
+    }
+    let out = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "ac_batch_log_lines_for_started_saved_failed_cancelled", "--nocapture", "--test-threads=1"])
+        .env("ACQ_BATCH_LOG_CHILD", "1")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(out.status.success(), "child failed:\n{err}");
+    let has = |needle: &[&str]| err.lines().any(|l| l.contains("calliope: import batch") && needle.iter().all(|n| l.contains(n)));
+    assert!(has(&["files=3"]), "{err}");
+    for (i, n) in [(1, "1.flac"), (2, "2.ogg"), (3, "3.mp3")] {
+        assert!(has(&[&format!("file={i}/3 name={n} result=started")]), "started {n}\n{err}");
+    }
+    assert!(has(&["file=1/3 name=1.flac result=saved id="]), "{err}");
+    assert!(has(&["file=2/3 name=2.ogg result=failed stage=server message="]), "{err}");
+    assert!(has(&["file=3/3 name=3.mp3 result=cancelled"]), "{err}");
+    assert!(has(&["cancelled saved=1 skipped=1"]), "{err}");
+}
