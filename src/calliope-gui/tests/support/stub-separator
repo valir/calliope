@@ -20,6 +20,7 @@
 #   silent      all six stems are digital silence
 #   undecodable ok stems, but other is stems-quiet/minus60 (empty) and piano is "fLaC" + junk (passes the server's check, cannot be decoded)
 #   boundary    vocals/drums/bass as ok; guitar 15.0 s audible, other 14.9 s, piano short loud bursts (9.5 s)
+#   seq:M1,M2,...  run n (counted in <work dir>/stub-runs) uses the n-th mode; the last one repeats
 # $STUB_SEPARATOR_LOG, if set, gets the argv (one line, tab separated) appended.
 set -euo pipefail
 
@@ -48,6 +49,17 @@ if [[ -z $mode ]]; then
   done
 fi
 mode=${mode:-ok}
+if [[ $mode == seq:* ]]; then
+  runs_file="$PWD/../../stub-runs"
+  runs=0
+  [[ -f $runs_file ]] && IFS= read -r runs <"$runs_file" || true
+  runs=$((runs + 1))
+  echo "$runs" >"$runs_file"
+  IFS=, read -r -a seq_modes <<<"${mode#seq:}"
+  idx=$((runs - 1))
+  ((idx >= ${#seq_modes[@]})) && idx=$((${#seq_modes[@]} - 1))
+  mode=${seq_modes[$idx]}
+fi
 
 [[ -f $in ]] || { echo "stub-separator: input not found" >&2; exit 2; }
 mkdir -p -- "$out"

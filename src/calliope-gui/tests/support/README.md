@@ -37,6 +37,8 @@ directory (or two levels up), else `ok`:
 | `sparse` | piano digital silence, other short loud bursts (9.5 s audible, peak -8 dBFS), guitar eight 2 s phrases (16 s audible) |
 | `boundary` | vocals/drums/bass as `ok`; guitar 15.0 s audible, other 14.9 s, piano short loud bursts (9.5 s) |
 
+`seq:ok,fail,ok` picks a mode per run (counted in `<work dir>/stub-runs`), so one file of a batch can fail or hang.
+
 `$STUB_SEPARATOR_LOG` gets one tab-separated argv line per run.
 
 The real adapter `src/calliope-stems/separators/audio-separator.sh` is only syntax-checked
