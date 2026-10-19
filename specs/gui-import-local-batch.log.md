@@ -13,3 +13,4 @@ task 10 | Source page, batch progress and summary | implementer | done (UI names
 task 11 | Headless acceptance tests | implementer | done
 task 12 | GUI end-to-end and visual review | implementer | done (plan text fixed: the remembered folder is the directory itself; progress screenshot uses seq:slow,ok)
 task 13 | README and UI guide | implementer (moved from local after its failures in this build) | done
+gui suite | all binaries green except one start-up stall in acceptance_stem_extraction_gui (qa_malicious_server..., app never got past start-up under parallel load); passes alone; pre-existing flake | orchestrator | done
