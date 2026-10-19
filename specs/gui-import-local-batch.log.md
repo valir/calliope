@@ -10,3 +10,4 @@ task 7 | IPC: start folder, remembering, import_directory | implementer | done
 task 8 | TS IPC types and wrappers | implementer (local model deleted 128 lines of ipc.ts, discarded) | done (committed with tasks 9-10)
 task 9 | Import state: directory source and batch events | implementer | done
 task 10 | Source page, batch progress and summary | implementer | done (UI names noted in the plan for tasks 11-12)
+task 11 | Headless acceptance tests | implementer | done

@@ -425,3 +425,276 @@ fn rejected_paths_start_no_job_and_create_nothing() {
     assert_eq!(fingerprint(&rig.sources), sources_before);
     rig.outside_ok();
 }
+
+// ------------------------------------------------------------------ gui-import-local-batch
+
+use calliope_gui::ipc::{ImportKind, do_import_directory, do_import_path, do_pick_import_file, PickKind, RepoState};
+use calliope_gui::picker::{DialogKind, ScriptedPicker};
+use calliope_gui::settings::SettingsStore;
+
+/// A `Rig` plus what the IPC functions need: a scripted picker (kept by handle), a settings
+/// store in a temp file, a recording event sink and a home folder.
+struct Ipc<'a> {
+    rig: &'a Rig,
+    store: SettingsStore,
+    picker: Arc<ScriptedPicker>,
+    st: RepoState,
+    events: Arc<Mutex<Vec<ImportEvent>>>,
+    sink: Sink,
+    home: PathBuf,
+    settings_file: PathBuf,
+}
+
+impl<'a> Ipc<'a> {
+    fn new(rig: &'a Rig, answers: &str, server: Option<&RealServer>) -> Ipc<'a> {
+        let answers_file = rig.dir.path().join("answers");
+        fs::write(&answers_file, answers).unwrap();
+        let settings_file = rig.dir.path().join("settings.json");
+        let store = SettingsStore::open(settings_file.clone());
+        if let Some(s) = server {
+            store.set_edge_ai_url(&s.url).unwrap();
+        }
+        let picker = Arc::new(ScriptedPicker::new(answers_file));
+        let st = RepoState::new(rig.root.clone(), Box::new(picker.clone()));
+        let events = Arc::new(Mutex::new(Vec::<ImportEvent>::new()));
+        let e2 = events.clone();
+        let sink: Sink = Arc::new(move |ev| e2.lock().unwrap().push(ev));
+        let home = rig.dir.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        Ipc { rig, store, picker, st, events, sink, home, settings_file }
+    }
+    fn browse(&self, kind: PickKind, typed: &str) -> Option<calliope_gui::ipc::PickedFile> {
+        do_pick_import_file(&self.st, &self.store, kind, typed, Some(self.home.clone())).unwrap()
+    }
+    fn last_start(&self) -> (DialogKind, Option<PathBuf>) {
+        self.picker.starts().pop().expect("a dialog was opened")
+    }
+    fn import_file(&self, path: &Path) -> Result<JobSnapshot, String> {
+        do_import_path(&self.st, &self.rig.state, &self.store, ImportKind::Audio, &path.display().to_string(), Some(self.home.clone()), self.sink.clone())
+    }
+    fn import_dir(&self, path: &Path) -> Result<JobSnapshot, String> {
+        do_import_directory(&self.st, &self.rig.state, &self.store, &path.display().to_string(), Some(self.home.clone()), self.sink.clone())
+    }
+    fn events(&self) -> Vec<ImportEvent> {
+        self.events.lock().unwrap().clone()
+    }
+    fn batch_file_names(&self) -> Vec<String> {
+        self.events().into_iter().filter_map(|e| if let ImportEvent::BatchFile { name, .. } = e { Some(name) } else { None }).collect()
+    }
+    fn wait_batch_over(&self) -> JobSnapshot {
+        self.rig.idle()
+    }
+}
+
+/// `<tmp>/music/rock/song.mp3` (tagged) and `<tmp>/music/jazz/`.
+fn music_tree(rig: &Rig) -> (PathBuf, PathBuf) {
+    let rock = rig.dir.path().join("music/rock");
+    fs::create_dir_all(&rock).unwrap();
+    fs::create_dir_all(rig.dir.path().join("music/jazz")).unwrap();
+    let song = rock.join("song.mp3");
+    fs::copy(fixture("tagged.mp3"), &song).unwrap();
+    (rock, song)
+}
+
+#[test]
+fn ac_browse_opens_the_typed_files_folder() {
+    let rig = Rig::new();
+    let (rock, song) = music_tree(&rig);
+    let ipc = Ipc::new(&rig, "import-audio CANCEL\nimport-video CANCEL\n", None);
+    assert!(ipc.browse(PickKind::Audio, &song.display().to_string()).is_none());
+    assert_eq!(ipc.last_start(), (DialogKind::ImportAudio, Some(rock.clone())));
+    // a quoted path works the same way, for the video dialog too
+    ipc.browse(PickKind::Video, &format!("\"{}\"", song.display()));
+    assert_eq!(ipc.last_start(), (DialogKind::ImportVideo, Some(rock)));
+    assert_eq!(ipc.store.get().last_import_dir, None, "Browse alone remembers nothing");
+}
+
+#[test]
+fn ac_browse_opens_the_typed_directory() {
+    let rig = Rig::new();
+    let (_, _) = music_tree(&rig);
+    let jazz = rig.dir.path().join("music/jazz");
+    let ipc = Ipc::new(&rig, "import-audio CANCEL\nimport-directory CANCEL\n", None);
+    ipc.browse(PickKind::Audio, &jazz.display().to_string());
+    assert_eq!(ipc.last_start(), (DialogKind::ImportAudio, Some(jazz.clone())));
+    ipc.browse(PickKind::Directory, &jazz.display().to_string());
+    assert_eq!(ipc.last_start(), (DialogKind::ImportDirectory, Some(jazz)));
+}
+
+#[test]
+fn ac_browse_opens_the_last_location_also_after_restart() {
+    let rig = Rig::new();
+    let (rock, song) = music_tree(&rig);
+    let answers = "import-audio CANCEL\nimport-video CANCEL\n";
+    {
+        let ipc = Ipc::new(&rig, answers, None);
+        ipc.import_file(&song).unwrap();
+        rig.ready();
+        assert_eq!(ipc.store.get().last_import_dir, Some(rock.clone()));
+    }
+    // app restart: a new store reads the same file
+    let ipc = Ipc::new(&rig, answers, None);
+    assert_eq!(ipc.settings_file, rig.dir.path().join("settings.json"));
+    assert_eq!(ipc.store.get().last_import_dir, Some(rock.clone()));
+    ipc.browse(PickKind::Audio, "");
+    assert_eq!(ipc.last_start(), (DialogKind::ImportAudio, Some(rock.clone())));
+    ipc.browse(PickKind::Video, &rig.dir.path().join("music/nope.mp3").display().to_string());
+    assert_eq!(ipc.last_start(), (DialogKind::ImportVideo, Some(rock)));
+}
+
+#[test]
+fn ac_browse_opens_home_when_nothing_was_imported() {
+    let rig = Rig::new();
+    let ipc = Ipc::new(&rig, "import-audio CANCEL\nimport-directory CANCEL\n", None);
+    ipc.browse(PickKind::Audio, "");
+    assert_eq!(ipc.last_start(), (DialogKind::ImportAudio, Some(ipc.home.clone())));
+    ipc.browse(PickKind::Directory, "relative/nothing");
+    assert_eq!(ipc.last_start(), (DialogKind::ImportDirectory, Some(ipc.home.clone())));
+}
+
+#[test]
+fn ac_directory_browse_uses_the_folder_dialog() {
+    let rig = Rig::new();
+    let (rock, _) = music_tree(&rig);
+    let ipc = Ipc::new(&rig, &format!("import-directory {}\n", rock.display()), None);
+    let picked = ipc.browse(PickKind::Directory, "").unwrap();
+    assert_eq!(picked.path, rock.display().to_string());
+    assert_eq!(picked.name, "rock");
+    assert_eq!(ipc.last_start().0, DialogKind::ImportDirectory);
+}
+
+fn album(rig: &Rig) -> PathBuf {
+    let dir = rig.dir.path().join("music/album");
+    fs::create_dir_all(dir.join("sub")).unwrap();
+    fs::copy(fixture("tagged.mp3"), dir.join("b.mp3")).unwrap();
+    fs::copy(fixture("untagged.flac"), dir.join("a.flac")).unwrap();
+    fs::write(dir.join("cover.jpg"), b"not an image").unwrap();
+    fs::copy(fixture("tagged.mp3"), dir.join("sub/c.mp3")).unwrap();
+    dir
+}
+
+#[test]
+fn ac_directory_import_order_and_ignored_entries() {
+    let server = RealServer::start("ok");
+    let rig = Rig::new();
+    let dir = album(&rig);
+    let before = fingerprint(&dir);
+    let ipc = Ipc::new(&rig, "", Some(&server));
+    ipc.import_dir(&dir).unwrap();
+    let done = ipc.wait_batch_over();
+    assert_eq!(done.phase, Phase::Finished, "{:?}", done.error);
+    assert_eq!(ipc.batch_file_names(), ["a.flac", "b.mp3"]);
+    let items = done.batch.unwrap().items;
+    assert_eq!(items.len(), 2);
+    assert!(items.iter().all(|i| matches!(i.outcome, BatchOutcome::Saved { .. })));
+    assert_eq!(rig.tracks().len(), 2);
+    let titles: Vec<String> = rig
+        .tracks()
+        .iter()
+        .map(|id| {
+            let j: serde_json::Value = serde_json::from_slice(&fs::read(rig.root.join("tracks").join(id).join("track.json")).unwrap()).unwrap();
+            assert_eq!(j["type"], "stem");
+            j["title"].as_str().unwrap().to_string()
+        })
+        .collect();
+    assert!(titles.contains(&"a".to_string()) && titles.contains(&"Glass Harbour".to_string()), "{titles:?}");
+    assert_eq!(rig.import_tmp(), Vec::<String>::new());
+    assert_eq!(fingerprint(&dir), before, "sources changed");
+    assert_eq!(ipc.store.get().last_import_dir, Some(dir));
+    rig.outside_ok();
+}
+
+#[test]
+fn ac_directory_without_audio_files() {
+    let rig = Rig::new();
+    let dir = rig.dir.path().join("music/images");
+    fs::create_dir_all(dir.join("sub")).unwrap();
+    fs::write(dir.join("cover.jpg"), b"x").unwrap();
+    fs::copy(fixture("tagged.mp3"), dir.join("sub/c.mp3")).unwrap();
+    fs::copy(fixture("with-audio.mp4"), dir.join("clip.mp4")).unwrap();
+    let ipc = Ipc::new(&rig, "", None);
+    let before = fingerprint(&rig.root);
+    assert_eq!(ipc.import_dir(&dir).unwrap_err(), format!("Directory {} has no audio files", dir.display()));
+    assert!(!rig.state.is_active());
+    assert!(rig.state.snapshot().is_none());
+    assert!(ipc.events().is_empty());
+    assert_eq!(fingerprint(&rig.root), before);
+    assert_eq!(ipc.store.get().last_import_dir, None);
+}
+
+#[test]
+fn ac_second_of_three_fails() {
+    let server = RealServer::start("seq:ok,fail,ok");
+    let rig = Rig::new();
+    let dir = rig.dir.path().join("music/three");
+    fs::create_dir_all(&dir).unwrap();
+    fs::copy(fixture("untagged.flac"), dir.join("1.flac")).unwrap();
+    fs::copy(fixture("tagged.ogg"), dir.join("2.ogg")).unwrap();
+    fs::copy(fixture("tagged.mp3"), dir.join("3.mp3")).unwrap();
+    let ipc = Ipc::new(&rig, "", Some(&server));
+    ipc.import_dir(&dir).unwrap();
+    let done = ipc.wait_batch_over();
+    assert_eq!(done.phase, Phase::Finished);
+    let items = done.batch.unwrap().items;
+    assert_eq!(items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(), ["1.flac", "2.ogg", "3.mp3"]);
+    assert!(matches!(items[0].outcome, BatchOutcome::Saved { .. }));
+    assert!(matches!(items[2].outcome, BatchOutcome::Saved { .. }));
+    match &items[1].outcome {
+        BatchOutcome::Failed { stage, message } => {
+            assert_eq!(*stage, Stage::Server);
+            assert!(!message.is_empty());
+        }
+        o => panic!("{o:?}"),
+    }
+    assert_eq!(rig.tracks().len(), 2);
+    assert_eq!(rig.import_tmp(), Vec::<String>::new());
+    let finished: Vec<_> = ipc.events().into_iter().filter(|e| matches!(e, ImportEvent::Finished { .. })).collect();
+    assert_eq!(finished.len(), 1);
+}
+
+#[test]
+fn ac_cancel_on_file_two_of_three() {
+    let server = RealServer::start("seq:ok,hang");
+    let rig = Rig::new();
+    let dir = rig.dir.path().join("music/three");
+    fs::create_dir_all(&dir).unwrap();
+    fs::copy(fixture("untagged.flac"), dir.join("1.flac")).unwrap();
+    fs::copy(fixture("tagged.ogg"), dir.join("2.ogg")).unwrap();
+    fs::copy(fixture("tagged.mp3"), dir.join("3.mp3")).unwrap();
+    let ipc = Ipc::new(&rig, "", Some(&server));
+    let snap = ipc.import_dir(&dir).unwrap();
+    until("file 2 working", 60, || {
+        rig.state.snapshot().is_some_and(|s| s.phase == Phase::Working && s.batch.is_some_and(|b| b.current == Some(1)))
+    });
+    rig.state.cancel(&snap.job).unwrap();
+    let s = ipc.wait_batch_over();
+    assert_eq!(s.phase, Phase::Cancelled);
+    assert!(!rig.state.is_active(), "idle again");
+    let b = s.batch.unwrap();
+    assert_eq!((b.current, b.items.len()), (None, 1));
+    assert_eq!(rig.tracks().len(), 1);
+    assert_eq!(ipc.batch_file_names(), ["1.flac", "2.ogg"], "file 3 never started");
+    until("the server job to be deleted", 10, || server.job_dirs().is_empty());
+    assert!(server.count("method=DELETE") >= 2);
+    assert_eq!(rig.import_tmp(), Vec::<String>::new());
+}
+
+#[test]
+fn ac_progress_names_the_current_file() {
+    let server = RealServer::start("seq:ok,hang");
+    let rig = Rig::new();
+    let dir = album(&rig);
+    let ipc = Ipc::new(&rig, "", Some(&server));
+    let snap = ipc.import_dir(&dir).unwrap();
+    assert_eq!(snap.source.label, "album");
+    until("file 2 working", 60, || {
+        rig.state.snapshot().is_some_and(|s| s.phase == Phase::Working && s.batch.is_some_and(|b| b.current == Some(1)))
+    });
+    let s = rig.state.snapshot().unwrap();
+    let b = s.batch.unwrap();
+    assert_eq!((b.current, b.files.len(), b.files[1].as_str()), (Some(1), 2, "b.mp3"));
+    assert_eq!(b.items.len(), 1);
+    assert_eq!(s.phase, Phase::Working);
+    rig.state.cancel(&snap.job).unwrap();
+    ipc.wait_batch_over();
+}
