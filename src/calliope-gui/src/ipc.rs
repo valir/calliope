@@ -391,32 +391,73 @@ pub struct PickedFile {
     pub name: String,
 }
 
-/// Opens the file dialog for `kind` and returns the chosen path. `Ok(None)` when cancelled.
-/// No validation here: `do_import_path` does it.
+/// Which dialog `pick_import_file` opens.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PickKind {
+    Audio,
+    Video,
+    Directory,
+}
+
+/// Opens the dialog for `kind` and returns the chosen path. `Ok(None)` when cancelled. The
+/// dialog starts in the folder of `typed`, else the remembered folder, else home. No validation
+/// here: `do_import_path` and `do_import_directory` do it.
 pub fn do_pick_import_file(
     st: &RepoState,
-    kind: ImportKind,
+    store: &SettingsStore,
+    kind: PickKind,
+    typed: &str,
     home: Option<PathBuf>,
 ) -> Result<Option<PickedFile>, String> {
+    let start = crate::local_source::browse_start(typed, store.get().last_import_dir.as_deref(), home.as_deref());
+    if start.forget_last {
+        eprintln!("calliope: import last-location forgotten");
+        if let Err(e) = store.set_last_import_dir(None) {
+            eprintln!("calliope: could not save settings: {e}");
+        }
+    }
+    let start_dir = start.dir;
     let (dialog, title, filter, exts) = match kind {
-        ImportKind::Audio => (DialogKind::ImportAudio, "Choose an audio file", "Audio files", AUDIO_EXTENSIONS),
-        ImportKind::Video => (DialogKind::ImportVideo, "Choose a video file", "Video files", VIDEO_EXTENSIONS),
+        PickKind::Audio => (DialogKind::ImportAudio, "Choose an audio file", "Audio files", AUDIO_EXTENSIONS),
+        PickKind::Video => (DialogKind::ImportVideo, "Choose a video file", "Video files", VIDEO_EXTENSIONS),
+        PickKind::Directory => (DialogKind::ImportDirectory, "Choose a folder of songs", "", &[][..]),
     };
-    let req = FileReq {
-        kind: dialog,
-        title: title.into(),
-        filter_name: filter.into(),
-        extensions: exts.iter().map(|s| s.to_string()).collect(),
-        start_dir: home,
+    eprintln!(
+        "calliope: dialog start kind={} from={} dir={}",
+        dialog.as_str(),
+        start.from.as_str(),
+        start_dir.as_ref().map_or("none".to_string(), |d| d.display().to_string())
+    );
+    let picked = if kind == PickKind::Directory {
+        st.picker.pick_folder(&FolderReq { kind: dialog, title: title.into(), start_dir })
+    } else {
+        st.picker.pick_file(&FileReq {
+            kind: dialog,
+            title: title.into(),
+            filter_name: filter.into(),
+            extensions: exts.iter().map(|s| s.to_string()).collect(),
+            start_dir,
+        })
     };
-    let Some(path) = st.picker.pick_file(&req) else {
+    let Some(path) = picked else {
         return Ok(None);
     };
-    const NOT_UTF8: &str =
-        "The chosen file's path has characters Calliope cannot show; rename the file or its folder";
-    let name = path.file_name().and_then(|n| n.to_str()).ok_or(NOT_UTF8)?.to_string();
-    let path = path.to_str().ok_or(NOT_UTF8)?.to_string();
+    let what = if kind == PickKind::Directory { "folder" } else { "file" };
+    let not_utf8 = format!(
+        "The chosen {what}'s path has characters Calliope cannot show; rename the {what} or its folder"
+    );
+    let name = path.file_name().and_then(|n| n.to_str()).ok_or(not_utf8.as_str())?.to_string();
+    let path = path.to_str().ok_or(not_utf8.as_str())?.to_string();
     Ok(Some(PickedFile { path, name }))
+}
+
+/// Saves `folder` as the starting folder of the next Browse. A save error is only logged.
+fn remember_location(store: &SettingsStore, folder: &std::path::Path) {
+    match store.set_last_import_dir(Some(folder.to_path_buf())) {
+        Ok(_) => eprintln!("calliope: import last-location dir={}", folder.display()),
+        Err(e) => eprintln!("calliope: could not save settings: {e}"),
+    }
 }
 
 /// Starts the import of a typed or picked path. The only command that takes a path; it only
@@ -424,6 +465,7 @@ pub fn do_pick_import_file(
 pub fn do_import_path(
     st: &RepoState,
     import: &ImportState,
+    store: &SettingsStore,
     kind: ImportKind,
     path: &str,
     home: Option<PathBuf>,
@@ -444,7 +486,45 @@ pub fn do_import_path(
         }
     };
     eprintln!("calliope: import path kind={k} result=accepted");
-    import.start_file(&st.current_root(), file_kind, &abs, sink)
+    let snap = import.start_file(&st.current_root(), file_kind, &abs, sink)?;
+    if let Some(folder) = abs.parent().filter(|p| !p.as_os_str().is_empty()) {
+        remember_location(store, folder);
+    }
+    Ok(snap)
+}
+
+/// Starts the import of every audio file directly inside the folder `path`. Read-only, like
+/// `do_import_path`. The folder itself is remembered once the job started.
+pub fn do_import_directory(
+    st: &RepoState,
+    import: &ImportState,
+    store: &SettingsStore,
+    path: &str,
+    home: Option<PathBuf>,
+    sink: Sink,
+) -> Result<JobSnapshot, String> {
+    if import.is_active() {
+        return Err(crate::import_job::BUSY_MESSAGE.into());
+    }
+    let reject = |reason: &str| eprintln!("calliope: import path kind=directory result=rejected reason={reason}");
+    let dir = crate::local_source::resolve_dir(path, home.as_deref()).map_err(|p| {
+        reject(p.reason);
+        p.message
+    })?;
+    let files = crate::local_source::list_audio_files(&dir).map_err(|p| {
+        reject(p.reason);
+        p.message
+    })?;
+    if files.is_empty() {
+        reject("no-audio");
+        return Err(crate::local_source::no_audio_message(&dir));
+    }
+    let s = store.get();
+    let n = files.len();
+    let snap = import.start_batch(&st.current_root(), &dir, files, s.edge_ai_url.as_deref(), s.keep_original, sink)?;
+    eprintln!("calliope: import path kind=directory result=accepted files={n}");
+    remember_location(store, &dir);
+    Ok(snap)
 }
 
 pub fn do_start_extraction(
@@ -872,9 +952,19 @@ pub async fn start_url_import(
 #[tauri::command]
 pub async fn pick_import_file(
     app: tauri::AppHandle,
-    kind: ImportKind,
+    kind: PickKind,
+    typed: Option<String>,
 ) -> Result<Option<PickedFile>, String> {
-    blocking(move || do_pick_import_file(&app.state::<RepoState>(), kind, home(&app))).await
+    blocking(move || {
+        do_pick_import_file(
+            &app.state::<RepoState>(),
+            &app.state::<SettingsStore>(),
+            kind,
+            typed.as_deref().unwrap_or(""),
+            home(&app),
+        )
+    })
+    .await
 }
 
 #[tauri::command]
@@ -888,7 +978,27 @@ pub async fn import_path(
         do_import_path(
             &app.state::<RepoState>(),
             &app.state::<ImportState>(),
+            &app.state::<SettingsStore>(),
             kind,
+            &path,
+            home(&app),
+            channel_sink(events),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn import_directory(
+    app: tauri::AppHandle,
+    path: String,
+    events: tauri::ipc::Channel<ImportEvent>,
+) -> Result<JobSnapshot, String> {
+    blocking(move || {
+        do_import_directory(
+            &app.state::<RepoState>(),
+            &app.state::<ImportState>(),
+            &app.state::<SettingsStore>(),
             &path,
             home(&app),
             channel_sink(events),
@@ -1124,6 +1234,7 @@ mod tests {
         import: ImportState,
         default: PathBuf,
         answers: PathBuf,
+        picker: Arc<ScriptedPicker>,
     }
 
     fn env(answers: &str) -> Env {
@@ -1132,10 +1243,11 @@ mod tests {
         let answers_path = base.join("answers");
         std::fs::write(&answers_path, answers).unwrap();
         let default = base.join("data/calliope");
-        let st = RepoState::new(default.clone(), Box::new(ScriptedPicker::new(answers_path.clone())));
+        let picker = Arc::new(ScriptedPicker::new(answers_path.clone()));
+        let st = RepoState::new(default.clone(), Box::new(picker.clone()));
         let store = SettingsStore::open(base.join("settings.json"));
         let import = ImportState::new(Tools::default(), st.repo_lock(), Duration::from_millis(10));
-        Env { _dir: dir, base, st, store, import, default, answers: answers_path }
+        Env { _dir: dir, base, st, store, import, default, answers: answers_path, picker }
     }
 
     fn seed(e: &Env) -> crate::repository::TrackRecord {
@@ -1335,12 +1447,110 @@ mod tests {
             format!("import-audio CANCEL\nimport-audio {}\nimport-video {}\n", f.display(), f.display()),
         )
         .unwrap();
-        assert!(do_pick_import_file(&e.st, ImportKind::Audio, None).unwrap().is_none());
-        let p = do_pick_import_file(&e.st, ImportKind::Audio, None).unwrap().unwrap();
+        assert!(do_pick_import_file(&e.st, &e.store, PickKind::Audio, "", None).unwrap().is_none());
+        let p = do_pick_import_file(&e.st, &e.store, PickKind::Audio, "", None).unwrap().unwrap();
         assert_eq!(p.path, f.to_str().unwrap());
         assert_eq!(p.name, "My Song.mp3");
         // no validation at pick time
-        assert!(do_pick_import_file(&e.st, ImportKind::Video, None).unwrap().is_some());
+        assert!(do_pick_import_file(&e.st, &e.store, PickKind::Video, "", None).unwrap().is_some());
+    }
+
+    #[test]
+    fn pick_start_dir_rules() {
+        use crate::picker::DialogKind as D;
+        let e = env("");
+        let music = e.base.join("music");
+        let album = music.join("album");
+        std::fs::create_dir_all(&album).unwrap();
+        let song = album.join("s.mp3");
+        std::fs::write(&song, b"x").unwrap();
+        let home = e.base.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let ans = |lines: &[String]| std::fs::write(&e.answers, lines.join("\n") + "\n").unwrap();
+        ans(&vec!["import-audio CANCEL".to_string(); 5]);
+        let pick = |k, typed: &str| do_pick_import_file(&e.st, &e.store, k, typed, Some(home.clone())).unwrap();
+        // typed file -> its folder; typed dir -> itself
+        pick(PickKind::Audio, song.to_str().unwrap());
+        pick(PickKind::Audio, album.to_str().unwrap());
+        // empty, with a remembered folder -> last
+        e.store.set_last_import_dir(Some(music.clone())).unwrap();
+        pick(PickKind::Audio, "");
+        // remembered folder deleted -> home, and the setting is cleared
+        let gone = e.base.join("gone");
+        e.store.set_last_import_dir(Some(gone)).unwrap();
+        pick(PickKind::Audio, "");
+        assert_eq!(e.store.get().last_import_dir, None);
+        // directory kind uses pick_folder
+        ans(&[format!("import-directory {}", album.display())]);
+        let got = pick(PickKind::Directory, "").unwrap();
+        assert_eq!((got.path.as_str(), got.name.as_str()), (album.to_str().unwrap(), "album"));
+        assert_eq!(
+            e.picker.starts(),
+            vec![
+                (D::ImportAudio, Some(album.clone())),
+                (D::ImportAudio, Some(album.clone())),
+                (D::ImportAudio, Some(music)),
+                (D::ImportAudio, Some(home.clone())),
+                (D::ImportDirectory, Some(home)),
+            ]
+        );
+    }
+
+    /// An import state whose ffprobe hangs, so an accepted job stays running until cancelled.
+    fn slow_import(e: &Env) -> ImportState {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = e.base.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for (n, body) in [("ffmpeg", "echo ffmpeg version 7.1"), ("ffprobe", "if [ \"$1\" = -version ]; then echo ffprobe version 7.1; else sleep 30; fi")] {
+            let f = bin.join(n);
+            std::fs::write(&f, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        ImportState::new(Tools::discover(bin.as_os_str()), e.st.repo_lock(), Duration::from_millis(10))
+    }
+
+    #[test]
+    fn accepted_imports_remember_the_folder() {
+        let e = env("");
+        do_list_tracks(&e.st, &e.default).unwrap();
+        let import = slow_import(&e);
+        let album = e.base.join("album");
+        std::fs::create_dir_all(&album).unwrap();
+        let song = album.join("song.mp3");
+        std::fs::write(&song, b"x").unwrap();
+        let notes = e.base.join("notes.txt");
+        std::fs::write(&notes, b"x").unwrap();
+        // a rejected path changes nothing
+        do_import_path(&e.st, &import, &e.store, ImportKind::Audio, notes.to_str().unwrap(), None, null_sink()).unwrap_err();
+        assert_eq!(e.store.get().last_import_dir, None);
+        // an accepted file remembers its folder
+        let snap = do_import_path(&e.st, &import, &e.store, ImportKind::Audio, song.to_str().unwrap(), None, null_sink()).unwrap();
+        assert_eq!(e.store.get().last_import_dir, Some(album.clone()));
+        let _ = import.cancel(&snap.job);
+        // an accepted directory remembers the directory itself
+        e.store.set_last_import_dir(None).unwrap();
+        e.store.set_edge_ai_url("http://127.0.0.1:1").unwrap();
+        let import = slow_import(&e);
+        let snap = do_import_directory(&e.st, &import, &e.store, album.to_str().unwrap(), None, null_sink()).unwrap();
+        assert_eq!(e.store.get().last_import_dir, Some(album));
+        let _ = import.cancel(&snap.job);
+    }
+
+    #[test]
+    fn import_directory_rejections() {
+        let e = env("");
+        let file = e.base.join("a.mp3");
+        std::fs::write(&file, b"x").unwrap();
+        let empty = e.base.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        let go = |p: &str| do_import_directory(&e.st, &e.import, &e.store, p, None, null_sink()).unwrap_err();
+        let missing = e.base.join("nope");
+        assert_eq!(go(missing.to_str().unwrap()), format!("No folder found at {}", missing.display()));
+        assert_eq!(go(file.to_str().unwrap()), format!("{} is not a folder", file.display()));
+        assert_eq!(go(empty.to_str().unwrap()), format!("Directory {} has no audio files", empty.display()));
+        assert_eq!(go(""), "Enter the path of a folder or choose one with Browse");
+        assert!(e.import.snapshot().is_none());
+        assert_eq!(e.store.get().last_import_dir, None);
     }
 
     #[test]
@@ -1350,7 +1560,7 @@ mod tests {
         let clip = e.base.join("clip.mp4");
         std::fs::write(&notes, b"x").unwrap();
         std::fs::write(&clip, b"x").unwrap();
-        let go = |k, p: &str| do_import_path(&e.st, &e.import, k, p, None, null_sink()).unwrap_err();
+        let go = |k, p: &str| do_import_path(&e.st, &e.import, &e.store, k, p, None, null_sink()).unwrap_err();
         let err = go(ImportKind::Audio, clip.to_str().unwrap());
         assert!(err.contains("not an audio file"), "{err}");
         let err = go(ImportKind::Video, notes.to_str().unwrap());
@@ -1369,7 +1579,7 @@ mod tests {
         do_list_tracks(&e.st, &e.default).unwrap();
         let f = e.base.join("song.mp3");
         std::fs::write(&f, b"x").unwrap();
-        let err = do_import_path(&e.st, &e.import, ImportKind::Audio, f.to_str().unwrap(), None, null_sink())
+        let err = do_import_path(&e.st, &e.import, &e.store, ImportKind::Audio, f.to_str().unwrap(), None, null_sink())
             .unwrap_err();
         assert!(err.contains("ffmpeg"), "{err}");
         assert!(e.import.snapshot().is_none());
@@ -1391,8 +1601,8 @@ mod tests {
         let import = ImportState::new(tools, e.st.repo_lock(), Duration::from_millis(10));
         let f = e.base.join("song.mp3");
         std::fs::write(&f, b"x").unwrap();
-        let snap = do_import_path(&e.st, &import, ImportKind::Audio, f.to_str().unwrap(), None, null_sink()).unwrap();
-        let err = do_import_path(&e.st, &import, ImportKind::Audio, f.to_str().unwrap(), None, null_sink())
+        let snap = do_import_path(&e.st, &import, &e.store, ImportKind::Audio, f.to_str().unwrap(), None, null_sink()).unwrap();
+        let err = do_import_path(&e.st, &import, &e.store, ImportKind::Audio, f.to_str().unwrap(), None, null_sink())
             .unwrap_err();
         assert_eq!(err, crate::import_job::BUSY_MESSAGE);
         let _ = import.cancel(&snap.job);
@@ -1403,12 +1613,12 @@ mod tests {
         let e = env("");
         std::fs::write(e.base.join("song.mp3"), b"x").unwrap();
         let err = do_import_path(
-            &e.st, &e.import, ImportKind::Audio, "~/song.mp3", Some(e.base.clone()), null_sink(),
+            &e.st, &e.import, &e.store, ImportKind::Audio, "~/song.mp3", Some(e.base.clone()), null_sink(),
         )
         .unwrap_err();
         assert!(err.contains("ffmpeg"), "{err}");
         let err = do_import_path(
-            &e.st, &e.import, ImportKind::Audio, "~/other.mp3", Some(e.base.clone()), null_sink(),
+            &e.st, &e.import, &e.store, ImportKind::Audio, "~/other.mp3", Some(e.base.clone()), null_sink(),
         )
         .unwrap_err();
         assert!(err.starts_with("No file found at "), "{err}");

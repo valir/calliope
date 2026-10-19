@@ -6,3 +6,4 @@ task 3 | Picker: directory kind, recorded start folders, Arc picker | implemente
 task 4 | local_source: starting folder, directory checks, audio listing | implementer | done
 task 5 | Import job: helpers and batch types (no behaviour change) | implementer | done (committed with task 6: shared files)
 task 6 | The batch runner | implementer | done (note for tasks 9-10 added to the plan)
+task 7 | IPC: start folder, remembering, import_directory | implementer | done

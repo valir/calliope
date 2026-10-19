@@ -17,6 +17,7 @@
     "allow-start-url-import",
     "allow-pick-import-file",
     "allow-import-path",
+    "allow-import-directory",
     "allow-start-stem-extraction",
     "allow-cancel-import",
     "allow-discard-import",

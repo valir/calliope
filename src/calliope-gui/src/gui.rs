@@ -90,6 +90,7 @@ pub fn run() {
             ipc::start_url_import,
             ipc::pick_import_file,
             ipc::import_path,
+            ipc::import_directory,
             ipc::start_stem_extraction,
             ipc::cancel_import,
             ipc::discard_import,

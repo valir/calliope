@@ -31,6 +31,7 @@ const COMMANDS: &[&str] = &[
     "start_url_import",
     "pick_import_file",
     "import_path",
+    "import_directory",
     "start_stem_extraction",
     "cancel_import",
     "discard_import",
