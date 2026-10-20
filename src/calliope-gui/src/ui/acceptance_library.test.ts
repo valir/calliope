@@ -450,3 +450,340 @@ describe('Delete track', () => {
     expect(calls.map((c) => c.cmd)).not.toContain('delete_track');
   });
 });
+
+// ---- gui-library-album-order: acceptance through LibraryView with a stateful fake backend ----
+describe('gui-library-album-order acceptance', () => {
+  type Patch = { id: string; revision: string; band?: string; album?: string; position?: number; album_position?: number };
+  let disk: TrackRecord[] = [];
+  let logs: string[] = [];
+  let rev = 0;
+  let trashFail = new Set<string>();
+  const realRect = Element.prototype.getBoundingClientRect;
+  const ROW = 30;
+
+  const mk = (id: string, band: string, album: string, title: string, p: Partial<TrackRecord> = {}): TrackRecord =>
+    rec(0, { id, band, album, title, revision: `r${++rev}`, position: null, album_position: null, ...p });
+  const apply = (p: Patch): TrackRecord => {
+    const i = disk.findIndex((t) => t.id === p.id);
+    const { id, revision, ...rest } = p;
+    void id;
+    void revision;
+    const set = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
+    disk[i] = { ...disk[i], ...set, revision: `r${++rev}` };
+    return disk[i];
+  };
+
+  const installMock = () =>
+    mockIPC((cmd, args) => {
+      const a = args as Record<string, unknown>;
+      switch (cmd) {
+        case 'frontend_log':
+          logs.push(a.message as string);
+          return undefined;
+        case 'get_repository':
+          return { root: '/tmp/repo', is_default: true, status: 'ok' };
+        case 'list_tracks':
+          return { root: '/tmp/repo', tracks: structuredClone(disk), problems: [] };
+        case 'update_tracks': {
+          calls.push({ cmd, args });
+          return { tracks: (a.patches as Patch[]).map(apply), failed: [] };
+        }
+        case 'delete_tracks': {
+          calls.push({ cmd, args });
+          const deleted: string[] = [];
+          const failed: { id: string; title: string; message: string }[] = [];
+          for (const it of a.items as { id: string }[]) {
+            const t = disk.find((x) => x.id === it.id)!;
+            if (trashFail.has(it.id)) failed.push({ id: it.id, title: t.title, message: 'conflict: changed on disk' });
+            else {
+              disk = disk.filter((x) => x.id !== it.id);
+              deleted.push(it.id);
+            }
+          }
+          return { deleted, failed };
+        }
+        case 'delete_track':
+          calls.push({ cmd, args });
+          disk = disk.filter((x) => x.id !== a.id);
+          return { trash: 'x' };
+        case 'save_track': {
+          const req = a.request as SaveTrackRequest;
+          calls.push({ cmd, args });
+          const main = apply({ id: req.id, revision: req.revision, ...req.edits, position: req.position, album_position: req.album_position } as Patch);
+          const updated = (req.group ?? []).map(apply);
+          return { track: main, warnings: [], updated, failed: [] };
+        }
+      }
+      return undefined;
+    });
+
+  beforeEach(() => {
+    logs = [];
+    trashFail = new Set();
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      if (this.hasAttribute('data-key')) {
+        const top = items().indexOf(this as HTMLElement) * ROW;
+        return { top, bottom: top + ROW, left: 0, right: 300, width: 300, height: ROW, x: 0, y: top } as DOMRect;
+      }
+      if (this.getAttribute('role') === 'tree') return { top: 0, bottom: 999, left: 0, right: 300, width: 300, height: 999, x: 0, y: 0 } as DOMRect;
+      return realRect.call(this);
+    };
+  });
+  afterEach(() => {
+    Element.prototype.getBoundingClientRect = realRect;
+  });
+
+  const row = (label: string) => items().find((i) => labels()[items().indexOf(i)] === label)!;
+  const y = (label: string, frac = 0.5) => items().indexOf(row(label)) * ROW + ROW * frac;
+  const pointer = (type: string, clientY: number, clientX = 20) =>
+    fireEvent(window, new PointerEvent(type, { clientX, clientY, button: 0, bubbles: true }));
+  const drag = async (from: string, toY: number) => {
+    await fireEvent.pointerDown(row(from), { button: 0, clientX: 20, clientY: y(from) });
+    await pointer('pointermove', toY);
+    await pointer('pointerup', toY);
+  };
+  const open = async () => {
+    calls = [];
+    installMock();
+    await ready();
+    await fireEvent.click(btn('Expand all'));
+    await tick();
+  };
+  const restart = async () => {
+    cleanup();
+    resetLibrary();
+    await open();
+  };
+  const sent = (cmd: string) => calls.filter((c) => c.cmd === cmd);
+  const quiet = () => new Promise((r) => setTimeout(r, 30));
+  const treeDelete = () => within(screen.getByTestId('tree-toolbar')).getByRole('button', { name: 'Delete' }) as HTMLButtonElement;
+  const abc = (p: Partial<TrackRecord>[] = [{}, {}, {}]) => [
+    mk('a', 'Band', 'Order', 'A', p[0]),
+    mk('b', 'Band', 'Order', 'B', p[1]),
+    mk('c', 'Band', 'Order', 'C', p[2]),
+    mk('d', 'Other', 'Elsewhere', 'D'),
+  ];
+
+  it('AC1: A, B, C without positions are alphabetical, without numbers', async () => {
+    disk = abc();
+    await open();
+    expect(labels()).toEqual(['Band', 'Order', 'A', 'B', 'C', 'Other', 'Elsewhere', 'D']);
+  });
+
+  it('AC2: dragging C above A gives 1. C, 2. A, 3. B, also after a restart', async () => {
+    disk = abc();
+    await open();
+    await drag('C', y('A', 0.2));
+    await waitFor(() => expect(labels().slice(2, 5)).toEqual(['1. C', '2. A', '3. B']));
+    await restart();
+    expect(labels().slice(2, 5)).toEqual(['1. C', '2. A', '3. B']);
+  });
+
+  it('AC3/AC4: Alt+Up moves "2. A" up and keeps its focus; on "1. A" nothing changes', async () => {
+    disk = abc([{ position: 2 }, { position: 3 }, { position: 1 }]);
+    await open();
+    expect(labels().slice(2, 5)).toEqual(['1. C', '2. A', '3. B']);
+    row('2. A').focus();
+    await fireEvent.keyDown(row('2. A'), { key: 'ArrowUp', altKey: true });
+    await waitFor(() => expect(labels().slice(2, 5)).toEqual(['1. A', '2. C', '3. B']));
+    await waitFor(() => expect((document.activeElement as HTMLElement).dataset.key).toBe('t:a'));
+    const n = sent('update_tracks').length;
+    await fireEvent.keyDown(row('1. A'), { key: 'ArrowUp', altKey: true });
+    await quiet();
+    expect(sent('update_tracks').length).toBe(n);
+    expect(logs).toContain('reorder none key=t:a via=key reason=first');
+    expect(labels().slice(2, 5)).toEqual(['1. A', '2. C', '3. B']);
+  });
+
+  it('AC5/AC9: a track dragged onto another album, an album onto another band, change nothing', async () => {
+    disk = abc();
+    await open();
+    await drag('C', y('Elsewhere'));
+    await drag('Order', y('Other'));
+    await quiet();
+    expect(calls).toEqual([]);
+    expect(labels()).toEqual(['Band', 'Order', 'A', 'B', 'C', 'Other', 'Elsewhere', 'D']);
+  });
+
+  it('AC6: a track added without a position is shown after the positioned ones', async () => {
+    disk = [...abc([{ position: 1 }, { position: 2 }, { title: 'Aardvark' }]).slice(0, 3)];
+    await open();
+    expect(labels().slice(2, 5)).toEqual(['1. A', '2. B', 'Aardvark']);
+  });
+
+  const albums = () => [
+    mk('a1', 'Band', 'Alpha', 'a-one', { position: 1 }),
+    mk('a2', 'Band', 'Alpha', 'a-two', { position: 2 }),
+    mk('b1', 'Band', 'Beta', 'b-one', { position: 1 }),
+    mk('g1', 'Band', 'Gamma', 'g-one', { position: 1 }),
+    mk('g2', 'Band', 'Gamma', 'g-two', { position: 2 }),
+    mk('n1', 'Band', '', 'loose'),
+    mk('o1', 'Other', 'Elsewhere', 'o-one'),
+  ];
+  const albumRows = () => labels().filter((l) => ['Alpha', 'Beta', 'Gamma', '(no album)'].includes(l));
+
+  it('AC7/AC8/AC10: Gamma dragged above Alpha, then Alt+Down on Alpha; track order kept, (no album) last', async () => {
+    disk = albums();
+    await open();
+    expect(albumRows()).toEqual(['Alpha', 'Beta', 'Gamma', '(no album)']);
+    await drag('Gamma', y('Alpha', 0.2));
+    await waitFor(() => expect(albumRows()).toEqual(['Gamma', 'Alpha', 'Beta', '(no album)']));
+    await restart();
+    expect(albumRows()).toEqual(['Gamma', 'Alpha', 'Beta', '(no album)']);
+    expect(disk.filter((t) => t.album === 'Gamma').map((t) => t.position)).toEqual([1, 2]);
+    expect(disk.filter((t) => t.album === 'Alpha').map((t) => t.position)).toEqual([1, 2]);
+    row('Alpha').focus();
+    await fireEvent.keyDown(row('Alpha'), { key: 'ArrowDown', altKey: true });
+    await waitFor(() => expect(albumRows()).toEqual(['Gamma', 'Beta', 'Alpha', '(no album)']));
+  });
+
+  it('AC11: the new Position row is read-only in edit mode', async () => {
+    disk = abc([{ position: 1 }]);
+    await open();
+    await fireEvent.click(row('1. A'));
+    await tick();
+    await edit();
+    expect(field('Position').value).toBe('1');
+    expect(field('Position').readOnly).toBe(true);
+  });
+
+  const puppets = () => [
+    ...Array.from({ length: 8 }, (_, i) => mk(`m${i + 1}`, 'Metalica', 'Masterof Puppets', `Song ${i + 1}`, { position: i + 1, album_position: 1 })),
+    mk('r1', 'Metalica', 'Ride the Lightning', 'Fuel', { position: 1, album_position: 2 }),
+    mk('r2', 'Metalica', 'Ride the Lightning', 'Creeping', { position: 2, album_position: 2 }),
+  ];
+
+  it('AC12/AC13/AC14: album and band renames ask first, cancel saves nothing, Yes moves every track in order', async () => {
+    disk = puppets();
+    await open();
+    await fireEvent.click(row('3. Song 3'));
+    await tick();
+    await edit();
+    await fireEvent.input(field('Album'), { target: { value: 'Master of Puppets' } });
+    await fireEvent.click(bar('Save'));
+    let dlg = await screen.findByRole('alertdialog');
+    expect(dlg.textContent).toContain('"Masterof Puppets"');
+    expect(dlg.textContent).toContain('"Master of Puppets"');
+    expect(dlg.textContent).toContain('8 tracks');
+    // AC14: cancel keeps edit mode and saves nothing
+    await fireEvent.click(within(dlg).getByRole('button', { name: 'No' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(sent('save_track').length).toBe(0);
+    expect(bar('Save').disabled).toBe(false);
+    expect(disk.every((t) => t.album !== 'Master of Puppets')).toBe(true);
+    await fireEvent.click(bar('Save'));
+    dlg = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(dlg).getByRole('button', { name: 'Yes' }));
+    await waitFor(() => expect(sent('save_track').length).toBe(1));
+    await restart();
+    const moved = disk.filter((t) => t.album === 'Master of Puppets');
+    expect(moved.map((t) => t.position).sort()).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(moved.find((t) => t.id === 'm3')!.position).toBe(3);
+
+    // AC13: band "Metalica" -> "Metallica" moves both albums
+    await fireEvent.click(row('2. Creeping'));
+    await tick();
+    await edit();
+    await fireEvent.input(field('Band'), { target: { value: 'Metallica' } });
+    await fireEvent.click(bar('Save'));
+    dlg = await screen.findByRole('alertdialog');
+    expect(dlg.textContent).toContain('10 tracks');
+    expect(dlg.textContent).toContain('2 albums');
+    await fireEvent.click(within(dlg).getByRole('button', { name: 'Yes' }));
+    await waitFor(() => expect(disk.every((t) => t.band === 'Metallica')).toBe(true));
+    expect(disk.filter((t) => t.album === 'Ride the Lightning').map((t) => [t.id, t.position])).toEqual([
+      ['r1', 1],
+      ['r2', 2],
+    ]);
+    expect(disk.find((t) => t.id === 'm1')!.album_position).toBe(1);
+    expect(disk.find((t) => t.id === 'r1')!.album_position).toBe(2);
+  });
+
+  it('AC15: with search text, dragging and the move keys do not reorder', async () => {
+    disk = abc([{ position: 1 }, { position: 2 }, { position: 3 }]);
+    await open();
+    await fireEvent.input(search(), { target: { value: 'b' } });
+    await tick();
+    const b = row('2. B');
+    b.focus();
+    await fireEvent.keyDown(b, { key: 'ArrowDown', altKey: true });
+    await drag('2. B', y('2. B') - ROW);
+    await quiet();
+    expect(sent('update_tracks')).toEqual([]);
+  });
+
+  it('AC16: Delete key and button on a selected track move it to the trash after a confirmation', async () => {
+    disk = abc();
+    await open();
+    await fireEvent.click(row('A'));
+    await tick();
+    row('A').focus();
+    await fireEvent.keyDown(row('A'), { key: 'Delete' });
+    let dlg = await screen.findByRole('alertdialog');
+    expect(dlg.textContent).toContain('Delete track "A"?');
+    await fireEvent.click(within(dlg).getByRole('button', { name: 'Yes' }));
+    await waitFor(() => expect(labels()).not.toContain('A'));
+    expect(disk.map((t) => t.id)).toEqual(['b', 'c', 'd']);
+    // the toolbar button does the same
+    row('B').focus();
+    await tick();
+    await fireEvent.click(treeDelete());
+    dlg = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(dlg).getByRole('button', { name: 'Yes' }));
+    await waitFor(() => expect(labels()).not.toContain('B'));
+  });
+
+  it('AC17/AC18: an album of 4 names band, album and "4 tracks"; cancelling deletes nothing, confirming deletes all', async () => {
+    disk = [...abc(), mk('e', 'Band', 'Order', 'E')];
+    await open();
+    row('Order').focus();
+    await fireEvent.keyDown(row('Order'), { key: 'Delete' });
+    let dlg = await screen.findByRole('alertdialog');
+    expect(dlg.textContent).toContain('Delete the album "Order" by Band (4 tracks)?');
+    await fireEvent.click(within(dlg).getByRole('button', { name: 'No' }));
+    await tick();
+    expect(sent('delete_tracks')).toEqual([]);
+    expect(disk.length).toBe(5);
+    await fireEvent.keyDown(row('Order'), { key: 'Delete' });
+    dlg = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(dlg).getByRole('button', { name: 'Yes' }));
+    await waitFor(() => expect(labels()).not.toContain('Order'));
+    expect(disk.map((t) => t.id)).toEqual(['d']);
+  });
+
+  it('AC19: one folder that cannot be moved is reported with its reason, the others are deleted', async () => {
+    disk = [...abc(), mk('e', 'Band', 'Order', 'E')];
+    trashFail = new Set(['b']);
+    await open();
+    row('Order').focus();
+    await fireEvent.keyDown(row('Order'), { key: 'Delete' });
+    await fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Yes' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Deleted 3 of 4 tracks');
+    expect(alert.textContent).toContain('"B": conflict: changed on disk');
+    expect(disk.map((t) => t.id)).toEqual(['b', 'd']);
+  });
+
+  it('AC20: a focused band disables Delete', async () => {
+    disk = abc();
+    await open();
+    row('Band').focus();
+    await tick();
+    expect(treeDelete().disabled).toBe(true);
+    await fireEvent.keyDown(row('Band'), { key: 'Delete' });
+    await quiet();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(logs.some((l) => l.startsWith('delete none') && l.includes('reason=band'))).toBe(true);
+  });
+
+  it('AC21: tracks without position keys (previous version) load alphabetically with no numbers', async () => {
+    disk = abc().map((t) => {
+      const old: Partial<TrackRecord> = { ...t };
+      delete old.position;
+      delete old.album_position;
+      return old as TrackRecord;
+    });
+    await open();
+    expect(labels().slice(2, 5)).toEqual(['A', 'B', 'C']);
+  });
+});

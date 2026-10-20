@@ -1270,3 +1270,86 @@ fn replacing_a_symlinked_tab_does_not_write_through_the_link() {
     assert_eq!(fs::read_to_string(e.outside.join("secret.gp5")).unwrap(), "SECRET", "wrote through symlink");
     e.assert_outside_unchanged();
 }
+
+// ---------- gui-library-album-order ----------
+
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for ent in fs::read_dir(from).unwrap().flatten() {
+        let dest = to.join(ent.file_name());
+        if ent.file_type().unwrap().is_dir() {
+            copy_tree(&ent.path(), &dest);
+        } else {
+            fs::copy(ent.path(), dest).unwrap();
+        }
+    }
+}
+
+/// A track.json from the previous version loads unchanged and with no position: the bytes and
+/// the revision are those of the file, and the scan writes nothing.
+#[test]
+fn old_track_json_files_load_unchanged_with_no_position() {
+    for fixture in ["library-sample", "library-v2"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        copy_tree(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(fixture), &root);
+        let before = snapshot(&root);
+        let lib = Repository::new(&root).scan();
+        assert!(!lib.tracks.is_empty(), "{fixture}");
+        for t in &lib.tracks {
+            assert_eq!(t.position, None, "{fixture} {}", t.id);
+            assert_eq!(t.album_position, None, "{fixture} {}", t.id);
+            let bytes = fs::read(root.join("tracks").join(&t.id).join("track.json")).unwrap();
+            assert_eq!(t.revision, fsutil::fnv1a64_hex(&bytes), "{fixture} {}", t.id);
+        }
+        assert_eq!(snapshot(&root), before, "{fixture}: the scan must not write");
+    }
+}
+
+#[test]
+fn batch_update_and_partial_batch_delete() {
+    use repository::{TrackPatch, TrackRef};
+    use std::os::unix::fs::PermissionsExt;
+    let e = Env::new();
+    let ids = ["t-a", "t-b", "t-c", "t-d"];
+    let recs: Vec<TrackRecord> = ids.iter().map(|i| e.track(i, &[])).collect();
+    let patch = |t: &TrackRecord, pos: u32| TrackPatch {
+        id: t.id.clone(),
+        revision: t.revision.clone(),
+        band: None,
+        album: None,
+        position: Some(pos),
+        album_position: Some(1),
+    };
+    let res = e.repo.update_tracks(&[patch(&recs[2], 1), patch(&recs[0], 2), patch(&recs[1], 3)]).unwrap();
+    assert!(res.failed.is_empty());
+    assert_eq!(res.tracks.iter().map(|t| (t.id.as_str(), t.position)).collect::<Vec<_>>(), [("t-c", Some(1)), ("t-a", Some(2)), ("t-b", Some(3))]);
+    assert_eq!(e.json("t-c")["position"], 1);
+    assert_eq!(e.json("t-a")["album_position"], 1);
+    // The untouched track keeps its bytes.
+    assert_eq!(e.repo.load_record("t-d").unwrap().revision, recs[3].revision);
+
+    // A stale revision refuses the whole batch and writes nothing.
+    let before = snapshot(&e.repo.root);
+    assert!(e.repo.update_tracks(&[patch(&res.tracks[0], 2), patch(&recs[1], 1)]).is_err());
+    assert_eq!(snapshot(&e.repo.root), before);
+
+    // Delete four: one folder cannot be moved (read-only), the others go to the trash.
+    let cur: Vec<TrackRecord> = ids.iter().map(|i| e.repo.load_record(i).unwrap()).collect();
+    fs::set_permissions(e.dir("t-b"), fs::Permissions::from_mode(0o555)).unwrap();
+    let probe = fs::write(e.dir("t-b").join("probe"), "x").is_ok(); // root ignores the mode
+    let items: Vec<TrackRef> = cur.iter().map(|t| TrackRef { id: t.id.clone(), revision: t.revision.clone() }).collect();
+    let del = e.repo.delete_tracks(&items);
+    fs::set_permissions(e.dir("t-b"), fs::Permissions::from_mode(0o755)).unwrap();
+    if probe {
+        return;
+    }
+    assert_eq!(del.deleted, ["t-a", "t-c", "t-d"]);
+    assert_eq!(del.failed.len(), 1);
+    assert_eq!(del.failed[0].id, "t-b");
+    assert_eq!(del.failed[0].title, "Title");
+    assert!(del.failed[0].message.contains("cannot move the track to the trash"), "{}", del.failed[0].message);
+    assert!(e.dir("t-b").join("track.json").exists());
+    assert!(!e.dir("t-a").exists());
+    assert_eq!(fs::read_dir(e.repo.root.join("trash")).unwrap().count(), 3);
+}

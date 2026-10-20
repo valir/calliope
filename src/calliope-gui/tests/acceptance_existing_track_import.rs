@@ -853,3 +853,66 @@ fn ac_batch_log_lines_for_started_saved_failed_cancelled() {
     assert!(has(&["file=3/3 name=3.mp3 result=cancelled"]), "{err}");
     assert!(has(&["cancelled saved=1 skipped=1"]), "{err}");
 }
+
+/// A copy of `src` with the given tags set (real ffmpeg, audio copied).
+fn tagged_copy(src: &Path, dest: &Path, tags: &[(&str, &str)]) {
+    let mut cmd = Command::new(tool("ffmpeg"));
+    cmd.args(["-nostdin", "-loglevel", "error", "-y", "-i"]).arg(format!("file:{}", src.display())).args(["-map", "0:a", "-c", "copy"]);
+    for (k, v) in tags {
+        cmd.arg("-metadata").arg(format!("{k}={v}"));
+    }
+    let out = cmd.arg(format!("file:{}", dest.display())).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+/// gui-library-album-order: a directory of files tagged with track numbers 2, 1 and 3 is imported;
+/// the saved tracks carry those positions, and an existing track of the album keeps its bytes.
+#[test]
+fn ac_directory_import_takes_the_positions_from_the_track_tags() {
+    let server = RealServer::start("ok");
+    let rig = Rig::new();
+    let repo = Repository::new(&rig.root);
+    let existing = repo
+        .create_track(
+            repository::NewTrack {
+                id: Some("t-existing".into()),
+                edits: track_meta::TrackEdits {
+                    band: "Band".into(),
+                    album: "Order".into(),
+                    title: "Existing".into(),
+                    composers: vec![],
+                    year: None,
+                    source_url: None,
+                    copyright: None,
+                },
+                audio_name: "backing.mp3".into(),
+                tablatures: vec![],
+            },
+            &fixture("tagged.mp3"),
+        )
+        .unwrap();
+    let existing_json = rig.root.join("tracks/t-existing/track.json");
+    let existing_bytes = fs::read(&existing_json).unwrap();
+
+    let dir = rig.dir.path().join("music/numbered");
+    fs::create_dir_all(&dir).unwrap();
+    for (file, title, n) in [("a.mp3", "Second", "2"), ("b.mp3", "First", "1"), ("c.mp3", "Third", "3")] {
+        tagged_copy(&fixture("tagged.mp3"), &dir.join(file), &[("album", "Order"), ("artist", "Band"), ("title", title), ("track", n)]);
+    }
+    let before = fingerprint(&dir);
+    let ipc = Ipc::new(&rig, "", Some(&server));
+    ipc.import_dir(&dir).unwrap();
+    let done = ipc.wait_batch_over();
+    assert_eq!(done.phase, Phase::Finished, "{:?}", done.error);
+    assert!(done.batch.unwrap().items.iter().all(|i| matches!(i.outcome, BatchOutcome::Saved { .. })));
+
+    let mut got: Vec<(String, String, Option<u32>)> =
+        repo.scan().tracks.into_iter().map(|t| (t.title, t.album, t.position)).collect();
+    got.sort();
+    let o = |s: &str, p: Option<u32>| (s.to_string(), "Order".to_string(), p);
+    assert_eq!(got, [o("Existing", None), o("First", Some(1)), o("Second", Some(2)), o("Third", Some(3))]);
+    assert_eq!(fs::read(&existing_json).unwrap(), existing_bytes, "the existing track was rewritten");
+    assert_eq!(repo.load_record("t-existing").unwrap().revision, existing.revision);
+    assert_eq!(fingerprint(&dir), before, "sources changed");
+    rig.outside_ok();
+}

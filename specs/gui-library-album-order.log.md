@@ -12,3 +12,4 @@ task 9 | Rename planner | implementer | done
 task 10 | Library state and operations | implementer | done (4 existing tests moved from a Band/Album edit to a Title edit; notes for tasks 11-14 added to the plan)
 task 11 | Tree UI: keys, pointer drag and drop, Delete button and confirmation | implementer | done
 task 12 | Track pane: position row and rename confirmation | implementer | done (GUI Tab counts updated; touched GUI tests pass; notes for tasks 13-14 added to the plan)
+task 13 | Headless acceptance tests | implementer | done
