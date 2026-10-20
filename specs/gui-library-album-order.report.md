@@ -1,7 +1,8 @@
 # Report: Library album and track order, deleting tracks and albums
 
 **Status: DONE.** All acceptance criteria and requirements 1-17 pass. The tester found no defects, and the
-reviewer approved with no fix round. The full headless suite and the full GUI suite (8 binaries) pass. Branch
+reviewer approved. At your request, one fix round fixed the reviewer's minor findings, and the reviewer approved
+again. The full headless suite and the full GUI suite (8 binaries) pass on `9f93b8d`. Branch
 `spec/gui-library-album-order`, base `f45e2da`, not pushed or merged.
 
 ## What was built
@@ -91,27 +92,32 @@ The AC tests are in `src/ui/acceptance_library.test.ts`, and the GUI tests in `t
 | GUI suite | me + implementer | the existing `edit_and_save` test edits an Album and needed to answer the new rename confirmation; fixed |
 | tester | tester | all PASS; 13 tests added; no defects |
 | reviewer | reviewer | APPROVED; 4 minor, 2 nits |
+| fix round 1 (your request) | implementer | the 4 minor findings and 2 nits fixed; full headless and GUI suites green |
+| reviewer (re-verify) | reviewer | APPROVED |
 
 The local model was not used in this build. The two routine tasks were edits inside long files that it broke in
 the last build.
 
-## Findings (reviewer: fine to ship, left as follow-ups)
+## Findings
 
-1. **A hand-edited name can block a reorder.** A track whose band or album has leading or trailing spaces makes a
-   reorder or rename of its album refuse. Such names never come from the app (imports and saves trim them), only
-   from a hand-edited `track.json`.
-   - The error names the track.
-   - Editing and saving that track fixes it.
-   - The tester's padded-names test passes, but it uses the fake backend.
-   - Suggested fix: check only the fields a reorder changes.
-2. **A write that fails halfway** (read-only folder, full disk) during a reorder leaves duplicate numbers in the
-   album. The error is shown, and a new reorder fixes it. Nothing tests that case yet.
-3. **Escape during a drag:** after Escape, releasing the mouse can still count as a click on the row (it
-   expands/collapses or selects it).
-4. **Stale position on join:** a "(no album)" track with a leftover hand-edited position keeps it when it joins
-   an album.
-5. *Nits:* `delete_tracks` doesn't reject duplicate ids (the screen never sends them); when the last track is
-   deleted, the keyboard focus goes nowhere.
+The reviewer first approved with 4 minor findings and 2 nits. You asked to fix them before merging. A fix round
+(`9f93b8d`) fixed all of them, and the reviewer approved again with nothing open:
+
+1. **A hand-edited name no longer blocks a reorder.** A reorder or rename now checks only the fields it changes.
+   A track whose band or album has a leading or trailing space from a hand-edited `track.json` is reordered
+   normally. A band or album that a rename sets still gets the strict checks.
+2. **A write that fails partway through a reorder** (read-only folder, full disk) is reported with its reason, the
+   other tracks are still written, and the Library reloads to show the real state. There is no rollback, so the
+   album can show a repeated number until the next reorder. This is now tested and described in
+   `docs/architecture.md`.
+3. **The click after an Escape-cancelled drag** is now ignored until the next click or press, instead of for
+   50 ms. A normal click still works.
+4. **Leftover position on join:** a "(no album)" track joining an album gets the next number (max + 1) when the
+   album is numbered. Otherwise its leftover number is cleared.
+   - To make this possible, the update and save commands now take an explicit `null` meaning "clear the
+     position". An absent field still means "unchanged".
+5. *Nits fixed:* a track id listed twice in one delete is handled once, and after deleting the last item in the
+   tree the focus goes to the search box.
 
 ## Deviations from the plan
 
@@ -137,8 +143,8 @@ builds still read the reordered `track.json` files (alphabetically) and keep the
   (alphabetical, no numbers), and a few `track.json` modification times are unchanged.
 - [ ] **M2, drag with the mouse and the touchpad.** Drag an album's last track above the first: the row dims, a
   line marks the target, and the numbers become 1..n.
-- [ ] **M3, drags that do nothing.** Onto another album, onto a band, outside the window, and Escape mid-drag.
-  A short click still selects. (Watch for finding 3 after Escape.)
+- [ ] **M3, drags that do nothing.** Onto another album, onto a band, outside the window, and Escape mid-drag
+  (releasing the button afterwards must not select or toggle the row). A short click still selects.
 - [ ] **M4, long album.** Drag from the bottom to the top of a long album: the column scrolls near its edge.
 - [ ] **M5, keys.** Alt+Up / Alt+Down move one place each and keep the focus. Check that no i3 or desktop
   shortcut takes Alt+Up.

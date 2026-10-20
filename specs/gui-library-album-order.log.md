@@ -21,3 +21,5 @@ reviewer | APPROVED; 4 minor (apply_patch validates the whole track, untested pa
 tester | all criteria and requirements PASS; added 13 acceptance tests (merges, case-only rename, no-album/no-band moves, refusals, edges, delete during search, focus, padded names); no defects | tester | done
 report | written | orchestrator | done
 fix round 1 | owner asked for the 4 minor follow-ups: patch validates only changed fields, partial write failure reported and tested (no rollback), click after Escape-cancel swallowed until the next click/press, join sets max+1 or clears (null clears a position); nits: duplicate delete ids handled once, focus to search after the last delete | implementer | done
+reviewer (re-verify 1) | APPROVED; nothing open | reviewer | done
+report | updated after fix round 1 | orchestrator | done
