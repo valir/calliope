@@ -281,6 +281,8 @@ struct Job {
     over: bool,
     cancel: Option<Cancel>,
     handle: Option<JoinHandle<()>>,
+    /// The track number of the source's tag (from `ready` on), saved with the track when it has an album.
+    position: Option<u32>,
 }
 
 struct Inner {
@@ -358,7 +360,14 @@ fn new_snapshot(job: String, kind: SourceKind, label: String, phase: Phase) -> J
 
 /// Builds the strictly validated metadata of a stem track (also used with a placeholder stem
 /// list to validate the user's edits before anything starts).
-fn build_meta(id: &str, edits: &TrackEdits, stems: &[String], model: &str, keep: bool) -> Result<TrackMeta, String> {
+fn build_meta(
+    id: &str,
+    edits: &TrackEdits,
+    stems: &[String],
+    model: &str,
+    keep: bool,
+    position: Option<u32>,
+) -> Result<TrackMeta, String> {
     let now = track_meta::now_rfc3339();
     let mut meta = TrackMeta {
         schema_version: track_meta::CURRENT_SCHEMA,
@@ -366,7 +375,9 @@ fn build_meta(id: &str, edits: &TrackEdits, stems: &[String], model: &str, keep:
         track_type: TrackType::Stem,
         band: String::new(),
         album: String::new(),
+        album_position: None,
         title: "x".into(),
+        position: None,
         composers: Vec::new(),
         year: None,
         source_url: None,
@@ -382,6 +393,8 @@ fn build_meta(id: &str, edits: &TrackEdits, stems: &[String], model: &str, keep:
         extra: serde_json::Map::new(),
     };
     track_meta::apply_edits(&mut meta, edits.clone())?;
+    // a track without an album is not in an album, so it has no place in one
+    meta.position = position.filter(|_| !meta.album.is_empty());
     track_meta::validate_for_write(&meta)?;
     Ok(meta)
 }
@@ -552,6 +565,7 @@ impl ImportState {
             over: false,
             cancel: Some(cancel),
             handle: Some(handle),
+            position: None,
         });
         Ok(out)
     }
@@ -565,7 +579,7 @@ impl ImportState {
         edge_ai_url: Option<&str>,
         keep_original: bool,
     ) -> Result<JobSnapshot, String> {
-        build_meta("validation", &edits, &["vocals".to_string()], "model", keep_original)?;
+        build_meta("validation", &edits, &["vocals".to_string()], "model", keep_original, None)?;
         let url = edge_ai_url.map(str::trim).filter(|u| !u.is_empty()).ok_or_else(|| NOT_CONFIGURED_MESSAGE.to_string())?;
         let url = url.to_string();
         let mut slot = guard(&self.inner.job);
@@ -592,10 +606,11 @@ impl ImportState {
         let out = j.snap.clone();
         let ctx = Ctx { inner: self.inner.clone(), id: j.snap.job.clone(), cancel, root: j.root.clone(), tmp };
         let dir = j.dir.clone();
+        let position = j.position;
         eprintln!("calliope: import job={} phase=uploading", job);
         let spawned = std::thread::Builder::new().name("import-job".into()).spawn(move || {
             ctx.emit(ImportEvent::Uploading { sent: 0, total: 0 });
-            let r = extract_cleaned(&ctx, &dir, &audio, &edits, &url, keep_original);
+            let r = extract_cleaned(&ctx, &dir, &audio, &edits, &url, keep_original, position);
             finish_extract(&ctx, r);
         });
         match spawned {
@@ -774,9 +789,10 @@ fn merge_url_edits(info: Option<TrackEdits>, probe: &Probe, url: &str) -> TrackE
     }
 }
 
-fn set_ready(ctx: &Ctx, audio: PathBuf, metadata: TrackEdits, duration_s: Option<f64>) {
+fn set_ready(ctx: &Ctx, audio: PathBuf, metadata: TrackEdits, duration_s: Option<f64>, position: Option<u32>) {
     ctx.update(|j| {
         j.audio = Some(audio);
+        j.position = position;
         j.snap.metadata = Some(metadata.clone());
         j.snap.duration_s = duration_s;
         j.snap.phase = Phase::Ready;
@@ -827,12 +843,21 @@ fn run_url(ctx: &Ctx, dir: &Path, url: &str, resume: bool) -> R<()> {
     ctx.check_cancel()?;
     let info_edits = info.as_deref().and_then(read_info).and_then(|t| download::edits_from_info(&t, url));
     let edits = merge_url_edits(info_edits, &probe, url);
-    set_ready(ctx, audio, edits, probe.duration_s);
+    set_ready(ctx, audio, edits, probe.duration_s, media::position_from_tags(&probe));
     Ok(())
 }
 
+/// What `prepare_file` produces from a local file.
+struct Prepared {
+    audio: PathBuf,
+    edits: TrackEdits,
+    duration_s: Option<f64>,
+    /// The track number of the file's tag.
+    position: Option<u32>,
+}
+
 /// Probes and converts a local file; everything `run_file` does except publishing `ready`.
-fn prepare_file(ctx: &Ctx, dir: &Path, path: &Path, name: &str) -> R<(PathBuf, TrackEdits, Option<f64>)> {
+fn prepare_file(ctx: &Ctx, dir: &Path, path: &Path, name: &str) -> R<Prepared> {
     let ffprobe = ctx.tool(ToolName::Ffprobe)?;
     let ffmpeg = ctx.tool(ToolName::Ffmpeg)?;
     ctx.check_cancel()?;
@@ -840,12 +865,17 @@ fn prepare_file(ctx: &Ctx, dir: &Path, path: &Path, name: &str) -> R<(PathBuf, T
     media::check_duration(&probe, name).map_err(|e| media_stop(e, None))?;
     let audio = media::to_flac(&ffmpeg, path, &probe, dir, &ctx.cancel).map_err(|e| media_stop(e, None))?;
     ctx.check_cancel()?;
-    Ok((audio, media::edits_from_tags(&probe, name), probe.duration_s))
+    Ok(Prepared {
+        audio,
+        edits: media::edits_from_tags(&probe, name),
+        duration_s: probe.duration_s,
+        position: media::position_from_tags(&probe),
+    })
 }
 
 fn run_file(ctx: &Ctx, dir: &Path, path: &Path, name: &str) -> R<()> {
-    let (audio, edits, duration_s) = prepare_file(ctx, dir, path, name)?;
-    set_ready(ctx, audio, edits, duration_s);
+    let p = prepare_file(ctx, dir, path, name)?;
+    set_ready(ctx, p.audio, p.edits, p.duration_s, p.position);
     Ok(())
 }
 
@@ -904,6 +934,7 @@ fn run_extract(
     edits: &TrackEdits,
     edge_url: &str,
     keep_original: bool,
+    position: Option<u32>,
     staging: &mut Option<Staging>,
     server_job: &mut Option<String>,
 ) -> R<(TrackRecord, Vec<DroppedStem>)> {
@@ -955,7 +986,7 @@ fn run_extract(
         return fail(Stage::Server, "The edge-AI server returned no stems");
     }
     // validates the final metadata before any download
-    build_meta("validation", edits, &stems, &model, keep_original).map_err(|m| Stop::Failed(JobError { stage: Stage::Save, message: m, http_status: None }))?;
+    build_meta("validation", edits, &stems, &model, keep_original, position).map_err(|m| Stop::Failed(JobError { stage: Stage::Save, message: m, http_status: None }))?;
     let new_id = track_meta::new_id();
     let save_err = |m: String| Stop::Failed(JobError { stage: Stage::Save, message: m, http_status: None });
     let root = ctx.root.clone();
@@ -1026,7 +1057,7 @@ fn run_extract(
     if keep_original {
         staging.as_mut().expect("staging").adopt_original(audio).map_err(save_err)?;
     }
-    let meta = build_meta(&new_id, edits, &kept, &model, keep_original).map_err(save_err)?;
+    let meta = build_meta(&new_id, edits, &kept, &model, keep_original, position).map_err(save_err)?;
     let record = locked(&*ctx.inner.lock, || staging.as_ref().expect("staging").commit(&meta)).map_err(save_err)?;
     // the track exists now: nothing to abandon any more
     *staging = None;
@@ -1048,10 +1079,11 @@ fn extract_cleaned(
     edits: &TrackEdits,
     edge_url: &str,
     keep_original: bool,
+    position: Option<u32>,
 ) -> R<(TrackRecord, Vec<DroppedStem>)> {
     let mut staging: Option<Staging> = None;
     let mut server_job: Option<String> = None;
-    let r = run_extract(ctx, dir, audio, edits, edge_url, keep_original, &mut staging, &mut server_job);
+    let r = run_extract(ctx, dir, audio, edits, edge_url, keep_original, position, &mut staging, &mut server_job);
     if let Some(s) = staging.take() {
         if let Err(e) = s.abandon() {
             eprintln!("calliope: import cleanup: {e}");

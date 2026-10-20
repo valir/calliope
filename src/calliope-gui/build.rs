@@ -21,6 +21,8 @@ const COMMANDS: &[&str] = &[
     "pick_tablature",
     "save_track",
     "delete_track",
+    "update_tracks",
+    "delete_tracks",
     "export_track",
     "export_tablature",
     "set_edge_ai_url",

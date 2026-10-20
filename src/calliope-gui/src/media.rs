@@ -273,6 +273,22 @@ fn file_stem(file_name: &str) -> String {
     clean_text(stem, MAX_NAME)
 }
 
+/// The track number from the `track` tag, else `tracknumber`: "3", "03" and "3/12" give 3. The
+/// text (trimmed) must be digits, optionally followed by `/` and anything; the number must be
+/// from 1 to 9999. Anything else gives `None`.
+pub fn position_from_tags(p: &Probe) -> Option<u32> {
+    let raw = p.tags.get("track").or_else(|| p.tags.get("tracknumber"))?;
+    let head = raw.trim().split('/').next().unwrap_or("");
+    if head.is_empty() || !head.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let digits = head.trim_start_matches('0');
+    if digits.is_empty() || digits.len() > 4 {
+        return None;
+    }
+    digits.parse().ok()
+}
+
 /// Maps file tags to the editable track fields (plan section 2.6). `file_name` is the bare
 /// name of the source, the title fallback.
 pub fn edits_from_tags(p: &Probe, file_name: &str) -> TrackEdits {
@@ -392,6 +408,49 @@ mod tests {
         assert_eq!(e.year, Some(2021));
         assert_eq!(e.copyright.as_deref(), Some("(c) 2021 The Example Band"));
         assert_eq!(e.source_url, None);
+    }
+
+    #[test]
+    fn position_from_the_track_number_tag() {
+        for (v, want) in [
+            ("3", Some(3)),
+            ("03", Some(3)),
+            ("3/12", Some(3)),
+            (" 7 ", Some(7)),
+            ("9999", Some(9999)),
+            ("0", None),
+            ("A3", None),
+            ("3 of 12", None),
+            ("", None),
+            ("10000", None),
+            ("/12", None),
+        ] {
+            assert_eq!(position_from_tags(&tags(&[("track", v)])), want, "{v:?}");
+        }
+        assert_eq!(position_from_tags(&tags(&[("tracknumber", "5")])), Some(5));
+        assert_eq!(position_from_tags(&tags(&[("track", "x"), ("tracknumber", "5")])), None, "track wins");
+        assert_eq!(position_from_tags(&tags(&[("track", "2"), ("tracknumber", "5")])), Some(2));
+        assert_eq!(position_from_tags(&tags(&[])), None);
+    }
+
+    #[test]
+    fn real_files_with_a_track_tag_give_a_position() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["untagged.flac", "tagged.mp3"] {
+            let dest = dir.path().join(name);
+            let out = std::process::Command::new(tool("ffmpeg"))
+                .args(["-nostdin", "-loglevel", "error", "-i"])
+                .arg(format!("file:{}", fixture(name).display()))
+                .args(["-map", "0:a", "-c", "copy", "-metadata", "track=2/9"])
+                .arg(format!("file:{}", dest.display()))
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            let p = probe(&tool("ffprobe"), &dest, &Cancel::new()).unwrap();
+            assert_eq!(position_from_tags(&p), Some(2), "{name}");
+        }
+        // the untouched fixtures carry no track number
+        assert_eq!(position_from_tags(&probe_fixture("untagged.flac").unwrap()), None);
     }
 
     #[test]

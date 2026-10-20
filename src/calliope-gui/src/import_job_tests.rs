@@ -172,6 +172,18 @@ fn hashes(dir: &Path) -> BTreeMap<String, Vec<u8>> {
     fs::read_dir(dir).unwrap().flatten().map(|e| (e.file_name().to_string_lossy().into_owned(), fs::read(e.path()).unwrap())).collect()
 }
 
+/// A copy of `src` with the given tags set (real ffmpeg, audio copied). Returns `dest`.
+fn tagged_copy(src: &Path, dest: &Path, tags: &[(&str, &str)]) -> PathBuf {
+    let mut cmd = std::process::Command::new(tool("ffmpeg"));
+    cmd.args(["-nostdin", "-loglevel", "error", "-y", "-i"]).arg(format!("file:{}", src.display())).args(["-map", "0:a", "-c", "copy"]);
+    for (k, v) in tags {
+        cmd.arg("-metadata").arg(format!("{k}={v}"));
+    }
+    let out = cmd.arg(format!("file:{}", dest.display())).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    dest.to_path_buf()
+}
+
 const WATCH: &str = "https://media.example/watch?v=ok";
 
 #[test]
@@ -271,6 +283,25 @@ fn video_file_flow_and_sources_stay_byte_identical() {
     rig.file("untagged.flac").unwrap();
     assert_eq!(rig.ready().metadata.unwrap().title, "untagged");
     assert_eq!(hashes(&rig.sources), before);
+    // the track-number tag becomes the position, but only for a track with an album; an untagged source has none
+    let finish = |ready: &JobSnapshot| {
+        rig.extract(ready, &server, false).unwrap();
+        rig.wait("saved", |s| s.phase == Phase::Saved).track.unwrap()
+    };
+    let save = |name: &str, tags: &[(&str, &str)]| {
+        let src = tagged_copy(&fixture("tagged.mp3"), &rig.sources.join(name), tags);
+        rig.file(name).unwrap();
+        let track = finish(&rig.ready());
+        fs::remove_file(src).unwrap();
+        track
+    };
+    assert_eq!(finish(&rig.wait("ready", |s| s.phase == Phase::Ready)).position, None);
+    assert_eq!(save("numbered.mp3", &[("track", "2/9"), ("title", "Numbered")]).position, Some(2));
+    let no_album = save("noalbum.mp3", &[("track", "3"), ("album", ""), ("title", "No album")]);
+    assert_eq!((no_album.album.as_str(), no_album.position), ("", None));
+    let tracks = Repository::new(&rig.root).scan().tracks;
+    assert_eq!(tracks.iter().filter(|t| t.position.is_some()).count(), 1);
+    assert!(tracks.iter().all(|t| t.album_position.is_none()));
     rig.check_clean();
 }
 
@@ -559,6 +590,57 @@ fn batch_imports_each_file_in_order() {
     }
     assert!(Rig::names_in(&rig.root.join("import-tmp")).is_empty());
     assert_eq!(hashes(&rig.sources.join("batch")), AB.iter().map(|(n, f)| (n.to_string(), fs::read(fixture(f)).unwrap())).collect());
+    rig.check_clean();
+}
+
+#[test]
+fn batch_saves_the_tag_positions_and_leaves_existing_tracks_alone() {
+    let server = TestServer::start("ok");
+    let rig = Rig::new();
+    let album = [("album", "Order"), ("artist", "Band")];
+    let tags = |n: &str, title: &'static str| -> Vec<(&'static str, String)> {
+        let mut v: Vec<(&str, String)> = album.iter().map(|(k, v)| (*k, v.to_string())).collect();
+        v.push(("title", title.to_string()));
+        if !n.is_empty() {
+            v.push(("track", n.to_string()));
+        }
+        v
+    };
+    let make = |dir: &Path, name: &str, base: &str, t: Vec<(&str, String)>| {
+        let t: Vec<(&str, &str)> = t.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        tagged_copy(&fixture(base), &dir.join(name), &t);
+    };
+    // an existing track of the album
+    let first = rig.sources.join("first");
+    fs::create_dir_all(&first).unwrap();
+    make(&first, "x.mp3", "tagged.mp3", tags("7", "Existing"));
+    rig.state.start_file(&rig.root, FileKind::Audio, &first.join("x.mp3"), rig.sink.clone()).unwrap();
+    let ready = rig.ready();
+    rig.extract(&ready, &server, false).unwrap();
+    let existing = rig.wait("saved", |s| s.phase == Phase::Saved).track.unwrap();
+    assert_eq!(existing.position, Some(7));
+    let existing_bytes = fs::read(rig.tracks_dir().join(&existing.id).join("track.json")).unwrap();
+    // the batch: tags 2, 1, 3 and an untagged file
+    let dir = rig.sources.join("album");
+    fs::create_dir_all(&dir).unwrap();
+    make(&dir, "a.mp3", "tagged.mp3", tags("2", "Second"));
+    make(&dir, "b.mp3", "tagged.mp3", tags("1", "First"));
+    make(&dir, "c.mp3", "tagged.mp3", tags("3/10", "Third"));
+    make(&dir, "d.mp3", "tagged.mp3", tags("", "Unnumbered"));
+    let paths: Vec<PathBuf> = ["a.mp3", "b.mp3", "c.mp3", "d.mp3"].iter().map(|n| dir.join(n)).collect();
+    rig.state.start_batch(&rig.root, &dir, paths, Some(&server.url), false, rig.sink.clone()).unwrap();
+    let done = rig.wait_idle("the batch to end");
+    assert_eq!(done.batch.unwrap().items.len(), 4);
+    let mut got: Vec<(String, Option<u32>)> = Repository::new(&rig.root)
+        .scan()
+        .tracks
+        .into_iter()
+        .map(|t| (t.title, t.position))
+        .collect();
+    got.sort();
+    let want = [("Existing", Some(7)), ("First", Some(1)), ("Second", Some(2)), ("Third", Some(3)), ("Unnumbered", None)];
+    assert_eq!(got, want.iter().map(|(t, p)| (t.to_string(), *p)).collect::<Vec<_>>());
+    assert_eq!(fs::read(rig.tracks_dir().join(&existing.id).join("track.json")).unwrap(), existing_bytes);
     rig.check_clean();
 }
 

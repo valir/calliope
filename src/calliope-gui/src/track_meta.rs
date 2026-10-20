@@ -41,6 +41,9 @@ pub struct BackingVariant {
     pub mix: Value,
 }
 
+/// Largest track or album position (plan 2.2).
+pub const MAX_POSITION: u32 = 9999;
+
 const MAX_NAME: usize = 200;
 const MAX_COMPOSERS: usize = 20;
 const MAX_URL: usize = 2000;
@@ -56,7 +59,14 @@ pub struct TrackMeta {
     pub band: String,
     #[serde(default)]
     pub album: String,
+    /// The album's place among the band's albums (1-based). Every track of an album carries it; the
+    /// tree uses the smallest value found among the album's tracks. `None` = not ordered.
+    #[serde(default, deserialize_with = "lenient_position", skip_serializing_if = "Option::is_none")]
+    pub album_position: Option<u32>,
     pub title: String,
+    /// The track's place in its album (1-based). `None` = not ordered.
+    #[serde(default, deserialize_with = "lenient_position", skip_serializing_if = "Option::is_none")]
+    pub position: Option<u32>,
     #[serde(default)]
     pub composers: Vec<String>,
     #[serde(default)]
@@ -88,6 +98,17 @@ pub struct TrackMeta {
     /// Fields this build doesn't know; written back unchanged.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// Reads any JSON value: an integer from 1 to `MAX_POSITION` becomes `Some`, anything else `None`.
+fn lenient_position<'de, D>(d: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Option::<Value>::deserialize(d)?;
+    Ok(v.and_then(|v| v.as_u64())
+        .filter(|n| (1..=u64::from(MAX_POSITION)).contains(n))
+        .map(|n| n as u32))
 }
 
 /// The user-editable fields (mirrors `TrackEdits` in the frontend).
@@ -318,6 +339,12 @@ fn validate_edit_fields(meta: &TrackMeta) -> Result<(), String> {
     if let Some(c) = &meta.copyright {
         check_text("copyright", c, MAX_COPYRIGHT)?;
     }
+    if meta.position.is_some_and(|p| !(1..=MAX_POSITION).contains(&p)) {
+        return Err(format!("position must be from 1 to {MAX_POSITION}"));
+    }
+    if meta.album_position.is_some_and(|p| !(1..=MAX_POSITION).contains(&p)) {
+        return Err(format!("album position must be from 1 to {MAX_POSITION}"));
+    }
     if meta.stems.len() > MAX_STEMS {
         return Err(format!("more than {MAX_STEMS} stems"));
     }
@@ -352,6 +379,42 @@ pub fn apply_edits(meta: &mut TrackMeta, edits: TrackEdits) -> Result<(), String
     next.year = edits.year;
     next.source_url = opt_trim(edits.source_url);
     next.copyright = opt_trim(edits.copyright);
+    validate_edit_fields(&next)?;
+    validate_for_read(&next)?;
+    *meta = next;
+    Ok(())
+}
+
+/// Applies a batch patch: names are trimmed and cannot be emptied, positions are set when given
+/// (`None` = unchanged). On error `meta` is left unchanged. Does not touch `modified`.
+pub fn apply_patch(
+    meta: &mut TrackMeta,
+    band: Option<&str>,
+    album: Option<&str>,
+    position: Option<u32>,
+    album_position: Option<u32>,
+) -> Result<(), String> {
+    let mut next = meta.clone();
+    if let Some(b) = band {
+        let b = b.trim();
+        if b.is_empty() {
+            return Err("a band name cannot be cleared".into());
+        }
+        next.band = b.to_string();
+    }
+    if let Some(a) = album {
+        let a = a.trim();
+        if a.is_empty() {
+            return Err("an album name cannot be cleared".into());
+        }
+        next.album = a.to_string();
+    }
+    if position.is_some() {
+        next.position = position;
+    }
+    if album_position.is_some() {
+        next.album_position = album_position;
+    }
     validate_edit_fields(&next)?;
     validate_for_read(&next)?;
     *meta = next;
@@ -710,6 +773,69 @@ mod tests {
         let mut e = edits_of(&m);
         e.composers = vec!["  ".into()];
         assert!(apply_edits(&mut m, e).is_err());
+    }
+
+    #[test]
+    fn positions_are_absent_by_default_and_round_trip() {
+        for (text, v1) in [(EXAMPLE, true), (EXAMPLE_V2, false), (STEM, false)] {
+            let m = parse(text.as_bytes(), ID).unwrap();
+            assert_eq!((m.position, m.album_position), (None, None), "v1={v1}");
+            let back: Value = serde_json::from_str(&to_json_pretty(&m)).unwrap();
+            assert!(back.get("position").is_none() && back.get("album_position").is_none());
+        }
+        let text = EXAMPLE.replace("\"year\"", "\"position\": 3, \"album_position\": 2,\n  \"year\"");
+        let m = parse(text.as_bytes(), ID).unwrap();
+        assert_eq!((m.position, m.album_position), (Some(3), Some(2)));
+        assert!(m.extra.is_empty());
+        let back: Value = serde_json::from_str(&to_json_pretty(&m)).unwrap();
+        assert_eq!((back["position"].clone(), back["album_position"].clone()), (3.into(), 2.into()));
+        assert_eq!(parse(to_json_pretty(&m).as_bytes(), ID).unwrap(), m);
+        // unknown fields still survive next to the positions
+        let with_future = text.replace("\"year\"", "\"future\": 1, \"year\"");
+        let m = parse(with_future.as_bytes(), ID).unwrap();
+        assert_eq!(m.extra.get("future"), Some(&Value::from(1)));
+    }
+
+    #[test]
+    fn bad_positions_read_as_none() {
+        for bad in ["0", "-1", "\"3\"", "3.5", "null", "10000"] {
+            let text = EXAMPLE.replace("\"year\"", &format!("\"position\": {bad}, \"album_position\": {bad}, \"year\""));
+            let m = parse(text.as_bytes(), ID).unwrap_or_else(|e| panic!("{bad}: {e}"));
+            assert_eq!((m.position, m.album_position), (None, None), "{bad}");
+            assert!(!to_json_pretty(&m).contains("position"), "{bad}");
+        }
+    }
+
+    #[test]
+    fn write_rejects_bad_positions() {
+        for (p, a) in [(Some(0), None), (Some(10000), None), (None, Some(0)), (None, Some(10000))] {
+            let mut m = example();
+            m.position = p;
+            m.album_position = a;
+            assert!(validate_for_write(&m).is_err(), "{p:?} {a:?}");
+        }
+        let mut m = example();
+        m.position = Some(9999);
+        m.album_position = Some(1);
+        assert!(validate_for_write(&m).is_ok());
+    }
+
+    #[test]
+    fn apply_patch_sets_trims_and_keeps_meta_on_error() {
+        let mut m = example();
+        apply_patch(&mut m, Some(" New Band "), Some(" New Album "), Some(4), Some(2)).unwrap();
+        assert_eq!((m.band.as_str(), m.album.as_str()), ("New Band", "New Album"));
+        assert_eq!((m.position, m.album_position), (Some(4), Some(2)));
+        apply_patch(&mut m, None, None, None, None).unwrap();
+        assert_eq!((m.position, m.album_position), (Some(4), Some(2)));
+        let before = m.clone();
+        assert_eq!(apply_patch(&mut m, Some("  "), None, None, None).unwrap_err(), "a band name cannot be cleared");
+        assert_eq!(apply_patch(&mut m, None, Some(""), None, None).unwrap_err(), "an album name cannot be cleared");
+        assert!(apply_patch(&mut m, None, None, Some(0), None).is_err());
+        assert!(apply_patch(&mut m, Some("X"), None, Some(10000), None).is_err());
+        assert!(apply_patch(&mut m, None, None, None, Some(0)).is_err());
+        assert!(apply_patch(&mut m, Some("a\u{7}b"), None, None, None).is_err());
+        assert_eq!(m, before);
     }
 
     #[test]

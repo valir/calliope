@@ -124,6 +124,9 @@ fn req(rec: &TrackRecord, tabs: Vec<TabEntry>) -> SaveTrackRequest {
         revision: rec.revision.clone(),
         edits: edits(&rec.band, &rec.album, &rec.title),
         tablatures: tabs,
+        position: None,
+        album_position: None,
+        group: vec![],
     }
 }
 
@@ -501,6 +504,184 @@ fn delete_moves_whole_folder_to_trash() {
     assert!(trash.keys().any(|k| k.ends_with("-aaa/one.gp5")));
     assert_eq!(trash.iter().find(|(k, _)| k.ends_with("backing.mp3")).unwrap().1, b"AUDIO");
     assert!(env.repo.scan().tracks.is_empty());
+}
+
+fn patch(rec: &TrackRecord) -> TrackPatch {
+    TrackPatch {
+        id: rec.id.clone(),
+        revision: rec.revision.clone(),
+        band: None,
+        album: None,
+        position: None,
+        album_position: None,
+    }
+}
+
+fn bytes_of(env: &Env, id: &str) -> Vec<u8> {
+    fs::read(env.dir(id).join("track.json")).unwrap()
+}
+
+#[test]
+fn positions_survive_a_library_save_and_an_export_and_save_track_sets_them() {
+    let env = Env::new();
+    let rec = env.track("aaa", &[]);
+    let mut r = req(&rec, vec![]);
+    r.position = Some(4);
+    r.album_position = Some(2);
+    let res = env.repo.save_track(r, &env.lookup()).unwrap();
+    assert_eq!((res.track.position, res.track.album_position), (Some(4), Some(2)));
+    assert!(res.updated.is_empty() && res.failed.is_empty());
+    // a later save without the fields keeps them
+    let mut r = req(&res.track, vec![]);
+    r.edits.title = "Renamed".into();
+    let res = env.repo.save_track(r, &env.lookup()).unwrap();
+    assert_eq!((res.track.position, res.track.album_position), (Some(4), Some(2)));
+    let mut bad = req(&res.track, vec![]);
+    bad.position = Some(0);
+    assert!(env.repo.save_track(bad, &env.lookup()).is_err());
+    let out = env.repo.export_track("aaa", &env.outside).unwrap();
+    let j: serde_json::Value = serde_json::from_slice(&fs::read(out.join("track.json")).unwrap()).unwrap();
+    assert_eq!((j["position"].clone(), j["album_position"].clone()), (4.into(), 2.into()));
+    fs::remove_dir_all(&out).unwrap();
+}
+
+#[test]
+fn update_tracks_writes_only_the_changed_tracks() {
+    let env = Env::new();
+    let (a, b, c) = (env.track("aaa", &[]), env.track("bbb", &[]), env.track("ccc", &[]));
+    for id in ["aaa", "bbb", "ccc"] {
+        let p = env.dir(id).join("track.json");
+        let s = fs::read_to_string(&p).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        v["modified"] = "2020-01-01T00:00:00Z".into();
+        fs::write(&p, serde_json::to_vec_pretty(&v).unwrap()).unwrap();
+    }
+    let rd = |id: &str| env.repo.load_record(id).unwrap();
+    let (a, b, c) = (rd(&a.id), rd(&b.id), rd(&c.id));
+    let c_bytes = bytes_of(&env, "ccc");
+    let (mut pa, mut pb, mut pc) = (patch(&a), patch(&b), patch(&c));
+    pa.position = Some(2);
+    pa.album_position = Some(1);
+    pb.album = Some("  New Album ".into());
+    pc.band = Some("Band".into()); // same value: nothing to write
+    let res = env.repo.update_tracks(&[pa, pb, pc]).unwrap();
+    assert!(res.failed.is_empty());
+    assert_eq!(res.tracks.len(), 3);
+    assert_eq!((res.tracks[0].position, res.tracks[0].album_position), (Some(2), Some(1)));
+    assert_eq!(res.tracks[1].album, "New Album");
+    assert_ne!(res.tracks[0].modified, "2020-01-01T00:00:00Z");
+    assert_ne!(res.tracks[1].modified, "2020-01-01T00:00:00Z");
+    assert_eq!(res.tracks[2], c, "an unchanged track keeps its record and revision");
+    assert_eq!(bytes_of(&env, "ccc"), c_bytes);
+    assert_eq!(res.tracks[0].title, a.title);
+    assert!(!env.dir("aaa").join("track.json.tmp").exists());
+}
+
+#[test]
+fn a_batch_with_a_problem_changes_nothing() {
+    let env = Env::new();
+    let (a, b) = (env.track("aaa", &[]), env.track("bbb", &[]));
+    let before = (bytes_of(&env, "aaa"), bytes_of(&env, "bbb"));
+    let mut good = patch(&a);
+    good.position = Some(1);
+    let still = |env: &Env| assert_eq!((bytes_of(env, "aaa"), bytes_of(env, "bbb")), before);
+
+    let mut stale = patch(&b);
+    stale.revision = "0000".into();
+    let e = env.repo.update_tracks(&[good.clone(), stale]).unwrap_err();
+    assert!(e.starts_with("conflict: \"Title\" changed on disk"), "{e}");
+    still(&env);
+
+    let mut unknown = patch(&b);
+    unknown.id = "nope".into();
+    assert!(env.repo.update_tracks(&[good.clone(), unknown]).is_err());
+    still(&env);
+
+    assert!(env.repo.update_tracks(&[good.clone(), good.clone()]).unwrap_err().contains("twice"));
+    let mut empty_band = patch(&b);
+    empty_band.band = Some("  ".into());
+    assert!(env.repo.update_tracks(&[good.clone(), empty_band]).unwrap_err().contains("band name cannot be cleared"));
+    let mut zero = patch(&b);
+    zero.position = Some(0);
+    assert!(env.repo.update_tracks(&[good.clone(), zero]).is_err());
+    let many: Vec<TrackPatch> = (0..5001).map(|_| good.clone()).collect();
+    assert_eq!(env.repo.update_tracks(&many).unwrap_err(), "too many tracks in one change");
+    still(&env);
+    assert!(env.trash_files().is_empty());
+}
+
+#[test]
+fn patching_a_v1_track_writes_schema_2_with_the_position_and_keeps_the_rest() {
+    let v = V2::new();
+    let p = v.dir(V1_A).join("track.json");
+    let mut j: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+    j["x_note"] = "keep me".into();
+    fs::write(&p, serde_json::to_vec_pretty(&j).unwrap()).unwrap();
+    let rec = v.record(V1_A);
+    let other_before = fs::read(v.dir(V1_B).join("track.json")).unwrap();
+    let mut pa = patch(&rec);
+    pa.position = Some(3);
+    let res = v.repo.update_tracks(&[pa]).unwrap();
+    assert_eq!(res.tracks[0].position, Some(3));
+    let after: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+    assert_eq!(after["schema_version"], 2);
+    assert_eq!(after["type"], "backing");
+    assert_eq!(after["position"], 3);
+    assert_eq!(after["x_note"], "keep me");
+    for k in ["title", "band", "album", "audio", "tablatures", "imported"] {
+        assert_eq!(after[k], j[k], "{k}");
+    }
+    assert_eq!(fs::read(v.dir(V1_B).join("track.json")).unwrap(), other_before);
+}
+
+fn four_tracks(env: &Env) -> Vec<TrackRef> {
+    ["aaa", "bbb", "ccc", "ddd"]
+        .iter()
+        .map(|id| {
+            let r = env.track(id, &["one.gp5"]);
+            TrackRef { id: r.id, revision: r.revision }
+        })
+        .collect()
+}
+
+#[test]
+fn delete_tracks_deletes_the_others_when_one_has_a_stale_revision() {
+    let env = Env::new();
+    let mut items = four_tracks(&env);
+    items[1].revision = "stale".into();
+    let res = env.repo.delete_tracks(&items);
+    assert_eq!(res.deleted, vec!["aaa", "ccc", "ddd"]);
+    assert_eq!(res.failed.len(), 1);
+    let f = &res.failed[0];
+    assert_eq!((f.id.as_str(), f.title.as_str()), ("bbb", "Title"));
+    assert!(f.message.starts_with("conflict:"), "{}", f.message);
+    assert!(env.dir("bbb").is_dir() && !env.dir("aaa").exists());
+    assert_eq!(env.repo.scan().tracks.len(), 1);
+    let unknown = env.repo.delete_tracks(&[TrackRef { id: "nope".into(), revision: "x".into() }]);
+    assert!(unknown.deleted.is_empty() && unknown.failed[0].title.is_empty());
+}
+
+#[test]
+fn delete_tracks_reports_a_folder_that_cannot_move() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = Env::new();
+    let items = four_tracks(&env);
+    let locked = env.dir("ccc");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+    // As root the mode does not matter (e.g. under `unshare -r`): skip.
+    let probe = locked.join("probe");
+    if fs::write(&probe, b"x").is_ok() {
+        let _ = fs::remove_file(&probe);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let res = env.repo.delete_tracks(&items);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(res.deleted, vec!["aaa", "bbb", "ddd"]);
+    assert_eq!(res.failed.len(), 1);
+    assert_eq!(res.failed[0].id, "ccc");
+    assert!(res.failed[0].message.starts_with("cannot move the track to the trash"), "{}", res.failed[0].message);
+    assert!(env.dir("ccc").is_dir());
 }
 
 #[test]
@@ -934,7 +1115,9 @@ mod staging {
             track_type: TrackType::Stem,
             band: "B".into(),
             album: "A".into(),
+            album_position: None,
             title: "T".into(),
+            position: None,
             composers: vec![],
             year: None,
             source_url: None,

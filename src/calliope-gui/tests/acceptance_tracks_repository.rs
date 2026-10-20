@@ -121,6 +121,9 @@ impl Env {
             revision: t.revision.clone(),
             edits: edits(&t.band, &t.album, &t.title),
             tablatures: tabs,
+            position: None,
+            album_position: None,
+            group: vec![],
         }
     }
     fn keep_all(&self, t: &TrackRecord) -> Vec<TabEntry> {
@@ -642,6 +645,7 @@ fn newer_schema_track_is_a_problem_and_never_rewritten_or_deleted() {
         source_url: None, copyright: None, audio: Some("backing.mp3".into()), tablatures: vec![],
         track_type: track_meta::TrackType::Backing, original: None, stems: vec![], stem_model: None, backings: vec![], imported: "".into(),
         modified: "".into(), revision: fsutil::fnv1a64_hex(&bytes), missing: vec![],
+        position: None, album_position: None,
     };
     assert!(e.repo.save_track(e.req(&fake, vec![]), &|_| None).is_err());
     assert!(e.repo.delete_track(ID1, &fake.revision).is_err());
@@ -1112,6 +1116,7 @@ mod ipc_layer {
             id: t.id.clone(), revision: t.revision.clone(),
             edits: edits("Band", "Album", "Title"),
             tablatures: vec![TabEntry::Add { token: picked.token.clone() }],
+            position: None, album_position: None, group: vec![],
         };
         assert!(do_save_track(&st, req).is_err());
     }
@@ -1156,6 +1161,7 @@ mod ipc_layer {
         let mk = |rev: &str| SaveTrackRequest {
             id: t.id.clone(), revision: rev.into(), edits: edits("Band", "Album", "Title"),
             tablatures: vec![TabEntry::Add { token: picked.token.clone() }],
+            position: None, album_position: None, group: vec![],
         };
         let r = do_save_track(&st, mk(&t.revision)).unwrap();
         // replay with the fresh revision: must not re-add (token consumed; also name would clash)

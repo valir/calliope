@@ -524,6 +524,16 @@ and never use the real `calliope-stems` on `0.0.0.0:8765` or any other host.
   three lists), and `cargo build -p calliope-gui` succeeds.
 - **routine:** yes
 
+- **Orchestrator note (after tasks 1-5), backend as built:** `update_tracks {patches}` returns
+  `{tracks, failed}` (`tracks` = re-read records of every patched track; a failed write is only in
+  `failed`); a batch problem refuses everything with an `Err` string (stale revision:
+  `conflict: "<title>" changed on disk since it was loaded`; others `"<title>": <reason>`).
+  `delete_tracks {items:[{id,revision}]}` returns `{deleted: string[], failed: {id,title,message}[]}`.
+  `save_track` request gains `position?`, `album_position?`, `group?: TrackPatch[]`; the result gains
+  `updated` and `failed` (always present). Every `TrackRecord` has `position` and `album_position`
+  (`null` when absent). `apply_patch` runs the strict text rules on the whole track, so a track whose
+  band/album has leading or trailing spaces refuses a reorder batch: show the error message.
+
 ### Task 6: TS IPC types and wrappers
 - **files:** `src/calliope-gui/src/ui/lib/ipc.ts`, `src/calliope-gui/src/ui/lib/ipc-repository.test.ts`
 - **does:** The type and wrapper changes of 2.5, placed next to `TrackRecord`, `SaveTrackRequest`,

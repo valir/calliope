@@ -63,13 +63,13 @@ fn run_one(ctx: &Ctx, path: &Path, name: &str, url: &str, keep_original: bool) -
     };
     ctx.update(|j| j.dir = dir.clone());
     let r = (|| {
-        let (audio, edits, duration_s) = prepare_file(ctx, &dir, path, name)?;
+        let p = prepare_file(ctx, &dir, path, name)?;
         ctx.update(|j| {
-            j.snap.metadata = Some(edits.clone());
-            j.snap.duration_s = duration_s;
+            j.snap.metadata = Some(p.edits.clone());
+            j.snap.duration_s = p.duration_s;
         });
         ctx.phase(Phase::Uploading, ImportEvent::Uploading { sent: 0, total: 0 });
-        extract_cleaned(ctx, &dir, &audio, &edits, url, keep_original)
+        extract_cleaned(ctx, &dir, &p.audio, &p.edits, url, keep_original, p.position)
     })();
     if r.is_err() && dir.exists() {
         if let Err(e) = ctx.tmp.remove_job_dir(&dir) {

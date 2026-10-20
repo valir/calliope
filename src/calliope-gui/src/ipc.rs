@@ -19,7 +19,10 @@ use crate::editor::{self, EditorEvent, EditorManager, EditorSnapshot, EventSink,
 use crate::tools::{Tools, ToolState, ToolStatus};
 use crate::track_meta::TrackEdits;
 use calliope_lib::stems_client::{ClientError, StemsClient};
-use crate::repository::{self, Library, RepoStatus, Repository, SaveResult, SaveTrackRequest};
+use crate::repository::{
+    self, DeleteResult, Library, RepoStatus, Repository, SaveResult, SaveTrackRequest, TrackPatch, TrackRef,
+    UpdateResult, MAX_BATCH,
+};
 use crate::settings::{self, Settings, SettingsStore, Theme};
 use crate::tempo_store::TempoStore;
 #[cfg(test)]
@@ -231,12 +234,37 @@ pub fn do_save_track(st: &RepoState, request: SaveTrackRequest) -> Result<SaveRe
             .get(DialogKind::AddTablature, token)
             .or_else(|| st.registry.get(DialogKind::UpdateTablature, token))
     };
-    let result = Repository::new(root.clone()).save_track(request, &lookup)?;
+    let repo = Repository::new(root.clone());
+    if request.group.iter().any(|p| p.id == request.id) {
+        return Err("the group of a save cannot contain the saved track".into());
+    }
+    // check the whole group first: a problem refuses the save and nothing is written
+    let prepared = repo.prepare_patches(&request.group)?;
+    let mut result = repo.save_track(request, &lookup)?;
     for t in &tokens {
         st.registry.take(DialogKind::AddTablature, t);
         st.registry.take(DialogKind::UpdateTablature, t);
     }
+    let group = repo.commit_patches(prepared);
+    result.updated = group.tracks;
+    result.failed = group.failed;
     Ok(result)
+}
+
+pub fn do_update_tracks(st: &RepoState, patches: Vec<TrackPatch>) -> Result<UpdateResult, String> {
+    let root = st.lock();
+    Repository::new(root.clone()).update_tracks(&patches)
+}
+
+pub fn do_delete_tracks(st: &RepoState, items: Vec<TrackRef>) -> Result<DeleteResult, String> {
+    if items.is_empty() {
+        return Err("no tracks to delete".into());
+    }
+    if items.len() > MAX_BATCH {
+        return Err("too many tracks in one change".into());
+    }
+    let root = st.lock();
+    Ok(Repository::new(root.clone()).delete_tracks(&items))
 }
 
 pub fn do_delete_track(st: &RepoState, id: &str, revision: &str) -> Result<(), String> {
@@ -886,6 +914,16 @@ pub async fn delete_track(
 }
 
 #[tauri::command]
+pub async fn update_tracks(app: tauri::AppHandle, patches: Vec<TrackPatch>) -> Result<UpdateResult, String> {
+    blocking(move || do_update_tracks(&app.state::<RepoState>(), patches)).await
+}
+
+#[tauri::command]
+pub async fn delete_tracks(app: tauri::AppHandle, items: Vec<TrackRef>) -> Result<DeleteResult, String> {
+    blocking(move || do_delete_tracks(&app.state::<RepoState>(), items)).await
+}
+
+#[tauri::command]
 pub async fn export_track(app: tauri::AppHandle, id: String) -> Result<Option<String>, String> {
     blocking(move || do_export_track(&app.state::<RepoState>(), &id, home(&app))).await
 }
@@ -1275,6 +1313,80 @@ mod tests {
         .unwrap()
     }
 
+    fn patch_of(r: &crate::repository::TrackRecord) -> TrackPatch {
+        TrackPatch {
+            id: r.id.clone(),
+            revision: r.revision.clone(),
+            band: None,
+            album: Some("A2".into()),
+            position: None,
+            album_position: None,
+        }
+    }
+
+    fn save_request(r: &crate::repository::TrackRecord, group: Vec<TrackPatch>) -> SaveTrackRequest {
+        SaveTrackRequest {
+            id: r.id.clone(),
+            revision: r.revision.clone(),
+            edits: TrackEdits {
+                band: r.band.clone(),
+                album: "A2".into(),
+                title: r.title.clone(),
+                composers: vec![],
+                year: None,
+                source_url: None,
+                copyright: None,
+            },
+            tablatures: vec![],
+            position: Some(1),
+            album_position: None,
+            group,
+        }
+    }
+
+    #[test]
+    fn a_save_with_a_group_renames_all_and_a_stale_member_refuses_it() {
+        let e = env("");
+        let (a, b, c) = (seed(&e), seed(&e), seed(&e));
+        let files = |ids: [&str; 3]| -> Vec<Vec<u8>> {
+            ids.iter().map(|i| std::fs::read(e.default.join("tracks").join(i).join("track.json")).unwrap()).collect()
+        };
+        let ids = [a.id.as_str(), b.id.as_str(), c.id.as_str()];
+        let before = files(ids);
+        let mut stale = patch_of(&c);
+        stale.revision = "stale".into();
+        let err = do_save_track(&e.st, save_request(&a, vec![patch_of(&b), stale])).unwrap_err();
+        assert!(err.starts_with("conflict:"), "{err}");
+        assert_eq!(files(ids), before, "nothing was written");
+        // the main track cannot be in its own group
+        assert!(do_save_track(&e.st, save_request(&a, vec![patch_of(&a)])).is_err());
+        assert_eq!(files(ids), before);
+
+        let res = do_save_track(&e.st, save_request(&a, vec![patch_of(&b), patch_of(&c)])).unwrap();
+        assert_eq!((res.track.album.as_str(), res.track.position), ("A2", Some(1)));
+        assert_eq!(res.updated.len(), 2);
+        assert!(res.failed.is_empty() && res.updated.iter().all(|t| t.album == "A2"));
+        let lib = do_list_tracks(&e.st, &e.default).unwrap();
+        assert!(lib.tracks.iter().all(|t| t.album == "A2"));
+    }
+
+    #[test]
+    fn update_and_delete_tracks_commands() {
+        let e = env("");
+        let (a, b) = (seed(&e), seed(&e));
+        let res = do_update_tracks(&e.st, vec![patch_of(&a)]).unwrap();
+        assert_eq!(res.tracks[0].album, "A2");
+        let err = do_delete_tracks(&e.st, vec![]).unwrap_err();
+        assert!(!err.is_empty());
+        let items = vec![
+            TrackRef { id: res.tracks[0].id.clone(), revision: res.tracks[0].revision.clone() },
+            TrackRef { id: b.id.clone(), revision: "stale".into() },
+        ];
+        let out = do_delete_tracks(&e.st, items).unwrap();
+        assert_eq!(out.deleted, vec![a.id]);
+        assert_eq!(out.failed.len(), 1);
+    }
+
     #[test]
     fn list_tracks_creates_default_layout_only() {
         let e = env("");
@@ -1374,6 +1486,9 @@ mod tests {
                 copyright: None,
             },
             tablatures: vec![TabEntry::Add { token: p.token.clone() }],
+            position: None,
+            album_position: None,
+            group: vec![],
         };
         let res = do_save_track(&e.st, req.clone()).unwrap();
         assert_eq!(res.track.tablatures, vec!["riff.gp5"]);

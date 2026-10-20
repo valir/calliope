@@ -80,6 +80,8 @@ pub fn run() {
             ipc::pick_tablature,
             ipc::save_track,
             ipc::delete_track,
+            ipc::update_tracks,
+            ipc::delete_tracks,
             ipc::export_track,
             ipc::export_tablature,
             ipc::set_edge_ai_url,

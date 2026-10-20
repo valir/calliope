@@ -40,7 +40,11 @@ pub struct TrackRecord {
     pub track_type: TrackType,
     pub band: String,
     pub album: String,
+    /// The album's place among the band's albums; `None` = not ordered.
+    pub album_position: Option<u32>,
     pub title: String,
+    /// The track's place in its album; `None` = not ordered.
+    pub position: Option<u32>,
     pub composers: Vec<String>,
     pub year: Option<i64>,
     pub source_url: Option<String>,
@@ -85,12 +89,80 @@ pub struct SaveTrackRequest {
     pub revision: String,
     pub edits: TrackEdits,
     pub tablatures: Vec<TabEntry>,
+    /// `Some` = set the track's position in its album.
+    #[serde(default)]
+    pub position: Option<u32>,
+    /// `Some` = set the album's position among the band's albums.
+    #[serde(default)]
+    pub album_position: Option<u32>,
+    /// Other tracks changed together with this one (a rename of a band or album). Ignored by
+    /// `Repository::save_track`; the IPC layer runs it (plan 2.5).
+    #[serde(default)]
+    pub group: Vec<TrackPatch>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SaveResult {
     pub track: TrackRecord,
     pub warnings: Vec<String>,
+    /// Records of the other tracks written with the main one (IPC `group`).
+    pub updated: Vec<TrackRecord>,
+    pub failed: Vec<BatchFailure>,
+}
+
+/// One track's change in a batch. `None` = unchanged.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TrackPatch {
+    pub id: String,
+    pub revision: String,
+    #[serde(default)]
+    pub band: Option<String>,
+    #[serde(default)]
+    pub album: Option<String>,
+    #[serde(default)]
+    pub position: Option<u32>,
+    #[serde(default)]
+    pub album_position: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TrackRef {
+    pub id: String,
+    pub revision: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BatchFailure {
+    pub id: String,
+    pub title: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+pub struct UpdateResult {
+    pub tracks: Vec<TrackRecord>,
+    pub failed: Vec<BatchFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+pub struct DeleteResult {
+    pub deleted: Vec<String>,
+    pub failed: Vec<BatchFailure>,
+}
+
+/// Most tracks one batch may touch.
+pub const MAX_BATCH: usize = 5000;
+
+struct PreparedItem {
+    id: String,
+    dir: PathBuf,
+    meta: TrackMeta,
+    changed: bool,
+}
+
+/// Result of phase 1 of a batch (nothing written yet); see `Repository::commit_patches`.
+pub struct PreparedPatches {
+    items: Vec<PreparedItem>,
 }
 
 /// A track to create from scratch (tests, the fixture builder, the future import feature).
@@ -282,7 +354,9 @@ impl Repository {
             track_type: m.track_type,
             band: m.band,
             album: m.album,
+            album_position: m.album_position,
             title: m.title,
+            position: m.position,
             composers: m.composers,
             year: m.year,
             source_url: m.source_url,
@@ -349,7 +423,9 @@ impl Repository {
             track_type: track_meta::TrackType::Backing,
             band: e.band.trim().to_string(),
             album: e.album.trim().to_string(),
+            album_position: None,
             title: e.title.trim().to_string(),
+            position: None,
             composers: e.composers.iter().map(|c| c.trim().to_string()).collect(),
             year: e.year,
             source_url: e.source_url.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
@@ -411,6 +487,7 @@ impl Repository {
         // 2. validate edits, tab entries and sources
         let mut meta = old.clone();
         track_meta::apply_edits(&mut meta, req.edits)?;
+        track_meta::apply_patch(&mut meta, None, None, req.position, req.album_position)?;
 
         struct Plan {
             name: String,
@@ -562,7 +639,7 @@ impl Repository {
 
         // 6. re-scan the record
         let track = self.load_record(&req.id)?;
-        Ok(SaveResult { track, warnings })
+        Ok(SaveResult { track, warnings, updated: Vec::new(), failed: Vec::new() })
     }
 
     /// The backing save transaction (plan 2.6). `save.part` is the finished render, a file of
@@ -679,7 +756,7 @@ impl Repository {
             eprintln!("calliope: repository warning: {w}");
         }
         let track = self.load_record(save.id)?;
-        Ok(SaveResult { track, warnings })
+        Ok(SaveResult { track, warnings, updated: Vec::new(), failed: Vec::new() })
     }
 
     /// Moves the whole track folder to `trash/`.
@@ -688,9 +765,107 @@ impl Repository {
         if loaded.revision != revision {
             return Err("conflict: track.json changed on disk since it was loaded".into());
         }
-        fsutil::move_track_to_trash(&self.root, &dir, &stamp_now(), id)
-            .map(|_| ())
-            .map_err(|e| io_err("cannot move the track to the trash", e))
+        let dest = fsutil::move_track_to_trash(&self.root, &dir, &stamp_now(), id)
+            .map_err(|e| io_err("cannot move the track to the trash", e))?;
+        eprintln!("calliope: track deleted id={id} trash={}", trash_name(&dest));
+        Ok(())
+    }
+
+    /// Phase 1 of a batch change: checks every patch and applies it to a copy. Writes nothing.
+    /// The whole batch is refused on the first problem.
+    pub fn prepare_patches(&self, patches: &[TrackPatch]) -> Result<PreparedPatches, String> {
+        if patches.len() > MAX_BATCH {
+            return Err("too many tracks in one change".into());
+        }
+        let mut items: Vec<PreparedItem> = Vec::with_capacity(patches.len());
+        for p in patches {
+            if items.iter().any(|i| i.id == p.id) {
+                return Err(format!("track \"{}\" is listed twice", p.id));
+            }
+            let (dir, loaded) = self.load(&p.id)?;
+            if loaded.revision != p.revision {
+                return Err(conflict_text(&loaded.meta.title));
+            }
+            let mut meta = loaded.meta.clone();
+            track_meta::apply_patch(&mut meta, p.band.as_deref(), p.album.as_deref(), p.position, p.album_position)
+                .map_err(|e| format!("\"{}\": {e}", loaded.meta.title))?;
+            let changed = meta != loaded.meta;
+            items.push(PreparedItem { id: p.id.clone(), dir, meta, changed });
+        }
+        Ok(PreparedPatches { items })
+    }
+
+    /// Phase 2: writes the changed tracks (`modified` = now). A write error becomes a failure and
+    /// the others go on. Returns the re-read record of every track that is on disk as intended.
+    pub fn commit_patches(&self, prepared: PreparedPatches) -> UpdateResult {
+        let now = track_meta::now_rfc3339();
+        let mut out = UpdateResult::default();
+        let (mut written, mut unchanged) = (0usize, 0usize);
+        for mut item in prepared.items {
+            if item.changed {
+                item.meta.modified = now.clone();
+                let json = track_meta::to_json_pretty(&item.meta);
+                if let Err(e) = fsutil::write_atomic(&item.dir.join(TRACK_FILE), json.as_bytes()) {
+                    let message = io_err("cannot write track.json", e);
+                    eprintln!("calliope: track update failed id={} message={message}", item.id);
+                    out.failed.push(BatchFailure { id: item.id, title: item.meta.title, message });
+                    continue;
+                }
+                written += 1;
+            } else {
+                unchanged += 1;
+            }
+            match self.load_record(&item.id) {
+                Ok(r) => out.tracks.push(r),
+                Err(message) => {
+                    eprintln!("calliope: track update failed id={} message={message}", item.id);
+                    out.failed.push(BatchFailure { id: item.id, title: item.meta.title, message });
+                }
+            }
+        }
+        eprintln!(
+            "calliope: tracks updated written={written} unchanged={unchanged} failed={}",
+            out.failed.len()
+        );
+        out
+    }
+
+    /// Both phases of a batch change.
+    pub fn update_tracks(&self, patches: &[TrackPatch]) -> Result<UpdateResult, String> {
+        Ok(self.commit_patches(self.prepare_patches(patches)?))
+    }
+
+    /// Moves every listed track to the trash, whatever happens to the others.
+    pub fn delete_tracks(&self, items: &[TrackRef]) -> DeleteResult {
+        let mut out = DeleteResult::default();
+        for it in items {
+            let mut title = String::new();
+            let result = (|| {
+                let (dir, loaded) = self.load(&it.id)?;
+                title = loaded.meta.title.clone();
+                if loaded.revision != it.revision {
+                    return Err(conflict_text(&title));
+                }
+                fsutil::move_track_to_trash(&self.root, &dir, &stamp_now(), &it.id)
+                    .map_err(|e| io_err("cannot move the track to the trash", e))
+            })();
+            match result {
+                Ok(dest) => {
+                    eprintln!("calliope: track deleted id={} trash={}", it.id, trash_name(&dest));
+                    out.deleted.push(it.id.clone());
+                }
+                Err(message) => {
+                    eprintln!("calliope: track delete failed id={} message={message}", it.id);
+                    out.failed.push(BatchFailure { id: it.id.clone(), title, message });
+                }
+            }
+        }
+        eprintln!(
+            "calliope: tracks deleted deleted={} failed={}",
+            out.deleted.len(),
+            out.failed.len()
+        );
+        out
     }
 
     /// Copies the track into a new `"Band - Album - Title"` folder under `dest_parent`.
@@ -772,6 +947,14 @@ impl Repository {
         }
         fsutil::copy_replace(&src, dest).map_err(|e| io_err("cannot export the tablature", e))
     }
+}
+
+fn conflict_text(title: &str) -> String {
+    format!("conflict: \"{title}\" changed on disk since it was loaded")
+}
+
+fn trash_name(dest: &Path) -> String {
+    dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
 /// Makes one part of an export folder name safe on every platform.
