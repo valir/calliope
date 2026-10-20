@@ -10,7 +10,8 @@ import {
   type TrackRecord,
 } from './ipc';
 import { draftFromRecord, toSaveRequest, validate, type Draft, type DraftField, type Mode } from './track-draft';
-import { allGroupKeys, buildTree, filterTree, type BandNode } from './library-tree';
+import { allGroupKeys, buildTree, filterTree, groupName, type BandNode } from './library-tree';
+import { planRename, type RenamePlan } from './library-rename';
 
 export const lib = $state({
   library: null as Library | null,
@@ -35,6 +36,10 @@ export const lib = $state({
   errorMessage: '' as string,
   /** Validation errors next to the fields. */
   fieldErrors: {} as Partial<Record<DraftField, string>>,
+  /** The tree item that has the focus (shared so that the Delete button can act on it). */
+  treeFocus: null as string | null,
+  /** A band / album rename waiting for the user's confirmation. */
+  pendingRename: null as RenamePlan | null,
 });
 
 export function resetLibrary(): void {
@@ -54,6 +59,8 @@ export function resetLibrary(): void {
   lib.message = '';
   lib.errorMessage = '';
   lib.fieldErrors = {};
+  lib.treeFocus = null;
+  lib.pendingRename = null;
 }
 
 function repoProblemText(status: RepoStatus, root: string): string {
@@ -162,6 +169,7 @@ export function startEdit(): void {
 
 export function endEdit(): void {
   const id = lib.selectedId;
+  lib.pendingRename = null;
   lib.draft = null;
   lib.mode = 'view';
   lib.conflict = false;
@@ -180,34 +188,82 @@ export async function discardAfterConflict(): Promise<void> {
   lib.message = 'Reloaded the track from disk.';
 }
 
-export async function saveEdit(): Promise<void> {
+/** The user said No to the rename confirmation: nothing is saved, the pane stays in edit mode. */
+export function cancelRename(): void {
+  if (!lib.pendingRename) return;
+  lib.pendingRename = null;
+  void frontendLog('rename cancelled');
+}
+
+export const groupConflictText =
+  'Another track of this album or band changed on disk. Cancel to reload; your edits will be discarded.';
+
+const tracksWord = (n: number): string => (n === 1 ? '1 track' : `${n} tracks`);
+
+export async function saveEdit(confirmed = false): Promise<void> {
   const d = lib.draft;
   if (!d || lib.mode !== 'edit' || lib.busy) return;
   clearMessages();
+  lib.pendingRename = null;
   const errors = validate(d);
   lib.fieldErrors = errors;
   if (Object.keys(errors).length > 0) {
     lib.errorMessage = 'Fix the highlighted fields, then save again.';
     return;
   }
+  const edited = lib.library?.tracks.find((t) => t.id === d.id) ?? selectedTrack();
+  const plan: RenamePlan = edited
+    ? planRename(lib.library?.tracks ?? [], edited, d.band, d.album)
+    : { kind: 'none' };
+  if (plan.kind === 'refused') {
+    lib.errorMessage = plan.message;
+    void frontendLog(`rename refused reason=${plan.reason}`);
+    return;
+  }
+  if (plan.kind === 'rename' && !confirmed) {
+    lib.pendingRename = plan;
+    return;
+  }
+  const request = toSaveRequest(d);
+  if (plan.kind === 'join') {
+    if (plan.position !== undefined) request.position = plan.position;
+    if (plan.album_position !== undefined) request.album_position = plan.album_position;
+  } else if (plan.kind === 'rename') {
+    Object.assign(request, plan.main, { group: plan.group });
+  }
   lib.busy = true;
   try {
-    const res = await saveTrack(toSaveRequest(d));
-    const tracks = lib.library?.tracks;
-    if (lib.library && tracks) {
-      lib.library.tracks = tracks.map((t) => (t.id === res.track.id ? res.track : t));
-    }
+    const res = await saveTrack(request);
+    const changed = new Map([res.track, ...(res.updated ?? [])].map((t) => [t.id, t]));
+    if (lib.library) lib.library.tracks = lib.library.tracks.map((t) => changed.get(t.id) ?? t);
     void frontendLog(
       `saved id=${res.track.id} tablatures=${res.track.tablatures.length} warnings=${res.warnings.length}`,
     );
+    const failed = res.failed ?? [];
+    if (plan.kind === 'rename') {
+      void frontendLog(
+        `rename kind=${plan.scope} from="${plan.from}" to="${plan.to}" tracks=${plan.count} merged=${plan.merged} failed=${failed.length}`,
+      );
+    }
+    // Group keys are name-based: open the renamed track's band and album so it stays visible.
+    const bandKey = `b:${groupName(res.track.band)}`;
+    lib.expanded[bandKey] = true;
+    lib.expanded[`${bandKey}|a:${groupName(res.track.album)}`] = true;
     endEdit();
-    lib.message = res.warnings.length > 0 ? `Saved. ${res.warnings.join(' ')}` : 'Saved.';
+    let message = res.warnings.length > 0 ? `Saved. ${res.warnings.join(' ')}` : 'Saved.';
+    if (failed.length > 0) {
+      message += ` Could not rename ${tracksWord(failed.length)}: ${failed.map((f) => `${f.title}: ${f.message}`).join('; ')}`;
+      await load();
+    }
+    lib.message = message;
   } catch (err) {
     void frontendLog(`error save_track: ${String(err)}`);
     if (isConflict(err)) {
       // Keep edit mode and the draft: the user's typing is not thrown away.
       lib.conflict = true;
-      lib.errorMessage = conflictText;
+      const ownTitle = edited ? `"${edited.title}"` : null;
+      const fromGroup = plan.kind === 'rename' && plan.group.length > 0 && !(ownTitle && String(err).includes(ownTitle));
+      lib.errorMessage = fromGroup ? groupConflictText : conflictText;
     } else {
       lib.errorMessage = `Could not save: ${String(err)}`;
     }

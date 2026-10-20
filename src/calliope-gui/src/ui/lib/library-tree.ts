@@ -1,7 +1,14 @@
 import type { TrackRecord } from './ipc';
 import { normalize, trackMatches, queryTokens } from './fuzzy';
 
-export interface AlbumNode { key: string; label: string; isNone: boolean; tracks: TrackRecord[] }
+export interface AlbumNode {
+  key: string;
+  label: string;
+  isNone: boolean;
+  /** Smallest `album_position` among the tracks; null = not ordered (always null for "(no album)"). */
+  position: number | null;
+  tracks: TrackRecord[];
+}
 export interface BandNode { key: string; label: string; isNone: boolean; albums: AlbumNode[] }
 
 export const NO_BAND = '(no band)';
@@ -17,7 +24,19 @@ function compareTracks(a: TrackRecord, b: TrackRecord): number {
   return compareText(a.title, b.title) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 }
 
-const groupName = (s: string): string => normalize(s.trim());
+export const groupName = (s: string): string => normalize(s.trim());
+
+const idOrder = (a: TrackRecord, b: TrackRecord): number => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+/** Positioned tracks first (by position, title, id), then the others (title, id). */
+function compareInAlbum(a: TrackRecord, b: TrackRecord): number {
+  const pa = a.position ?? null;
+  const pb = b.position ?? null;
+  if (pa !== null && pb === null) return -1;
+  if (pa === null && pb !== null) return 1;
+  if (pa !== null && pb !== null && pa !== pb) return pa - pb;
+  return compareText(a.title, b.title) || idOrder(a, b);
+}
 
 function bySortedFirst<T>(items: T[], name: (t: T) => string): string {
   return [...items].map(name).sort(compareText)[0];
@@ -35,10 +54,32 @@ function group<T>(items: T[], pick: (t: T) => string): Map<string, T[]> {
   return map;
 }
 
-function sortGroups<G extends { label: string; isNone: boolean }>(groups: G[]): G[] {
-  return groups.sort((a, b) =>
-    a.isNone !== b.isNone ? (a.isNone ? 1 : -1) : compareText(a.label, b.label),
-  );
+function sortGroups<G extends { label: string; isNone: boolean; position?: number | null }>(
+  groups: G[],
+): G[] {
+  return groups.sort((a, b) => {
+    if (a.isNone !== b.isNone) return a.isNone ? 1 : -1;
+    const pa = a.position ?? null;
+    const pb = b.position ?? null;
+    if (pa !== null && pb === null) return -1;
+    if (pa === null && pb !== null) return 1;
+    if (pa !== null && pb !== null && pa !== pb) return pa - pb;
+    return compareText(a.label, b.label);
+  });
+}
+
+/** "3. Title" for a positioned track of a real album, else the bare title. */
+export function trackLabel(t: TrackRecord, album: AlbumNode): string {
+  return !album.isNone && t.position ? `${t.position}. ${t.title}` : t.title;
+}
+
+function minAlbumPosition(tracks: TrackRecord[]): number | null {
+  let min: number | null = null;
+  for (const t of tracks) {
+    const p = t.album_position;
+    if (p && (min === null || p < min)) min = p;
+  }
+  return min;
 }
 
 export function buildTree(tracks: TrackRecord[]): BandNode[] {
@@ -52,7 +93,8 @@ export function buildTree(tracks: TrackRecord[]): BandNode[] {
         key: `b:${bandKey}|a:${albumKey}`,
         label: albumNone ? NO_ALBUM : bySortedFirst(albumTracks, (t) => t.album.trim()),
         isNone: albumNone,
-        tracks: [...albumTracks].sort(compareTracks),
+        position: albumNone ? null : minAlbumPosition(albumTracks),
+        tracks: [...albumTracks].sort(albumNone ? compareTracks : compareInAlbum),
       });
     }
     bands.push({

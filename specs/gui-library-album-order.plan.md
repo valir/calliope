@@ -619,6 +619,17 @@ and never use the real `calliope-stems` on `0.0.0.0:8765` or any other host.
   pass, and `npm run check` is clean.
 - **routine:** no
 
+- **Orchestrator note (after tasks 6-10), frontend as built:** `lib.treeFocus` and
+  `lib.pendingRename` are new state; `TrackTree` still has its local `focusKey` and must switch to
+  `lib.treeFocus`. `saveEdit(confirmed = false)` (call as `() => void saveEdit()`; `saveEdit(true)` is
+  Yes), `cancelRename()` for No/Escape. Ops in `library-ops.svelte.ts`: `reorderAllowed()`,
+  `moveTreeItem(key, delta, 'key')`, `dropTreeItem(key, gap, 'drag')`, `treeDeleteTarget()`,
+  `deleteTargetOrReason()`, `logDeleteNone()`, `deleteTreeTarget(target)` → `{removedKeys}` (calls
+  `load()`, sets messages). Nothing logs `delete cancelled key=<k>`: the UI must. Helpers:
+  `gapAt`, `neighbourKey`, `confirmDeleteAlbum` (`library-order.ts`), `trackLabel` (`library-tree.ts`).
+  Four existing frontend tests that edited Band/Album to test save errors now edit Title (owner
+  requirement 11 makes a Band/Album edit a group rename).
+
 ### Task 11: Tree UI: keys, pointer drag and drop, Delete button and confirmation
 - **files:** `src/calliope-gui/src/ui/components/library/TrackTree.svelte`, `TreeToolbar.svelte`, `TrackBrowser.svelte`,
   `src/calliope-gui/src/ui/views/LibraryView.svelte`, `src/calliope-gui/src/ui/views/LibraryView.test.ts`

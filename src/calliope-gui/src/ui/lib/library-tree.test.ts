@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTree, allGroupKeys, filterTree } from './library-tree';
+import { buildTree, allGroupKeys, filterTree, trackLabel } from './library-tree';
 import { FIXTURE_TRACKS } from './fixture-tracks';
 import type { TrackRecord } from './ipc';
 
@@ -45,6 +45,47 @@ describe('buildTree', () => {
     expect(t[0].albums[0].tracks.map((x) => x.id)).toEqual(['c', 'd', 'a', 'b']);
   });
   it('empty library gives an empty tree', () => expect(buildTree([])).toEqual([]));
+});
+
+describe('order and position labels', () => {
+  const mk = (id: string, title: string, position: number | null, over: Partial<TrackRecord> = {}): TrackRecord => ({
+    ...FIXTURE_TRACKS[0], id, band: 'Band', album: 'Album', title, position, album_position: null, ...over,
+  });
+  const labels = (ts: TrackRecord[]) => {
+    const a = buildTree(ts)[0].albums[0];
+    return a.tracks.map((t) => trackLabel(t, a));
+  };
+  it('stays alphabetical without positions, with bare titles', () =>
+    expect(labels([mk('1', 'C', null), mk('2', 'A', null), mk('3', 'B', null)])).toEqual(['A', 'B', 'C']));
+  it('orders by position and numbers the labels', () =>
+    expect(labels([mk('1', 'A', 2), mk('2', 'B', 3), mk('3', 'C', 1)])).toEqual(['1. C', '2. A', '3. B']));
+  it('puts tracks without a position after the positioned ones', () =>
+    expect(labels([mk('1', 'A', null), mk('2', 'Z', 1)])).toEqual(['1. Z', 'A']));
+  it('breaks equal positions by title', () =>
+    expect(labels([mk('1', 'B', 1), mk('2', 'A', 1)])).toEqual(['1. A', '1. B']));
+  it('ignores positions in (no album)', () => {
+    const a = buildTree([mk('1', 'B', 1, { album: '' }), mk('2', 'A', 2, { album: '' })])[0].albums[0];
+    expect(a.isNone).toBe(true);
+    expect(a.position).toBeNull();
+    expect(a.tracks.map((t) => trackLabel(t, a))).toEqual(['A', 'B']);
+  });
+  it('orders albums by album position, then name, with (no album) last', () => {
+    const ts = [
+      mk('1', 'x', null, { album: 'Alpha', album_position: 2 }),
+      mk('2', 'x', null, { album: 'Beta' }),
+      mk('3', 'x', null, { album: 'Gamma', album_position: 1 }),
+      mk('4', 'x', null, { album: '', album_position: 1 }),
+    ];
+    expect(buildTree(ts)[0].albums.map((a) => a.label)).toEqual(['Gamma', 'Alpha', 'Beta', '(no album)']);
+  });
+  it('uses the minimum album position over the album tracks', () => {
+    const ts = [
+      mk('1', 'a', null, { album: 'Alpha', album_position: 5 }),
+      mk('2', 'b', null, { album: 'Alpha', album_position: 3 }),
+      mk('3', 'c', null, { album: 'Alpha' }),
+    ];
+    expect(buildTree(ts)[0].albums[0].position).toBe(3);
+  });
 });
 
 describe('allGroupKeys', () => {

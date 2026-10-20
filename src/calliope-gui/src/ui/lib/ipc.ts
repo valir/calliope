@@ -50,6 +50,10 @@ export interface TrackRecord {
   modified: string;
   revision: string;
   missing: string[];
+  /** Place in the album (1-based). Rust always sends it; optional here so test literals stay valid. */
+  position?: number | null;
+  /** The album's place among the band's albums (1-based). */
+  album_position?: number | null;
 }
 export interface LibraryProblem { dir: string; message: string }
 export interface Library { root: string; tracks: TrackRecord[]; problems: LibraryProblem[] }
@@ -71,8 +75,36 @@ export type TabEntry =
   | { kind: 'keep'; name: string }
   | { kind: 'add'; token: string }
   | { kind: 'replace'; name: string; token: string };
-export interface SaveTrackRequest { id: string; revision: string; edits: TrackEdits; tablatures: TabEntry[] }
-export interface SaveResult { track: TrackRecord; warnings: string[] }
+/** One track of a batch change; absent fields stay as they are. */
+export interface TrackPatch {
+  id: string;
+  revision: string;
+  band?: string;
+  album?: string;
+  position?: number;
+  album_position?: number;
+}
+export interface TrackRef { id: string; revision: string }
+export interface BatchFailure { id: string; title: string; message: string }
+/** `tracks` holds the re-read record of every patched track whose write did not fail. */
+export interface UpdateResult { tracks: TrackRecord[]; failed: BatchFailure[] }
+export interface DeleteResult { deleted: string[]; failed: BatchFailure[] }
+export interface SaveTrackRequest {
+  id: string;
+  revision: string;
+  edits: TrackEdits;
+  tablatures: TabEntry[];
+  position?: number;
+  album_position?: number;
+  /** Other tracks changed together with this one (band / album renames). */
+  group?: TrackPatch[];
+}
+export interface SaveResult {
+  track: TrackRecord;
+  warnings: string[];
+  updated?: TrackRecord[];
+  failed?: BatchFailure[];
+}
 
 export const getRepository = (): Promise<RepoInfo> => invoke<RepoInfo>('get_repository');
 export const chooseRepositoryRoot = (): Promise<PickedRoot | null> =>
@@ -87,6 +119,10 @@ export const saveTrack = (request: SaveTrackRequest): Promise<SaveResult> =>
   invoke<SaveResult>('save_track', { request });
 export const deleteTrack = (id: string, revision: string): Promise<void> =>
   invoke<void>('delete_track', { id, revision });
+export const updateTracks = (patches: TrackPatch[]): Promise<UpdateResult> =>
+  invoke<UpdateResult>('update_tracks', { patches });
+export const deleteTracks = (items: TrackRef[]): Promise<DeleteResult> =>
+  invoke<DeleteResult>('delete_tracks', { items });
 export const exportTrack = (id: string): Promise<string | null> =>
   invoke<string | null>('export_track', { id });
 export const exportTablature = (id: string, name: string): Promise<string | null> =>

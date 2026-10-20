@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import {
-  chooseRepositoryRoot, deleteTrack, exportTablature, exportTrack, getRepository, listTracks,
-  pickTablature, resetRepositoryRoot, saveTrack, setRepositoryRoot, type SaveTrackRequest,
+  chooseRepositoryRoot, deleteTrack, deleteTracks, exportTablature, exportTrack, getRepository, listTracks,
+  pickTablature, resetRepositoryRoot, saveTrack, setRepositoryRoot, updateTracks, type SaveTrackRequest,
 } from './ipc';
 
 afterEach(() => clearMocks());
@@ -16,6 +16,7 @@ describe('repository ipc wrappers', () => {
       revision: '00ff',
       edits: { band: 'B', album: 'A', title: 'T', composers: ['C'], year: 1999, source_url: null, copyright: null },
       tablatures: [{ kind: 'keep', name: 'x.gp5' }, { kind: 'add', token: 'p1' }],
+      group: [{ id: 'g1', revision: 'aa', album: 'New', position: 2 }],
     };
     await getRepository();
     await chooseRepositoryRoot();
@@ -25,6 +26,8 @@ describe('repository ipc wrappers', () => {
     await pickTablature('add');
     await saveTrack(req);
     await deleteTrack('abc', '00ff');
+    await updateTracks([{ id: 'abc', revision: '00ff', position: 1 }]);
+    await deleteTracks([{ id: 'abc', revision: '00ff' }]);
     await exportTrack('abc');
     await exportTablature('abc', 'x.gp5');
     expect(calls).toEqual([
@@ -36,6 +39,8 @@ describe('repository ipc wrappers', () => {
       ['pick_tablature', { purpose: 'add' }],
       ['save_track', { request: req }],
       ['delete_track', { id: 'abc', revision: '00ff' }],
+      ['update_tracks', { patches: [{ id: 'abc', revision: '00ff', position: 1 }] }],
+      ['delete_tracks', { items: [{ id: 'abc', revision: '00ff' }] }],
       ['export_track', { id: 'abc' }],
       ['export_tablature', { id: 'abc', name: 'x.gp5' }],
     ]);

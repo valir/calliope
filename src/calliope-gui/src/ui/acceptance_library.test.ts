@@ -283,16 +283,16 @@ describe('AC10: save', () => {
   it('sends only edited-field values plus id/revision; never a path; returns to view mode', async () => {
     await openTrack('z-song');
     await edit();
-    await fireEvent.input(field('Album'), { target: { value: 'New Album' } });
+    await fireEvent.input(field('Title'), { target: { value: 'New Title' } });
     await fireEvent.click(bar('Save'));
     await waitFor(() => expect(bar('Edit').disabled).toBe(false));
     expect(saves.length).toBe(1);
-    expect(saves[0].edits.album).toBe('New Album');
+    expect(saves[0].edits.title).toBe('New Title');
     expect(saves[0].revision).toBe('rev1');
     expect(JSON.stringify(saves[0])).not.toMatch(/\/(home|tmp|etc)/);
     expect(bar('Save').disabled).toBe(true);
     expect(field('Modified').value).toBe('2026-10-05T09:00:00Z');
-    expect(field('Album').readOnly).toBe(true);
+    expect(field('Title').readOnly).toBe(true);
   });
 
   it.each([

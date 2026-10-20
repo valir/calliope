@@ -243,27 +243,27 @@ describe('Track pane: saving and discarding', () => {
     saveError = 'disk full';
     await open('Slow Burn');
     await edit();
-    await fireEvent.input(field('Band'), { target: { value: 'X' } });
+    await fireEvent.input(field('Title'), { target: { value: 'X' } });
     await clickBtn('Save');
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('disk full'));
     expect(btn('Save').disabled).toBe(false);
-    expect(field('Band').value).toBe('X');
+    expect(field('Title').value).toBe('X');
   });
 
   it('a conflict keeps edit mode and the draft; Cancel then discards and reloads without asking', async () => {
     saveError = 'conflict: track changed on disk';
     await open('Slow Burn');
     await edit();
-    await fireEvent.input(field('Band'), { target: { value: 'Typed' } });
+    await fireEvent.input(field('Title'), { target: { value: 'Typed' } });
     await clickBtn('Save');
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Cancel to reload it'));
-    expect(field('Band').value).toBe('Typed');
+    expect(field('Title').value).toBe('Typed');
     expect(btn('Cancel').disabled).toBe(false);
     expect(calledCmds().filter((c) => c === 'list_tracks').length).toBe(1);
     await clickBtn('Cancel');
     await waitFor(() => expect(btn('Edit').disabled).toBe(false));
     expect(screen.queryByRole('alertdialog')).toBeNull();
-    expect(field('Band').value).not.toBe('Typed');
+    expect(field('Title').value).not.toBe('Typed');
     expect(calledCmds().filter((c) => c === 'list_tracks').length).toBe(2);
   });
 
@@ -271,7 +271,7 @@ describe('Track pane: saving and discarding', () => {
     saveError = 'conflict: track changed on disk';
     await open('Slow Burn');
     await edit();
-    await fireEvent.input(field('Band'), { target: { value: 'Typed' } });
+    await fireEvent.input(field('Title'), { target: { value: 'Typed' } });
     await clickBtn('Save');
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Cancel to reload it'));
     await fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' });
