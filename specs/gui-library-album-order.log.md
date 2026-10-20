@@ -17,3 +17,5 @@ task 14 | GUI end-to-end tests and visual review | implementer | done
 task 15 | README and UI guide | implementer (moved from local) | done
 gui suite | edit_and_save (existing test editing Album) needed the new rename confirmation; fixed by implementer | implementer | done
 gui suite | all 8 binaries green | orchestrator | done
+reviewer | APPROVED; 4 minor (apply_patch validates the whole track, untested partial write in commit_patches, click after Escape cancel, stale position on join), 2 nit (duplicate delete ids, focus when the tree empties) | reviewer | done
+tester | all criteria and requirements PASS; added 13 acceptance tests (merges, case-only rename, no-album/no-band moves, refusals, edges, delete during search, focus, padded names); no defects | tester | done

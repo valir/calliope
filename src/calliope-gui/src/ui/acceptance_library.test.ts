@@ -786,4 +786,214 @@ describe('gui-library-album-order acceptance', () => {
     await open();
     expect(labels().slice(2, 5)).toEqual(['A', 'B', 'C']);
   });
+
+  // ---- QA edge cases -------------------------------------------------------------------------
+  const saveWith = async (title: string, change: Partial<{ band: string; album: string }>) => {
+    await fireEvent.click(row(title));
+    await tick();
+    await edit();
+    if (change.band !== undefined) await fireEvent.input(field('Band'), { target: { value: change.band } });
+    if (change.album !== undefined) await fireEvent.input(field('Album'), { target: { value: change.album } });
+    await fireEvent.click(bar('Save'));
+  };
+  const confirm = async (answer: 'Yes' | 'No') => {
+    const dlg = await screen.findByRole('alertdialog');
+    const text = dlg.textContent ?? '';
+    await fireEvent.click(within(dlg).getByRole('button', { name: answer }));
+    return text;
+  };
+  const inAlbum = (album: string) =>
+    disk.filter((t) => t.album === album).sort((a, b) => (a.position ?? 99) - (b.position ?? 99)).map((t) => t.id);
+
+  it('QA merge: renaming an album to an existing name puts the renamed tracks after the existing ones', async () => {
+    disk = [
+      mk('e1', 'Band', 'Metallica', 'E-one', { position: 1, album_position: 1 }),
+      mk('e2', 'Band', 'Metallica', 'E-two', { position: 2, album_position: 1 }),
+      mk('r1', 'Band', 'Metalica', 'R-one', { position: 1, album_position: 2 }),
+      mk('r2', 'Band', 'Metalica', 'R-two', { position: 2, album_position: 2 }),
+    ];
+    await open();
+    await saveWith('1. R-one', { album: 'Metallica' });
+    const text = await confirm('Yes');
+    expect(text).toContain('merged');
+    expect(text).toContain('2 tracks');
+    await waitFor(() => expect(disk.every((t) => t.album === 'Metallica')).toBe(true));
+    expect(inAlbum('Metallica')).toEqual(['e1', 'e2', 'r1', 'r2']);
+    expect(disk.map((t) => t.position).sort()).toEqual([1, 2, 3, 4]);
+    expect(disk.every((t) => t.album_position === 1)).toBe(true);
+    await restart();
+    expect(labels().filter((l) => /^\d\./.test(l))).toEqual(['1. E-one', '2. E-two', '3. R-one', '4. R-two']);
+  });
+
+  it('QA merge: renaming a band to an existing band merges the colliding albums, existing first', async () => {
+    disk = [
+      mk('e1', 'Metallica', 'Alpha', 'e-a1', { position: 1, album_position: 1 }),
+      mk('e2', 'Metallica', 'Beta', 'e-b1', { position: 1, album_position: 2 }),
+      mk('m1', 'Metalica', 'Beta', 'm-b1', { position: 1, album_position: 1 }),
+      mk('m2', 'Metalica', 'Gamma', 'm-g1', { position: 1, album_position: 2 }),
+    ];
+    await open();
+    await saveWith('1. m-g1', { band: 'Metallica' });
+    expect(await confirm('Yes')).toContain('merged');
+    await waitFor(() => expect(disk.every((t) => t.band === 'Metallica')).toBe(true));
+    expect(inAlbum('Beta')).toEqual(['e2', 'm1']);
+    const ap = (id: string) => disk.find((t) => t.id === id)!.album_position;
+    expect([ap('e1'), ap('e2'), ap('m1'), ap('m2')]).toEqual([1, 2, 2, 3]);
+  });
+
+  it('QA case-only rename is a rename of all tracks, not a merge', async () => {
+    disk = [
+      mk('a', 'metallica', 'Ride', 'A', { position: 1, album_position: 1 }),
+      mk('b', 'metallica', 'Ride', 'B', { position: 2, album_position: 1 }),
+    ];
+    await open();
+    await saveWith('1. A', { band: 'Metallica' });
+    const text = await confirm('Yes');
+    expect(text).not.toContain('merged');
+    expect(text).toContain('2 tracks');
+    await waitFor(() => expect(disk.every((t) => t.band === 'Metallica')).toBe(true));
+    expect(disk.map((t) => t.position)).toEqual([1, 2]);
+  });
+
+  it('QA a (no album) track gets an album: joins at the end, no confirmation, others untouched', async () => {
+    disk = [
+      mk('a', 'Band', 'Order', 'A', { position: 1, album_position: 3 }),
+      mk('b', 'Band', 'Order', 'B', { position: 2, album_position: 3 }),
+      mk('n', 'Band', '', 'Loose'),
+    ];
+    await open();
+    await saveWith('Loose', { album: 'Order' });
+    await waitFor(() => expect(disk.find((t) => t.id === 'n')!.album).toBe('Order'));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(inAlbum('Order')).toEqual(['a', 'b', 'n']);
+    expect(disk.find((t) => t.id === 'n')!.position).toBe(3);
+    expect(disk.find((t) => t.id === 'n')!.album_position).toBe(3);
+    expect(sent('update_tracks')).toEqual([]);
+    await restart();
+    expect(labels().filter((l) => /^\d\./.test(l))).toEqual(['1. A', '2. B', '3. Loose']);
+  });
+
+  it('QA a (no album) track getting a brand new album moves alone', async () => {
+    disk = [mk('a', 'Band', 'Order', 'A'), mk('n', 'Band', '', 'Loose'), mk('m', 'Band', '', 'Loose2')];
+    await open();
+    await saveWith('Loose', { album: 'Fresh' });
+    await waitFor(() => expect(disk.find((t) => t.id === 'n')!.album).toBe('Fresh'));
+    expect(disk.find((t) => t.id === 'm')!.album).toBe('');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('QA a (no band) track gets a band: its whole album moves together after a confirmation', async () => {
+    disk = [
+      mk('a', '', 'Demo', 'A', { position: 1 }),
+      mk('b', '', 'Demo', 'B', { position: 2 }),
+      mk('x', 'Real', 'Other', 'X'),
+    ];
+    await open();
+    await saveWith('1. A', { band: 'Real' });
+    const text = await confirm('Yes');
+    expect(text).toContain('2 tracks');
+    await waitFor(() => expect(disk.filter((t) => t.band === 'Real').length).toBe(3));
+    expect(disk.find((t) => t.id === 'b')!.band).toBe('Real');
+    expect(inAlbum('Demo')).toEqual(['a', 'b']);
+  });
+
+  it('QA a lone (no band) track without an album gets a band alone, without a confirmation', async () => {
+    disk = [mk('a', '', '', 'Solo'), mk('b', '', '', 'Other solo')];
+    await open();
+    await saveWith('Solo', { band: 'Someone' });
+    await waitFor(() => expect(disk.find((t) => t.id === 'a')!.band).toBe('Someone'));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(disk.find((t) => t.id === 'b')!.band).toBe('');
+  });
+
+  it('QA changing band and album together, or clearing either, is refused and saves nothing', async () => {
+    disk = abc([{ position: 1 }, { position: 2 }, { position: 3 }]);
+    await open();
+    await saveWith('1. A', { band: 'NewBand', album: 'NewAlbum' });
+    await waitFor(() => expect(screen.queryByText(/Change the band or the album/)).not.toBeNull());
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(bar('Save').disabled).toBe(false);
+    await fireEvent.input(field('Band'), { target: { value: 'Band' } });
+    await fireEvent.input(field('Album'), { target: { value: '' } });
+    await fireEvent.click(bar('Save'));
+    await waitFor(() => expect(screen.queryByText(/cannot be cleared/)).not.toBeNull());
+    await fireEvent.input(field('Album'), { target: { value: 'Order' } });
+    await fireEvent.input(field('Band'), { target: { value: '   ' } });
+    await fireEvent.click(bar('Save'));
+    await waitFor(() => expect(screen.queryByText(/cannot be cleared/)).not.toBeNull());
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(sent('save_track')).toEqual([]);
+    expect(disk.every((t) => ['Band', 'Other'].includes(t.band))).toBe(true);
+  });
+
+  it('QA Alt+Down on the last track and Alt+Up on the first album change nothing', async () => {
+    disk = albums();
+    await open();
+    const last = 'g-two';
+    const tr = row(`2. ${last}`);
+    tr.focus();
+    await fireEvent.keyDown(tr, { key: 'ArrowDown', altKey: true });
+    row('Alpha').focus();
+    await fireEvent.keyDown(row('Alpha'), { key: 'ArrowUp', altKey: true });
+    await quiet();
+    expect(sent('update_tracks')).toEqual([]);
+    expect(logs.some((l) => l.includes('reason=last'))).toBe(true);
+    expect(logs.some((l) => l.includes('reason=first'))).toBe(true);
+  });
+
+  it('QA reorder is refused while the pane is in edit mode', async () => {
+    disk = abc([{ position: 1 }, { position: 2 }, { position: 3 }]);
+    await open();
+    await fireEvent.click(row('1. A'));
+    await tick();
+    await edit();
+    const b = row('2. B');
+    b.focus();
+    await fireEvent.keyDown(b, { key: 'ArrowDown', altKey: true });
+    await drag('2. B', y('3. C', 0.8));
+    await quiet();
+    expect(sent('update_tracks')).toEqual([]);
+    expect(labels().slice(2, 5)).toEqual(['1. A', '2. B', '3. C']);
+  });
+
+  it('QA deleting an album while a search hides some tracks deletes and counts all of them', async () => {
+    disk = [...abc(), mk('e', 'Band', 'Order', 'Zed')];
+    await open();
+    await fireEvent.input(search(), { target: { value: 'Zed' } });
+    await tick();
+    row('Order').focus();
+    await fireEvent.keyDown(row('Order'), { key: 'Delete' });
+    const text = await confirm('Yes');
+    expect(text).toContain('4 tracks');
+    await waitFor(() => expect(disk.map((t) => t.id)).toEqual(['d']));
+  });
+
+  it('QA after deleting a track the focus is on a neighbour; an emptied album and band disappear', async () => {
+    disk = [mk('a', 'Band', 'Order', 'A'), mk('b', 'Band', 'Order', 'B'), mk('d', 'Other', 'Elsewhere', 'D')];
+    await open();
+    row('A').focus();
+    await fireEvent.keyDown(row('A'), { key: 'Delete' });
+    await confirm('Yes');
+    await waitFor(() => expect(labels()).not.toContain('A'));
+    await waitFor(() => expect((document.activeElement as HTMLElement).dataset.key).toBe('t:b'));
+    await fireEvent.keyDown(row('B'), { key: 'Delete' });
+    await confirm('Yes');
+    await waitFor(() => expect(labels()).toEqual(['Other', 'Elsewhere', 'D']));
+    await waitFor(() => expect(items().some((i) => i === document.activeElement)).toBe(true));
+  });
+
+  it('QA reorder works when band and album names carry leading/trailing spaces', async () => {
+    disk = [
+      mk('a', ' Band ', 'Order ', 'A'),
+      mk('b', 'Band', ' Order', 'B'),
+      mk('c', 'Band ', 'Order', 'C'),
+    ];
+    await open();
+    expect(labels().filter((l) => l === 'Band' || l === 'Order').length).toBe(2);
+    await drag('C', y('A', 0.2));
+    await waitFor(() => expect(labels().filter((l) => /^\d\./.test(l))).toEqual(['1. C', '2. A', '3. B']));
+    expect(sent('update_tracks').length).toBe(1);
+    await restart();
+    expect(labels().filter((l) => /^\d\./.test(l))).toEqual(['1. C', '2. A', '3. B']);
+  });
 });
