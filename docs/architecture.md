@@ -22,13 +22,13 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (IPC commands) | Laptop | All `#[tauri::command]` functions; thin wrappers over pure modules. The Player's commands are in their own file | Rust | `src/ipc.rs`, `src/player_ipc.rs` |
 | calliope-gui (settings) | Laptop | Loads/saves user settings (theme, repository root, edge-AI server URL, keep-original switch, the last local import folder; MIDI/audio later) as JSON | Rust + serde | `src/settings.rs` |
 | calliope-gui (fs helpers) | Laptop | Atomic writes, no-clobber copies, file-name validation, moving to the repository trash, FNV-1a revisions | Rust, std only | `src/fsutil.rs` |
-| calliope-gui (track metadata) | Laptop | `track.json` schema (version 2: track type, stems), validation, v1→v2 migration in memory, ids (UUIDv7), RFC 3339 timestamps | Rust + serde, `uuid` | `src/track_meta.rs` |
-| calliope-gui (track repository) | Laptop | Repository layout, scan, save transaction, delete-to-trash, export, staged (atomic) creation of new tracks | Rust, pure (no Tauri) | `src/repository.rs` (+ `src/repository_tests.rs`) |
+| calliope-gui (track metadata) | Laptop | `track.json` schema (version 2: track type, stems, optional `position` / `album_position` read leniently), validation, v1→v2 migration in memory, `apply_patch` (band/album/positions), ids (UUIDv7), RFC 3339 timestamps | Rust + serde, `uuid` | `src/track_meta.rs` |
+| calliope-gui (track repository) | Laptop | Repository layout, scan, save transaction (incl. the main track's positions), delete-to-trash, batch delete (`delete_tracks`: each track on its own, failures reported), revision-checked field patches in two phases (`prepare_patches` refuses the whole batch on any conflict, `commit_patches` writes only changed tracks), export, staged (atomic) creation of new tracks | Rust, pure (no Tauri) | `src/repository.rs` (+ `src/repository_tests.rs`) |
 | calliope-gui (file dialogs) | Laptop | Native open/folder/save dialogs opened from Rust (tablatures, repository root, exports, import audio/video/directory); pick tokens; scripted picker for e2e (`e2e-hooks` feature) that also records each request's start folder | Rust + `tauri-plugin-dialog` | `src/picker.rs` |
 | calliope-gui (local source paths) | Laptop | Typed/pasted local paths for the import (trim, quotes, `~/`, `file://`), the file and folder checks with exact messages, the audio/video extension lists, the dialog's start folder (`browse_start`: typed path's folder > last import folder > home) and the audio files directly inside a folder (`list_audio_files`, name order) | Rust, pure (std + `url`) | `src/local_source.rs` |
 | calliope-gui (import temp space) | Laptop | `<root>/import-tmp/` job folders, resume lookup, safe cleanup | Rust, pure | `src/import_tmp.rs` |
 | calliope-gui (external tools) | Laptop | Finds `yt-dlp`/`ffmpeg`/`ffprobe` on `PATH`, version checks; runs them with `calliope_lib::process` | Rust | `src/tools.rs` |
-| calliope-gui (media) | Laptop | ffprobe JSON → audio check/duration/tags → `TrackEdits`; ffmpeg → FLAC 44.1 kHz stereo | Rust, pure | `src/media.rs` |
+| calliope-gui (media) | Laptop | ffprobe JSON → audio check/duration/tags → `TrackEdits`, track-number tag → album position (`position_from_tags`); ffmpeg → FLAC 44.1 kHz stereo | Rust, pure | `src/media.rs` |
 | calliope-gui (download) | Laptop | URL validation/normalisation (`url` crate), yt-dlp args, progress/error parsing, `info.json` mapping | Rust | `src/download.rs` |
 | calliope-gui (import job) | Laptop | The single import job: state machine, events, cancel, shutdown; the directory batch (one job in the same slot that runs each file's preparation + extraction in turn, without the edit pane) | Rust, pure (std threads) | `src/import_job.rs`, `src/import_batch.rs` (child module) |
 | calliope-gui (stem audio) | Laptop | FLAC stem probing/compatibility rules, decoding into memory as 16-bit for playback, full-precision streaming reader for rendering, the empty-stem decision for imports (`check_stem` over `calliope_lib::flac_level` with early stop at 15 s, `check_reported` for server-reported audible time, `EMPTY_STEM_MIN_AUDIBLE_MS = 15_000`) | Rust, `claxon`, `calliope-lib` | `src/stem_audio.rs` |
@@ -48,7 +48,7 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (player sources) | Laptop | Dropdown entries of a track (backing variants, `audio`, `original`, stems), decoding one into memory (FLAC: `claxon`; other formats: external `ffmpeg` piped to memory), waveform peaks (2048) | Rust | `src/player_source.rs` |
 | calliope-gui (metronome) | Laptop | Synthesised click (own sound), count-in plan (at `bpm × speed`), placing clicks in an output block, `section_clicks` (the song's click list: beats of sections whose metronome is on, with each section count-in replacing the clicks before that section; skipped at the end of a repeating loop) | Rust, pure | `src/metronome.rs` |
 | calliope-gui (player engine) | Laptop | Player sessions: one decoded source, a callback-owned `Engine` (playback, count-in, loop repeats, metronome, fades; bypass mode at 100 % and stretch mode otherwise: song-time timeline delayed by the stretcher latency, clicks and wraps placed at the heard song position, crossfade into stretch mode; the speed-training run with per-pass speeds switched at the loop start) fed by a bounded command channel, the track speed (`speed` actions, refused during a training run), transport + scrub rule, events, debounced `player.json` writes, `edit_sections(id, SectionEdit)` (Player tempo-section edits, section flags and names applied live: new click grid, loops re-snapped, debounced write; stale-index guard), `jump_section` (instant jump to a section's start or last bar), the grid sent to the engine is `section_clicks` (re-sent when the repeating loop changes; the engine's metronome flag only means "has a tempo" since gui-player-tempo-sections phase 3), the Play pre-roll comes from the Count In of the section under the playhead and loop Play's from the loop's Count-In, `release(id)` (flush + close + `closed` event when the Editor writes the tempo), `finish_open` re-reads a `player.json` changed since its off-lock load | Rust (std threads) | `src/player.rs` (+ `src/player_tests.rs`) |
-| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree + track pane; Import: stem extraction steps; Editor: shared track tree + stem mixer + Mix lane with the mix waveform (tempo sections, draggable changes) and Autodetect BPM; Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform (loops + editable tempo sections: drag, keys, BPM label overlay), under the waveform two full-width rows: Sections (the BPM group, then status + section name box, Add, Remove, ×2, ÷2, Start, End and the section's Click / Count In toggles; no global metronome) beside Loops (a "Training…" button on its third line opens the speed-training popover; the training progress shows in its status line; Loops wraps below in narrow windows), then Playback at the bottom (transport, then the Speed group: `-`, % box, `+`, Reset and the played-BPM readout, wrapping to a second line in narrow panes); Home/End and `[`/`]` keys); Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
+| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree (album / track order, "3. Title" labels; Library only: pointer drag and drop and Alt+Up/Down reordering, a Delete icon button and the Delete key for tracks and albums) + track pane (read-only Position; band/album edits rename the whole band/album after a confirmation, planned by `library-rename.ts`); Import: stem extraction steps; Editor: shared track tree + stem mixer + Mix lane with the mix waveform (tempo sections, draggable changes) and Autodetect BPM; Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform (loops + editable tempo sections: drag, keys, BPM label overlay), under the waveform two full-width rows: Sections (the BPM group, then status + section name box, Add, Remove, ×2, ÷2, Start, End and the section's Click / Count In toggles; no global metronome) beside Loops (a "Training…" button on its third line opens the speed-training popover; the training progress shows in its status line; Loops wraps below in narrow windows), then Playback at the bottom (transport, then the Speed group: `-`, % box, `+`, Reset and the played-BPM readout, wrapping to a second line in narrow panes); Home/End and `[`/`]` keys); Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
 | calliope-lib (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation (incl. the beats document, `check_beats`), FLAC STREAMINFO parser, FLAC audible-time scan (`flac_level`: 100 ms windows, RMS of the loudest channel above `AUDIBLE_LEVEL_DBFS = -40`, integer sum-of-squares comparison, peak for display; no 15 s decision), HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel). No Tauri/GTK | Rust; `serde`, `libc`, `claxon`, `ureq` 3 without TLS (feature) | `src/calliope-lib/` |
 | calliope-stems (edge-AI stems service) | archserver (LAN), deployed by hand as a systemd user unit | HTTP server for "calliope-stems API v1": validates FLAC uploads (≤ 15 min), queues jobs (1 running), runs a configurable separator command, measures each stem's audible time, serves the stems, cleans up; beat jobs (`POST /v1/beats`) run a configurable beat-tracker command in the same queue; `--measure FILE...` prints audible times without starting a server. No Tauri/GTK; the GUI doesn't depend on it | Rust; `tiny_http`, `calliope-lib` | `src/calliope-stems/` |
 | separator adapter | archserver | `<sep> <input.flac> <out_dir> <model>` → `<out_dir>/<stem>.flac`; the real one runs the owner's audio-separator venv with `htdemucs_6s` (frees VRAM from Ollama first) | bash | `src/calliope-stems/separators/audio-separator.sh` |
@@ -97,7 +97,9 @@ the GUI crate, `src/calliope-gui/`.
     `get_repository() -> RepoInfo`, `choose_repository_root() -> Option<PickedRoot>`,
     `set_repository_root(token) -> RepoInfo`, `reset_repository_root() -> RepoInfo`,
     `list_tracks() -> Library`, `pick_tablature(purpose) -> Option<Picked>`,
-    `save_track(request) -> SaveResult`, `delete_track(id, revision)`,
+    `save_track(request) -> SaveResult` (request may carry `position`, `album_position` and `group: [TrackPatch]`, the other tracks of a band/album rename, checked before and written after the main save; the result then has `updated` and `failed`), `delete_track(id, revision)`,
+    `update_tracks(patches: [TrackPatch{id, revision, band?, album?, position?, album_position?}]) -> UpdateResult{tracks, failed: [{id, title, message}]}`,
+    `delete_tracks(items: [{id, revision}]) -> DeleteResult{deleted: [id], failed}` (gui-library-album-order plan §2.4-2.5),
     `export_track(id) -> Option<String>`, `export_tablature(id, name) -> Option<String>`;
     edge-AI and import (gui-stem-extraction plan §2.10): `set_edge_ai_url(url)`, `set_keep_original(keep)`,
     `check_edge_ai()`, `check_tools()`, `prepare_url_import(url)`,
@@ -162,7 +164,13 @@ the GUI crate, `src/calliope-gui/`.
   `csp-violation directive=<d> blocked=<uri>`, `error <context>: <msg>`; Library:
   `library root=<p> status=<s> tracks=<n> problems=<m>`, `select id=<id>`, `mode=edit|view id=<id>`,
   `saved id=<id> tablatures=<n> warnings=<w>`, `deleted id=<id>`, `exported id=<id>`,
-  `tab-staged <add|update|remove> name=<n>`, `repository root=<p> default=<bool>`.
+  `tab-staged <add|update|remove> name=<n>`, `repository root=<p> default=<bool>`; order and delete (gui-library-album-order):
+  `reorder tracks album=<key> id=<id> from=<i> to=<j> via=<drag|key> written=<n> failed=<k>`,
+  `reorder albums band=<key> album=<key> from=<i> to=<j> via=<drag|key> written=<n> failed=<k>`,
+  `reorder none key=<k> via=<drag|key> reason=<search|edit|busy|band|no-album|first|last|same|outside>`, `drag start key=<k>`,
+  `drag target key=<k> gap=<g|none>`, `rename kind=<band|album> from="<a>" to="<b>" tracks=<n> merged=<b> failed=<k>`,
+  `rename cancelled`, `rename refused reason=<clear-band|clear-album|both>`, `deleted album band="<b>" album="<a>" tracks=<n> failed=<k>`,
+  `delete cancelled key=<k>`, `delete none key=<k> reason=<band|no-album|none|edit|busy>`.
   Import: `import mode=stem-extraction`, `import source=url|audio|video|directory`, `import path-picked kind=<audio|video|directory>`,
   `import phase=<phase> job=<job>`, `import error stage=<s> message=<m>`,
   `import saved id=<id> stems=<n> original=<b> dropped=<a,b|none>`; directory batch: `import batch file=<i>/<n> name=<name>`,
@@ -191,7 +199,8 @@ the GUI crate, `src/calliope-gui/`.
   `import path kind=directory result=accepted files=<n>|rejected reason=<empty|invalid|relative|missing|unreadable|not-folder|no-audio>`,
   `import batch job=<j> files=<n>`, `import batch job=<j> file=<i>/<n> name=<name> result=started|saved id=<id> dropped=<..>|failed stage=<s> message=<m>|cancelled`,
   `import batch job=<j> finished saved=<a> failed=<b>`, `import batch job=<j> cancelled saved=<a> skipped=<k>`,
-  `tool <name> found=<bool> version=<v>`,
+  `tool <name> found=<bool> version=<v>`, `track deleted id=<id> trash=<folder>`, `track delete failed id=<id> message=<m>`,
+  `tracks deleted deleted=<n> failed=<k>`, `tracks updated written=<n> unchanged=<u> failed=<k>`, `track update failed id=<id> message=<m>`,
   `audio backend=<cpal|null|capture> rate=<hz>`, `editor open id=<id> stems=<n> duration_ms=<ms>`,
   `editor transport playing=<b> audible=<b> position_ms=<ms> solo=<n|none> clipping=<b>` (changes only),
   `editor saved id=<id> file=<f> bits=<b> clipped=<n>`, `editor peaks id=<id> gen=<n> ms=<ms>`,
@@ -240,7 +249,7 @@ the GUI crate, `src/calliope-gui/`.
       tablature files removed or replaced in one save go into ONE trash/<stamp>-<id>-tablatures/,
       a name clash inside it suffixes the file as `name (2).ext`; `-2`.. suffix on folder clash)
   ```
-  `track.json` fields: `schema_version, id, type ("backing"|"stem"), band, album, title,
+  `track.json` fields: `schema_version, id, type ("backing"|"stem"), band, album, album_position?, title, position?,
   composers[], year, source_url, copyright, audio (required for backing, null allowed for stem),
   original (optional plain file name of the kept full mix), stems[{name, file}], stem_model,
   tablatures[], imported, modified` (RFC 3339 UTC), and the optional list `backings[{id, name, file,
@@ -255,6 +264,13 @@ the GUI crate, `src/calliope-gui/`.
   `backing`, name "Backing"), changes only `backings` and `modified`, refuses (`conflict:`) if the stems
   list changed on disk since the Editor loaded it, and moves a replaced file to
   `trash/<stamp>-<id>-backing/`.
+  **Order** (gui-library-album-order plan §2.2): `position` = the track's place in its album and `album_position` = its album's
+  place among the band's albums (1..9999, omitted when unset; additive, no schema bump, so schema-2 builds keep them in
+  unknown fields). Read leniently (any other value = unset, never a problem), validated on write. The album's place is the
+  minimum `album_position` of its tracks (grouping = the tree's trimmed, case- and accent-insensitive names); an album reorder
+  writes it to every track of the band's albums. Tracks of "(no album)" ignore `position`. Imports set `position` from the
+  `track` / `tracknumber` tag ("3", "3/12") when the track has an album, never `album_position`, and never touch other tracks.
+  Ordered tracks/albums come first (by number, then name), then the others alphabetically.
   **Schema migration**: v1 files are migrated in memory (`type: "backing"`, `stems: []`) and are
   never rewritten by scans, lists, exports or imports; a Library Save writes schema 2 (lazy
   migration). Older builds show such a track as "written by a newer Calliope" and leave it
@@ -434,6 +450,8 @@ src/                      ALL source (owner requirement), one folder per crate
                           views/ (one file per main view),
                           lib/ (ipc.ts, views.ts, theme.ts, app-state.svelte.ts,
                           fuzzy.ts, library-tree.ts, track-draft.ts, library-state.svelte.ts,
+                          library-order.ts (reorder patches, drop gaps, neighbour after delete),
+                          library-rename.ts (band/album rename plans), library-ops.svelte.ts (reorder/delete actions),
                           url-check.ts, import-state.svelte.ts, editor-state.svelte.ts, time-format.ts,
                           player-state.svelte.ts, bar-format.ts, bpm-format.ts, speed-format.ts, waveform-geometry.ts,
                           utils.ts, components/ui/ = shadcn components owned by us),
@@ -652,6 +670,14 @@ the server out of the GUI.
   RMS" across speed changes, wraps and training passes; `tests/player_realtime.rs` counts Rust allocations on the render
   thread (must be zero after construction; C++ allocations are covered by code reading). At 100 % the engine stays
   bit-exact. Listening quality is a manual check.
+- **Library order and delete** (gui-library-album-order): planners are pure TS (`library-order`, `library-rename`) tested in
+  vitest; component tests drive pointer drags with `fireEvent` on `window` and stubbed `getBoundingClientRect`. GUI tests
+  use seeded temp repositories (`tests/common` `seed_dirs`: only the given schema-2 tracks), drag with `drag_xy`
+  (xdotool mousedown, stepped mousemove, mouseup), use `alt+Up`/`alt+Down`/`Delete` keys, and wait on the `reorder`/`drag`/
+  `deleted`/`rename` log lines. A track that cannot be deleted is made by changing its `track.json` after the Library
+  loaded (revision conflict); Rust tests also use `chmod 0555` on the track folder (skipped as root, e.g. under
+  `unshare -r`). Tagged import sources are made at test time with the local `ffmpeg -c copy -metadata track=…`
+  (`tagged_copy`).
 - MIDI: no fake yet. Each feature that adds hardware must also add a simulator/fake and list it here.
 
 ## Decision log
@@ -1337,3 +1363,34 @@ are never sent in a batch. `import_directory(path)` is the second command that t
 would orchestrate a long job, a webview reload would stop the batch, and the files would have to be listed to the webview),
 and a queue of separate jobs (rejected: two job concepts, and "one import at a time" would need new rules). Tests use the
 stub separator's new `seq:` mode to fail or hang one file of a batch.
+
+### 2026-10-20: Album and track order live in each `track.json` (`position`, `album_position`), additive, no schema bump   (feature: gui-library-album-order; plan §2.2)
+The tree must show tracks in the publisher's order and a band's albums in chronological order. Choice: two optional
+integers per track, `position` (place in the album) and `album_position` (the album's place in the band, copied on every
+track of the album; the tree takes the minimum). This keeps the repository "plain folders + one `track.json` per track":
+no index file to get out of sync, Export carries the order, and hand edits stay possible. Alternatives: one
+repository-level order file keyed by band/album names (rejected: it breaks on every rename, needs its own concurrency and
+leaves stale entries after deletes), and a schema bump to 3 (rejected: schema-2 builds already preserve unknown keys and
+would then treat every reordered track as read-only). Consequences: an album reorder rewrites every track of the band
+(small files, revision-checked); reading is lenient (a bad value = unset), writing strict (1..9999); an album whose tracks
+carrying the value were all deleted loses its place until the next reorder.
+
+### 2026-10-20: Group changes are planned by the frontend and applied by Rust as revision-checked batches   (feature: gui-library-album-order; plan §2.4-2.5, §2.8)
+Reorders, band/album renames (with merges) and album deletes touch many tracks. The frontend already builds the tree the
+user acts on, so it computes the exact per-track changes (`library-order.ts`, `library-rename.ts`) and sends them with each
+track's revision. Rust stays a dumb, safe applier: `update_tracks` (and `save_track`'s `group`) checks every track first and
+refuses the whole batch on any conflict, then writes only changed files, reporting write failures per track;
+`delete_tracks` deletes each track independently and reports failures with their reason (the spec wants the others deleted).
+Alternatives: grouping in Rust (rejected: it would duplicate the tree's case- and accent-insensitive grouping without a
+Unicode-normalisation crate and could disagree with what the user sees) and a frontend loop over `save_track` (rejected: no
+upfront conflict check, many round trips). Consequence: a batch is checked-then-written, not atomic as a whole; after a
+partial failure the frontend rescans and shows the true state.
+
+### 2026-10-20: Tree drag and drop uses pointer events, not HTML5 drag and drop   (feature: gui-library-album-order; plan §2.7, open question 6)
+HTML5 drag and drop is unreliable in WebKitGTK (drop events missing unless `setData` is called, WebKit bug 265857, also
+seen in Tauri), shares GTK machinery with Tauri's file-drop handler, and synthetic xdotool drags through GTK drag and drop
+are flaky. The tree implements its own drag with pointer events (5 px threshold, window-level move/up listeners, Escape
+cancels, drop gap from the sibling rows' rects via the pure `gapAt`, an inset line as the marker, edge auto-scroll), as the
+Player waveform already does. Consequences: no OS drag image (the dragged row is dimmed in place); it works the same with
+mouse and touchpad, in jsdom and under xdotool; no Tauri config change. Reordering and deleting exist only in the Library's
+tree (`TrackBrowser editable`); the Editor and Player show the same order read-only.
