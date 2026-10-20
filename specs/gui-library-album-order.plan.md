@@ -673,6 +673,17 @@ and never use the real `calliope-stems` on `0.0.0.0:8765` or any other host.
   passed to every binary; tests that are not matched are skipped.)
 - **routine:** no
 
+- **Orchestrator note (after tasks 11-12), UI as built:** two buttons are named "Delete": the tree
+  icon button (`within(getByTestId('tree-toolbar'))`) and the pane's (`within(getByRole('toolbar',
+  {name: 'Track actions'}))`). Positioned rows are named "3. Title" (badge text prefixed). Drag: 5 px
+  vertical threshold, window-level pointer listeners, `data-drop="before|after"` marker, Escape
+  cancels; in jsdom stub `getBoundingClientRect` for `[data-key]` rows and `[role=tree]`. GUI drags
+  must stay inside the tree column (x within the 320 px column minus 16 px padding). Frontend log
+  lines: `drag start key=`, `drag target key= gap=`, `reorder none ... via=drag reason=outside`,
+  `delete cancelled key=`. Position row `#track-position` ("none" without a position). The tree
+  Delete button is a Tab stop before the search box, skipped while disabled. Not yet screenshot-
+  checked at 1024x640 / 1280x800 (task 14).
+
 ### Task 13: Headless acceptance tests
 - **files:** `src/calliope-gui/src/ui/acceptance_library.test.ts`, `src/calliope-gui/tests/acceptance_tracks_repository.rs`,
   `src/calliope-gui/tests/acceptance_existing_track_import.rs`

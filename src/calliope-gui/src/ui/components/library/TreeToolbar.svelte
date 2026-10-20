@@ -1,15 +1,18 @@
 <script lang="ts">
   import ChevronsDownUpIcon from '@lucide/svelte/icons/chevrons-down-up';
   import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
+  import Trash2Icon from '@lucide/svelte/icons/trash-2';
   import XIcon from '@lucide/svelte/icons/x';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import { lib, collapseAll, expandAll, setSearch } from '$lib/library-state.svelte';
+  import { treeDeleteTarget } from '$lib/library-ops.svelte';
 
   let {
     searchRef = $bindable(null),
     onsearchdown,
-  }: { searchRef?: HTMLInputElement | null; onsearchdown?: () => void } = $props();
+    ondelete,
+  }: { searchRef?: HTMLInputElement | null; onsearchdown?: () => void; ondelete?: () => void } = $props();
 
   function onkeydown(e: KeyboardEvent): void {
     if (e.key === 'ArrowDown') {
@@ -27,6 +30,19 @@
     <Button variant="outline" size="sm" disabled={lib.mode === 'edit'} onclick={expandAll}>
       <ChevronsUpDownIcon aria-hidden="true" /> Expand all
     </Button>
+    {#if ondelete}
+      <Button
+        variant="outline"
+        size="icon-sm"
+        class="text-destructive"
+        aria-label="Delete"
+        title="Delete the focused track or album (Delete)"
+        disabled={lib.mode === 'edit' || treeDeleteTarget() === null}
+        onclick={ondelete}
+      >
+        <Trash2Icon aria-hidden="true" />
+      </Button>
+    {/if}
   </div>
   <div class="flex gap-2">
     <Input

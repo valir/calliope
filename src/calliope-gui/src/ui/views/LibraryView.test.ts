@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import LibraryView from './LibraryView.svelte';
@@ -14,6 +14,7 @@ let status: RepoStatus = 'ok';
 let isDefault = true;
 let listCalls = 0;
 let failList = false;
+let calls: { cmd: string; args: Record<string, unknown> }[] = [];
 
 beforeEach(() => {
   logs = [];
@@ -23,6 +24,7 @@ beforeEach(() => {
   isDefault = true;
   listCalls = 0;
   failList = false;
+  calls = [];
   resetLibrary();
   mockIPC((cmd, args) => {
     if (cmd === 'get_repository') return { root: '/tmp/repo', is_default: isDefault, status };
@@ -33,6 +35,19 @@ beforeEach(() => {
       return { root: '/tmp/repo', tracks, problems };
     }
     if (cmd === 'frontend_log') logs.push((args as { message: string }).message);
+    else if (cmd === 'update_tracks' || cmd === 'delete_tracks') calls.push({ cmd, args: args as Record<string, unknown> });
+    if (cmd === 'update_tracks') {
+      const patches = (args as { patches: { id: string; position?: number }[] }).patches;
+      return {
+        tracks: patches.map((p) => ({ ...tracks.find((t) => t.id === p.id)!, position: p.position ?? null })),
+        failed: [],
+      };
+    }
+    if (cmd === 'delete_tracks') {
+      const ids = (args as { items: { id: string }[] }).items.map((i) => i.id);
+      tracks = tracks.filter((t) => !ids.includes(t.id));
+      return { deleted: ids, failed: [] };
+    }
     return undefined;
   });
 });
@@ -263,5 +278,152 @@ describe('Library view: track-type badges', () => {
     expect(back.getAttribute('aria-label')).toBe('Backing track');
     // groups carry no badge
     expect(items()[0].querySelector('[data-track-type]')).toBeNull();
+  });
+});
+
+describe('Library view: reorder and delete', () => {
+  const mk = (id: string, album: string, title: string, band = 'Band'): TrackRecord => ({
+    ...FIXTURE_TRACKS[0],
+    id,
+    band,
+    album,
+    title,
+    revision: `r-${id}`,
+  });
+  const ROW = 30;
+  let box = { left: 0, right: 300 };
+  const realRect = Element.prototype.getBoundingClientRect;
+
+  beforeEach(() => {
+    tracks = [
+      mk('a', 'Order', 'A'),
+      mk('b', 'Order', 'B'),
+      mk('c', 'Order', 'C'),
+      mk('d', 'Order', 'D'),
+      mk('e', 'Elsewhere', 'E'),
+      mk('f', 'Elsewhere', 'F', 'Other'),
+    ];
+    box = { left: 0, right: 300 };
+    // Rows are 30 px high, stacked in tree order.
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      const key = this.getAttribute('data-key');
+      if (key !== null) {
+        const top = items().findIndex((i) => i === this) * ROW;
+        return { top, bottom: top + ROW, left: 0, right: 300, width: 300, height: ROW, x: 0, y: top } as DOMRect;
+      }
+      if (this.getAttribute('role') === 'tree') return { ...box, top: 0, bottom: 999, width: 300, height: 999, x: 0, y: 0 } as DOMRect;
+      return realRect.call(this);
+    };
+  });
+  afterEach(() => {
+    Element.prototype.getBoundingClientRect = realRect;
+  });
+
+  const row = (label: string) => items().find((i) => labelOf(i) === label)!;
+  const y = (label: string, frac = 0.5) => items().indexOf(row(label)) * ROW + ROW * frac;
+  const pointer = (type: string, clientY: number, clientX = 20) =>
+    fireEvent(window, new PointerEvent(type, { clientX, clientY, button: 0, bubbles: true }));
+  const drag = async (from: string, toY: number) => {
+    await fireEvent.pointerDown(row(from), { button: 0, clientX: 20, clientY: y(from) });
+    await pointer('pointermove', toY);
+  };
+
+  it('Alt+ArrowDown moves the track, sends update_tracks and keeps the focus on the row', async () => {
+    await ready();
+    await expandAll();
+    row('A').focus();
+    await fireEvent.keyDown(row('A'), { key: 'ArrowDown', altKey: true });
+    await waitFor(() => expect(calls.map((c) => c.cmd)).toEqual(['update_tracks']));
+    expect((calls[0].args.patches as { id: string; position: number }[]).map((p) => [p.id, p.position])).toEqual([
+      ['b', 1],
+      ['a', 2],
+      ['c', 3],
+      ['d', 4],
+    ]);
+    await waitFor(() => expect(logs.some((l) => l.startsWith('reorder tracks') && l.includes('via=key'))).toBe(true));
+    await waitFor(() => expect((document.activeElement as HTMLElement).dataset.key).toBe('t:a'));
+  });
+
+  it('a pointer drag shows the drop line and sends the new order on release', async () => {
+    await ready();
+    await expandAll();
+    // C dragged to the upper half of A.
+    await drag('C', y('A', 0.2));
+    expect(row('A').getAttribute('data-drop')).toBe('before');
+    expect(logs).toContain('drag start key=t:c');
+    await pointer('pointerup', y('A', 0.2));
+    await waitFor(() => expect(calls.length).toBe(1));
+    expect((calls[0].args.patches as { id: string; position: number }[]).map((p) => [p.id, p.position])).toEqual([
+      ['c', 1],
+      ['a', 2],
+      ['b', 3],
+      ['d', 4],
+    ]);
+    expect(items().some((i) => i.hasAttribute('data-drop'))).toBe(false);
+  });
+
+  it('a drag over another album, outside the tree or cancelled with Escape sends nothing', async () => {
+    await ready();
+    await expandAll();
+    await drag('C', y('Elsewhere'));
+    expect(items().some((i) => i.hasAttribute('data-drop'))).toBe(false);
+    await pointer('pointerup', y('Elsewhere'));
+    expect(logs).toContain('reorder none key=t:c via=drag reason=outside');
+    await drag('C', y('A', 0.2));
+    box = { left: 400, right: 700 };
+    await pointer('pointermove', y('A', 0.2));
+    expect(items().some((i) => i.hasAttribute('data-drop'))).toBe(false);
+    box = { left: 0, right: 300 };
+    await pointer('pointermove', y('A', 0.2));
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    await pointer('pointerup', y('A', 0.2));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toEqual([]);
+  });
+
+  it('a click after pointerdown without movement still selects', async () => {
+    await ready();
+    await expandAll();
+    await fireEvent.pointerDown(row('B'), { button: 0, clientX: 20, clientY: y('B') });
+    await pointer('pointermove', y('B') + 2);
+    await pointer('pointerup', y('B') + 2);
+    await fireEvent.click(row('B'));
+    expect(row('B').getAttribute('aria-selected')).toBe('true');
+    expect(logs.some((l) => l.startsWith('drag start'))).toBe(false);
+  });
+
+  it('the Delete button follows the focused item', async () => {
+    await ready();
+    const del = () => within(screen.getByTestId('tree-toolbar')).getByRole('button', { name: 'Delete' }) as HTMLButtonElement;
+    expect(del().disabled).toBe(true);
+    items()[0].focus();
+    await tick();
+    expect(del().disabled).toBe(true);
+    await expandAll();
+    row('Order').focus();
+    await tick();
+    expect(del().disabled).toBe(false);
+    row('B').focus();
+    await tick();
+    expect(del().disabled).toBe(false);
+  });
+
+  it('Delete on an album asks with band, album and count; No sends nothing, Yes deletes and focuses a neighbour', async () => {
+    await ready();
+    await expandAll();
+    row('Order').focus();
+    await fireEvent.keyDown(row('Order'), { key: 'Delete' });
+    const dlg = await screen.findByRole('alertdialog');
+    expect(dlg.textContent).toContain('Delete the album "Order" by Band (4 tracks)?');
+    await fireEvent.click(screen.getByRole('button', { name: 'No' }));
+    await waitFor(() => expect(logs.filter((l) => l.startsWith('delete cancelled key=')).length).toBe(1));
+    expect(calls).toEqual([]);
+    await fireEvent.keyDown(row('Order'), { key: 'Delete' });
+    await screen.findByRole('alertdialog');
+    await fireEvent.click(screen.getByRole('button', { name: 'Yes' }));
+    await waitFor(() => expect(calls.map((c) => c.cmd)).toEqual(['delete_tracks']));
+    expect((calls[0].args.items as { id: string }[]).map((i) => i.id)).toEqual(['a', 'b', 'c', 'd']);
+    // The album is gone; the focus lands on the next row, the band "Other".
+    await waitFor(() => expect((document.activeElement as HTMLElement).dataset.key).toBe(items().find((i) => labelOf(i) === 'Other')!.dataset.key));
   });
 });

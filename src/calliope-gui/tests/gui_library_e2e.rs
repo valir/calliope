@@ -171,8 +171,8 @@ fn tablature_add_and_remove() {
     assert!(tablatures(&dirs, ID2).is_empty());
     app.key(&wid, "ctrl+e");
     app.wait_contains(&format!("mode=edit id={ID2}"));
-    // Band, Album, Title, Composers, Year, Source, Copyright, 5 read-only (ID, Type, Audio, Imported, Modified), list box, Add.
-    app.key(&wid, &"Tab ".repeat(14));
+    // Band, Album, Title, Composers, Year, Source, Copyright, 6 read-only (ID, Type, Position, Audio, Imported, Modified), list box, Add.
+    app.key(&wid, &"Tab ".repeat(15));
     app.key(&wid, "Return");
     app.wait_contains("dialog kind=add-tablature result=picked");
     app.wait_contains("tab-staged add name=riff.gp5");
@@ -190,7 +190,7 @@ fn tablature_add_and_remove() {
     app.key(&wid, "ctrl+e");
     app.wait_contains(&format!("mode=edit id={ID2}"));
     click_band_label(&wid);
-    app.key(&wid, &"Tab ".repeat(12)); // the list box (Band is focused; 11 fields incl. Type, then it)
+    app.key(&wid, &"Tab ".repeat(13)); // the list box (Band is focused; 12 fields incl. Type and Position, then it)
     app.key(&wid, "Down Tab Tab"); // select the row, then Add, Update
     app.key(&wid, "Return");
     app.wait_contains("dialog kind=update-tablature result=picked");
@@ -211,7 +211,7 @@ fn tablature_add_and_remove() {
     app.key(&wid, "ctrl+e");
     app.wait_contains(&format!("mode=edit id={ID2}"));
     click_band_label(&wid);
-    app.key(&wid, &"Tab ".repeat(12)); // the list box (Band is focused; 11 fields incl. Type, then it)
+    app.key(&wid, &"Tab ".repeat(13)); // the list box (Band is focused; 12 fields incl. Type and Position, then it)
     app.key(&wid, "Down");
     settle();
     shot("library-tab-selected");
@@ -282,7 +282,7 @@ fn add_opens_real_file_dialog() {
     let json_before = std::fs::read(dirs.track_json(ID2)).unwrap();
     app.key(&wid, "ctrl+e");
     app.wait_contains(&format!("mode=edit id={ID2}"));
-    app.key(&wid, &"Tab ".repeat(14));
+    app.key(&wid, &"Tab ".repeat(15));
     app.key(&wid, "Return");
     let dlg = out("xdotool", &["search", "--sync", "--name", "^Add tablature$"]);
     let dlg = dlg.lines().next().expect("dialog window").to_string();
@@ -316,8 +316,8 @@ fn delete_track_to_trash() {
     let dirs = lib_dirs("delete_track_to_trash");
     let (mut app, wid, _) = App::start_lib(&dirs, &[]);
     app.select_by_search(&wid, "lanterns", ID4);
-    // The 12 fields (with Type), Edit, Export, Delete.
-    app.key(&wid, &"Tab ".repeat(15));
+    // The 13 fields (with Type and Position), Edit, Export, Delete.
+    app.key(&wid, &"Tab ".repeat(16));
     app.key(&wid, "Return");
     settle();
     shot("library-delete-confirm");

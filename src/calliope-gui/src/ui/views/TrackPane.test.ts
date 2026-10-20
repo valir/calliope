@@ -125,6 +125,7 @@ describe('Track pane: states', () => {
     expect(field('Composers').value).toBe('Ann Example\nBo Sample');
     expect(field('Year').value).toBe('2019');
     expect(field('Track ID').value).toBe(FIXTURE_TRACKS[0].id);
+    expect(field('Position').value).toBe('none');
     expect(field('Audio file').value).toBe('backing.mp3');
     expect(field('Modified').value).toBe('2026-10-01T12:00:00Z');
     expect(field('Title').readOnly).toBe(true);
@@ -144,6 +145,7 @@ describe('Track pane: states', () => {
     expect(field('Title').readOnly).toBe(false);
     expect(field('Composers').readOnly).toBe(false);
     expect(field('Track ID').readOnly).toBe(true);
+    expect(field('Position').readOnly).toBe(true);
     expect(field('Audio file').readOnly).toBe(true);
     expect(field('Modified').readOnly).toBe(true);
     expect(btn('Edit').disabled).toBe(true);
@@ -297,6 +299,35 @@ describe('Track pane: saving and discarding', () => {
     await waitFor(() => expect(btn('Edit').disabled).toBe(false));
     expect(field('Title').value).toBe('Slow Burn');
     expect(saves.length).toBe(0);
+  });
+});
+
+describe('Track pane: position and rename', () => {
+  it('the Position row shows the number, and stays read-only while editing', async () => {
+    tracks[0] = { ...tracks[0], position: 3 };
+    await open('3. Slow Burn');
+    expect(field('Position').value).toBe('3');
+    await edit();
+    expect(field('Position').readOnly).toBe(true);
+  });
+
+  it('an album change asks first; No keeps editing and saves nothing, Yes sends one save_track with the group', async () => {
+    await open('Slow Burn');
+    await edit();
+    await fireEvent.input(field('Album'), { target: { value: 'Northern Road' } });
+    await clickBtn('Save');
+    const dlg = await screen.findByRole('alertdialog');
+    expect(dlg.textContent).toContain('Rename the album "Northern Roads" to "Northern Road" for 2 tracks?');
+    await fireEvent.click(within(dlg).getByRole('button', { name: 'No' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(saves.length).toBe(0);
+    expect(field('Album').value).toBe('Northern Road');
+    expect(btn('Save').disabled).toBe(false);
+
+    await clickBtn('Save');
+    await fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Yes' }));
+    await waitFor(() => expect(saves.length).toBe(1));
+    expect(saves[0].group?.map((g) => [g.id, g.album])).toEqual([[FIXTURE_TRACKS[1].id, 'Northern Road']]);
   });
 });
 

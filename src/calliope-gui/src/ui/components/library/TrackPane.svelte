@@ -5,6 +5,7 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import TrackFields from '../TrackFields.svelte';
   import {
+    cancelRename,
     discardAfterConflict,
     endEdit,
     exportSelectedTrack,
@@ -32,9 +33,9 @@
 
   let confirmOpen = $state(false);
   let confirmMessage = $state('');
-  let pending: 'discard' | 'delete' | null = null;
+  let pending: 'discard' | 'delete' | 'rename' | null = null;
 
-  function ask(kind: 'discard' | 'delete', message: string): void {
+  function ask(kind: 'discard' | 'delete' | 'rename', message: string): void {
     pending = kind;
     confirmMessage = message;
     confirmOpen = true;
@@ -54,10 +55,21 @@
   function answer(yes: boolean): void {
     const p = pending;
     pending = null;
+    if (p === 'rename') {
+      if (yes) void saveEdit(true);
+      else cancelRename();
+      return;
+    }
     if (!yes) return;
     if (p === 'discard') endEdit();
     else if (p === 'delete') void removeSelectedTrack();
   }
+
+  // A band or album rename waits for the user's answer.
+  $effect(() => {
+    const plan = lib.pendingRename;
+    if (plan && plan.kind === 'rename' && !confirmOpen) ask('rename', plan.message);
+  });
 
   function onKeydown(e: KeyboardEvent): void {
     if (confirmOpen || document.querySelector('[role="alertdialog"]')) return;
@@ -81,6 +93,11 @@
   const readOnly = $derived([
     { id: 'track-id', label: 'Track ID', value: shown?.id ?? '' },
     { id: 'track-type', label: 'Type', value: selected ? (selected.type === 'stem' ? 'Stem track' : 'Backing track') : '' },
+    {
+      id: 'track-position',
+      label: 'Position',
+      value: selected ? (selected.position && selected.album.trim() !== '' ? String(selected.position) : 'none') : '',
+    },
     { id: 'track-audio', label: 'Audio file', value: selected ? (selected.audio ?? 'none') : '' },
     ...(selected?.original ? [{ id: 'track-original', label: 'Original', value: selected.original }] : []),
     ...(selected?.stem_model ? [{ id: 'track-stem-model', label: 'Stem model', value: selected.stem_model }] : []),

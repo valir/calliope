@@ -42,6 +42,13 @@ describe('Editor view', () => {
     await fireEvent.click(screen.getByRole('treeitem', { name: /Glass Harbour$/ }));
     await tick();
     expect(lib.selectedId).toBe(FIXTURE_TRACKS[6].id);
+    // Read-only tree: no Delete button, and Alt+ArrowUp reorders nothing.
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    const row = screen.getByRole('treeitem', { name: /Glass Harbour$/ });
+    row.focus();
+    await fireEvent.keyDown(row, { key: 'ArrowUp', altKey: true });
+    await tick();
+    expect(commands).not.toContain('update_tracks');
   });
 
   it('does not re-attach to a backend session when a track is already selected', async () => {

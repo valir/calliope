@@ -23,7 +23,7 @@
 <svelte:window onkeydown={onKeydown} />
 
 <section class="flex h-full min-h-0" aria-labelledby="view-heading">
-  <TrackBrowser heading="Library" bind:searchRef />
+  <TrackBrowser heading="Library" editable bind:searchRef />
   <section aria-label="Track" class="min-h-0 min-w-0 flex-1 p-4">
     <TrackPane />
   </section>
