@@ -151,6 +151,7 @@ tester for the features.
 - [x] `gui-player-tempo-sections.md`: edit tempo sections in the player
 - [x] `gui-player-speed.md`: adjustable playback speed
 - [x] `gui-import-local-batch.md`: batch import a directory
+- [ ] `gui-library-album-order.md`: ability to adjust track ordering for albums
 - [ ] `gui-tablatures.md`: associate tablature to backing track
 - [ ] `gui-manipulate-backing-track.md`: associate tempo and MIDI commands into the backing track
 - [ ] `stems-empty-detection.md`: better detection of the empty resulting stems
