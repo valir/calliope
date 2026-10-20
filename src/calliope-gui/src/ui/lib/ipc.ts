@@ -81,8 +81,9 @@ export interface TrackPatch {
   revision: string;
   band?: string;
   album?: string;
-  position?: number;
-  album_position?: number;
+  /** Absent = unchanged, `null` = clear. */
+  position?: number | null;
+  album_position?: number | null;
 }
 export interface TrackRef { id: string; revision: string }
 export interface BatchFailure { id: string; title: string; message: string }
@@ -94,8 +95,9 @@ export interface SaveTrackRequest {
   revision: string;
   edits: TrackEdits;
   tablatures: TabEntry[];
-  position?: number;
-  album_position?: number;
+  /** Absent = unchanged, `null` = clear. */
+  position?: number | null;
+  album_position?: number | null;
   /** Other tracks changed together with this one (band / album renames). */
   group?: TrackPatch[];
 }

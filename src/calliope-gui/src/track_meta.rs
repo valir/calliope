@@ -386,13 +386,13 @@ pub fn apply_edits(meta: &mut TrackMeta, edits: TrackEdits) -> Result<(), String
 }
 
 /// Applies a batch patch: names are trimmed and cannot be emptied, positions are set when given
-/// (`None` = unchanged). On error `meta` is left unchanged. Does not touch `modified`.
+/// (`None` = unchanged, `Some(None)` = cleared). On error `meta` is left unchanged. Does not touch `modified`.
 pub fn apply_patch(
     meta: &mut TrackMeta,
     band: Option<&str>,
     album: Option<&str>,
-    position: Option<u32>,
-    album_position: Option<u32>,
+    position: Option<Option<u32>>,
+    album_position: Option<Option<u32>>,
 ) -> Result<(), String> {
     let mut next = meta.clone();
     if let Some(b) = band {
@@ -400,6 +400,7 @@ pub fn apply_patch(
         if b.is_empty() {
             return Err("a band name cannot be cleared".into());
         }
+        check_text("band", b, MAX_NAME)?;
         next.band = b.to_string();
     }
     if let Some(a) = album {
@@ -407,15 +408,23 @@ pub fn apply_patch(
         if a.is_empty() {
             return Err("an album name cannot be cleared".into());
         }
+        check_text("album", a, MAX_NAME)?;
         next.album = a.to_string();
     }
-    if position.is_some() {
-        next.position = position;
+    if let Some(p) = position {
+        next.position = p;
     }
-    if album_position.is_some() {
-        next.album_position = album_position;
+    if let Some(p) = album_position {
+        next.album_position = p;
     }
-    validate_edit_fields(&next)?;
+    // Only what the patch changes is held to the strict rules; the rest of a hand-edited track
+    // only has to be readable.
+    if next.position.is_some_and(|p| !(1..=MAX_POSITION).contains(&p)) {
+        return Err(format!("position must be from 1 to {MAX_POSITION}"));
+    }
+    if next.album_position.is_some_and(|p| !(1..=MAX_POSITION).contains(&p)) {
+        return Err(format!("album position must be from 1 to {MAX_POSITION}"));
+    }
     validate_for_read(&next)?;
     *meta = next;
     Ok(())
@@ -823,7 +832,7 @@ mod tests {
     #[test]
     fn apply_patch_sets_trims_and_keeps_meta_on_error() {
         let mut m = example();
-        apply_patch(&mut m, Some(" New Band "), Some(" New Album "), Some(4), Some(2)).unwrap();
+        apply_patch(&mut m, Some(" New Band "), Some(" New Album "), Some(Some(4)), Some(Some(2))).unwrap();
         assert_eq!((m.band.as_str(), m.album.as_str()), ("New Band", "New Album"));
         assert_eq!((m.position, m.album_position), (Some(4), Some(2)));
         apply_patch(&mut m, None, None, None, None).unwrap();
@@ -831,11 +840,33 @@ mod tests {
         let before = m.clone();
         assert_eq!(apply_patch(&mut m, Some("  "), None, None, None).unwrap_err(), "a band name cannot be cleared");
         assert_eq!(apply_patch(&mut m, None, Some(""), None, None).unwrap_err(), "an album name cannot be cleared");
-        assert!(apply_patch(&mut m, None, None, Some(0), None).is_err());
-        assert!(apply_patch(&mut m, Some("X"), None, Some(10000), None).is_err());
-        assert!(apply_patch(&mut m, None, None, None, Some(0)).is_err());
+        assert!(apply_patch(&mut m, None, None, Some(Some(0)), None).is_err());
+        assert!(apply_patch(&mut m, Some("X"), None, Some(Some(10000)), None).is_err());
+        assert!(apply_patch(&mut m, None, None, None, Some(Some(0))).is_err());
         assert!(apply_patch(&mut m, Some("a\u{7}b"), None, None, None).is_err());
         assert_eq!(m, before);
+    }
+
+    #[test]
+    fn apply_patch_null_clears_and_absent_leaves() {
+        let mut m = example();
+        m.position = Some(4);
+        m.album_position = Some(2);
+        apply_patch(&mut m, None, None, None, None).unwrap();
+        assert_eq!((m.position, m.album_position), (Some(4), Some(2)));
+        apply_patch(&mut m, None, None, Some(None), None).unwrap();
+        assert_eq!((m.position, m.album_position), (None, Some(2)));
+        apply_patch(&mut m, None, None, None, Some(None)).unwrap();
+        assert_eq!((m.position, m.album_position), (None, None));
+    }
+
+    #[test]
+    fn apply_patch_does_not_revalidate_untouched_fields() {
+        let mut m = example();
+        m.band = "Band ".into();
+        m.album = " Album".into();
+        apply_patch(&mut m, None, None, Some(Some(3)), None).unwrap();
+        assert_eq!((m.band.as_str(), m.album.as_str(), m.position), ("Band ", " Album", Some(3)));
     }
 
     #[test]

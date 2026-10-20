@@ -381,6 +381,19 @@ describe('Library view: reorder and delete', () => {
     expect(calls).toEqual([]);
   });
 
+  it('the click that follows an Escape-cancelled drag is swallowed, the next one is not', async () => {
+    await ready();
+    await expandAll();
+    await drag('C', y('A', 0.2));
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    await pointer('pointerup', y('C'));
+    await new Promise((r) => setTimeout(r, 120)); // longer than the old 50 ms timer
+    await fireEvent.click(row('C'));
+    expect(row('C').getAttribute('aria-selected')).not.toBe('true');
+    await fireEvent.click(row('C'));
+    expect(row('C').getAttribute('aria-selected')).toBe('true');
+  });
+
   it('a click after pointerdown without movement still selects', async () => {
     await ready();
     await expandAll();
@@ -425,5 +438,18 @@ describe('Library view: reorder and delete', () => {
     expect((calls[0].args.items as { id: string }[]).map((i) => i.id)).toEqual(['a', 'b', 'c', 'd']);
     // The album is gone; the focus lands on the next row, the band "Other".
     await waitFor(() => expect((document.activeElement as HTMLElement).dataset.key).toBe(items().find((i) => labelOf(i) === 'Other')!.dataset.key));
+  });
+
+  it('deleting the last row moves the focus to the search box', async () => {
+    tracks = [mk('a', 'Order', 'A')];
+    await ready();
+    await expandAll();
+    const r = items().find((i) => labelOf(i) === 'Order')!;
+    r.focus();
+    await fireEvent.keyDown(r, { key: 'Delete' });
+    await screen.findByRole('alertdialog');
+    await fireEvent.click(screen.getByRole('button', { name: 'Yes' }));
+    await waitFor(() => expect(items().length).toBe(0));
+    await waitFor(() => expect(document.activeElement).toBe(search()));
   });
 });

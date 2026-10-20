@@ -5,8 +5,8 @@ export interface Patch {
   revision: string;
   band?: string;
   album?: string;
-  position?: number;
-  album_position?: number;
+  position?: number | null;
+  album_position?: number | null;
 }
 
 /** `list` with the item at `from` moved so that it ends at index `to` (both 0-based). */

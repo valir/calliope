@@ -89,12 +89,12 @@ pub struct SaveTrackRequest {
     pub revision: String,
     pub edits: TrackEdits,
     pub tablatures: Vec<TabEntry>,
-    /// `Some` = set the track's position in its album.
-    #[serde(default)]
-    pub position: Option<u32>,
-    /// `Some` = set the album's position among the band's albums.
-    #[serde(default)]
-    pub album_position: Option<u32>,
+    /// Absent = unchanged, `null` = clear, a number = set the track's position in its album.
+    #[serde(default, deserialize_with = "double_option")]
+    pub position: Option<Option<u32>>,
+    /// Absent = unchanged, `null` = clear, a number = set the album's position among the band's albums.
+    #[serde(default, deserialize_with = "double_option")]
+    pub album_position: Option<Option<u32>>,
     /// Other tracks changed together with this one (a rename of a band or album). Ignored by
     /// `Repository::save_track`; the IPC layer runs it (plan 2.5).
     #[serde(default)]
@@ -110,7 +110,7 @@ pub struct SaveResult {
     pub failed: Vec<BatchFailure>,
 }
 
-/// One track's change in a batch. `None` = unchanged.
+/// One track's change in a batch. `None` = unchanged (positions: `Some(None)` clears).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct TrackPatch {
     pub id: String,
@@ -119,10 +119,15 @@ pub struct TrackPatch {
     pub band: Option<String>,
     #[serde(default)]
     pub album: Option<String>,
-    #[serde(default)]
-    pub position: Option<u32>,
-    #[serde(default)]
-    pub album_position: Option<u32>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub position: Option<Option<u32>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub album_position: Option<Option<u32>>,
+}
+
+/// Absent key = `None` (via `default`), JSON `null` = `Some(None)`, a number = `Some(Some(n))`.
+fn double_option<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<u32>>, D::Error> {
+    <Option<u32> as Deserialize>::deserialize(d).map(Some)
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -838,7 +843,11 @@ impl Repository {
     /// Moves every listed track to the trash, whatever happens to the others.
     pub fn delete_tracks(&self, items: &[TrackRef]) -> DeleteResult {
         let mut out = DeleteResult::default();
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for it in items {
+            if !seen.insert(it.id.as_str()) {
+                continue; // listed twice: handled once
+            }
             let mut title = String::new();
             let result = (|| {
                 let (dir, loaded) = self.load(&it.id)?;

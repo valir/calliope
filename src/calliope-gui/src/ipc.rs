@@ -1338,7 +1338,7 @@ mod tests {
                 copyright: None,
             },
             tablatures: vec![],
-            position: Some(1),
+            position: Some(Some(1)),
             album_position: None,
             group,
         }

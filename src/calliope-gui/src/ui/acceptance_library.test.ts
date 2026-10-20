@@ -453,7 +453,7 @@ describe('Delete track', () => {
 
 // ---- gui-library-album-order: acceptance through LibraryView with a stateful fake backend ----
 describe('gui-library-album-order acceptance', () => {
-  type Patch = { id: string; revision: string; band?: string; album?: string; position?: number; album_position?: number };
+  type Patch = { id: string; revision: string; band?: string; album?: string; position?: number | null; album_position?: number | null };
   let disk: TrackRecord[] = [];
   let logs: string[] = [];
   let rev = 0;

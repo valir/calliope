@@ -1318,8 +1318,8 @@ fn batch_update_and_partial_batch_delete() {
         revision: t.revision.clone(),
         band: None,
         album: None,
-        position: Some(pos),
-        album_position: Some(1),
+        position: Some(Some(pos)),
+        album_position: Some(Some(1)),
     };
     let res = e.repo.update_tracks(&[patch(&recs[2], 1), patch(&recs[0], 2), patch(&recs[1], 3)]).unwrap();
     assert!(res.failed.is_empty());

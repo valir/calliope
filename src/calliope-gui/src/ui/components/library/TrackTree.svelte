@@ -261,8 +261,16 @@
   }
 
   function finish(key: string, gap: number | null): void {
+    // The release of this press still fires a click on the pressed row: swallow exactly that one.
+    // It ends at the next click (after the row handler ran) or the next press, so it cannot stick.
     swallowClick = true;
-    setTimeout(() => (swallowClick = false), 50);
+    const clear = (): void => {
+      swallowClick = false;
+      window.removeEventListener('click', clear);
+      window.removeEventListener('pointerdown', clear, true);
+    };
+    window.addEventListener('click', clear);
+    window.addEventListener('pointerdown', clear, true);
     endDrag();
     if (gap === null) void frontendLog(`reorder none key=${key} via=drag reason=outside`);
     else void dropTreeItem(key, gap, 'drag').then(() => focusItem(key));

@@ -59,6 +59,7 @@
     await tick();
     const next = neighbourKey(before, removedKeys, tree?.visibleKeys() ?? []);
     if (next) void tree?.focusKey(next);
+    else searchRef?.focus();
   }
 
   const tracks = $derived(lib.library?.tracks ?? []);

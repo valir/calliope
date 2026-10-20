@@ -2,7 +2,8 @@ import type { TrackRecord } from './ipc';
 import type { Patch } from './library-order';
 import { buildTree, groupName, type AlbumNode, type BandNode } from './library-tree';
 
-type PosFields = { position?: number; album_position?: number };
+/** `null` clears the field on disk; absent leaves it. */
+type PosFields = { position?: number | null; album_position?: number | null };
 
 export type RenamePlan =
   | { kind: 'none' }
@@ -130,11 +131,14 @@ export function planRename(
     if (oldAlbum === '') {
       // Rule 4: a "(no album)" track joins an album.
       const join: PosFields = {};
-      if (target) {
-        const max = Math.max(0, ...target.tracks.map((t) => t.position ?? 0));
-        if (hasPositions(target.tracks)) join.position = max + 1;
-        if (target.position !== null) join.album_position = target.position;
+      // It joins at the end, whatever position it kept from before: numbered after the others, or
+      // (an album without numbers) its leftover position is cleared.
+      if (target && hasPositions(target.tracks)) {
+        join.position = Math.max(0, ...target.tracks.map((t) => t.position ?? 0)) + 1;
+      } else if (edited.position) {
+        join.position = null;
       }
+      if (target && target.position !== null) join.album_position = target.position;
       return { kind: 'join', ...join };
     }
     if (!srcAlbum) return { kind: 'none' };

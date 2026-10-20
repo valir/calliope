@@ -57,6 +57,15 @@ describe('planRename: album', () => {
     const all = [...album('B', 'Alb', 3, 2), mk('solo', 'B', '')];
     expect(plan(all, 'solo', 'B', 'alb')).toEqual({ kind: 'join', position: 4, album_position: 2 });
   });
+  it('a (no album) track with a leftover position still joins at max + 1', () => {
+    const all = [...album('B', 'Alb', 3, 2), mk('solo', 'B', '', 9)];
+    expect(plan(all, 'solo', 'B', 'alb')).toEqual({ kind: 'join', position: 4, album_position: 2 });
+  });
+  it('a (no album) track with a leftover position joining an album without positions has it cleared', () => {
+    const all = [mk('x', 'B', 'Plain'), mk('solo', 'B', '', 9)];
+    expect(plan(all, 'solo', 'B', 'plain')).toEqual({ kind: 'join', position: null });
+    expect(plan(all, 'solo', 'B', 'Fresh')).toEqual({ kind: 'join', position: null });
+  });
   it('a (no album) track joining a new album gets nothing', () => {
     const all = [...album('B', 'Alb', 3, 2), mk('solo', 'B', '')];
     expect(plan(all, 'solo', 'B', 'Fresh')).toEqual({ kind: 'join' });

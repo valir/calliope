@@ -526,8 +526,8 @@ fn positions_survive_a_library_save_and_an_export_and_save_track_sets_them() {
     let env = Env::new();
     let rec = env.track("aaa", &[]);
     let mut r = req(&rec, vec![]);
-    r.position = Some(4);
-    r.album_position = Some(2);
+    r.position = Some(Some(4));
+    r.album_position = Some(Some(2));
     let res = env.repo.save_track(r, &env.lookup()).unwrap();
     assert_eq!((res.track.position, res.track.album_position), (Some(4), Some(2)));
     assert!(res.updated.is_empty() && res.failed.is_empty());
@@ -537,7 +537,7 @@ fn positions_survive_a_library_save_and_an_export_and_save_track_sets_them() {
     let res = env.repo.save_track(r, &env.lookup()).unwrap();
     assert_eq!((res.track.position, res.track.album_position), (Some(4), Some(2)));
     let mut bad = req(&res.track, vec![]);
-    bad.position = Some(0);
+    bad.position = Some(Some(0));
     assert!(env.repo.save_track(bad, &env.lookup()).is_err());
     let out = env.repo.export_track("aaa", &env.outside).unwrap();
     let j: serde_json::Value = serde_json::from_slice(&fs::read(out.join("track.json")).unwrap()).unwrap();
@@ -560,8 +560,8 @@ fn update_tracks_writes_only_the_changed_tracks() {
     let (a, b, c) = (rd(&a.id), rd(&b.id), rd(&c.id));
     let c_bytes = bytes_of(&env, "ccc");
     let (mut pa, mut pb, mut pc) = (patch(&a), patch(&b), patch(&c));
-    pa.position = Some(2);
-    pa.album_position = Some(1);
+    pa.position = Some(Some(2));
+    pa.album_position = Some(Some(1));
     pb.album = Some("  New Album ".into());
     pc.band = Some("Band".into()); // same value: nothing to write
     let res = env.repo.update_tracks(&[pa, pb, pc]).unwrap();
@@ -578,12 +578,83 @@ fn update_tracks_writes_only_the_changed_tracks() {
 }
 
 #[test]
+fn reorder_succeeds_for_tracks_with_hand_edited_padded_names() {
+    let env = Env::new();
+    let (a, b) = (env.track("aaa", &[]), env.track("bbb", &[]));
+    for (id, key, val) in [("aaa", "band", "Band "), ("bbb", "album", " Album")] {
+        let p = env.dir(id).join("track.json");
+        let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+        v[key] = val.into();
+        fs::write(&p, serde_json::to_vec_pretty(&v).unwrap()).unwrap();
+    }
+    let (a, b) = (env.repo.load_record(&a.id).unwrap(), env.repo.load_record(&b.id).unwrap());
+    let (mut pa, mut pb) = (patch(&a), patch(&b));
+    pa.position = Some(Some(2));
+    pb.position = Some(Some(1));
+    let res = env.repo.update_tracks(&[pa, pb]).unwrap();
+    assert!(res.failed.is_empty(), "{:?}", res.failed);
+    assert_eq!((res.tracks[0].position, res.tracks[1].position), (Some(2), Some(1)));
+    assert_eq!((res.tracks[0].band.as_str(), res.tracks[1].album.as_str()), ("Band ", " Album"));
+    assert_eq!((res.tracks[0].album.as_str(), res.tracks[1].band.as_str()), (a.album.as_str(), b.band.as_str()));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_write_failure_in_a_batch_is_reported_and_the_others_are_written() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = Env::new();
+    let (a, b, c) = (env.track("aaa", &[]), env.track("bbb", &[]), env.track("ccc", &[]));
+    let (mut pa, mut pb, mut pc) = (patch(&a), patch(&b), patch(&c));
+    pa.position = Some(Some(1));
+    pb.position = Some(Some(2));
+    pc.position = Some(Some(3));
+    let dir = env.dir("bbb");
+    let before = bytes_of(&env, "bbb");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+    if fs::File::create(dir.join("probe")).is_ok() {
+        fs::remove_file(dir.join("probe")).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let res = env.repo.update_tracks(&[pa, pb, pc]);
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    let res = res.unwrap();
+    assert_eq!(res.failed.len(), 1);
+    assert_eq!(res.failed[0].id, "bbb");
+    assert!(res.failed[0].message.starts_with("cannot write track.json"), "{}", res.failed[0].message);
+    let ids: Vec<_> = res.tracks.iter().map(|t| (t.id.as_str(), t.position)).collect();
+    assert_eq!(ids, [("aaa", Some(1)), ("ccc", Some(3))]);
+    assert_eq!(bytes_of(&env, "bbb"), before);
+}
+
+#[test]
+fn a_null_position_clears_and_an_absent_one_leaves_it() {
+    let env = Env::new();
+    let a = env.track("aaa", &[]);
+    let mut p = patch(&a);
+    p.position = Some(Some(3));
+    p.album_position = Some(Some(2));
+    env.repo.update_tracks(&[p]).unwrap();
+    let a = env.repo.load_record("aaa").unwrap();
+    let parse = |extra: &str| -> TrackPatch {
+        serde_json::from_str(&format!(r#"{{"id":"aaa","revision":"{}"{extra}}}"#, a.revision)).unwrap()
+    };
+    let (absent, null, set) = (parse(""), parse(r#","position":null"#), parse(r#","position":5"#));
+    assert_eq!((absent.position, null.position, set.position), (None, Some(None), Some(Some(5))));
+    let res = env.repo.update_tracks(&[absent]).unwrap();
+    assert_eq!((res.tracks[0].position, res.tracks[0].album_position), (Some(3), Some(2)));
+    let res = env.repo.update_tracks(&[null]).unwrap();
+    assert_eq!((res.tracks[0].position, res.tracks[0].album_position), (None, Some(2)));
+    assert!(serde_json::from_str::<TrackPatch>(r#"{"id":"a","revision":"r","position":"x"}"#).is_err());
+}
+
+#[test]
 fn a_batch_with_a_problem_changes_nothing() {
     let env = Env::new();
     let (a, b) = (env.track("aaa", &[]), env.track("bbb", &[]));
     let before = (bytes_of(&env, "aaa"), bytes_of(&env, "bbb"));
     let mut good = patch(&a);
-    good.position = Some(1);
+    good.position = Some(Some(1));
     let still = |env: &Env| assert_eq!((bytes_of(env, "aaa"), bytes_of(env, "bbb")), before);
 
     let mut stale = patch(&b);
@@ -602,7 +673,7 @@ fn a_batch_with_a_problem_changes_nothing() {
     empty_band.band = Some("  ".into());
     assert!(env.repo.update_tracks(&[good.clone(), empty_band]).unwrap_err().contains("band name cannot be cleared"));
     let mut zero = patch(&b);
-    zero.position = Some(0);
+    zero.position = Some(Some(0));
     assert!(env.repo.update_tracks(&[good.clone(), zero]).is_err());
     let many: Vec<TrackPatch> = (0..5001).map(|_| good.clone()).collect();
     assert_eq!(env.repo.update_tracks(&many).unwrap_err(), "too many tracks in one change");
@@ -620,7 +691,7 @@ fn patching_a_v1_track_writes_schema_2_with_the_position_and_keeps_the_rest() {
     let rec = v.record(V1_A);
     let other_before = fs::read(v.dir(V1_B).join("track.json")).unwrap();
     let mut pa = patch(&rec);
-    pa.position = Some(3);
+    pa.position = Some(Some(3));
     let res = v.repo.update_tracks(&[pa]).unwrap();
     assert_eq!(res.tracks[0].position, Some(3));
     let after: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
@@ -659,6 +730,15 @@ fn delete_tracks_deletes_the_others_when_one_has_a_stale_revision() {
     assert_eq!(env.repo.scan().tracks.len(), 1);
     let unknown = env.repo.delete_tracks(&[TrackRef { id: "nope".into(), revision: "x".into() }]);
     assert!(unknown.deleted.is_empty() && unknown.failed[0].title.is_empty());
+}
+
+#[test]
+fn delete_tracks_handles_a_listed_twice_id_once() {
+    let env = Env::new();
+    let items = four_tracks(&env);
+    let res = env.repo.delete_tracks(&[items[0].clone(), items[0].clone()]);
+    assert_eq!(res.deleted, vec!["aaa"]);
+    assert!(res.failed.is_empty(), "{:?}", res.failed);
 }
 
 #[test]
