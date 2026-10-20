@@ -150,7 +150,7 @@ tester for the features.
 - [x] `stems-beat-autodetect.md`: specifies how the beat autodetection should work
 - [x] `gui-player-tempo-sections.md`: edit tempo sections in the player
 - [x] `gui-player-speed.md`: adjustable playback speed
-- [ ] `gui-import-local-batch.md`: batch import a directory
+- [x] `gui-import-local-batch.md`: batch import a directory
 - [ ] `gui-tablatures.md`: associate tablature to backing track
 - [ ] `gui-manipulate-backing-track.md`: associate tempo and MIDI commands into the backing track
 - [ ] `stems-empty-detection.md`: better detection of the empty resulting stems
