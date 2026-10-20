@@ -14,3 +14,4 @@ task 11 | Tree UI: keys, pointer drag and drop, Delete button and confirmation |
 task 12 | Track pane: position row and rename confirmation | implementer | done (GUI Tab counts updated; touched GUI tests pass; notes for tasks 13-14 added to the plan)
 task 13 | Headless acceptance tests | implementer | done
 task 14 | GUI end-to-end tests and visual review | implementer | done
+task 15 | README and UI guide | implementer (moved from local) | done

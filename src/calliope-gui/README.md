@@ -78,7 +78,14 @@ The default folder is `~/.local/share/calliope/`; change it in Settings > Track 
 To try the Library with sample data, copy `tests/fixtures/library-sample` to a new folder
 and choose that folder in Settings.
 
-Library keys: Ctrl+F search, Ctrl+E edit, Ctrl+S save, Escape cancel editing.
+Library keys: Ctrl+F search, Ctrl+E edit, Ctrl+S save, Escape cancel editing, Alt+Up / Alt+Down
+move the focused track or album, Delete deletes the focused track or album (after a confirmation).
+
+Tracks are shown in album order ("3. Hold On") and albums in the order you give them. Drag a track
+between the other tracks of its album, or an album between the band's other albums, to reorder
+it (not while a search is active). Imports take the order from the file's track-number tag.
+Changing a track's band or album renames that band or album for all its tracks, after a
+confirmation.
 
 ## Editor
 

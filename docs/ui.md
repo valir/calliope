@@ -115,6 +115,13 @@
   inline in the pane (status/alert line), never as toasts.
 - Library keys: Ctrl+F search, ↓ from search into the tree, arrows in the tree, Ctrl+E edit,
   Ctrl+S save, Escape cancels editing.
+- (gui-library-album-order) Tracks sort by album position, then title; albums by position, then
+  name, with "(no album)" last. The position is shown as "3. " before the title, and albums show no
+  number. Reordering uses pointer drag and drop in the Library tree only (the dragged row at 50 %,
+  a 2 px primary line marks the drop gap, Escape cancels, the column scrolls near its edges), or
+  Alt+Up / Alt+Down. The toolbar's Delete is an icon button after Expand all (tooltip "Delete the
+  focused track or album (Delete)"). Renames are confirmed with old name, new name and track count.
+  The track pane shows Position read-only after Type.
 - Settings order: Appearance, Track repository, MIDI interface, Audio output, Edge-AI server.
 - (gui-stem-extraction, task 22) Message text in the accent colour (import errors, edge-AI/tool
   problems, the "Change in Settings" link) uses `text-amber-700` in the light theme and
