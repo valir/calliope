@@ -107,6 +107,10 @@ fn edit_and_save() {
     app.typ(&wid, "Brand New Album");
     settle();
     app.key(&wid, "ctrl+s");
+    settle();
+    // Changing the album is a rename for all its tracks: confirm with Yes (No is focused).
+    app.key(&wid, "Tab Return");
+    wait_log(&app, "rename kind=album", 1);
     app.wait_contains(&format!("saved id={ID1}"));
     settle();
     let v = dirs.json(ID1);
@@ -129,6 +133,8 @@ fn edit_and_save() {
     let hand = std::fs::read_to_string(dirs.track_json(ID1)).unwrap().replace("Brand New Album", "Hand Edited");
     std::fs::write(dirs.track_json(ID1), &hand).unwrap();
     app.key(&wid, "ctrl+s");
+    settle();
+    app.key(&wid, "Tab Return"); // confirm the band rename (Yes); the save then hits the conflict
     let l = app.wait_contains("error save_track");
     assert!(l.contains("conflict"), "{l}");
     settle();

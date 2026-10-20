@@ -15,3 +15,4 @@ task 12 | Track pane: position row and rename confirmation | implementer | done 
 task 13 | Headless acceptance tests | implementer | done
 task 14 | GUI end-to-end tests and visual review | implementer | done
 task 15 | README and UI guide | implementer (moved from local) | done
+gui suite | edit_and_save (existing test editing Album) needed the new rename confirmation; fixed by implementer | implementer | done
