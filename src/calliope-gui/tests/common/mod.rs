@@ -888,3 +888,93 @@ pub fn start_player(dirs: &Dirs) -> (App, String) {
     app.wait_view("player");
     (app, wid)
 }
+
+
+// ---- seeded repositories (gui-library-album-order) ----
+
+/// One backing track of a seeded repository.
+pub struct Seed<'a> {
+    pub id: &'a str,
+    pub band: &'a str,
+    pub album: &'a str,
+    pub title: &'a str,
+    pub position: Option<u32>,
+    pub album_position: Option<u32>,
+}
+
+/// Shorthand for a seed without positions.
+pub fn seed<'a>(id: &'a str, band: &'a str, album: &'a str, title: &'a str) -> Seed<'a> {
+    Seed { id, band, album, title, position: None, album_position: None }
+}
+
+/// A temp dir (under target/) whose default root holds only these schema-2 backing tracks (each
+/// with a copy of the sample's backing.mp3) and the repository marker.
+pub fn seed_dirs(test: &str, tracks: &[Seed]) -> Dirs {
+    let dirs = Dirs::new(test);
+    assert!(dirs.0.starts_with(repo().join("target")), "temp dir is not under target/");
+    let repo_dir = dirs.repo();
+    std::fs::create_dir_all(repo_dir.join("tracks")).unwrap();
+    std::fs::write(repo_dir.join("calliope-repository.json"), "{\n  \"schema_version\": 1\n}\n").unwrap();
+    let audio = root().join("tests/fixtures/library-sample/tracks").join(ID1).join("backing.mp3");
+    for t in tracks {
+        let dir = dirs.track_dir(t.id);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::copy(&audio, dir.join("backing.mp3")).unwrap();
+        let mut v = serde_json::json!({
+            "schema_version": 2,
+            "type": "backing",
+            "id": t.id,
+            "band": t.band,
+            "album": t.album,
+            "title": t.title,
+            "composers": [],
+            "year": null,
+            "source_url": null,
+            "copyright": null,
+            "audio": "backing.mp3",
+            "original": null,
+            "stems": [],
+            "stem_model": null,
+            "tablatures": [],
+            "imported": "2026-10-01T12:00:00Z",
+            "modified": "2026-10-01T12:00:00Z",
+        });
+        if let Some(p) = t.position {
+            v["position"] = p.into();
+        }
+        if let Some(p) = t.album_position {
+            v["album_position"] = p.into();
+        }
+        std::fs::write(dir.join("track.json"), serde_json::to_string_pretty(&v).unwrap() + "\n").unwrap();
+    }
+    dirs
+}
+
+impl Dirs {
+    /// `(position, album_position)` of a track on disk.
+    pub fn positions(&self, id: &str) -> (Option<u64>, Option<u64>) {
+        let v = self.json(id);
+        (v["position"].as_u64(), v["album_position"].as_u64())
+    }
+}
+
+impl App {
+    /// Left-button drag from `from` to `to` in 10 steps of 40 ms, relative to the window.
+    /// `before_release` runs while the button is still down.
+    pub fn drag_xy(&self, wid: &str, from: (i32, i32), to: (i32, i32), before_release: impl FnOnce()) {
+        let run = |args: &[&str]| {
+            let s = Command::new("xdotool").args(args).status().unwrap();
+            assert!(s.success(), "xdotool {args:?}");
+        };
+        run(&["windowactivate", "--sync", wid, "mousemove", "--window", wid, &from.0.to_string(), &from.1.to_string(), "mousedown", "1"]);
+        let n = 10;
+        for i in 1..=n {
+            let x = from.0 + (to.0 - from.0) * i / n;
+            let y = from.1 + (to.1 - from.1) * i / n;
+            run(&["mousemove", "--window", wid, &x.to_string(), &y.to_string()]);
+            sleep(Duration::from_millis(40));
+        }
+        before_release();
+        run(&["mouseup", "1"]);
+    }
+}
