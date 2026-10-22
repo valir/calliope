@@ -52,6 +52,8 @@ pub struct LoopSpec {
     /// Count-in before every repeat (the loop's own Count-In): the song BPM at the loop start times 1000.
     /// The engine spaces the clicks by `60 / (bpm × speed)` of the coming pass.
     pub count_in_bpm_milli: Option<u32>,
+    /// Song frames from the loop start to the next beat (0 on a beat): the count-in is spaced on the grid.
+    pub count_in_lead: u64,
     /// Speed training of the loop (settings with `on`; only given when it is on and the loop repeats).
     pub training: Option<Training>,
 }
@@ -142,7 +144,7 @@ enum EventKind {
     /// `pass`/`pct`: the pass that starts and its speed (pass 0: no training run).
     Wrap { len: u64, pass: u32, pct: u32 },
     /// Loop end with count-in (`pass`/`pct` as for `Wrap`).
-    CountIn { start: u64, bpm_milli: u32, pass: u32, pct: u32 },
+    CountIn { start: u64, bpm_milli: u32, lead: u64, pass: u32, pct: u32 },
     /// A loop played once ended.
     Once { start: u64 },
     /// The track ended.
@@ -391,7 +393,8 @@ impl Engine {
             Some(l) if l.repeat => {
                 let bpm_milli = l.count_in_bpm_milli.unwrap_or(0);
                 let (pass, pct) = self.coming_pass(&l);
-                self.push_event(FeedEvent { u: at, kind: EventKind::CountIn { start: l.start, bpm_milli, pass, pct } });
+                let lead = l.count_in_lead;
+                self.push_event(FeedEvent { u: at, kind: EventKind::CountIn { start: l.start, bpm_milli, lead, pass, pct } });
                 self.feed_zero = true;
             }
             Some(l) => {
@@ -577,9 +580,10 @@ impl Engine {
         }
     }
 
-    /// The count-in of a loop wrap, spaced for the coming pass.
-    fn wrap_count(&self, bpm_milli: u32, speed: f64) -> CountState {
-        CountState { plan: count_in_plan(f64::from(bpm_milli) / 1000.0 * speed, self.pcm.rate), at: 0 }
+    /// The count-in of a loop wrap, spaced for the coming pass; `lead` song frames before the next beat.
+    fn wrap_count(&self, bpm_milli: u32, lead: u64, speed: f64) -> CountState {
+        let plan = count_in_plan(f64::from(bpm_milli) / 1000.0 * speed, self.pcm.rate);
+        CountState { plan: plan.lead_in((lead as f64 / speed).round() as u64), at: 0 }
     }
 
     /// The loop the feed wraps at, when it is in play.
@@ -679,13 +683,13 @@ impl Engine {
                 self.shared.wraps.fetch_add(1, Ordering::AcqRel);
                 false
             }
-            EventKind::CountIn { start, bpm_milli, pass, pct } => {
+            EventKind::CountIn { start, bpm_milli, lead, pass, pct } => {
                 self.heard_pass(pass, pct);
                 self.shared.wraps.fetch_add(1, Ordering::AcqRel);
                 self.pos = start;
                 self.beat_dirty = true;
                 let speed = if pass > 0 { f64::from(pct) / 100.0 } else { self.speed };
-                self.count = Some(self.wrap_count(bpm_milli, speed));
+                self.count = Some(self.wrap_count(bpm_milli, lead, speed));
                 self.enter(start);
                 true
             }
@@ -801,7 +805,7 @@ impl Engine {
             self.pos = l.start;
             self.beat_dirty = true;
             self.shared.wraps.fetch_add(1, Ordering::AcqRel);
-            self.count = l.count_in_bpm_milli.map(|b| self.wrap_count(b, self.speed));
+            self.count = l.count_in_bpm_milli.map(|b| self.wrap_count(b, l.count_in_lead, self.speed));
             if self.count.is_none() {
                 self.start_fade();
             }
@@ -1239,10 +1243,25 @@ impl Session {
         }
     }
 
-    /// The count-in for a start at `ms`; none without a tempo.
+    /// The count-in for a start at `ms`, on the beat grid at `pct`; none without a tempo.
     fn plan_at(&self, ms: f64, pct: u32) -> Option<CountIn> {
         let bpm = self.state.tempo.bpm_at(ms) * f64::from(pct) / 100.0;
-        (!self.state.tempo.is_empty() && bpm > 0.0).then(|| count_in_plan(bpm, self.pcm.rate))
+        let lead = (self.beat_lead(ms) as f64 * 100.0 / f64::from(pct.max(1))).round() as u64;
+        (!self.state.tempo.is_empty() && bpm > 0.0).then(|| count_in_plan(bpm, self.pcm.rate).lead_in(lead))
+    }
+
+    /// Song frames from a start at `ms` to the next beat of the grid (0 on a beat or without a tempo).
+    fn beat_lead(&self, ms: f64) -> u64 {
+        let bpm = self.state.tempo.bpm_at(ms);
+        if bpm <= 0.0 {
+            return 0;
+        }
+        let half_frame = 500.0 / f64::from(self.pcm.rate.max(1));
+        let beat = 60000.0 / bpm;
+        match self.state.tempo.beats_in(ms - half_frame, ms + 2.0 * beat).first() {
+            Some(&(g, _)) => self.frame_of_ms_f(g).saturating_sub(self.frame_of_ms_f(ms)),
+            None => 0,
+        }
     }
 
     /// Logs a count-in; Play adds the index of the section that counted in.
@@ -1283,7 +1302,15 @@ impl Session {
         let count_in_bpm_milli = (l.count_in && !self.state.tempo.is_empty())
             .then(|| (self.state.tempo.bpm_at(self.boundary_ms(l.start)) * 1000.0).round() as u32)
             .filter(|&b| b > 0);
-        Some(LoopSpec { start, end, repeat: l.repeat, count_in_bpm_milli, training: l.training.filter(|t| t.on && l.repeat) })
+        let count_in_lead = self.beat_lead(self.boundary_ms(l.start));
+        Some(LoopSpec {
+            start,
+            end,
+            repeat: l.repeat,
+            count_in_bpm_milli,
+            count_in_lead,
+            training: l.training.filter(|t| t.on && l.repeat),
+        })
     }
 
     fn sync_loop(&mut self) {

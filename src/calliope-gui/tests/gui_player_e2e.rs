@@ -931,7 +931,8 @@ fn player_phase3() {
     assert!(overflow <= 14, "the Player pane scrolls by {overflow} px: {l}");
     shot("player-p3-layout");
 
-    // 2. Play inside section 2 (Count In on): three clicks at its tempo, then the tone.
+    // 2. Play inside section 2 (Count In on): three clicks at its tempo, then the tone, started 435.48 ms
+    //    before the 4th beat so that the next beat (10435.48 ms) falls on it.
     enter(&app, &wid, TIME, "0:10.0");
     app.wait_line(|l| l.contains("player seek position=10000"), secs(10));
     let start = mark(&app, &cap);
@@ -954,7 +955,8 @@ fn player_phase3() {
         assert!((w[1] - w[0] - 645.16).abs() <= 5.0, "{clicks:?}");
     }
     let tone = tone_start_ms(&heard, rate, 330.0).expect("the backing starts");
-    assert!((tone - clicks[0] - 3.0 * 645.16).abs() <= 10.0, "the tone starts at {tone} ms, the first click at {} ms", clicks[0]);
+    let lead = 8500.0 + 3.0 * 645.16 - 10000.0;
+    assert!((tone - clicks[0] - (3.0 * 645.16 - lead)).abs() <= 10.0, "the tone starts at {tone} ms, the first click at {} ms", clicks[0]);
 
     // 3. Play inside section 1 (no Count In, no Click): no count-in, the tone at once, no click.
     let count_ins = app.count("player count-in");

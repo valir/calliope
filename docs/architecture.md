@@ -1394,3 +1394,12 @@ cancels, drop gap from the sibling rows' rects via the pure `gapAt`, an inset li
 Player waveform already does. Consequences: no OS drag image (the dragged row is dimmed in place); it works the same with
 mouse and touchpad, in jsdom and under xdotool; no Tauri config change. Reordering and deleting exist only in the Library's
 tree (`TrackBrowser editable`); the Editor and Player show the same order read-only.
+
+### 2026-10-22: A count-in is placed on the beat grid, not on the start position   (fix: count-in alignment)
+A Play or loop count-in was three clicks one beat apart with the audio on the 4th beat, timed from the start
+position. From a start between two beats, the song's next beat (and its click) then came up to a beat late: 1.5
+beats after the third click instead of one. Choice: the plan keeps its three clicks at `bpm × speed`, but the audio
+starts `lead` output frames before the 4th beat, `lead` being the song frames from the start to the next beat of
+the tempo map divided by the speed (`CountIn::lead_in`, kept under one beat). The manager computes it for Play
+(`plan_at`) and for a loop start (`LoopSpec::count_in_lead`, rescaled by the engine for each pass's speed). A start on
+a beat, or within half a frame of one, keeps the audio on the 4th beat.

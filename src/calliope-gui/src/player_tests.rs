@@ -1029,11 +1029,12 @@ fn play_counts_in_per_section_at_that_sections_tempo() {
     // Click off everywhere; Count In only on the 90 BPM section
     flags(&mut m, &spec.id, 0, 500.0, false, false, t0);
     flags(&mut m, &spec.id, 1, 10500.0, false, true, t0);
-    // paused inside it: three clicks one 90 BPM beat (14700 frames) apart, then the audio from there
+    // paused inside it, between beats: three clicks one 90 BPM beat (14700 frames) apart, then the audio from
+    // there 500 ms (11025 frames) before the 4th beat, so that the next beat (12500 ms) falls on it
     m.seek(&spec.id, 12000, t0).unwrap();
     let st = m.play(&spec.id, t0).unwrap();
     assert!(st.counting_in && st.playing);
-    let pre = 14700 * 3;
+    let pre = 14700 * 3 - 11025;
     let got = b.pull(pre + 2000);
     let mut want = vec![0.0f32; (pre + 2000) * 2];
     for f in [0usize, 14700, 29400] {
@@ -1269,6 +1270,22 @@ fn loop_play_with_training_counts_in_at_the_first_pass_speed() {
     let spec_loop = s.loop_spec().unwrap();
     assert_eq!(spec_loop.training, Some(t));
     assert_eq!(spec_loop.count_in_bpm_milli, Some(120_000));
+    assert_eq!(spec_loop.count_in_lead, 0, "a loop starting on a tick of the grid");
+}
+
+#[test]
+fn the_count_in_plan_leads_into_the_next_beat_at_the_speed() {
+    let (_t, _spec, m, _b, _e) = opened(WITH_TEMPO);
+    let s = m.session.as_ref().unwrap();
+    // 90 BPM from 10500 ms: at 50 % a beat is 29400 output frames; 12000 is 500 ms (11025 song frames,
+    // 22050 output frames) before the beat at 12500
+    let p = s.plan_at(12000.0, 50).unwrap();
+    assert_eq!(p.clicks, [0, 29400, 58800]);
+    assert_eq!(p.start, 3 * 29400 - 22050);
+    assert_eq!(s.plan_at(12000.0, 100).unwrap().start, 3 * 14700 - 11025);
+    // on a beat, or a fraction of a frame after it: the audio on the 4th beat
+    assert_eq!(s.plan_at(12500.0, 50).unwrap().start, 3 * 29400);
+    assert_eq!(s.plan_at(12500.01, 50).unwrap().start, 3 * 29400);
 }
 
 #[test]
@@ -1280,7 +1297,7 @@ fn engine_callback_never_allocates() {
     let mut en = Engine::new(pcm.clone(), 0, shared.clone()).with_trash(tx);
     let grid: Vec<Beat> = (0..40).map(|k| (k * 11025, k % 4 == 1)).collect();
     let plan = count_in_plan(120.0, 22050);
-    let spec_loop = LoopSpec { start: 20000, end: 40000, repeat: true, count_in_bpm_milli: Some(120_000), training: None };
+    let spec_loop = LoopSpec { start: 20000, end: 40000, repeat: true, count_in_bpm_milli: Some(120_000), count_in_lead: 0, training: None };
     let g2 = Arc::new(grid.clone());
     let mut out = vec![0.0f32; 2 * 1024];
     let empty = Arc::new(Vec::new());
@@ -1532,7 +1549,7 @@ fn scenario(name: &str, pct: u32) -> (Vec<(usize, Cmd)>, usize) {
             (c, 6 * sec)
         }
         "wrap" => {
-            let l = LoopSpec { start: 2 * sec as u64, end: 4 * sec as u64, repeat: true, count_in_bpm_milli: None, training: None };
+            let l = LoopSpec { start: 2 * sec as u64, end: 4 * sec as u64, repeat: true, count_in_bpm_milli: None, count_in_lead: 0, training: None };
             c.extend([(0, Cmd::SetSpeed(pct)), (0, Cmd::SetLoop(Some(l))), (0, Cmd::Play { count_in: None })]);
             (c, 12 * sec)
         }
@@ -1622,7 +1639,7 @@ fn speed_change_while_playing_has_no_gap_and_the_position_never_goes_back() {
 #[test]
 fn a_repeating_loop_at_80_percent_wraps_without_a_gap() {
     let sec = RATE;
-    let l = LoopSpec { start: sec as u64, end: 2 * sec as u64, repeat: true, count_in_bpm_milli: None, training: None };
+    let l = LoopSpec { start: sec as u64, end: 2 * sec as u64, repeat: true, count_in_bpm_milli: None, count_in_lead: 0, training: None };
     let cmds = [(0, Cmd::SetSpeed(80)), (0, Cmd::SetLoop(Some(l))), (0, Cmd::Seek(sec as u64)), (0, Cmd::Play { count_in: None }), (0, Cmd::Resume)];
     let (x, pos, shared) = render_cmds(tone_pcm(10), &cmds, 5 * sec);
     assert!(shared.wraps.load(Ordering::Acquire) >= 2);
@@ -1636,7 +1653,7 @@ fn a_repeating_loop_at_80_percent_wraps_without_a_gap() {
 #[test]
 fn loop_end_with_count_in_at_50_percent_counts_three_clicks_then_the_music() {
     let sec = RATE;
-    let l = LoopSpec { start: 2 * BEAT as u64, end: 6 * BEAT as u64, repeat: true, count_in_bpm_milli: Some(120_000), training: None };
+    let l = LoopSpec { start: 2 * BEAT as u64, end: 6 * BEAT as u64, repeat: true, count_in_bpm_milli: Some(120_000), count_in_lead: 0, training: None };
     let cmds = [(0, Cmd::SetSpeed(50)), (0, Cmd::SetLoop(Some(l))), (0, Cmd::PlayLoop { count_in: None })];
     let total = 9 * sec;
     let (clicks, _, shared) = render_cmds(pcm_of(|_| 0.0, 30 * sec), &cmds, total);
@@ -1651,6 +1668,66 @@ fn loop_end_with_count_in_at_50_percent_counts_three_clicks_then_the_music() {
     let after: Vec<usize> = burst_peaks(&music[on[2] + sec / 2..]).iter().map(|p| p + on[2] + sec / 2).collect();
     let want = on[2] + sec + RATE / 100; // the middle of the burst, stretched to 20 ms
     assert!(after[0].abs_diff(want) <= RATE / 100, "burst at {} want {want}", after[0]);
+}
+
+/// A silent track's clicks after `cmds`: the count-in, then the 120 BPM grid (a click on every beat).
+fn count_in_then_grid(pct: u32, cmds: Vec<(usize, Cmd)>) -> Vec<i64> {
+    let grid: Vec<Beat> = (0..60).map(|k| ((k * BEAT) as u64, false)).collect();
+    let mut all = vec![(0, Cmd::SetGrid(Arc::new(grid))), (0, Cmd::SetMetronome(true)), (0, Cmd::SetSpeed(pct))];
+    all.extend(cmds);
+    let (x, _, _) = render_cmds(pcm_of(|_| 0.0, 30 * RATE), &all, 10 * RATE);
+    onsets(&x).windows(2).map(|w| w[1] as i64 - w[0] as i64).take(6).collect()
+}
+
+#[test]
+fn a_count_in_between_beats_lands_on_the_grid_at_every_speed() {
+    for pct in [100u32, 50, 75] {
+        let out_beat = BEAT as f64 * 100.0 / f64::from(pct);
+        for start in [4 * BEAT, 4 * BEAT + BEAT / 2, 4 * BEAT + BEAT / 10, 5 * BEAT - BEAT / 10] {
+            let lead = (((5 * BEAT - start) % BEAT) as f64 * 100.0 / f64::from(pct)).round() as u64;
+            let plan = count_in_plan(120.0 * f64::from(pct) / 100.0, RATE as u32).lead_in(lead);
+            let gaps = count_in_then_grid(pct, vec![(0, Cmd::Seek(start as u64)), (0, Cmd::Play { count_in: Some(plan) })]);
+            assert_eq!(gaps.len(), 6, "{pct} % from {start}: {gaps:?}");
+            for g in &gaps {
+                // the stretch path places a click within a sub-block
+                assert!((*g as f64 - out_beat).abs() <= 300.0, "{pct} % from {start}: {gaps:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_loop_count_in_between_beats_lands_on_the_grid_on_every_pass() {
+    for pct in [100u32, 50] {
+        let out_beat = BEAT as f64 * 100.0 / f64::from(pct);
+        let start = 2 * BEAT + BEAT / 2;
+        let l = LoopSpec {
+            start: start as u64,
+            end: 6 * BEAT as u64,
+            repeat: true,
+            count_in_bpm_milli: Some(120_000),
+            count_in_lead: (BEAT / 2) as u64,
+            training: None,
+        };
+        let plan = count_in_plan(120.0 * f64::from(pct) / 100.0, RATE as u32).lead_in((BEAT as f64 / 2.0 * 100.0 / f64::from(pct)).round() as u64);
+        let grid: Vec<Beat> = (0..60).map(|k| ((k * BEAT) as u64, false)).collect();
+        let cmds = [
+            (0, Cmd::SetGrid(Arc::new(grid))),
+            (0, Cmd::SetMetronome(true)),
+            (0, Cmd::SetSpeed(pct)),
+            (0, Cmd::SetLoop(Some(l))),
+            (0, Cmd::PlayLoop { count_in: Some(plan) }),
+        ];
+        let (x, _, shared) = render_cmds(pcm_of(|_| 0.0, 30 * RATE), &cmds, 14 * RATE * 100 / pct as usize / 2);
+        assert!(shared.wraps.load(Ordering::Acquire) >= 1);
+        // count-in 3 clicks, beats 3, 4, 5 of the pass, the loop end on beat 6 starts the next count-in, ...:
+        // one beat apart all the way
+        let gaps: Vec<i64> = onsets(&x).windows(2).map(|w| w[1] as i64 - w[0] as i64).take(11).collect();
+        assert_eq!(gaps.len(), 11, "{pct} %: {gaps:?}");
+        for (k, g) in gaps.iter().enumerate() {
+            assert!((*g as f64 - out_beat).abs() <= 300.0, "{pct} %: gap {k} in {gaps:?}");
+        }
+    }
 }
 
 #[test]
@@ -1748,6 +1825,7 @@ fn loop_2s(training: Option<Training>, count_in: bool) -> LoopSpec {
         end: 3 * RATE as u64,
         repeat: true,
         count_in_bpm_milli: count_in.then_some(120_000),
+        count_in_lead: 0,
         training,
     }
 }

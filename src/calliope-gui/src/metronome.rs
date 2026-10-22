@@ -44,7 +44,8 @@ impl Click {
     }
 }
 
-/// Output frames of the three audible count-in clicks and of the audio start (the silent 4th beat).
+/// Output frames of the three audible count-in clicks and of the audio start (the silent 4th beat, or up to a beat
+/// earlier with `lead_in`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CountIn {
     pub clicks: [u64; 3],
@@ -56,6 +57,15 @@ pub fn count_in_plan(bpm: f64, rate: u32) -> CountIn {
     CountIn {
         clicks: [0, b, 2 * b],
         start: 3 * b,
+    }
+}
+
+impl CountIn {
+    /// The same clicks with the audio starting `lead` output frames before the 4th beat, for a start `lead`
+    /// frames before the track's next beat: that beat then falls on the 4th beat. Kept under one beat.
+    pub fn lead_in(self, lead: u64) -> CountIn {
+        let b = self.clicks[1];
+        CountIn { start: self.start - lead.min(b.saturating_sub(1)), ..self }
     }
 }
 
@@ -126,6 +136,14 @@ mod tests {
             s1 = s;
         }
         s1 * s1 + s2 * s2 - c * s1 * s2
+    }
+
+    #[test]
+    fn lead_in_starts_the_audio_earlier_and_stays_under_a_beat() {
+        let p = count_in_plan(120.0, 22050);
+        assert_eq!(p.lead_in(0), p);
+        assert_eq!(p.lead_in(5000), CountIn { clicks: [0, 11025, 22050], start: 33075 - 5000 });
+        assert_eq!(p.lead_in(99_999).start, 22051, "after the third click");
     }
 
     #[test]
