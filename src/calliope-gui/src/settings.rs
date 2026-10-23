@@ -25,6 +25,12 @@ pub struct Settings {
     pub keep_original: bool,
     /// Folder of the last accepted local import (file or directory), where Browse starts; `None` = none yet.
     pub last_import_dir: Option<PathBuf>,
+    /// Root of the RC-5 drive chosen last (the export's folder dialog starts there); `None` = none yet.
+    pub rc5_dir: Option<PathBuf>,
+    /// Folder of the last MP3/OGG export; `None` = none yet.
+    pub export_dir: Option<PathBuf>,
+    /// RC-5 memory of the last successful export (1..=99); the next one suggests it plus one.
+    pub rc5_memory: Option<u8>,
 }
 
 /// Longest accepted `edge_ai_url`.
@@ -155,6 +161,25 @@ pub fn load(path: &Path) -> Settings {
             path.display()
         ),
     }
+    for (key, slot) in [("rc5_dir", &mut s.rc5_dir), ("export_dir", &mut s.export_dir)] {
+        match obj.get(key) {
+            None | Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::String(d)) if Path::new(d).is_absolute() => {
+                *slot = Some(PathBuf::from(d));
+            }
+            Some(v) => eprintln!(
+                "calliope: invalid {key} {v} in {} (not an absolute path string); using none",
+                path.display()
+            ),
+        }
+    }
+    match obj.get("rc5_memory") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::Number(n)) if n.as_u64().is_some_and(|m| (1..=99).contains(&m)) => {
+            s.rc5_memory = n.as_u64().map(|m| m as u8);
+        }
+        Some(v) => eprintln!("calliope: invalid rc5_memory {v} in {} (not 1..99); using none", path.display()),
+    }
     s
 }
 
@@ -225,6 +250,33 @@ impl SettingsStore {
         *cur = next.clone();
         Ok(next)
     }
+
+    pub fn set_rc5_dir(&self, dir: Option<PathBuf>) -> std::io::Result<Settings> {
+        let mut cur = self.current.lock().unwrap_or_else(|e| e.into_inner());
+        let mut next = cur.clone();
+        next.rc5_dir = dir;
+        save(&self.path, &next)?;
+        *cur = next.clone();
+        Ok(next)
+    }
+
+    pub fn set_export_dir(&self, dir: Option<PathBuf>) -> std::io::Result<Settings> {
+        let mut cur = self.current.lock().unwrap_or_else(|e| e.into_inner());
+        let mut next = cur.clone();
+        next.export_dir = dir;
+        save(&self.path, &next)?;
+        *cur = next.clone();
+        Ok(next)
+    }
+
+    pub fn set_rc5_memory(&self, n: Option<u8>) -> std::io::Result<Settings> {
+        let mut cur = self.current.lock().unwrap_or_else(|e| e.into_inner());
+        let mut next = cur.clone();
+        next.rc5_memory = n;
+        save(&self.path, &next)?;
+        *cur = next.clone();
+        Ok(next)
+    }
 }
 
 #[cfg(test)]
@@ -242,7 +294,7 @@ mod tests {
 
     #[test]
     fn json_shape() {
-        assert_eq!(serde_json::to_string(&light()).unwrap(), r#"{"theme":"light","repository_root":null,"edge_ai_url":null,"keep_original":false,"last_import_dir":null}"#);
+        assert_eq!(serde_json::to_string(&light()).unwrap(), r#"{"theme":"light","repository_root":null,"edge_ai_url":null,"keep_original":false,"last_import_dir":null,"rc5_dir":null,"export_dir":null,"rc5_memory":null}"#);
         let s: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
         assert_eq!(s, light());
     }
@@ -379,6 +431,39 @@ mod tests {
         }
         let long = format!("http://h/{}", "a".repeat(200));
         assert!(normalize_edge_ai_url(&long).is_err());
+    }
+
+    #[test]
+    fn export_fields_roundtrip_and_lenient() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("s.json");
+        let s = Settings {
+            rc5_dir: Some(PathBuf::from("/media/RC-5")),
+            export_dir: Some(PathBuf::from("/home/x/music")),
+            rc5_memory: Some(7),
+            ..Settings::default()
+        };
+        save(&p, &s).unwrap();
+        assert_eq!(load(&p), s);
+        for mem in ["0", "100", "\"7\"", "-1"] {
+            std::fs::write(
+                &p,
+                format!(r#"{{"theme":"light","rc5_dir":"rel","export_dir":5,"rc5_memory":{mem}}}"#),
+            )
+            .unwrap();
+            assert_eq!(load(&p), light(), "{mem}");
+        }
+        let q = d.path().join("cfg/s.json");
+        let store = SettingsStore::open(q.clone());
+        store.set_rc5_dir(Some(PathBuf::from("/a"))).unwrap();
+        store.set_export_dir(Some(PathBuf::from("/b"))).unwrap();
+        store.set_rc5_memory(Some(99)).unwrap();
+        let g = SettingsStore::open(q.clone()).get();
+        assert_eq!((g.rc5_dir, g.export_dir, g.rc5_memory), (Some("/a".into()), Some("/b".into()), Some(99)));
+        store.set_rc5_dir(None).unwrap();
+        store.set_export_dir(None).unwrap();
+        store.set_rc5_memory(None).unwrap();
+        assert_eq!(SettingsStore::open(q).get(), Settings::default());
     }
 
     #[test]

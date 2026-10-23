@@ -7,6 +7,7 @@ pub mod beat_detect;
 pub mod cli;
 pub mod download;
 pub mod editor;
+pub mod export_rules;
 pub mod fsutil;
 pub mod gui;
 pub mod import_job;
@@ -37,5 +38,6 @@ pub mod track_meta;
 pub mod transport;
 #[allow(dead_code)] // only build.rs uses it outside tests
 mod version;
+mod wav;
 
 pub const VERSION: &str = env!("CALLIOPE_VERSION");

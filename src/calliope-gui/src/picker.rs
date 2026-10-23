@@ -18,6 +18,8 @@ pub enum DialogKind {
     ImportAudio,
     ImportVideo,
     ImportDirectory,
+    ExportRc5,
+    ExportAudio,
 }
 
 impl DialogKind {
@@ -31,6 +33,8 @@ impl DialogKind {
             DialogKind::ImportAudio => "import-audio",
             DialogKind::ImportVideo => "import-video",
             DialogKind::ImportDirectory => "import-directory",
+            DialogKind::ExportRc5 => "export-rc5",
+            DialogKind::ExportAudio => "export-audio",
         }
     }
 
@@ -44,6 +48,8 @@ impl DialogKind {
             DialogKind::ImportAudio,
             DialogKind::ImportVideo,
             DialogKind::ImportDirectory,
+            DialogKind::ExportRc5,
+            DialogKind::ExportAudio,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -370,10 +376,13 @@ mod tests {
     fn scripted_knows_import_kinds() {
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("answers");
-        std::fs::write(&f, "import-audio /tmp/a.mp3\nimport-video CANCEL\n").unwrap();
+        std::fs::write(&f, "import-audio /tmp/a.mp3\nimport-video CANCEL\nexport-rc5 /tmp/rc5\nexport-audio CANCEL\n").unwrap();
         let p = ScriptedPicker::new(f);
         assert_eq!(p.pick_file(&file_req(DialogKind::ImportAudio)), Some("/tmp/a.mp3".into()));
         assert_eq!(p.pick_file(&file_req(DialogKind::ImportVideo)), None);
+        let folder = |kind| FolderReq { kind, title: "t".into(), start_dir: None };
+        assert_eq!(p.pick_folder(&folder(DialogKind::ExportRc5)), Some("/tmp/rc5".into()));
+        assert_eq!(p.pick_folder(&folder(DialogKind::ExportAudio)), None);
     }
 
     #[test]

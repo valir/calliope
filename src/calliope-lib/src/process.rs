@@ -1,4 +1,5 @@
-//! Runs an external program: argv only (never a shell), stdin closed, output delivered line by
+//! Runs an external program: argv only (never a shell), stdin closed unless `spawn_with_stdin`
+//! hands the caller a pipe to it, output delivered line by
 //! line to callbacks, and cancellable. On Linux the child leads its own process group (so
 //! cancelling also stops its children) and dies with the spawning thread (`PR_SET_PDEATHSIG`;
 //! the thread that spawned must therefore stay alive until `wait` returns).
@@ -6,7 +7,7 @@
 use std::ffi::OsStr;
 use std::io::{self, BufRead, Read};
 use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -53,7 +54,23 @@ pub fn spawn<S: AsRef<OsStr>>(
     on_stdout_line: impl FnMut(String) + Send + 'static,
     on_stderr_line: impl FnMut(String) + Send + 'static,
 ) -> io::Result<Running> {
-    spawn_with(program, args, cwd, move |out| read_lines(out, on_stdout_line), on_stderr_line)
+    spawn_with(program, args, cwd, Stdio::null(), move |out| read_lines(out, on_stdout_line), on_stderr_line)
+        .map(|(running, _)| running)
+}
+
+/// Like [`spawn`], but stdin is a pipe returned to the caller (for feeding audio to an encoder).
+/// Dropping the `ChildStdin` closes it. Writing after the child has died fails with
+/// `BrokenPipe` (Rust ignores SIGPIPE). Same process-group, parent-death and cancel rules.
+pub fn spawn_with_stdin<S: AsRef<OsStr>>(
+    program: impl AsRef<OsStr>,
+    args: &[S],
+    cwd: Option<&Path>,
+    on_stdout_line: impl FnMut(String) + Send + 'static,
+    on_stderr_line: impl FnMut(String) + Send + 'static,
+) -> io::Result<(Running, ChildStdin)> {
+    let (running, stdin) =
+        spawn_with(program, args, cwd, Stdio::piped(), move |out| read_lines(out, on_stdout_line), on_stderr_line)?;
+    Ok((running, stdin.expect("piped stdin")))
 }
 
 /// Like [`spawn`], but stdout is binary: every chunk read is passed to `on_stdout_chunk`
@@ -69,6 +86,7 @@ pub fn spawn_raw_stdout<S: AsRef<OsStr>>(
         program,
         args,
         cwd,
+        Stdio::null(),
         move |mut out| {
             let mut buf = vec![0u8; 64 * 1024];
             loop {
@@ -82,18 +100,20 @@ pub fn spawn_raw_stdout<S: AsRef<OsStr>>(
         },
         on_stderr_line,
     )
+    .map(|(running, _)| running)
 }
 
 fn spawn_with<S: AsRef<OsStr>>(
     program: impl AsRef<OsStr>,
     args: &[S],
     cwd: Option<&Path>,
+    stdin: Stdio,
     on_stdout: impl FnOnce(std::process::ChildStdout) + Send + 'static,
     on_stderr_line: impl FnMut(String) + Send + 'static,
-) -> io::Result<Running> {
+) -> io::Result<(Running, Option<ChildStdin>)> {
     let program = program.as_ref();
     let mut cmd = Command::new(program);
-    cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.args(args).stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped());
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
     }
@@ -112,6 +132,7 @@ fn spawn_with<S: AsRef<OsStr>>(
     }
     let mut child = cmd.spawn().map_err(|e| spawn_error(program, &e))?;
     let pid = child.id();
+    let stdin = child.stdin.take();
     let out = child.stdout.take().expect("piped stdout");
     let err = child.stderr.take().expect("piped stderr");
     let readers = vec![
@@ -125,7 +146,7 @@ fn spawn_with<S: AsRef<OsStr>>(
         #[cfg(not(unix))]
         child: child.clone(),
     };
-    Ok(Running { child, handle, readers })
+    Ok((Running { child, handle, readers }, stdin))
 }
 
 fn read_lines(source: impl Read, mut on_line: impl FnMut(String)) {
@@ -324,6 +345,31 @@ mod tests {
             .unwrap();
         r.wait().unwrap();
         assert_eq!(rx.iter().collect::<Vec<_>>(), [MAX_LINE_BYTES, 4]);
+    }
+
+    #[test]
+    fn stdin_is_piped_and_closing_it_ends_the_child() {
+        use std::io::Write;
+        let (tx, rx) = mpsc::channel();
+        let (r, mut stdin) = spawn_with_stdin("/bin/sh", &["-c", "wc -c"], None, move |l| tx.send(l).unwrap(), |_| {})
+            .unwrap();
+        stdin.write_all(&vec![7u8; 100_000]).unwrap();
+        drop(stdin);
+        assert!(r.wait().unwrap().success());
+        assert_eq!(rx.iter().map(|l| l.trim().to_string()).collect::<Vec<_>>(), ["100000"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancel_with_stdin_ends_promptly_and_later_writes_hit_a_broken_pipe() {
+        use std::io::Write;
+        let (r, mut stdin) = spawn_with_stdin("sleep", &["60"], None, |_| {}, |_| {}).unwrap();
+        let started = Instant::now();
+        r.cancel();
+        r.wait().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(3));
+        let e = stdin.write_all(b"x").and_then(|()| stdin.flush()).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::BrokenPipe);
     }
 
     #[cfg(unix)]

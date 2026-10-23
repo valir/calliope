@@ -263,7 +263,7 @@ pub fn status(root: &Path) -> RepoStatus {
 }
 
 /// Is `path` (canonicalised, or its nearest existing ancestor) inside the repository root?
-fn inside_root(root: &Path, path: &Path) -> bool {
+pub(crate) fn inside_root(root: &Path, path: &Path) -> bool {
     let Ok(root) = root.canonicalize() else {
         return false;
     };
@@ -967,7 +967,7 @@ fn trash_name(dest: &Path) -> String {
 }
 
 /// Makes one part of an export folder name safe on every platform.
-fn sanitize_component(s: &str) -> String {
+pub(crate) fn sanitize_component(s: &str) -> String {
     let replaced: String = s
         .chars()
         .map(|c| {
@@ -988,7 +988,7 @@ const MAX_PART_BYTES: usize = 75;
 const MAX_FOLDER_BYTES: usize = 240;
 
 /// The longest prefix of `s` of at most `max` bytes, cut on a UTF-8 character boundary.
-fn cut_bytes(s: &str, max: usize) -> &str {
+pub(crate) fn cut_bytes(s: &str, max: usize) -> &str {
     if s.len() <= max {
         return s;
     }

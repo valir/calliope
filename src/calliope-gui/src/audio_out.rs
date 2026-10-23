@@ -5,8 +5,6 @@
 
 #![allow(dead_code)] // used by the editor session (task 7) and the tests
 
-use std::fs::File;
-use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -15,6 +13,8 @@ use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample};
+
+use crate::wav::WavWriter;
 
 /// Fills an interleaved stereo f32 block.
 pub type RenderFn = Box<dyn FnMut(&mut [f32]) + Send>;
@@ -143,51 +143,6 @@ impl OutputBackend for NullBackend {
             }
         });
         Ok(Box::new(NullHandle { stop, thread: Some(thread) }))
-    }
-}
-
-/// Float32 stereo WAV, header patched on `finish`.
-struct WavWriter {
-    out: BufWriter<File>,
-    bytes: u32,
-}
-
-impl WavWriter {
-    fn create(path: &Path, rate: u32) -> std::io::Result<Self> {
-        let mut out = BufWriter::new(File::create(path)?);
-        let mut h = Vec::with_capacity(44);
-        h.extend_from_slice(b"RIFF");
-        h.extend_from_slice(&36u32.to_le_bytes());
-        h.extend_from_slice(b"WAVEfmt ");
-        h.extend_from_slice(&16u32.to_le_bytes());
-        h.extend_from_slice(&3u16.to_le_bytes()); // IEEE float
-        h.extend_from_slice(&2u16.to_le_bytes());
-        h.extend_from_slice(&rate.to_le_bytes());
-        h.extend_from_slice(&(rate * 8).to_le_bytes());
-        h.extend_from_slice(&8u16.to_le_bytes());
-        h.extend_from_slice(&32u16.to_le_bytes());
-        h.extend_from_slice(b"data");
-        h.extend_from_slice(&0u32.to_le_bytes());
-        out.write_all(&h)?;
-        Ok(Self { out, bytes: 0 })
-    }
-
-    fn write(&mut self, samples: &[f32]) -> std::io::Result<()> {
-        for s in samples {
-            self.out.write_all(&s.to_le_bytes())?;
-        }
-        self.bytes = self.bytes.saturating_add(samples.len() as u32 * 4);
-        Ok(())
-    }
-
-    fn finish(mut self) -> std::io::Result<()> {
-        self.out.flush()?;
-        let f = self.out.get_mut();
-        f.seek(SeekFrom::Start(4))?;
-        f.write_all(&self.bytes.saturating_add(36).to_le_bytes())?;
-        f.seek(SeekFrom::Start(40))?;
-        f.write_all(&self.bytes.to_le_bytes())?;
-        f.sync_all()
     }
 }
 

@@ -560,6 +560,10 @@ Never commit in a routine task.
 - **routine:** no
 
 ### Task 7: The export job
+> **Orchestrator note (after tasks 1-5):** `export_rules::file_name` takes a 4th argument, the fallback
+> (call it with `&t.id`); `start_dir(...)` returns `(&'static str, Option<PathBuf>)` with "last"/"home"/"none";
+> `parse_stream_info` returns `None` without a positive duration; `ExportKind::as_str()` exists.
+
 - **files:** `src/calliope-gui/src/export_job.rs` (new), `src/calliope-gui/src/export_job_tests.rs` (new), `src/calliope-gui/src/lib.rs`
 - **does:** (`lib.rs`: `pub mod export_job;`; at the end of `export_job.rs`, `#[cfg(test)] #[path = "export_job_tests.rs"] mod tests;`
   like `editor.rs`) the types and `ExportState` of 2.6: `plan`, `start` (re-checks, created folders, part file),

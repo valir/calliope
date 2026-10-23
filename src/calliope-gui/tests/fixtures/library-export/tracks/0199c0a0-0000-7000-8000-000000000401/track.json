@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "id": "0199c0a0-0000-7000-8000-000000000401",
+  "type": "stem",
+  "band": "The Example Band",
+  "album": "Export Tests",
+  "title": "Stem Mix",
+  "position": 3,
+  "album_position": 1,
+  "composers": [],
+  "year": 2021,
+  "source_url": null,
+  "copyright": null,
+  "audio": null,
+  "original": null,
+  "stems": [{"name": "guitar", "file": "stems/guitar.flac"}],
+  "stem_model": "htdemucs_6s",
+  "tablatures": [],
+  "backings": [{"id": "backing", "name": "Backing", "file": "backings/backing.flac", "created": "2026-10-23T10:00:00Z", "modified": "2026-10-23T10:00:00Z", "sample_rate": 44100, "bits": 16, "mix": {"stems": [{"name": "guitar", "gain_db": 0.0, "unmuted": true}]}}],
+  "imported": "2026-10-23T10:00:00Z",
+  "modified": "2026-10-23T10:00:00Z"
+}
