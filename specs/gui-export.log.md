@@ -17,3 +17,4 @@ task 14 | Export pane helpers (pure) | implementer | done
 task 15 | Export state, view and pane | implementer | done (placeholder acceptance test now checks the real view)
 task 16 | GUI end-to-end tests and visual review | implementer | done (gui_export_e2e, 5 tests; 1024 px layout fix)
 task 17 | README, UI guide, licences | implementer | done
+gui suite | me | all 9 binaries pass on 4c41f93
