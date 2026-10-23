@@ -365,7 +365,7 @@ fn mix_waveform_and_autodetect() {
     settle();
     shot("editor-mix-detected-dark");
 
-    // The light theme (Settings, Alt+6, is not needed: the theme is a settings.json value).
+    // The light theme (Settings, Alt+7, is not needed: the theme is a settings.json value).
     // Keys on the waveform: Shift+Right moves by a beat, Right by 1/64 beat.
     app.click(&wid, wave_x(2000.0), WAVE_Y); // focuses the canvas, away from the bar
     app.key(&wid, "shift+Right");

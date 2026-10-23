@@ -7,7 +7,7 @@ import App from './App.svelte';
 import { ui } from '$lib/app-state.svelte';
 import { resetLibrary } from '$lib/library-state.svelte';
 
-const NAV_ORDER = ['Library', 'Import', 'Editor', 'Playlists', 'Player', 'Settings'];
+const NAV_ORDER = ['Library', 'Import', 'Editor', 'Playlists', 'Player', 'Export', 'Settings'];
 // Spec requirement 4: which future feature each view names.
 const FEATURES: Record<string, string[]> = {
   // Library has no placeholder any more: gui-tracks-repository replaced it with the real view.
@@ -66,6 +66,10 @@ describe('acceptance: navigation (req 4, AC2, AC3)', () => {
         for (const t of ['MIDI interface', 'Audio output', 'Stem extraction', 'External tools', 'Appearance']) expect(text).toContain(t);
         expect(text).toContain('gui-audio-midi-settings');
       } else if (name === 'Import') expect(text).toContain('Stem Extraction');
+      else if (name === 'Export') {
+        expect(text).toContain('Export...');
+        expect(text).toContain('to BOSS RC-5');
+      }
       else if (name === 'Library') await waitFor(() => expect(main().textContent).toContain('No tracks in the repository yet.'));
       else for (const f of FEATURES[name]) expect(text).toContain(f);
     }
@@ -85,7 +89,7 @@ describe('acceptance: navigation (req 4, AC2, AC3)', () => {
     await fireEvent.keyDown(window, { code: 'Digit3', altKey: true, shiftKey: true });
     await fireEvent.keyDown(window, { code: 'Digit3', ctrlKey: true });
     await fireEvent.keyDown(window, { code: 'Digit3' });
-    await fireEvent.keyDown(window, { code: 'Digit7', altKey: true });
+    await fireEvent.keyDown(window, { code: 'Digit8', altKey: true });
     await tick();
     expect(main().querySelector('h1')!.textContent).toBe('Library');
   });

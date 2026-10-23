@@ -4,6 +4,7 @@
   import AudioWaveformIcon from '@lucide/svelte/icons/audio-waveform';
   import ListMusicIcon from '@lucide/svelte/icons/list-music';
   import PlayIcon from '@lucide/svelte/icons/play';
+  import FileOutputIcon from '@lucide/svelte/icons/file-output';
   import SettingsIcon from '@lucide/svelte/icons/settings';
   import PanelLeftIcon from '@lucide/svelte/icons/panel-left';
   import type { Component } from 'svelte';
@@ -17,6 +18,7 @@
     editor: AudioWaveformIcon,
     playlists: ListMusicIcon,
     player: PlayIcon,
+    export: FileOutputIcon,
     settings: SettingsIcon,
   };
 </script>

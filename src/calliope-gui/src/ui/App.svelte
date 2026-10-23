@@ -7,6 +7,7 @@
   import EditorView from './views/EditorView.svelte';
   import PlaylistsView from './views/PlaylistsView.svelte';
   import PlayerView from './views/PlayerView.svelte';
+  import ExportView from './views/ExportView.svelte';
   import SettingsView from './views/SettingsView.svelte';
   import { ui } from '$lib/app-state.svelte';
   import { appVersion, frontendLog } from '$lib/ipc';
@@ -64,6 +65,8 @@
       <EditorView />
     {:else if ui.view === 'playlists'}
       <PlaylistsView />
+    {:else if ui.view === 'export'}
+      <ExportView />
     {:else if ui.view === 'player'}
       <PlayerView />
     {:else}

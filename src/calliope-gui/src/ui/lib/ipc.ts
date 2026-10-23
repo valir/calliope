@@ -7,6 +7,9 @@ export interface Settings {
   edge_ai_url: string | null;
   keep_original: boolean;
   last_import_dir?: string | null;
+  rc5_dir?: string | null;
+  export_dir?: string | null;
+  rc5_memory?: number | null;
 }
 
 export const appVersion = (): Promise<string> => invoke<string>('app_version');
@@ -464,3 +467,56 @@ export const playerTempo = (id: string, action: TempoAction): Promise<PlayerSnap
   invoke<PlayerSnapshot>('player_tempo', { id, action });
 export const playerLoop = (id: string, action: LoopAction): Promise<PlayerSnapshot> =>
   invoke<PlayerSnapshot>('player_loop', { id, action });
+
+// Export: mirrors src/export_job.rs and src/export_ipc.rs.
+export type ExportKind = 'rc5' | 'mp3' | 'ogg';
+export type ExportTargetReq = { kind: 'rc5'; memory: string } | { kind: 'mp3' } | { kind: 'ogg' };
+export interface CountInInfo { bpm: number; first_beat_ms: number; lead_ms: number }
+export interface ExportInfo {
+  id: string;
+  available: boolean;
+  reason: string | null;
+  source: string | null;
+  count_in: CountInInfo | null;
+  memory: number;
+}
+export interface ExportPlan { token: string; path: string; exists: boolean }
+export type ExportPhase = 'writing' | 'finishing' | 'done' | 'failed' | 'cancelled';
+export interface ExportSnapshot {
+  job: string;
+  id: string;
+  title: string;
+  target: ExportKind;
+  path: string;
+  phase: ExportPhase;
+  progress: number;
+  message: string | null;
+  clipped: number;
+}
+export type ExportEvent =
+  | { phase: 'writing'; progress: number }
+  | { phase: 'finishing' }
+  | { phase: 'done'; path: string; clipped: number }
+  | { phase: 'failed'; message: string }
+  | { phase: 'cancelled' };
+
+function exportChannel(onEvent: (e: ExportEvent) => void): Channel<ExportEvent> {
+  const ch = new Channel<ExportEvent>();
+  ch.onmessage = onEvent;
+  return ch;
+}
+
+export const exportInfo = (id: string): Promise<ExportInfo> => invoke<ExportInfo>('export_info', { id });
+export const prepareExport = (id: string, target: ExportTargetReq): Promise<ExportPlan | null> =>
+  invoke<ExportPlan | null>('prepare_export', { id, target });
+export const startExport = (
+  token: string,
+  overwrite: boolean,
+  onEvent: (e: ExportEvent) => void,
+): Promise<ExportSnapshot> =>
+  invoke<ExportSnapshot>('start_export', { token, overwrite, events: exportChannel(onEvent) });
+export const cancelExport = (job: string): Promise<ExportSnapshot | null> =>
+  invoke<ExportSnapshot | null>('cancel_export', { job });
+export const getExport = (): Promise<ExportSnapshot | null> => invoke<ExportSnapshot | null>('get_export');
+export const watchExport = (onEvent: (e: ExportEvent) => void): Promise<ExportSnapshot | null> =>
+  invoke<ExportSnapshot | null>('watch_export', { events: exportChannel(onEvent) });

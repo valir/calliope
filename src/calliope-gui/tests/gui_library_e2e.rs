@@ -358,7 +358,7 @@ fn settings_change_root() {
     let ans = answers(&dirs, &[format!("repository-root {}", second.display())]);
     let (mut app, wid, lib) = App::start_lib(&dirs, &[("CALLIOPE_E2E_DIALOG_ANSWERS", &ans)]);
     assert_eq!(tracks_in(&lib), 6);
-    app.key(&wid, "alt+6");
+    app.key(&wid, "alt+7");
     app.wait_view("settings");
     settle();
     // The Theme card comes first; "Choose folder" is the first repository button.

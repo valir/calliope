@@ -1,4 +1,4 @@
-export type ViewId = 'library' | 'import' | 'editor' | 'player' | 'playlists' | 'settings';
+export type ViewId = 'library' | 'import' | 'editor' | 'player' | 'playlists' | 'export' | 'settings';
 
 export interface ViewInfo {
   id: ViewId;
@@ -14,7 +14,8 @@ export const VIEWS: readonly ViewInfo[] = [
   { id: 'editor', label: 'Editor', digit: 3, summary: 'One track: stems and backing mix, BPM and sections, tablature, MIDI cues.', features: ['gui-backing-track-editor', 'gui-tablatures', 'gui-manipulate-backing-track'] },
   { id: 'playlists', label: 'Playlists', digit: 4, summary: 'Backing-track playlists.', features: [] },
   { id: 'player', label: 'Player', digit: 5, summary: 'Playback with the tablature view.', features: ['gui-play-backing-track'] },
-  { id: 'settings', label: 'Settings', digit: 6, summary: 'MIDI interface, audio output, edge-AI server and theme.', features: ['gui-audio-midi-settings', 'gui-stem-extracting'] },
+  { id: 'export', label: 'Export', digit: 6, summary: "Copy a track's backing to the BOSS RC-5, or save it as MP3 or OGG.", features: ['gui-export'] },
+  { id: 'settings', label: 'Settings', digit: 7, summary: 'MIDI interface, audio output, edge-AI server and theme.', features: ['gui-audio-midi-settings', 'gui-stem-extracting'] },
 ];
 
 export interface TrackTab { id: string; label: string; feature: string }
@@ -50,7 +51,7 @@ export interface KeyLike {
 
 export function viewForKey(e: KeyLike): ViewId | null {
   if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return null;
-  const m = /^(?:Digit|Numpad)([1-6])$/.exec(e.code);
+  const m = /^(?:Digit|Numpad)([1-7])$/.exec(e.code);
   return m ? VIEWS[Number(m[1]) - 1].id : null;
 }
 

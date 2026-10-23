@@ -1,0 +1,166 @@
+import {
+  cancelExport,
+  exportInfo,
+  frontendLog,
+  prepareExport,
+  startExport,
+  watchExport,
+  type ExportEvent,
+  type ExportInfo,
+  type ExportKind,
+  type ExportPlan,
+  type ExportSnapshot,
+  type ExportTargetReq,
+  type TrackRecord,
+} from './ipc';
+
+export const ex = $state({
+  info: null as ExportInfo | null,
+  /** The Memory box (RC-5 export). */
+  memory: '',
+  snap: null as ExportSnapshot | null,
+  /** A refusal or start error, shown like a failure. */
+  message: '',
+  /** Waiting for the folder dialog. */
+  preparing: false,
+  /** The overwrite confirmation, while it is open. */
+  confirm: null as { plan: ExportPlan; target: ExportKind } | null,
+});
+
+let infoSeq = 0;
+/** Events that arrived before the command's snapshot did. */
+let pending: ExportEvent[] = [];
+
+export function resetExport(): void {
+  ex.info = null;
+  ex.memory = '';
+  ex.snap = null;
+  ex.message = '';
+  ex.preparing = false;
+  ex.confirm = null;
+  infoSeq = 0;
+  pending = [];
+}
+
+export function isRunning(): boolean {
+  return ex.snap?.phase === 'writing' || ex.snap?.phase === 'finishing';
+}
+
+/** Loads the export info of a track (null clears it). `refill` replaces the Memory box text. */
+export async function loadInfo(id: string | null, refill = false): Promise<void> {
+  const seq = ++infoSeq;
+  if (id === null) {
+    ex.info = null;
+    return;
+  }
+  if (ex.info && ex.info.id !== id) ex.info = null;
+  try {
+    const info = await exportInfo(id);
+    if (seq !== infoSeq) return;
+    ex.info = info;
+    if (refill || ex.memory === '') ex.memory = String(info.memory);
+  } catch (e) {
+    if (seq !== infoSeq) return;
+    ex.info = null;
+    ex.message = String(e);
+  }
+}
+
+export function applyEvent(e: ExportEvent): void {
+  const s = ex.snap;
+  if (!s) {
+    pending.push(e);
+    return;
+  }
+  void frontendLog(`export phase=${e.phase}`);
+  s.phase = e.phase;
+  if (e.phase === 'writing') s.progress = e.progress;
+  else if (e.phase === 'done') {
+    s.path = e.path;
+    s.clipped = e.clipped;
+    s.progress = 1;
+    void frontendLog(`export done path=${e.path}`);
+    void loadInfo(s.id, true);
+  } else if (e.phase === 'failed') {
+    s.message = e.message;
+    void frontendLog(`export failed message=${e.message}`);
+  }
+}
+
+function takeSnapshot(snap: ExportSnapshot): void {
+  // Events that arrived while the command was running are newer than its answer.
+  ex.snap = snap;
+  const early = pending;
+  pending = [];
+  for (const e of early) applyEvent(e);
+}
+
+async function start(plan: ExportPlan): Promise<void> {
+  ex.message = '';
+  ex.snap = null;
+  pending = [];
+  try {
+    const snap = await startExport(plan.token, plan.exists, applyEvent);
+    takeSnapshot(snap);
+  } catch (e) {
+    ex.message = String(e);
+    void frontendLog(`export failed message=${ex.message}`);
+  }
+}
+
+export async function exportTo(kind: ExportKind, track: TrackRecord | null): Promise<void> {
+  if (!track || ex.preparing || isRunning()) return;
+  const target: ExportTargetReq = kind === 'rc5' ? { kind, memory: ex.memory.trim() } : { kind };
+  ex.message = '';
+  ex.preparing = true;
+  let plan: ExportPlan | null;
+  try {
+    plan = await prepareExport(track.id, target);
+  } catch (e) {
+    ex.message = String(e);
+    void frontendLog(`export prepare target=${kind} result=refused exists=false`);
+    return;
+  } finally {
+    ex.preparing = false;
+  }
+  if (!plan) {
+    void frontendLog(`export prepare target=${kind} result=cancelled exists=false`);
+    return;
+  }
+  void frontendLog(`export prepare target=${kind} result=plan exists=${plan.exists}`);
+  if (plan.exists) {
+    ex.confirm = { plan, target: kind };
+    return;
+  }
+  await start(plan);
+}
+
+export async function answerConfirm(yes: boolean): Promise<void> {
+  const c = ex.confirm;
+  ex.confirm = null;
+  if (!c) return;
+  void frontendLog(`export confirm answer=${yes ? 'yes' : 'no'} path=${c.plan.path}`);
+  if (yes) await start(c.plan);
+}
+
+export async function cancel(): Promise<void> {
+  const s = ex.snap;
+  if (!s || !isRunning()) return;
+  try {
+    const r = await cancelExport(s.job);
+    if (r && ex.snap && ex.snap.job === r.job && ex.snap.phase !== 'done') ex.snap = r;
+  } catch (e) {
+    ex.message = String(e);
+  }
+}
+
+/** Re-attaches to a running or finished export after a webview reload. */
+export async function attachExport(): Promise<void> {
+  try {
+    const snap = await watchExport(applyEvent);
+    if (snap) takeSnapshot(snap);
+    else pending = [];
+  } catch {
+    // No backend: nothing to attach to.
+  }
+}

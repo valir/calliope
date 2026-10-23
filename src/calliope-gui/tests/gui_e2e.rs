@@ -9,7 +9,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 const BIN: &str = env!("CARGO_BIN_EXE_calliope-gui");
-const VIEWS: [&str; 6] = ["library", "import", "editor", "playlists", "player", "settings"];
+const VIEWS: [&str; 7] = ["library", "import", "editor", "playlists", "player", "export", "settings"];
 
 /// The repository root (workspace): `target/`, `docs/`, `specs/` and the workspace Cargo.toml.
 fn repo() -> PathBuf {
@@ -279,7 +279,7 @@ fn theme_switch_persists() {
         app.wait_ready();
         let wid = app.wid();
         settle();
-        app.key(&wid, "alt+6");
+        app.key(&wid, "alt+7");
         app.wait_view("settings");
         app.key(&wid, "Tab");
         app.key(&wid, "Right");

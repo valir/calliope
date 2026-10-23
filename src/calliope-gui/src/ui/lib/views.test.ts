@@ -20,10 +20,10 @@ const key = (code: string, o: Partial<KeyLike> = {}): KeyLike => ({
 
 describe('views', () => {
   it('has labels in order', () => {
-    expect(VIEWS.map((v) => v.label)).toEqual(['Library', 'Import', 'Editor', 'Playlists', 'Player', 'Settings']);
+    expect(VIEWS.map((v) => v.label)).toEqual(['Library', 'Import', 'Editor', 'Playlists', 'Player', 'Export', 'Settings']);
   });
-  it('has digits 1..6', () => {
-    expect(VIEWS.map((v) => v.digit)).toEqual([1, 2, 3, 4, 5, 6]);
+  it('has digits 1..7', () => {
+    expect(VIEWS.map((v) => v.digit)).toEqual([1, 2, 3, 4, 5, 6, 7]);
   });
   it('has features for all but playlists', () => {
     for (const v of VIEWS) {
@@ -37,13 +37,14 @@ describe('views', () => {
   });
   it('viewForKey maps Alt+digit', () => {
     expect(viewForKey(key('Digit1', { altKey: true }))).toBe('library');
-    expect(viewForKey(key('Digit6', { altKey: true }))).toBe('settings');
+    expect(viewForKey(key('Digit6', { altKey: true }))).toBe('export');
+    expect(viewForKey(key('Digit7', { altKey: true }))).toBe('settings');
     expect(viewForKey(key('Numpad3', { altKey: true }))).toBe('editor');
     expect(viewForKey(key('Digit4', { altKey: true }))).toBe('playlists');
     expect(viewForKey(key('Digit5', { altKey: true }))).toBe('player');
   });
   it('viewForKey rejects other keys', () => {
-    expect(viewForKey(key('Digit7', { altKey: true }))).toBeNull();
+    expect(viewForKey(key('Digit8', { altKey: true }))).toBeNull();
     expect(viewForKey(key('Digit0', { altKey: true }))).toBeNull();
     expect(viewForKey(key('KeyA', { altKey: true }))).toBeNull();
   });

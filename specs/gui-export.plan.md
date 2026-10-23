@@ -728,6 +728,17 @@ Never commit in a routine task.
 - **routine:** no
 
 ### Task 16: GUI end-to-end tests and visual review
+> **Orchestrator note (after tasks 10-15), the UI as built:** `alt+6` opens Export, `alt+7` Settings; heading
+> `h1#view-heading` "Export"; pane `section[aria-label="Export"]` with `[data-testid="export-pane"]`; fieldset legend
+> "Export..."; buttons named exactly `to BOSS RC-5`, `MP3 file`, `OGG file`, `Cancel`; memory box `input#export-memory`
+> ("Memory"); fields `#export-band`, `#export-album`, `#export-title`; text lines `export-source`, `export-count-in`,
+> `export-reason` (role status), `export-progress`, `export-result` (status; alert on failure: "Written to <path>." +
+> " Eject the RC-5 before unplugging it." for the RC-5, "Export failed: <m>", "Export cancelled; nothing was written.").
+> Overwrite confirmation: an `alertdialog` "Replace the existing file <path>? Its old content will be lost.", focus on
+> No. Focus moves to Cancel when an export starts. Log lines (`calliope-ui:`): `export target id= kind= available=`,
+> `export prepare target= result=<plan|cancelled|refused> exists=`, `export confirm answer= path=`, `export phase=`,
+> `export done path=`, `export failed message=`, `export layout overflow= width=`. `clipped` is a number.
+
 - **files:** `src/calliope-gui/tests/gui_export_e2e.rs` (new), `src/calliope-gui/scripts/test-gui.sh`
   (`gui_export_e2e` added to `BINARIES`), `src/calliope-gui/tests/common/mod.rs` (an `export_dirs`
   helper copying `library-export` into the test's own `target/gui-e2e/<test>/` if needed)
