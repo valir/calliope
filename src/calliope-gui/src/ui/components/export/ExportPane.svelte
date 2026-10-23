@@ -97,23 +97,25 @@
     <p class="min-h-5" data-testid="export-count-in">{countInText(info)}</p>
   </div>
 
-  <fieldset class="flex flex-col gap-3 rounded-lg border border-border p-4">
+  <fieldset class="flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4">
     <legend class="px-2 text-sm font-medium">Export...</legend>
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center gap-3">
       <Button
         class="h-[3.25rem] w-44"
         {disabled}
         onclick={() => void exportTo('rc5', track)}
       >to BOSS RC-5</Button>
-      <label for="export-memory" class="text-sm font-medium">Memory</label>
-      <Input
-        id="export-memory"
-        class="w-16"
-        inputmode="numeric"
-        autocomplete="off"
-        bind:value={ex.memory}
-        disabled={running || ex.preparing}
-      />
+      <div class="flex items-center gap-3">
+        <label for="export-memory" class="text-sm font-medium">Memory</label>
+        <Input
+          id="export-memory"
+          class="w-16"
+          inputmode="numeric"
+          autocomplete="off"
+          bind:value={ex.memory}
+          disabled={running || ex.preparing}
+        />
+      </div>
     </div>
     <div class="flex items-center gap-3">
       <Button class="h-[3.25rem] w-44" {disabled} onclick={() => void exportTo('mp3', track)}>MP3 file</Button>

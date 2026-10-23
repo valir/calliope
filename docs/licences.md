@@ -124,7 +124,7 @@ only), not from memory, except where marked.
 | Tool | Used for | Licence | Notes |
 |---|---|---|---|
 | yt-dlp | downloading audio from a URL (Import) | Unlicense (public domain) | Stated by the upstream project; not installed on the build machine, so not checked against local metadata. The standalone PyInstaller builds of yt-dlp bundle GPL-3.0+ components, but Calliope only runs whichever `yt-dlp` the owner installed (`pacman -S yt-dlp`). |
-| ffmpeg, ffprobe | metadata, audio extraction from video, FLAC conversion | GPL-3.0-only for the Arch package `ffmpeg` 2:9.0.2 (built with `--enable-gpl --enable-version3`); FFmpeg's own default is LGPL-2.1+ | **Not permissive**, but used only as a separate command-line program; no FFmpeg code or library is in Calliope. |
+| ffmpeg, ffprobe | metadata, audio extraction from video, FLAC conversion | GPL-3.0-only for the Arch package `ffmpeg` 2:9.0.2 (built with `--enable-gpl --enable-version3`); FFmpeg's own default is LGPL-2.1+ | **Not permissive**, but used only as a separate command-line program; no FFmpeg code or library is in Calliope. Also used for MP3 (libmp3lame, LGPL) and Ogg Vorbis (libvorbis, BSD) encoding for exports, through the user's ffmpeg; nothing bundled. |
 
 **Server (archserver, `calliope-stems`):**
 

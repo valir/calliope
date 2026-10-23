@@ -51,7 +51,7 @@ Starts the Vite dev server with hot reload plus the debug app. It uses a dev-onl
 
 ## Keyboard
 
-* Alt+1 ... Alt+6: Library, Import, Editor, Playlists, Player, Settings
+* Alt+1 ... Alt+7: Library, Import, Editor, Playlists, Player, Export, Settings
 * Ctrl+B: collapse navigation
 * Player (Alt+5): Space play/pause, b / e mark the loop start / end, Left / Right previous / next loop,
   l or Shift+L loop on/off, Ctrl+L collapse the track tree, Ctrl+F search. The letter keys do nothing
@@ -155,6 +155,25 @@ Ctrl+L folds it to a narrow rail).
 * Audio output and tests: as for the Editor. To try it, copy `tests/fixtures/library-player` to a new
   folder and choose it in Settings.
 
+## Export
+
+The Export view (Alt+6) copies the backing track of the track selected in the tree to the BOSS RC-5
+loop station, or saves it as an MP3 or an OGG file. It needs `ffmpeg` and `ffprobe` and a tempo map
+(set it in the Player; a track without one cannot be exported). A stem track needs a saved mix (the
+Editor); a plain backing track is exported as it is.
+
+* "to BOSS RC-5": press the button, choose the root folder of the RC-5 drive (the one that holds
+  `ROLAND/`), and the file is written to `ROLAND/WAVE/<NNN>_1/<NNN>_1.WAV` (32-bit float stereo WAV).
+  The Memory box (1 to 99) is the RC-5 memory number; it starts at 1 and then suggests the last one
+  plus one. The dialog starts in the drive you chose last. Eject the RC-5 before unplugging it.
+* "MP3 file" / "OGG file": choose a folder; the file is named `Band - Title.mp3` (or `.ogg`) and
+  carries the title, band, album, track number and year as tags.
+* Count-in: every export starts with 4 beats of silence at the track's tempo, with six ticks
+  ending on the first beat, so the audio that follows is in time with the loop. The exported
+  file is therefore 4 beats longer than the original.
+* An existing file is only replaced after you confirm. Cancel stops a running export and leaves
+  nothing behind; the repository is never changed.
+
 ## Import and stem extraction
 
 The Import view (Alt+2) > "Stem Extraction" turns a song into a new "stem" track with six
@@ -205,7 +224,7 @@ external tools: [`docs/licences.md`](../../docs/licences.md).
 
 ## Settings files
 
-* `~/.config/app.calliope.gui/settings.json` (theme, repository folder, edge-AI address, keep-original, last import folder)
+* `~/.config/app.calliope.gui/settings.json` (theme, repository folder, edge-AI address, keep-original, last import folder, last RC-5 drive and export folder, last RC-5 memory)
 * `~/.config/app.calliope.gui/.window-state.json`
 * `~/.local/share/calliope/`: default track repository (see above)
 

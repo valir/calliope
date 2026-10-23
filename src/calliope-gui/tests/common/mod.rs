@@ -978,3 +978,21 @@ impl App {
         run(&["mouseup", "1"]);
     }
 }
+
+
+// ---- export helpers ----
+
+pub const EX_STEM: &str = "0199c0a0-0000-7000-8000-000000000401";
+pub const EX_NOMIX: &str = "0199c0a0-0000-7000-8000-000000000402";
+pub const EX_PLAIN: &str = "0199c0a0-0000-7000-8000-000000000403";
+pub const EX_MONO: &str = "0199c0a0-0000-7000-8000-000000000404";
+pub const EX_LONG: &str = "0199c0a0-0000-7000-8000-000000000407";
+pub const EX_NOTEMPO: &str = "0199c0a0-0000-7000-8000-000000000410";
+
+/// A temp dir with the `library-export` fixture as the default repository.
+pub fn export_dirs(test: &str) -> Dirs {
+    let dirs = Dirs::new(test);
+    assert!(dirs.0.starts_with(repo().join("target")), "temp dir is not under target/");
+    copy_dir(&root().join("tests/fixtures/library-export"), &dirs.repo());
+    dirs
+}

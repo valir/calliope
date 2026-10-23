@@ -27,7 +27,7 @@
 <!-- Main structure. The views come from specs/overview.md; adjust freely. -->
 - Navigation on the left (collapsible), with the content area on the right and a
   slim footer (status, edge-AI server state, version).
-- Views: Library · Import · Editor · Playlists · Player · Settings
+- Views: Library · Import · Editor · Playlists · Player · Export · Settings
 - In the Player, the tablature takes most of the screen, with transport controls
   (play/pause, position, loop, tempo) in a bar that stays visible beneath the
   tablature
@@ -48,7 +48,7 @@
 
 ## Keyboard
 <!-- Shortcuts that matter to you. Defaults below can be changed. -->
-- `Alt+1` … `Alt+6`: switch views in navigation order
+- `Alt+1` … `Alt+7`: switch views in navigation order
 - `Space`: play/pause in the Player
 - `b`: mark section start
 - `e`: mark section end
@@ -74,8 +74,9 @@
 ## Decided by the team
 <!-- The agents record here UI choices they made where this guide was silent, so the next
      feature reuses them. Edit or overrule anything. -->
-- (gui-frontend-foundation, **owner decision**) Navigation order and `Alt+1`...`Alt+6`:
-  Library, Import, Editor, Playlists, Player, Settings (Alt+4 = Playlists, Alt+5 = Player).
+- (gui-frontend-foundation, **owner decision**; amended by gui-export) Navigation order and `Alt+1`...`Alt+7`:
+  Library, Import, Editor, Playlists, Player, Export, Settings (Alt+4 = Playlists, Alt+5 = Player,
+  Alt+6 = Export, Alt+7 = Settings).
   Note: the ASCII sketch under "Layout and navigation" still shows the old order (Player
   before Playlists); the owner will update it.
 - Font: Inter Variable, bundled with the app (shadcn-svelte itself sets no font; the system
@@ -258,3 +259,13 @@
 - Known limits: at 1024x640 the controls need scrolling (about 1.5 screens high with the tree
   shown, and the Sections row is clipped there), and the unfilled part of the position slider is faint in the light theme (the slider is
   shared with the Editor).
+- (gui-export) Export view. Left the shared track tree (read-only, the same selection as the other views),
+  right the pane: Band, Album and Title as read-only rows, the source line and the count-in line, a
+  bordered group "Export..." with three 3.25 rem buttons ("to BOSS RC-5" with its "Memory" box beside it,
+  "MP3 file", "OGG file") and a muted reason line for a disabled state, then the job area (reserved
+  height): while running a progress bar with Cancel (the focus moves to Cancel) and "Exporting <title> to
+  <path> - 42 %"; afterwards "Written to <path>." (RC-5: plus the eject sentence), or, in the accent
+  colour, "Export failed: <message>"; "Export cancelled; nothing was written." Buttons are disabled for a
+  band or album row, a track without a usable backing or tempo map, and while an export runs. Overwriting
+  asks first (Replace the existing file ...? focus on No). Measured: no vertical overflow at 1280x800; at
+  1024x640 (tree shown) the Memory box wraps below its button and the count-in line takes two lines.

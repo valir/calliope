@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 GUI_DIR=$PWD
 REPO=$(cd ../.. && pwd)
 LOGS=$REPO/target/gui-logs
-BINARIES=(gui_smoke gui_e2e gui_library_e2e gui_import_e2e gui_editor_e2e gui_player_e2e gui_player_acceptance_e2e acceptance_stem_extraction_gui)
+BINARIES=(gui_smoke gui_e2e gui_library_e2e gui_import_e2e gui_export_e2e gui_editor_e2e gui_player_e2e gui_player_acceptance_e2e acceptance_stem_extraction_gui)
 
 serial=0
 if [[ ${1:-} == --serial ]]; then serial=1; shift; fi
