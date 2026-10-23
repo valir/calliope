@@ -101,6 +101,8 @@ pub struct PlanInput<'a> {
     /// The folder picked by the user: the RC-5's root, or the MP3/OGG folder.
     pub chosen: &'a Path,
     pub repo_root: &'a Path,
+    /// The track's directory; `start` reads the tempo map from it.
+    pub track_dir: PathBuf,
     pub tempo: &'a TempoMap,
 }
 
@@ -110,6 +112,7 @@ struct Planned {
     id: String,
     title: String,
     tags: Vec<(&'static str, String)>,
+    track_dir: PathBuf,
     source: PathBuf,
     kind: ExportKind,
     memory: Option<u8>,
@@ -310,6 +313,7 @@ impl ExportState {
             id: p.track.id.clone(),
             title: p.track.title.clone(),
             tags: export_rules::tags(p.track),
+            track_dir: p.track_dir,
             source: p.source,
             kind,
             memory: p.memory,
@@ -336,10 +340,11 @@ impl ExportState {
         lock(&self.inner).running()
     }
 
-    /// The track, target and RC-5 memory of the pending plan `token`, if it is still valid.
-    pub fn planned(&self, token: &str) -> Option<(String, ExportKind, Option<u8>)> {
+    /// The track, its directory (as it was at prepare time), target and RC-5 memory of the
+    /// pending plan `token`, if it is still valid.
+    pub fn planned(&self, token: &str) -> Option<(String, PathBuf, ExportKind, Option<u8>)> {
         let g = lock(&self.inner);
-        g.planned.as_ref().filter(|p| p.token == token).map(|p| (p.id.clone(), p.kind, p.memory))
+        g.planned.as_ref().filter(|p| p.token == token).map(|p| (p.id.clone(), p.track_dir.clone(), p.kind, p.memory))
     }
 
     /// Starts the planned export. `overwrite` must be true when the target exists. `tempo` is the

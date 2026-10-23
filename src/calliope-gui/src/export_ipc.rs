@@ -140,6 +140,7 @@ pub fn do_prepare_export(
     let root = repo.current_root();
     let plan = export.plan(PlanInput {
         track: &rec,
+        track_dir: dir.clone(),
         source: dir.join(&src.file),
         kind,
         memory,
@@ -173,10 +174,10 @@ pub fn remember_memory(settings: &SettingsStore, n: u8) {
     }
 }
 
-/// Starts the planned export with the tempo map as it is now. `remember` runs with the RC-5
+/// Starts the planned export with the tempo map as it is now (read from the planned track's directory). `remember` runs with the RC-5
 /// memory when an RC-5 export is done (before the `done` event).
 pub fn do_start_export(
-    repo: &RepoState,
+    _repo: &RepoState,
     export: &ExportState,
     store: &dyn TempoStore,
     token: &str,
@@ -184,14 +185,11 @@ pub fn do_start_export(
     sink: Sink,
     remember: Box<dyn FnOnce(u8) + Send>,
 ) -> Result<ExportSnapshot, String> {
-    let Some((id, kind, memory)) = export.planned(token) else {
+    let Some((id, dir, kind, memory)) = export.planned(token) else {
         eprintln!("calliope: export refused target=none reason=stale");
         return Err(STALE_MESSAGE.into());
     };
-    let dir = {
-        let root = repo.lock();
-        Repository::new(root.clone()).tracks_dir().join(&id)
-    };
+    // The track directory is the one the plan was made for, not the current repository root.
     let tempo = store.load(&id, &dir)?;
     let on_done: Box<dyn FnOnce() + Send> = match (kind, memory) {
         (ExportKind::Rc5, Some(n)) => Box::new(move || remember(n)),

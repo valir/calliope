@@ -139,7 +139,7 @@ ffmpeg (decoder) --f32le, R Hz, C ch--> Rust: lead + ticks -+--> wav::WavWriter 
   MP3/OGG channels: 1 for a mono source, else 2 (a source with more than two channels is downmixed).
 - **Decoder argv** (`export_audio::decoder_args(src, rate, channels)`):
   `-nostdin -hide_banner -loglevel error -protocol_whitelist file,pipe -i file:<abs> -map 0:a:0
-  -vn -sn -dn -t 905 -f f32le -acodec pcm_f32le -ac <C> -ar <R> pipe:1`, run with
+  -vn -sn -dn -f f32le (no length cap: the whole source is decoded) -acodec pcm_f32le -ac <C> -ar <R> pipe:1`, run with
   `process::spawn_raw_stdout`. Chunks go through a bounded `sync_channel(8)` to the job thread
   (backpressure), which keeps a partial sample across chunk boundaries.
 - **Encoder argv** (`export_audio::encoder_args(kind, rate, channels, &Tags, part)`):

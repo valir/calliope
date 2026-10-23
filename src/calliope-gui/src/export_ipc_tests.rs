@@ -301,3 +301,18 @@ fn memory_is_remembered_after_done() {
     assert_eq!(ran.load(Ordering::SeqCst), 0);
     assert!(out.join("The Example Band - Plain MP3.mp3").is_file());
 }
+
+#[test]
+fn start_uses_the_track_dir_of_the_plan_when_the_root_changed() {
+    let rig = Rig::new();
+    let out = rig.home.join("out2");
+    std::fs::create_dir(&out).unwrap();
+    rig.answer(&[format!("export-audio {}", out.display())]);
+    let plan = rig.prepare(403, TargetReq::Mp3).unwrap().unwrap();
+    let other = rig._tmp.path().join("other-root");
+    std::fs::create_dir_all(&other).unwrap();
+    *rig.st.lock() = other;
+    rig.start(&plan.token, false).unwrap();
+    assert_eq!(rig.wait().phase, ExportPhase::Done);
+    assert!(out.join("The Example Band - Plain MP3.mp3").is_file());
+}

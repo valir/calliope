@@ -16,6 +16,7 @@ let info: ExportInfo;
 let plan: ExportPlan | null;
 let prepareError: string | null;
 let channelId = 0;
+let lastTarget = 'mp3';
 
 const snapshot = (o: Partial<ExportSnapshot> = {}): ExportSnapshot => ({
   job: 'j1', id: TRACK.id, title: TRACK.title, target: 'mp3', path: '/out/a.mp3', phase: 'writing',
@@ -49,11 +50,12 @@ beforeEach(() => {
     if (cmd === 'export_info') return { ...info, id: a.id };
     if (cmd === 'prepare_export') {
       if (prepareError) throw prepareError;
+      lastTarget = (a.target as { kind: string }).kind;
       return plan;
     }
     if (cmd === 'start_export') {
       channelId = (a.events as { id: number }).id;
-      return snapshot();
+      return snapshot({ target: (lastTarget as 'rc5' | 'mp3' | 'ogg') });
     }
     if (cmd === 'cancel_export') return snapshot({ phase: 'cancelled' });
     return null;
@@ -88,6 +90,15 @@ describe('Export view', () => {
     expect(reason()).toBe('');
     expect((screen.getByLabelText('Memory') as HTMLInputElement).value).toBe('7');
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(TRACK.title);
+  });
+
+  it('a track selected outside the tree replaces a stale band focus', async () => {
+    lib.treeFocus = 'b:somebody';
+    selectTrack(TRACK.id);
+    render(ExportView);
+    await waitFor(() => expect(btn('MP3 file').disabled).toBe(false));
+    expect(reason()).toBe('');
+    expect(lib.treeFocus).toBeNull();
   });
 
   it('disables with the reason from export_info (no mix, no tempo)', async () => {
@@ -203,5 +214,54 @@ describe('Export view', () => {
     await waitFor(() => expect(screen.getByTestId('export-result').textContent)
       .toBe('Export failed: Cannot write to /out: Permission denied (os error 13)'));
     expect(btn('MP3 file').disabled).toBe(false);
+  });
+
+  it('sends an edited memory text as typed (Rust refuses 0, 100, abc) and never sends a path', async () => {
+    plan = null;
+    await renderWithTrack();
+    const box = screen.getByLabelText('Memory') as HTMLInputElement;
+    for (const text of ['0', '100', 'abc']) {
+      calls.length = 0;
+      await fireEvent.input(box, { target: { value: text } });
+      await fireEvent.click(btn('to BOSS RC-5'));
+      await waitFor(() => expect(names()).toContain('prepare_export'));
+      expect(calls.find((x) => x[0] === 'prepare_export')![1]).toEqual({ id: TRACK.id, target: { kind: 'rc5', memory: text } });
+      await tick();
+    }
+    plan = { token: 'tok', path: '/out/a.ogg', exists: false };
+    calls.length = 0;
+    await fireEvent.click(btn('OGG file'));
+    await waitFor(() => expect(names()).toContain('start_export'));
+    expect(Object.keys(calls.find((x) => x[0] === 'start_export')![1]).sort()).toEqual(['events', 'overwrite', 'token']);
+    expect(calls.find((x) => x[0] === 'prepare_export')![1]).toEqual({ id: TRACK.id, target: { kind: 'ogg' } });
+  });
+
+  // QA finding: exportTo() has no availability guard; with Svelte's delegated click a disabled button
+  // (jsdom) still reaches it. Rust refuses anyway, and a real browser does not click a disabled button.
+  it('asks nothing and sends nothing when the buttons are disabled', async () => {
+    info = { ...info, available: false, reason: NO_TEMPO, count_in: null };
+    selectTrack(TRACK.id);
+    render(ExportView);
+    await waitFor(() => expect(reason()).toBe(NO_TEMPO));
+    for (const n of ['to BOSS RC-5', 'MP3 file', 'OGG file']) await fireEvent.click(btn(n));
+    await tick();
+    expect(names()).not.toContain('prepare_export');
+  });
+
+  it('declined confirmation by Escape or No never starts; the RC-5 done text says to eject', async () => {
+    plan = { token: 'tok', path: '/rc5/ROLAND/WAVE/007_1/007_1.WAV', exists: true };
+    await renderWithTrack();
+    await fireEvent.click(btn('to BOSS RC-5'));
+    await screen.findByRole('alertdialog');
+    expect(screen.getByRole('alertdialog').textContent).toContain('/rc5/ROLAND/WAVE/007_1/007_1.WAV');
+    await fireEvent.click(screen.getByRole('button', { name: 'No' }));
+    await tick();
+    expect(names()).not.toContain('start_export');
+    await fireEvent.click(btn('to BOSS RC-5'));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Yes' }));
+    await waitFor(() => expect(names()).toContain('start_export'));
+    send({ phase: 'done', path: plan.path, clipped: 0 });
+    await waitFor(() => expect(screen.getByTestId('export-result').textContent)
+      .toBe(`Written to ${plan!.path}. Eject the RC-5 before unplugging it.`));
   });
 });

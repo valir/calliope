@@ -139,6 +139,8 @@ export function collapseAll(): void {
 }
 
 export function selectTrack(id: string): void {
+  // A group row's focus key must not outlive a selection made elsewhere (Export pane target).
+  if (lib.treeFocus?.startsWith('b:')) lib.treeFocus = null;
   if (lib.selectedId === id) return;
   lib.selectedId = id;
   lib.message = '';

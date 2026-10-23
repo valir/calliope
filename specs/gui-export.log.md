@@ -18,3 +18,6 @@ task 15 | Export state, view and pane | implementer | done (placeholder acceptan
 task 16 | GUI end-to-end tests and visual review | implementer | done (gui_export_e2e, 5 tests; 1024 px layout fix)
 task 17 | README, UI guide, licences | implementer | done
 gui suite | me | all 9 binaries pass on 4c41f93
+reviewer | reviewer | CHANGES REQUIRED: 1 major (stale treeFocus), 3 minor, 3 nits
+tester | tester | all criteria PASS; 14 tests added; 1 low defect (exportTo has no availability guard)
+fix round 1 | implementer + me | stale treeFocus cleared by selectTrack; exportTo guard; no 905 s cap; start uses the planned track dir; 2 clippy lints in the new tests

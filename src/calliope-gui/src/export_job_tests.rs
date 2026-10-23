@@ -93,7 +93,7 @@ impl Rig {
         let dir = r.tracks_dir().join(&t.id);
         let src = dir.join(export_source(&t).unwrap().file);
         let tempo = FileTempoStore.load(&t.id, &dir).unwrap();
-        self.state.plan(PlanInput { track: &t, source: src, kind, memory, chosen, repo_root: &self.repo, tempo: &tempo })
+        self.state.plan(PlanInput { track: &t, track_dir: dir.clone(), source: src, kind, memory, chosen, repo_root: &self.repo, tempo: &tempo })
     }
 
     fn tempo(&self, n: u32) -> TempoMap {

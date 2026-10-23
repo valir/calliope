@@ -145,6 +145,7 @@ fn encoder_args_shape() {
     }
     let d: Vec<String> = decoder_args(Path::new("/a b/x.flac"), 44100, 2).iter().map(|s| s.to_string_lossy().into_owned()).collect();
     assert!(d.contains(&"file:/a b/x.flac".to_string()) && d.contains(&"pipe:1".to_string()));
+    assert!(!d.contains(&"-t".to_string()), "the decoder must not truncate the source");
 }
 
 // ---- helpers for the real ffmpeg ----

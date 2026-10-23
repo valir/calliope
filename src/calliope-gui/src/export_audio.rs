@@ -28,8 +28,6 @@ pub const CANCELLED: &str = "cancelled";
 const LEAD_BLOCK_FRAMES: usize = 4096;
 /// How long the job loop waits for decoded data before looking at the cancel flag.
 const RECV_TIMEOUT: Duration = Duration::from_millis(50);
-/// Longest source decoded, seconds (Calliope's tracks are at most 15 minutes).
-const MAX_SOURCE_SECONDS: &str = "905";
 
 /// Where the ticks fall. All values are output frames at the export's rate.
 #[derive(Debug, Clone, PartialEq)]
@@ -115,7 +113,7 @@ pub fn decoder_args(src: &Path, rate: u32, channels: u32) -> Vec<OsString> {
         .collect();
     a.push(file_arg("file:", src));
     for s in [
-        "-map", "0:a:0", "-vn", "-sn", "-dn", "-t", MAX_SOURCE_SECONDS, "-f", "f32le", "-acodec", "pcm_f32le", "-ac",
+        "-map", "0:a:0", "-vn", "-sn", "-dn", "-f", "f32le", "-acodec", "pcm_f32le", "-ac",
     ] {
         a.push(os(s));
     }
