@@ -21,3 +21,6 @@ gui suite | me | all 9 binaries pass on 4c41f93
 reviewer | reviewer | CHANGES REQUIRED: 1 major (stale treeFocus), 3 minor, 3 nits
 tester | tester | all criteria PASS; 14 tests added; 1 low defect (exportTo has no availability guard)
 fix round 1 | implementer + me | stale treeFocus cleared by selectTrack; exportTo guard; no 905 s cap; start uses the planned track dir; 2 clippy lints in the new tests
+tester (re-verify 1) | tester | defect fixed; all PASS
+reviewer (re-verify 1) | reviewer | APPROVED
+report | me | done
