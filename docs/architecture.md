@@ -19,15 +19,15 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (CLI front) | Laptop | Parses arguments before any GUI init; prints `--help` / `--version` | Rust, hand-written parser (no clap) | `src/main.rs` (thin binary), `src/cli.rs` |
 | calliope-gui (version) | build time + Laptop | Formats the `YY.MM.BBBB` version; shared by `build.rs` and the crate | Rust, no deps | `src/version.rs`, `build.rs` |
 | calliope-gui (GUI shell) | Laptop | Tauri 2 app: main window, plugins, managed state, IPC handler registration | Rust + Tauri 2 (webkit2gtk-4.1 on Linux), `tauri-plugin-window-state` | `src/gui.rs`, `tauri.conf.json` |
-| calliope-gui (IPC commands) | Laptop | All `#[tauri::command]` functions; thin wrappers over pure modules. The Player's commands are in their own file | Rust | `src/ipc.rs`, `src/player_ipc.rs` |
-| calliope-gui (settings) | Laptop | Loads/saves user settings (theme, repository root, edge-AI server URL, keep-original switch, the last local import folder; MIDI/audio later) as JSON | Rust + serde | `src/settings.rs` |
+| calliope-gui (IPC commands) | Laptop | All `#[tauri::command]` functions; thin wrappers over pure modules. The Player's and the Export view's commands are in their own files | Rust | `src/ipc.rs`, `src/player_ipc.rs`, `src/export_ipc.rs` |
+| calliope-gui (settings) | Laptop | Loads/saves user settings (theme, repository root, edge-AI server URL, keep-original switch, the last local import folder, the RC-5 root and the MP3/OGG folder of the last exports, the last RC-5 memory; MIDI/audio later) as JSON | Rust + serde | `src/settings.rs` |
 | calliope-gui (fs helpers) | Laptop | Atomic writes, no-clobber copies, file-name validation, moving to the repository trash, FNV-1a revisions | Rust, std only | `src/fsutil.rs` |
 | calliope-gui (track metadata) | Laptop | `track.json` schema (version 2: track type, stems, optional `position` / `album_position` read leniently), validation, v1→v2 migration in memory, `apply_patch` (band/album/positions), ids (UUIDv7), RFC 3339 timestamps | Rust + serde, `uuid` | `src/track_meta.rs` |
 | calliope-gui (track repository) | Laptop | Repository layout, scan, save transaction (incl. the main track's positions), delete-to-trash, batch delete (`delete_tracks`: each track on its own, failures reported), revision-checked field patches in two phases (`prepare_patches` refuses the whole batch on any conflict, `commit_patches` writes only changed tracks, one after the other: a track whose write fails is reported in `failed` with its reason and the rest are still written, with no rollback, so a failure can leave mixed old/new positions; the frontend reloads the library after a reported failure so the user sees the real state; `apply_patch` holds only the fields the patch sets to the strict text rules and the rest of the track to the read-level rules, so hand-edited padded names do not block a reorder), export, staged (atomic) creation of new tracks | Rust, pure (no Tauri) | `src/repository.rs` (+ `src/repository_tests.rs`) |
-| calliope-gui (file dialogs) | Laptop | Native open/folder/save dialogs opened from Rust (tablatures, repository root, exports, import audio/video/directory); pick tokens; scripted picker for e2e (`e2e-hooks` feature) that also records each request's start folder | Rust + `tauri-plugin-dialog` | `src/picker.rs` |
+| calliope-gui (file dialogs) | Laptop | Native open/folder/save dialogs opened from Rust (tablatures, repository root, exports (track folder, RC-5 root, MP3/OGG folder), import audio/video/directory); pick tokens; scripted picker for e2e (`e2e-hooks` feature) that also records each request's start folder | Rust + `tauri-plugin-dialog` | `src/picker.rs` |
 | calliope-gui (local source paths) | Laptop | Typed/pasted local paths for the import (trim, quotes, `~/`, `file://`), the file and folder checks with exact messages, the audio/video extension lists, the dialog's start folder (`browse_start`: typed path's folder > last import folder > home) and the audio files directly inside a folder (`list_audio_files`, name order) | Rust, pure (std + `url`) | `src/local_source.rs` |
 | calliope-gui (import temp space) | Laptop | `<root>/import-tmp/` job folders, resume lookup, safe cleanup | Rust, pure | `src/import_tmp.rs` |
-| calliope-gui (external tools) | Laptop | Finds `yt-dlp`/`ffmpeg`/`ffprobe` on `PATH`, version checks; runs them with `calliope_lib::process` | Rust | `src/tools.rs` |
+| calliope-gui (external tools) | Laptop | Finds `yt-dlp`/`ffmpeg`/`ffprobe` on `PATH`, version checks; runs them with `calliope_lib::process` (the export also checks `ffmpeg -encoders` for libmp3lame / libvorbis) | Rust | `src/tools.rs` |
 | calliope-gui (media) | Laptop | ffprobe JSON → audio check/duration/tags → `TrackEdits`, track-number tag → album position (`position_from_tags`); ffmpeg → FLAC 44.1 kHz stereo | Rust, pure | `src/media.rs` |
 | calliope-gui (download) | Laptop | URL validation/normalisation (`url` crate), yt-dlp args, progress/error parsing, `info.json` mapping | Rust | `src/download.rs` |
 | calliope-gui (import job) | Laptop | The single import job: state machine, events, cancel, shutdown; the directory batch (one job in the same slot that runs each file's preparation + extraction in turn, without the edit pane) | Rust, pure (std threads) | `src/import_job.rs`, `src/import_batch.rs` (child module) |
@@ -35,12 +35,16 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (mixer) | Laptop | Pure mixing shared by playback and Save: dB gains (-60 = Off .. +12), unmuted, mono->stereo, sum, hard clip with clipped-sample count, quantise | Rust, std only | `src/mixer.rs` |
 | calliope-gui (transport) | Laptop | Play/pause/stop/seek state machine with the 0.3 s scrub-resume rule; time injected | Rust, pure | `src/transport.rs` |
 | calliope-gui (audio output) | Laptop | `OutputBackend` trait: `CpalBackend` (default device), `NullBackend` (paced, optional WAV capture; the only backend in `e2e-hooks` builds), `ManualBackend` (unit tests) | Rust, `cpal` (ALSA on Linux) | `src/audio_out.rs` |
+| calliope-gui (WAV writer) | Laptop | Float32 stereo WAV with exactly a 16-byte `fmt ` and a `data` chunk (44-byte header patched on finish); used by the capture backend and the RC-5 export | Rust, std only | `src/wav.rs` |
 | calliope-gui (editor engine) | Laptop | Editor sessions: load stems, lock-free render callback, transport, transient solo, clip indicator, events, remembered mixes, the backing save job, the mix waveform (0.3 s debounce, worker thread), the session's tempo map, the beat-detection job's start/cancel/outcome | Rust (std threads) | `src/editor.rs` (+ `src/editor_tests.rs`) |
 | calliope-gui (mix waveform) | Laptop | `mix_peaks` (2048 max-abs buckets of the checked stems' mix, the playback mixer's maths, cancellable) and `Debounce` (restartable 300 ms deadline, injected `Instant`s) | Rust, pure | `src/mix_waveform.rs` |
 | calliope-gui (tempo detection) | Laptop | Beats + downbeats (from the edge-AI server) → tempo sections: glitch repair, optimal segmentation (sections ≥ 1 bar, > 4 % apart), absorbing glitch sections and folding 2x/0.5x octave errors into the neighbour's tempo, BPM per section (0.1), anchor on the first downbeat, each change snapped to the previous section's 1/64-beat step and recorded as detected | Rust, pure | `src/tempo_detect.rs` |
 | calliope-gui (tempo store) | Laptop | `TempoStore` (load/replace a track's tempo map): `FileTempoStore` on `player.json`; the app's `PlayerTempoStore` works under the `PlayerHost` lock: `load` flushes an open Player session first, `replace` flushes and closes it (`PlayerManager::release`) before writing the file | Rust | `src/tempo_store.rs`, `src/player_ipc.rs` |
 | calliope-gui (beat detection job) | Laptop | Renders the drums + bass + guitar stems (`other` without a guitar, else all stems) at unity gain to a part file, uploads it to `POST /v1/beats`, waits, fetches and validates the beats, derives the sections, saves them through the `TempoStore`; phases, cancel, cleanup | Rust (own std thread) | `src/beat_detect.rs` (+ `src/beat_detect_tests.rs`) |
 | calliope-gui (backing render) | Laptop | Offline render of the mix to FLAC | Rust, `flacenc` | `src/backing_render.rs` |
+| calliope-gui (export rules) | Laptop | Which file a track exports (first backing variant, else `audio`) or why not, RC-5 memory numbers and paths, MP3/OGG file names, output rate/channels per target, tags, ffprobe stream info, ffmpeg encoder list, memory suggestion, dialog start folder | Rust, pure | `src/export_rules.rs` |
+| calliope-gui (export audio) | Laptop | The export count-in in exact frames (4 beats of silence before the original, 6 ticks at the first beat + 0, 1, 2, 2.5, 3, 3.5 beats of the output, ending on the first beat), tick mixing, ffmpeg decoder/encoder argv, the pipeline ffmpeg decode → Rust lead + ticks → WAV writer or ffmpeg encoder stdin, cancel | Rust (std threads), external `ffmpeg` | `src/export_audio.rs` |
+| calliope-gui (export job) | Laptop | One export at a time: single-use plans from the chosen folder, part file in the destination + rename, folders it created removed on failure/cancel, events, snapshot/watch, shutdown | Rust (own std thread) | `src/export_job.rs` (+ `src/export_job_tests.rs`) |
 | calliope-gui (tempo map) | Laptop | Tempo segments, beat grid in 1/64-note ticks (16 per beat, `beats_per_bar` default 4), ms<->tick, snapping, "set BPM at position", beats in a range, loop boundary re-snapping; detected changes (`Segment.detected_ms`) and placed changes (`Segment.on_beat`, added or moved in the Player) both start their section on a beat: beat-rounded tick base, stretched last beat. Section operations: `move_change` (1/64-beat steps of the left tempo; detected: ±256 from the detected position, widened to the current offset; others: counted from the left section's start, no limit), `set_section_bpm`, `scale_section` (×2/÷2), `add_change` (on the split section's 1/64-beat grid), `remove_change`; every section ≥ 1 beat of its own tempo; `set_change_offset` (the Editor's, detected only). Per-section settings `Segment.meta: SectionMeta {name, metronome, count_in}` (flattened; carried through edits: Add copies the split section's metronome flag, Remove drops the joined section's), `set_section_flags`, `set_section_name`, `section_jump_ms` (start, or end; the player lands End on the last frame inside the section) | Rust, pure | `src/tempo_map.rs` |
 | calliope-gui (player state) | Laptop | `player.json` schema 6 (reads 1-6, migrating the old global metronome of 1-4; lenient read, strict write, newer schema read-only), the track speed (stored as a factor 0.25..2.0, used as a whole percentage), loop list operations (a new loop ends at the next tempo section or the track end), per-loop speed-training settings (Training on also sets Loop On; Loop On off ends Training), source choice rule, load/save | Rust + serde, pure | `src/player_state.rs` |
 | calliope-gui (speed rules) | Laptop | Speed percentages (25..200, `-`/`+` to the next multiple of 5, typed whole numbers), factor ↔ percent, speed-training settings (`Training`: on, start, end, step, repeats; validation) and their pass schedule (`pass_speed`, `progress`) | Rust, pure | `src/speed.rs` |
@@ -48,8 +52,8 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (player sources) | Laptop | Dropdown entries of a track (backing variants, `audio`, `original`, stems), decoding one into memory (FLAC: `claxon`; other formats: external `ffmpeg` piped to memory), waveform peaks (2048) | Rust | `src/player_source.rs` |
 | calliope-gui (metronome) | Laptop | Synthesised click (own sound), count-in plan (at `bpm × speed`), placing clicks in an output block, `section_clicks` (the song's click list: beats of sections whose metronome is on, with each section count-in replacing the clicks before that section; skipped at the end of a repeating loop) | Rust, pure | `src/metronome.rs` |
 | calliope-gui (player engine) | Laptop | Player sessions: one decoded source, a callback-owned `Engine` (playback, count-in, loop repeats, metronome, fades; bypass mode at 100 % and stretch mode otherwise: song-time timeline delayed by the stretcher latency, clicks and wraps placed at the heard song position, crossfade into stretch mode; the speed-training run with per-pass speeds switched at the loop start) fed by a bounded command channel, the track speed (`speed` actions, refused during a training run), transport + scrub rule, events, debounced `player.json` writes, `edit_sections(id, SectionEdit)` (Player tempo-section edits, section flags and names applied live: new click grid, loops re-snapped, debounced write; stale-index guard), `jump_section` (instant jump to a section's start or last bar), the grid sent to the engine is `section_clicks` (re-sent when the repeating loop changes; the engine's metronome flag only means "has a tempo" since gui-player-tempo-sections phase 3), the Play pre-roll comes from the Count In of the section under the playhead and loop Play's from the loop's Count-In, `release(id)` (flush + close + `closed` event when the Editor writes the tempo), `finish_open` re-reads a `player.json` changed since its off-lock load | Rust (std threads) | `src/player.rs` (+ `src/player_tests.rs`) |
-| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree (album / track order, "3. Title" labels; Library only: pointer drag and drop and Alt+Up/Down reordering, a Delete icon button and the Delete key for tracks and albums) + track pane (read-only Position; band/album edits rename the whole band/album after a confirmation, planned by `library-rename.ts`); Import: stem extraction steps; Editor: shared track tree + stem mixer + Mix lane with the mix waveform (tempo sections, draggable changes) and Autodetect BPM; Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform (loops + editable tempo sections: drag, keys, BPM label overlay), under the waveform two full-width rows: Sections (the BPM group, then status + section name box, Add, Remove, ×2, ÷2, Start, End and the section's Click / Count In toggles; no global metronome) beside Loops (a "Training…" button on its third line opens the speed-training popover; the training progress shows in its status line; Loops wraps below in narrow windows), then Playback at the bottom (transport, then the Speed group: `-`, % box, `+`, Reset and the played-BPM readout, wrapping to a second line in narrow panes); Home/End and `[`/`]` keys); Settings), theme, keyboard shortcuts | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
-| calliope-lib (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation (incl. the beats document, `check_beats`), FLAC STREAMINFO parser, FLAC audible-time scan (`flac_level`: 100 ms windows, RMS of the loudest channel above `AUDIBLE_LEVEL_DBFS = -40`, integer sum-of-squares comparison, peak for display; no 15 s decision), HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel). No Tauri/GTK | Rust; `serde`, `libc`, `claxon`, `ureq` 3 without TLS (feature) | `src/calliope-lib/` |
+| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree (album / track order, "3. Title" labels; Library only: pointer drag and drop and Alt+Up/Down reordering, a Delete icon button and the Delete key for tracks and albums) + track pane (read-only Position; band/album edits rename the whole band/album after a confirmation, planned by `library-rename.ts`); Import: stem extraction steps; Editor: shared track tree + stem mixer + Mix lane with the mix waveform (tempo sections, draggable changes) and Autodetect BPM; Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform (loops + editable tempo sections: drag, keys, BPM label overlay), under the waveform two full-width rows: Sections (the BPM group, then status + section name box, Add, Remove, ×2, ÷2, Start, End and the section's Click / Count In toggles; no global metronome) beside Loops (a "Training…" button on its third line opens the speed-training popover; the training progress shows in its status line; Loops wraps below in narrow windows), then Playback at the bottom (transport, then the Speed group: `-`, % box, `+`, Reset and the played-BPM readout, wrapping to a second line in narrow panes); Home/End and `[`/`]` keys); Export: shared track tree (read-only) + export pane (band/album/title, source and count-in lines, the "Export..." group: to BOSS RC-5 with the memory box, MP3 file, OGG file; progress + Cancel, result line, overwrite confirmation); Settings), theme, keyboard shortcuts (Alt+1..Alt+7) | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
+| calliope-lib (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation (incl. the beats document, `check_beats`), FLAC STREAMINFO parser, FLAC audible-time scan (`flac_level`: 100 ms windows, RMS of the loudest channel above `AUDIBLE_LEVEL_DBFS = -40`, integer sum-of-squares comparison, peak for display; no 15 s decision), HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel; stdin closed, or piped with `spawn_with_stdin`). No Tauri/GTK | Rust; `serde`, `libc`, `claxon`, `ureq` 3 without TLS (feature) | `src/calliope-lib/` |
 | calliope-stems (edge-AI stems service) | archserver (LAN), deployed by hand as a systemd user unit | HTTP server for "calliope-stems API v1": validates FLAC uploads (≤ 15 min), queues jobs (1 running), runs a configurable separator command, measures each stem's audible time, serves the stems, cleans up; beat jobs (`POST /v1/beats`) run a configurable beat-tracker command in the same queue; `--measure FILE...` prints audible times without starting a server. No Tauri/GTK; the GUI doesn't depend on it | Rust; `tiny_http`, `calliope-lib` | `src/calliope-stems/` |
 | separator adapter | archserver | `<sep> <input.flac> <out_dir> <model>` → `<out_dir>/<stem>.flac`; the real one runs the owner's audio-separator venv with `htdemucs_6s` (frees VRAM from Ollama first) | bash | `src/calliope-stems/separators/audio-separator.sh` |
 | yt-dlp, ffmpeg, ffprobe | Laptop | External executables, installed by the user, never bundled | upstream | system `PATH` |
@@ -129,8 +133,15 @@ the GUI crate, `src/calliope-gui/`.
     heard: the training speed during a run) and `training` (`{loop, speed_pct, repeat, of|null}` or null); the snapshot
     carries the track speed `speed_pct` and each loop's `training`. Actions are tagged objects to keep the command list
     short. BPM detection runs from the Editor (Autodetect BPM, stems-beat-autodetect); the Player has no Detect button.
+    Export (gui-export plan §2.8, in `src/export_ipc.rs`): `export_info(id) -> {id, available, reason, source, count_in:
+    {bpm, first_beat_ms, lead_ms}|null, memory}` (`available: false` without a tempo map), `prepare_export(id, target: {kind: rc5, memory: "<text>"}|{kind: mp3}|{kind: ogg})
+    -> Option<{token, path, exists}>` (checks the memory number, ffmpeg/ffprobe, the encoder, the backing and the tempo map
+    before opening the folder dialog, then the folder; `path` is for display only), `start_export(token, overwrite, events) -> ExportSnapshot`
+    (re-reads the tempo map),
+    `cancel_export(job)`, `get_export()`, `watch_export(events)`; events are tagged by `phase`: `writing {progress}`,
+    `finishing`, `done {path, clipped}`, `failed {message}`, `cancelled`.
     Types are in `src/ui/lib/ipc.ts` and in the plans (tracks-repository §2.7, stem-extraction §2.10,
-    backing-track-editor §2.7, play-backing-track §2.9, stems-beat-autodetect §2.11).
+    backing-track-editor §2.7, play-backing-track §2.9, stems-beat-autodetect §2.11, export §2.6-2.8).
   - **Long-running jobs and progress**: a command that starts a job takes a
     `tauri::ipc::Channel<Event>` argument (`events`), returns a snapshot at once and runs the
     work on its own std thread; progress goes over the channel (tagged JSON, `phase` field,
@@ -193,8 +204,10 @@ the GUI crate, `src/calliope-gui/`.
   `player training index=<i> on=<b> start=<s> end=<e> step=<t> repeats=<r>`, `player readout bpm=<text|none> speed=<pct>`
   (`player active` ends with ` speed=<pct>`),
   `player sections segments=<k> bpm=<a,b,..> starts=<ms,..> metronome=<1|0,..> count_in=<1|0,..> named=<n>`.
-  Rust lines (prefix `calliope: `): `dialog kind=<add-tablature|update-tablature|repository-root|export-track|export-tablature|import-audio|import-video|import-directory> result=<picked|cancelled>`,
-  `dialog start kind=<import-audio|import-video|import-directory> from=<typed|last|home|none> dir=<p|none>`, `import last-location dir=<p>`, `import last-location forgotten`,
+  Export: `export target id=<id|none> kind=<track|group|none> available=<b>`, `export prepare target=<rc5|mp3|ogg> result=<plan|cancelled|refused> exists=<b>`,
+  `export confirm answer=<yes|no> path=<p>`, `export phase=<p>`, `export done path=<p>`, `export failed message=<m>`, `export layout overflow=<px> width=<px>`.
+  Rust lines (prefix `calliope: `): `dialog kind=<add-tablature|update-tablature|repository-root|export-track|export-tablature|import-audio|import-video|import-directory|export-rc5|export-audio> result=<picked|cancelled>`,
+  `dialog start kind=<import-audio|import-video|import-directory|export-rc5|export-audio> from=<typed|last|home|none> dir=<p|none>`, `import last-location dir=<p>`, `import last-location forgotten`,
   `import job=<job> phase=<phase>`, `import path kind=<audio|video> result=<accepted|rejected>[ reason=<empty|invalid|relative|missing|folder|not-file|unreadable|extension>]`,
   `import path kind=directory result=accepted files=<n>|rejected reason=<empty|invalid|relative|missing|unreadable|not-folder|no-audio>`,
   `import batch job=<j> files=<n>`, `import batch job=<j> file=<i>/<n> name=<name> result=started|saved id=<id> dropped=<..>|failed stage=<s> message=<m>|cancelled`,
@@ -212,14 +225,21 @@ the GUI crate, `src/calliope-gui/`.
   `player count-in clicks=3 beat_ms=<ms>`, `player wrap loop=<index, 0-based> count_in=<b>`, `player state saved id=<id>`,
   `player state error id=<id> message=<m>`, `player section <bpm|scale|add|remove|move|flags|name> id=<id> index=<i> segments=<k> bpm=<..>[ steps=<s> applied=<s'>] metronome=<1|0,..> count_in=<1|0,..>`,
   `player section jump id=<id> index=<i> edge=<start|end> position_ms=<ms>`, `player speed id=<id> percent=<n>`,
-  `player training loop=<i> pass=<n> speed=<pct> repeat=<r>/<of|end>`, `player training end loop=<i> speed=<pct>`.
+  `player training loop=<i> pass=<n> speed=<pct> repeat=<r>/<of|end>`, `player training end loop=<i> speed=<pct>`;
+  export: `export start job=<j> id=<id> target=<rc5|mp3|ogg> path=<p> rate=<hz> channels=<c> count_in=<bpm> first_beat_ms=<ms> lead_frames=<n> overwrite=<b>`,
+  `export done job=<j> path=<p> frames=<n> clipped=<n>`, `export failed job=<j|none> message=<m>`, `export cancelled job=<j>`,
+  `export refused target=<t> reason=<memory|tools|encoder|not-folder|no-roland|inside-repo|is-folder|exists|busy|no-backing|no-tempo|stale>`,
+  `export remembered kind=<rc5|file> dir=<p>`, `export remembered memory=<n>`.
 - **Settings file**: `$XDG_CONFIG_HOME/app.calliope.gui/settings.json` (Tauri
-  `app_config_dir()`), e.g. `{"theme": "dark", "repository_root": null, "edge_ai_url": null, "keep_original": false, "last_import_dir": "/music/rock"}`
+  `app_config_dir()`), e.g. `{"theme": "dark", "repository_root": null, "edge_ai_url": null, "keep_original": false, "last_import_dir": "/music/rock", "rc5_dir": "/run/media/me/BOSS_RC-5", "export_dir": null, "rc5_memory": 7}`
   (`repository_root`: `null`/absent = the default root, must be an absolute path;
   `edge_ai_url`: `null` = not configured, else `http://host[:port][/path]`, no TLS/userinfo/query;
   `keep_original`: keep the original full mix as `original.flac` with imported stems;
   `last_import_dir`: `null` or an absolute path, the folder of the last accepted local import (a file's folder; an imported
-  directory itself), shared by audio, video and directory Browse, cleared when Browse finds it missing). Missing or invalid files give the defaults;
+  directory itself), shared by audio, video and directory Browse, cleared when Browse finds it missing;
+  `rc5_dir` / `export_dir`: `null` or an absolute path, the RC-5 root / MP3-OGG folder last picked and accepted, where the
+  export dialogs start; kept when missing (an unplugged drive), the dialog then starts in home;
+  `rc5_memory`: `null` or 1..99, the memory of the last successful RC-5 export, the box suggests it plus one, 99 stays 99). Missing or invalid files give the defaults;
   writes are atomic (tmp + rename); unknown fields are ignored. Window geometry is in
   `.window-state.json` in the same directory (written by `tauri-plugin-window-state` on
   graceful exit).
@@ -404,6 +424,25 @@ the GUI crate, `src/calliope-gui/`.
   `yt-dlp` ≥ 2023.01 (`--ignore-config`, `--` before the URL, output only into the job
   folder), `ffmpeg`/`ffprobe` ≥ 5 (inputs as `file:<abs path>`, `-nostdin`, `-n`). Always argv
   arrays, never a shell. Children run in their own process group with PDEATHSIG (Linux).
+- **Exports** (gui-export plan §2.3-2.6): only the backing track leaves Calliope: the first `backings` variant of a stem
+  track, else a plain track's `audio`; stems, `original` and tablatures never. **BOSS RC-5**: the user picks the drive's
+  root; it must hold a `ROLAND` folder ("No ROLAND folder in <base>: is the RC-5 mounted?"); memory N (1..99) is written as
+  `<root>/ROLAND/WAVE/0NN_1/0NN_1.WAV` (`WAVE` and `0NN_1` created when missing, other files left alone): IEEE float 32-bit,
+  stereo, 44.1 kHz (resampled by ffmpeg, mono duplicated), exactly `RIFF`/`WAVE` + 16-byte `fmt ` (format 3) + `data`,
+  written by Calliope (`src/wav.rs`), never by ffmpeg's WAV muxer (it adds `fact`/`LIST`). **MP3 / OGG**:
+  `<folder>/<Band> - <Title>.mp3|.ogg` (invalid characters → `_`), ffmpeg libmp3lame `-q:a 2` (ID3v2.3, no ID3v1) or
+  libvorbis `-q:a 6`, at the backing's own rate (MP3: ≤ 48 kHz), mono kept, tags title/artist/album/track (only with an
+  album)/date. **Count-in** (required: a track without a tempo map
+  cannot be exported): read from the Player's tempo map at export time (`TempoStore::load`, so an open Player session is
+  flushed first; nothing cached). At the output rate R: `beat = round(R·60/bpm)` (first section's BPM, speed and
+  `beats_per_bar` ignored), `lead = 4·beat`, `first = round(segments[0].start_ms·R/1000)`; the file is `lead` frames of
+  silence + the original unchanged (always original + 4 beats long); the Player's click (no accent) starts at output frames
+  `first + round(k·beat)`, k = 0, 1, 2, 2.5, 3, 3.5, so the count ends on the first beat at `lead + first`; samples under a
+  tick are clamped to ±1, all others bit-exact. **Writes**: a `.<name>.calliope-<pid>-<n>.part` file in the
+  destination folder (created with `create_new`; ffmpeg encoders write it with `-y`), fsync, `rename` over the target
+  (an existing target only after the user confirmed; otherwise exists-check + rename, since FAT has no hard links),
+  directory fsync; a failure or cancel removes the part and the folders the export created. Destinations inside the
+  repository root are refused; the repository is only read.
 - **Window**: label `main`, title `calliope`, default 1280x800 centred, minimum 1024x640,
   created hidden and shown by the window-state plugin after it restores the geometry.
 
@@ -435,7 +474,8 @@ src/                      ALL source (owner requirement), one folder per crate
                           audio_out, editor (+ editor_tests), backing_render, tempo_map,
                           player_state, player_source, metronome, player (+ player_tests),
                           player_ipc, mix_waveform, tempo_detect, tempo_store,
-                          beat_detect (+ beat_detect_tests), speed, stretch, ...)
+                          beat_detect (+ beat_detect_tests), speed, stretch, wav, export_rules,
+                          export_audio, export_job (+ export_job_tests), export_ipc, ...)
     src/ui/               frontend: index.html, main.ts, app.css, App.svelte,
                           components/ (library/ = tree, pane, tablature panel;
                           import/ = source page (URL box, or local file/folder path box + Browse +
@@ -445,7 +485,8 @@ src/                      ALL source (owner requirement), one folder per crate
                           Player mode `freeMove` edits sections), SectionBpmInput (BPM overlay), BpmSection, SectionsSection,
                           PlaybackSection (+ SpeedControl), LoopsSection (+ TrainingPopover) (row 1: Sections with BPM inside + Loops;
                           row 2: Playback with the Speed group);
-                          library/TrackBrowser.svelte = tree column shared by Library and Editor;
+                          export/ = ExportPane;
+                          library/TrackBrowser.svelte = tree column shared by Library, Editor, Player and Export;
                           TrackFields.svelte shared by Library and Import),
                           views/ (one file per main view),
                           lib/ (ipc.ts, views.ts, theme.ts, app-state.svelte.ts,
@@ -453,17 +494,19 @@ src/                      ALL source (owner requirement), one folder per crate
                           library-order.ts (reorder patches, drop gaps, neighbour after delete),
                           library-rename.ts (band/album rename plans), library-ops.svelte.ts (reorder/delete actions),
                           url-check.ts, import-state.svelte.ts, editor-state.svelte.ts, time-format.ts,
-                          player-state.svelte.ts, bar-format.ts, bpm-format.ts, speed-format.ts, waveform-geometry.ts,
+                          player-state.svelte.ts, export-state.svelte.ts, export-format.ts, bar-format.ts, bpm-format.ts, speed-format.ts, waveform-geometry.ts,
                           utils.ts, components/ui/ = shadcn components owned by us),
                           *.test.ts next to the code
     dist/                 generated by `vite build`, gitignored, embedded into the binary
-    tests/                cargo integration tests (cli, frontend, acceptance_*, gui_smoke, gui_e2e,
-                          gui_library_e2e, gui_import_e2e, gui_editor_e2e, gui_player_e2e, player_realtime); fixtures/library-sample/ = sample
+    tests/                cargo integration tests (cli, frontend, acceptance_* (incl. acceptance_export), gui_smoke, gui_e2e,
+                          gui_library_e2e, gui_import_e2e, gui_editor_e2e, gui_player_e2e, gui_export_e2e, player_realtime); fixtures/library-sample/ = sample
                           repository (v1), library-v2/ = mixed v1/v2 incl. a stem track,
                           import/ = generated audio/video/stem fixtures (make-fixtures.sh),
                           library-editor/ = stem tracks for the Editor (editor/make-fixtures.sh),
                           library-player/ = tracks for the Player incl. an MP3 backing and a player.json
-                          with two tempos and loops (player/make-fixtures.sh)
+                          with two tempos and loops (player/make-fixtures.sh), library-export/ = export cases:
+                          mix, no mix, MP3, mono, 48 kHz, tempo with/without padding, missing mix, odd names
+                          (export/make-fixtures.sh)
       support/            test-only stand-ins: stub-separator (bash), stub-beat-tracker (Python 3 stdlib),
                           bin/yt-dlp (Python 3 stdlib)
   calliope-lib/           shared library (package calliope-lib, lib calliope_lib): Cargo.toml,
@@ -577,7 +620,7 @@ the server out of the GUI.
   keys and clicks, and `i3-msg` floats, resizes and closes windows (i3 tiles windows and
   ignores the requested size/position unless they're floating). GUI tests are `#[ignore]`d
   cargo tests (`tests/gui_smoke.rs`, `tests/gui_e2e.rs`, `tests/gui_library_e2e.rs`,
-  `tests/gui_import_e2e.rs`), run with
+  `tests/gui_import_e2e.rs`, `tests/gui_export_e2e.rs`, ...), run with
   `npm run test:gui` (built with `--features e2e-hooks`; see "Parallel GUI runs" below). Library e2e tests also
   assert on the files on disk. They launch the real binary with temporary
   `XDG_CONFIG_HOME`/`XDG_DATA_HOME`/`XDG_CACHE_HOME` (never the user's real config), assert
@@ -678,6 +721,15 @@ the server out of the GUI.
   loaded (revision conflict); Rust tests also use `chmod 0555` on the track folder (skipped as root, e.g. under
   `unshare -r`). Tagged import sources are made at test time with the local `ffmpeg -c copy -metadata track=…`
   (`tagged_copy`).
+- **Exports** (gui-export): the **BOSS RC-5** is a temp folder with a `ROLAND/` subfolder (without it = "not the RC-5's
+  root", `chmod 0555` = an unwritable drive, removed between plan and start = unmounted); MP3/OGG destinations are temp
+  folders. The real local `ffmpeg`/`ffprobe` decode and encode the committed `library-export` fixtures; fake ffmpeg scripts
+  in temp dirs stand for an ffmpeg without encoders and for hanging/failing encoders. Audio is checked by decoding the
+  result (sample equality for 44.1 kHz sources, exact click frames for the count-in, Goertzel tone checks after
+  resampling, durations ± 30 ms for MP3/OGG) and by reading the WAV header bytes; every export test asserts the repository
+  copy is byte-identical afterwards. GUI tests answer the `export-rc5` / `export-audio` dialogs with the scripted picker and
+  slow an export to real time with `CALLIOPE_E2E_EXPORT_PACE=1` (`e2e-hooks` only) to press Cancel. A real RC-5 is a manual
+  check.
 - MIDI: no fake yet. Each feature that adds hardware must also add a simulator/fake and list it here.
 
 ## Decision log
@@ -1403,3 +1455,54 @@ starts `lead` output frames before the 4th beat, `lead` being the song frames fr
 the tempo map divided by the speed (`CountIn::lead_in`, kept under one beat). The manager computes it for Play
 (`plan_at`) and for a loop start (`LoopSpec::count_in_lead`, rescaled by the engine for each pass's speed). A start on
 a beat, or within half a frame of one, keeps the audio on the 4th beat.
+
+### 2026-10-23: Navigation: Export at Alt+6 after Player, Settings at Alt+7   (feature: gui-export, spec requirement 11)
+The order is Library, Import, Editor, Playlists, Player, Export, Settings (`VIEWS` in `src/ui/lib/views.ts`, `Alt+1`..`Alt+7`).
+This amends "Navigation order Library, Import, Track, Playlists, Player, Settings" (2026-10-04) for the digits of Settings.
+
+### 2026-10-23: Exports: ffmpeg decodes, Rust adds the count-in, Calliope writes the RC-5 WAV itself, ffmpeg encodes MP3/OGG from stdin   (feature: gui-export; plan §2.3-2.5)
+Every export needs the same steps: decode any backing format (FLAC, MP3, …), resample for the RC-5, mix a count-in, write
+the result. Choice: one pipeline. The external `ffmpeg` (already required; symphonia is rejected) decodes to f32 at the
+target rate and channel count; Rust prepends the silence the count-in needs and adds the Player's click at exact frames
+(testable sample by sample); the RC-5 file is written by our own `WavWriter` (the capture writer moved to `src/wav.rs`),
+because ffmpeg's WAV muxer always adds a `fact` chunk for float data (and `LIST` without `-bitexact`) and the spec forbids
+extra chunks; MP3/OGG are encoded by a second `ffmpeg` reading raw f32 from stdin (new
+`calliope_lib::process::spawn_with_stdin`) and writing the part file itself (seekable, so libmp3lame's VBR/gapless header
+is right). Streaming keeps memory flat (no whole-track buffer). Alternatives: ffmpeg alone with a filter graph mixing a
+click file (levels and timing harder to control and to test), in-process encoders (`lame`/`vorbis` bindings: native build
+dependencies and LGPL/BSD code linked into Calliope, against the "external tools, not bundled" rule), decoding FLAC with
+claxon (resampling still needs ffmpeg; one decoder path is simpler), an intermediate WAV for the encoder (doubles the
+writes on a USB drive). Missing tools or encoders are refused before the folder dialog with a message naming them.
+
+### 2026-10-23: Export count-in = 4 beats of silence before the original, six ticks ending on the first beat; a tempo map is required   (feature: gui-export; plan §2.3; spec requirement 12; owner answers 1-5, 2026-10-23)
+The owner fixed the layout strictly on the song's beat grid: every exported file is exactly 4 beats (at the first section's
+BPM, at 100 %: the Player's speed and `beats_per_bar` are ignored) of silence followed by the original, unchanged from its
+0:00 (an intro before the first beat is kept as is). The six ticks (the Player's click, no accent) are at output time
+`segments[0].start_ms + {0, 1, 2, 2.5, 3, 3.5}` beats, so the count ends exactly on the first beat; they are mixed over
+whatever is there (the silence, or the intro). Everything is in whole frames at the output rate, the beat rounded once
+(`round(R·60/bpm)`, as the Player's `count_in_plan`), the half-beat ticks rounded half away from zero; only samples under
+a tick are clamped. The first beat is read from the tempo map at export time (prepare and again at start), because a later
+Editor feature will let the user place it precisely. A track without a tempo map cannot be exported: the buttons are
+disabled with "Set a tempo in the Player first: the export starts with a count-in", and Rust refuses (`no-tempo`).
+Consequence: "the same length" in the export spec means the original + 4 beats. Alternatives considered before the
+answers: prepending only the missing silence (file length would depend on the intro), cutting the intro, exporting
+without a count-in when there is no tempo.
+
+### 2026-10-23: Export writes = part file in the destination folder + rename; one export job at a time   (feature: gui-export; plan §2.6)
+A cancelled or failed export must leave nothing, and an existing file is replaced only after a confirmation. Choice: the
+job creates `.<name>.calliope-<pid>-<n>.part` with `create_new` next to the target (same file system, so the final
+`rename` is atomic, also on the RC-5's FAT), fsyncs it and renames it over the target; without a confirmed overwrite the
+target's absence is checked right before the rename (FAT has no hard links, so `copy_no_clobber`'s hard-link trick is not
+available; the window is accepted for a single user). The `WAVE` / `0NN_1` folders the job created are removed again (never
+recursively) on failure or cancel. The flow is two commands: `prepare_export` opens the dialog in Rust, checks the folder and
+returns a single-use token with the display path and `exists`; the frontend asks for the confirmation and calls
+`start_export(token, overwrite)`, which re-checks (the drive may be gone). The export has its own slot (`ExportState`),
+independent of the import job, with the usual snapshot/`watch_*`/cancel/exit-shutdown pattern. Remembered folders
+(`rc5_dir`, `export_dir`) are kept when missing, unlike `last_import_dir`, because an unplugged RC-5 is normal.
+Alternatives: writing in the OS temp dir and moving (a cross-device copy, not atomic on the drive), a save dialog per
+export (the spec fixes the RC-5 names, and a folder dialog plus our own confirmation names the exact file).
+
+### 2026-10-23: In the Export view a focused band or album row disables the export   (feature: gui-export; plan §2.9, open question 8)
+Calliope's selection is always a track, shared by all views. The spec says nothing is enabled "when a band or an album is
+selected", so the Export view takes the tree's focused row (`lib.treeFocus`, which keeps the last focused row) as the
+target when it is a group row, else the selected track. The other views are unchanged.
