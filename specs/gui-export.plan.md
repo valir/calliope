@@ -672,6 +672,20 @@ Never commit in a routine task.
 - **routine:** yes
 
 ### Task 13: TS IPC types and wrappers
+> **Orchestrator note (after tasks 6-9), the backend as built:**
+> - Commands (async): `export_info(id)`, `prepare_export(id, target)` with `target` `{kind:'rc5', memory:'7'}` |
+>   `{kind:'mp3'}` | `{kind:'ogg'}` -> `ExportPlan | null` (`{token, path, exists}`; null = dialog cancelled; a
+>   refusal is a rejected string), `start_export(token, overwrite, events)`, `cancel_export(job)` -> snapshot | null,
+>   `get_export()` / `watch_export(events)` -> `ExportSnapshot | null`.
+> - `ExportInfo {id, available, reason: string|null, source: string|null, count_in: {bpm, first_beat_ms, lead_ms}|null,
+>   memory: number}`; no tempo: `available:false`, `source` set, `count_in:null`, the no-tempo reason.
+> - `ExportSnapshot {job, id, title, target: 'rc5'|'mp3'|'ogg', path, phase: 'writing'|'finishing'|'done'|'failed'|
+>   'cancelled', progress, message: string|null, clipped}`; `ExportEvent` tagged by `phase`: `writing {progress}`,
+>   `finishing`, `done {path, clipped}`, `failed {message}`, `cancelled`. `rc5_memory` is saved before `done` is sent.
+> - Messages: stale token "This export is no longer ready; press the button again", busy "An export is running",
+>   tools "Install ffmpeg to export (ffmpeg and ffprobe are needed)". E2E knob `CALLIOPE_E2E_EXPORT_PACE=<f>`
+>   (e2e-hooks builds only): an export takes f x the audio's duration.
+
 - **files:** `src/calliope-gui/src/ui/lib/ipc.ts` (append at the end), `src/calliope-gui/src/ui/lib/ipc-export.test.ts` (new)
 - **does:** `Settings` gains optional `rc5_dir?`, `export_dir?: string | null`, `rc5_memory?: number | null`.
   Append a block `// Export: mirrors src/export_job.rs and src/export_ipc.rs.` with the types

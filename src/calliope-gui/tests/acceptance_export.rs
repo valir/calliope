@@ -1,0 +1,626 @@
+//! Rust-side acceptance tests of specs/gui-export.md (plan section 7), through the `do_*`
+//! functions of `export_ipc`. Temporary directories only (a copy of `tests/fixtures/library-export`,
+//! temp destinations), the scripted dialog, the local ffmpeg/ffprobe; no real drive, no audio device.
+//! Every length is "the original + 4 beats at the first section's BPM" (owner answer 1).
+
+use std::collections::BTreeMap;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use calliope_gui::export_ipc::{
+    do_export_info, do_prepare_export, do_start_export, remember_memory, ExportInfo,
+};
+use calliope_gui::export_job::{ExportPhase, ExportPlan, ExportSnapshot, ExportState, Sink, TargetReq};
+use calliope_gui::export_rules::NO_TEMPO_REASON;
+use calliope_gui::ipc::RepoState;
+use calliope_gui::picker::ScriptedPicker;
+use calliope_gui::settings::SettingsStore;
+use calliope_gui::tempo_store::FileTempoStore;
+use calliope_gui::tools::Tools;
+
+const BAND: &str = "The Example Band";
+
+type Tree = BTreeMap<String, Option<Vec<u8>>>;
+
+/// Every file (bytes) and folder under `dir`, by relative path.
+fn tree(dir: &Path) -> Tree {
+    fn walk(root: &Path, dir: &Path, out: &mut Tree) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let e = e.unwrap();
+            let rel = e.path().strip_prefix(root).unwrap().display().to_string();
+            if e.file_type().unwrap().is_dir() {
+                out.insert(rel, None);
+                walk(root, &e.path(), out);
+            } else {
+                out.insert(rel, Some(std::fs::read(e.path()).unwrap()));
+            }
+        }
+    }
+    let mut out = Tree::new();
+    walk(dir, dir, &mut out);
+    out
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let dest = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            copy_dir(&e.path(), &dest);
+        } else {
+            std::fs::copy(e.path(), dest).unwrap();
+        }
+    }
+}
+
+fn real_tools() -> Tools {
+    Tools::discover(&std::env::var_os("PATH").unwrap_or_default())
+}
+
+fn id(n: u32) -> String {
+    format!("0199c0a0-0000-7000-8000-000000000{n}")
+}
+
+struct Env {
+    _tmp: tempfile::TempDir,
+    repo: PathBuf,
+    home: PathBuf,
+    answers: PathBuf,
+    settings_file: PathBuf,
+    before: Tree,
+    st: RepoState,
+    picker: Arc<ScriptedPicker>,
+    export: ExportState,
+}
+
+impl Env {
+    fn new() -> Self {
+        Self::with(ExportState::new(Box::new(real_tools)))
+    }
+
+    fn with(export: ExportState) -> Self {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        copy_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-export"), &repo);
+        let home = tmp.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        let answers = tmp.path().join("answers");
+        std::fs::write(&answers, "").unwrap();
+        let picker = Arc::new(ScriptedPicker::new(answers.clone()));
+        let st = RepoState::new(repo.clone(), Box::new(picker.clone()));
+        let settings_file = tmp.path().join("settings.json");
+        let before = tree(&repo);
+        Env { _tmp: tmp, repo, home, answers, settings_file, before, st, picker, export }
+    }
+
+    /// The settings as the file holds them: a restart before every call.
+    fn settings(&self) -> SettingsStore {
+        SettingsStore::open(self.settings_file.clone())
+    }
+
+    fn repo_unchanged(&self) {
+        assert!(tree(&self.repo) == self.before, "the repository changed");
+    }
+
+    /// A folder with a `ROLAND` folder in it, like an RC-5 drive.
+    fn rc5(&self, name: &str) -> PathBuf {
+        let b = self.home.join(name);
+        std::fs::create_dir_all(b.join("ROLAND")).unwrap();
+        b
+    }
+
+    fn folder(&self, name: &str) -> PathBuf {
+        let b = self.home.join(name);
+        std::fs::create_dir_all(&b).unwrap();
+        b
+    }
+
+    fn info(&self, n: u32) -> ExportInfo {
+        do_export_info(&self.st, &self.settings(), &FileTempoStore, &id(n)).unwrap()
+    }
+
+    /// Scripts the folder dialog of `target` to answer `base`.
+    fn answer(&self, target: &TargetReq, base: &Path) {
+        let kind = if matches!(target, TargetReq::Rc5 { .. }) { "export-rc5" } else { "export-audio" };
+        let old = std::fs::read_to_string(&self.answers).unwrap();
+        std::fs::write(&self.answers, format!("{old}{kind} {}\n", base.display())).unwrap();
+    }
+
+    fn prepare(&self, n: u32, target: TargetReq) -> Result<Option<ExportPlan>, String> {
+        do_prepare_export(
+            &self.st,
+            &self.settings(),
+            &self.export,
+            &FileTempoStore,
+            Some(self.home.clone()),
+            &id(n),
+            target,
+        )
+    }
+
+    fn start(&self, token: &str, overwrite: bool) -> Result<ExportSnapshot, String> {
+        let path = self.settings_file.clone();
+        let sink: Sink = Arc::new(|_| {});
+        do_start_export(
+            &self.st,
+            &self.export,
+            &FileTempoStore,
+            token,
+            overwrite,
+            sink,
+            Box::new(move |n| remember_memory(&SettingsStore::open(path), n)),
+        )
+    }
+
+    fn wait(&self) -> ExportSnapshot {
+        let end = Instant::now() + Duration::from_secs(60);
+        loop {
+            let s = self.export.snapshot().unwrap();
+            if !matches!(s.phase, ExportPhase::Writing | ExportPhase::Finishing) {
+                return s;
+            }
+            assert!(Instant::now() < end, "the export did not end: {s:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Dialog -> plan -> start (overwriting when the plan says the target exists) -> end.
+    fn export(&self, n: u32, target: TargetReq, base: &Path) -> (ExportPlan, ExportSnapshot) {
+        self.answer(&target, base);
+        let plan = self.prepare(n, target).unwrap().expect("a plan");
+        self.start(&plan.token, plan.exists).unwrap();
+        let s = self.wait();
+        (plan, s)
+    }
+}
+
+fn rc5(m: &str) -> TargetReq {
+    TargetReq::Rc5 { memory: m.into() }
+}
+
+fn wav_path(base: &Path, n: u32) -> PathBuf {
+    base.join(format!("ROLAND/WAVE/{n:03}_1/{n:03}_1.WAV"))
+}
+
+/// Checks the 44-byte float32 stereo header exactly and returns (rate, left, right).
+fn read_wav(p: &Path) -> (u32, Vec<f32>, Vec<f32>) {
+    let b = std::fs::read(p).unwrap();
+    let n = (b.len() - 44) as u32;
+    assert_eq!(&b[0..4], b"RIFF");
+    assert_eq!(u32::from_le_bytes(b[4..8].try_into().unwrap()), 36 + n);
+    assert_eq!(&b[8..16], b"WAVEfmt ");
+    assert_eq!(u32::from_le_bytes(b[16..20].try_into().unwrap()), 16);
+    assert_eq!(u16::from_le_bytes(b[20..22].try_into().unwrap()), 3, "IEEE float");
+    assert_eq!(u16::from_le_bytes(b[22..24].try_into().unwrap()), 2, "stereo");
+    let rate = u32::from_le_bytes(b[24..28].try_into().unwrap());
+    assert_eq!(u32::from_le_bytes(b[28..32].try_into().unwrap()), rate * 8);
+    assert_eq!(u16::from_le_bytes(b[32..34].try_into().unwrap()), 8);
+    assert_eq!(u16::from_le_bytes(b[34..36].try_into().unwrap()), 32);
+    assert_eq!(&b[36..40], b"data");
+    assert_eq!(u32::from_le_bytes(b[40..44].try_into().unwrap()), n, "no chunk after the samples");
+    let s: Vec<f32> = b[44..].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+    let l = s.chunks_exact(2).map(|f| f[0]).collect();
+    let r = s.chunks_exact(2).map(|f| f[1]).collect();
+    (rate, l, r)
+}
+
+/// Any audio file decoded by ffmpeg to stereo f32 at 44.1 kHz: (left, right).
+fn decode(p: &Path) -> (Vec<f32>, Vec<f32>) {
+    let out = Command::new("ffmpeg")
+        .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-i"])
+        .arg(p)
+        .args(["-map", "0:a:0", "-f", "f32le", "-acodec", "pcm_f32le", "-ac", "2", "-ar", "44100", "pipe:1"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let s: Vec<f32> = out.stdout.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+    (s.chunks_exact(2).map(|f| f[0]).collect(), s.chunks_exact(2).map(|f| f[1]).collect())
+}
+
+fn probe(p: &Path) -> serde_json::Value {
+    let out = Command::new("ffprobe")
+        .args(["-v", "error", "-show_entries", "format_tags:stream_tags:stream=codec_name", "-of", "json"])
+        .arg(p)
+        .output()
+        .unwrap();
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+fn tag(v: &serde_json::Value, key: &str) -> Option<String> {
+    [&v["format"]["tags"], &v["streams"][0]["tags"]].iter().find_map(|t| {
+        t.as_object()?
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .map(|(_, v)| v.as_str().unwrap().to_string())
+    })
+}
+
+fn goertzel(x: &[f32], hz: f32) -> f32 {
+    let w = 2.0 * std::f32::consts::PI * hz / 44100.0;
+    let c = 2.0 * w.cos();
+    let (mut s1, mut s2) = (0.0f32, 0.0f32);
+    for &v in x {
+        let s = v + c * s1 - s2;
+        s2 = s1;
+        s1 = s;
+    }
+    (s1 * s1 + s2 * s2 - c * s1 * s2).max(0.0).sqrt() / x.len().max(1) as f32
+}
+
+fn assert_seconds(frames: usize, want: f64, tol: f64) {
+    let s = frames as f64 / 44100.0;
+    assert!((s - want).abs() <= tol, "{s} s, expected {want} s");
+}
+
+// ---- which tracks can be exported ----
+
+#[test]
+fn ac_stem_track_with_mix_is_exportable() {
+    let e = Env::new();
+    let i = e.info(401);
+    assert!(i.available && i.reason.is_none());
+    assert_eq!(i.source.as_deref(), Some("backings/backing.flac"));
+    for (target, kind, base) in [
+        (rc5("7"), "export-rc5", e.rc5("rc5")),
+        (TargetReq::Mp3, "export-audio", e.folder("mp3")),
+        (TargetReq::Ogg, "export-audio", e.folder("ogg")),
+    ] {
+        std::fs::write(&e.answers, format!("{kind} {}\n", base.display())).unwrap();
+        assert!(e.prepare(401, target).unwrap().is_some(), "{kind}");
+    }
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_stem_track_without_mix_is_not_exportable() {
+    let e = Env::new();
+    for (n, why) in [
+        (402, "No mix saved yet: save one in the Editor"),
+        (408, "The saved mix (backings/backing.flac) is missing: save it again in the Editor"),
+    ] {
+        let i = e.info(n);
+        assert!(!i.available);
+        assert_eq!(i.reason.as_deref(), Some(why));
+        for t in [rc5("7"), TargetReq::Mp3, TargetReq::Ogg] {
+            assert_eq!(e.prepare(n, t).unwrap_err(), why);
+        }
+    }
+    assert!(e.picker.starts().is_empty(), "no dialog for a track that cannot be exported");
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_track_without_tempo_is_not_exportable() {
+    let e = Env::new();
+    let i = e.info(410);
+    assert!(!i.available && i.count_in.is_none());
+    assert_eq!(i.reason.as_deref(), Some(NO_TEMPO_REASON));
+    let base = e.rc5("rc5");
+    for t in [rc5("7"), TargetReq::Mp3, TargetReq::Ogg] {
+        assert_eq!(e.prepare(410, t).unwrap_err(), NO_TEMPO_REASON);
+    }
+    assert!(e.picker.starts().is_empty());
+    assert!(!base.join("ROLAND/WAVE").exists());
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_plain_backing_is_exportable() {
+    let e = Env::new();
+    let i = e.info(403);
+    assert!(i.available);
+    assert_eq!(i.source.as_deref(), Some("backing.mp3"));
+    let base = e.rc5("rc5");
+    let (_, s) = e.export(403, rc5("3"), &base);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let (rate, l, _) = read_wav(&wav_path(&base, 3));
+    assert_eq!(rate, 44100);
+    assert_seconds(l.len(), 6.0, 0.03);
+    e.repo_unchanged();
+}
+
+// ---- the RC-5 ----
+
+#[test]
+fn ac_rc5_memory_7() {
+    let e = Env::new();
+    let base = e.rc5("rc5");
+    let (plan, s) = e.export(401, rc5("7"), &base);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    assert_eq!(plan.path, wav_path(&base, 7).display().to_string());
+    let (rate, l, r) = read_wav(&wav_path(&base, 7));
+    assert_eq!(rate, 44100);
+    // 4 beats at 120 BPM (2 s) + the 4 s original.
+    assert_eq!(l.len(), 88200 + 176400);
+    let (ol, or) = decode(&e.repo.join("tracks").join(id(401)).join("backings/backing.flac"));
+    assert_eq!(ol.len(), 176400);
+    // The original is unchanged after the lead; the ticks are all inside the lead.
+    assert!(l[88200..] == ol[..] && r[88200..] == or[..], "the original differs");
+    assert!(l[..88200].iter().any(|&v| v != 0.0), "no ticks");
+    assert_eq!(std::fs::read_dir(wav_path(&base, 7).parent().unwrap()).unwrap().count(), 1);
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_rc5_without_roland() {
+    let e = Env::new();
+    let base = e.folder("plain");
+    let before = tree(&base);
+    e.answer(&rc5("7"), &base);
+    let err = e.prepare(401, rc5("7")).unwrap_err();
+    assert_eq!(err, format!("No ROLAND folder in {}: is the RC-5 mounted?", base.display()));
+    assert!(tree(&base) == before && before.is_empty());
+    assert_eq!(e.settings().get().rc5_dir, None, "a refused folder is not remembered");
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_rc5_overwrite_confirmed() {
+    let e = Env::new();
+    let base = e.rc5("rc5");
+    let dir = wav_path(&base, 7).parent().unwrap().to_path_buf();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(wav_path(&base, 7), b"old").unwrap();
+    std::fs::write(dir.join("notes.txt"), b"mine").unwrap();
+    e.answer(&rc5("7"), &base);
+    let plan = e.prepare(401, rc5("7")).unwrap().unwrap();
+    assert!(plan.exists, "the confirmation can name {}", plan.path);
+    // Without the confirmation nothing is replaced.
+    assert!(e.start(&plan.token, false).unwrap_err().contains("already exists"));
+    assert_eq!(std::fs::read(wav_path(&base, 7)).unwrap(), b"old");
+    e.answer(&rc5("7"), &base);
+    let plan = e.prepare(401, rc5("7")).unwrap().unwrap();
+    e.start(&plan.token, true).unwrap();
+    assert_eq!(e.wait().phase, ExportPhase::Done);
+    let (_, l, _) = read_wav(&wav_path(&base, 7));
+    assert_eq!(l.len(), 88200 + 176400);
+    assert_eq!(std::fs::read(dir.join("notes.txt")).unwrap(), b"mine");
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_overwrite_declined() {
+    let e = Env::new();
+    let base = e.rc5("rc5");
+    let dir = wav_path(&base, 7).parent().unwrap().to_path_buf();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(wav_path(&base, 7), b"old").unwrap();
+    let before = tree(&base);
+    e.answer(&rc5("7"), &base);
+    let plan = e.prepare(401, rc5("7")).unwrap().unwrap();
+    assert!(plan.exists);
+    // The user answers No: `start_export` is never called. Nothing changed.
+    assert!(tree(&base) == before);
+    assert!(e.export.snapshot().is_none());
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_rc5_mono_becomes_stereo() {
+    let e = Env::new();
+    let base = e.rc5("rc5");
+    let (_, s) = e.export(404, rc5("2"), &base);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let (rate, l, r) = read_wav(&wav_path(&base, 2));
+    assert_eq!(rate, 44100);
+    assert!(l == r, "both channels carry the same signal");
+    assert!(l.iter().any(|v| v.abs() > 0.1));
+    assert_eq!(l.len(), 88200 + 176400);
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_rc5_bad_memory_numbers() {
+    let e = Env::new();
+    let base = e.rc5("rc5");
+    let before = tree(&base);
+    e.answer(&rc5("7"), &base);
+    for bad in ["0", "100", "abc", "", "7.5", "-3"] {
+        assert_eq!(e.prepare(401, rc5(bad)).unwrap_err(), "Enter a memory number from 1 to 99", "{bad:?}");
+    }
+    assert!(e.picker.starts().is_empty(), "refused before any dialog");
+    assert!(tree(&base) == before);
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_rc5_resamples_48k() {
+    let e = Env::new();
+    let base = e.rc5("rc5");
+    let (_, s) = e.export(405, rc5("5"), &base);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let (rate, l, _) = read_wav(&wav_path(&base, 5));
+    assert_eq!(rate, 44100);
+    // 4 beats at 100 BPM (2.4 s) + the 4 s original.
+    let want = 105840 + 176400;
+    assert!(l.len().abs_diff(want) <= 1, "{} vs {want}", l.len());
+    let tone = &l[105840 + 20000..105840 + 40000];
+    assert!(goertzel(tone, 1000.0) > 5.0 * goertzel(tone, 440.0));
+    e.repo_unchanged();
+}
+
+// ---- MP3 and OGG ----
+
+#[test]
+fn ac_mp3_export() {
+    let e = Env::new();
+    let out = e.folder("out");
+    let (plan, s) = e.export(401, TargetReq::Mp3, &out);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let file = out.join(format!("{BAND} - Stem Mix.mp3"));
+    assert_eq!(plan.path, file.display().to_string());
+    let v = probe(&file);
+    assert_eq!(v["streams"][0]["codec_name"], "mp3");
+    assert_eq!(tag(&v, "title").as_deref(), Some("Stem Mix"));
+    assert_eq!(tag(&v, "artist").as_deref(), Some(BAND));
+    assert_eq!(tag(&v, "album").as_deref(), Some("Export Tests"));
+    assert_eq!(tag(&v, "track").as_deref(), Some("3"));
+    assert_eq!(tag(&v, "date").as_deref(), Some("2021"));
+    assert_seconds(decode(&file).0.len(), 6.0, 0.03);
+    // A track with an odd name and no album.
+    let (_, s) = e.export(409, TargetReq::Mp3, &out);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let odd = out.join("AC_DC_ - Live_ A_B_.mp3");
+    assert!(odd.is_file());
+    assert_eq!(tag(&probe(&odd), "track"), None);
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 2, "no part file is left");
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_ogg_export() {
+    let e = Env::new();
+    let out = e.folder("out");
+    let (_, s) = e.export(401, TargetReq::Ogg, &out);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let file = out.join(format!("{BAND} - Stem Mix.ogg"));
+    let v = probe(&file);
+    assert_eq!(v["streams"][0]["codec_name"], "vorbis");
+    assert_eq!(tag(&v, "title").as_deref(), Some("Stem Mix"));
+    assert_eq!(tag(&v, "artist").as_deref(), Some(BAND));
+    assert_eq!(tag(&v, "album").as_deref(), Some("Export Tests"));
+    assert_seconds(decode(&file).0.len(), 6.0, 0.03);
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 1);
+    e.repo_unchanged();
+}
+
+// ---- cancel and failure ----
+
+#[test]
+fn ac_cancel_leaves_nothing() {
+    let e = Env::with(ExportState::new(Box::new(real_tools)).with_pace(5.0));
+    let base = e.rc5("rc5");
+    let before = tree(&base);
+    e.answer(&rc5("7"), &base);
+    let plan = e.prepare(401, rc5("7")).unwrap().unwrap();
+    let snap = e.start(&plan.token, false).unwrap();
+    assert_eq!(snap.phase, ExportPhase::Writing);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(wav_path(&base, 7).parent().unwrap().exists(), "the export is under way");
+    assert!(e.export.cancel(&snap.job).is_some());
+    let s = e.wait();
+    assert_eq!(s.phase, ExportPhase::Cancelled);
+    assert!(tree(&base) == before, "nothing is left in the destination");
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_unwritable_destination() {
+    let e = Env::new();
+    let root = std::fs::read_to_string("/proc/self/status")
+        .unwrap()
+        .lines()
+        .any(|l| l.starts_with("Uid:") && l.split_whitespace().nth(1) == Some("0"));
+    if root {
+        eprintln!("skipped: running as root");
+        return;
+    }
+    let out = e.folder("ro");
+    std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o555)).unwrap();
+    e.answer(&TargetReq::Mp3, &out);
+    let plan = e.prepare(401, TargetReq::Mp3).unwrap().unwrap();
+    let err = e.start(&plan.token, false).unwrap_err();
+    std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(err.starts_with("Cannot write to ") && err.contains("Permission denied"), "{err}");
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
+    e.repo_unchanged();
+}
+
+// ---- remembered folders and memory ----
+
+#[test]
+fn ac_remembered_after_restart() {
+    let e = Env::new();
+    let rc5_a = e.rc5("rc5-a");
+    let out = e.folder("out");
+    let (_, s) = e.export(401, rc5("7"), &rc5_a);
+    assert_eq!(s.phase, ExportPhase::Done);
+    let (_, s) = e.export(403, TargetReq::Mp3, &out);
+    assert_eq!(s.phase, ExportPhase::Done);
+
+    // "Restart": a store opened again from the same file, new dialog and state objects.
+    let settings = e.settings();
+    assert_eq!(settings.get().rc5_dir, Some(rc5_a.clone()));
+    assert_eq!(settings.get().export_dir, Some(out.clone()));
+    assert_eq!(settings.get().rc5_memory, Some(7));
+    assert_eq!(do_export_info(&e.st, &settings, &FileTempoStore, &id(401)).unwrap().memory, 8);
+
+    let answers = e.home.join("answers2");
+    std::fs::write(&answers, format!("export-rc5 {}\nexport-audio {}\n", rc5_a.display(), out.display())).unwrap();
+    let picker = Arc::new(ScriptedPicker::new(answers));
+    let st = RepoState::new(e.repo.clone(), Box::new(picker.clone()));
+    let export = ExportState::new(Box::new(real_tools));
+    let prep = |n, t| {
+        do_prepare_export(&st, &settings, &export, &FileTempoStore, Some(e.home.clone()), &id(n), t).unwrap().unwrap()
+    };
+    prep(401, rc5("8"));
+    prep(403, TargetReq::Ogg);
+    use calliope_gui::picker::DialogKind;
+    assert_eq!(
+        picker.starts(),
+        [(DialogKind::ExportRc5, Some(rc5_a.clone())), (DialogKind::ExportAudio, Some(out.clone()))]
+    );
+
+    // 99 stays 99.
+    settings.set_rc5_memory(Some(99)).unwrap();
+    assert_eq!(do_export_info(&e.st, &e.settings(), &FileTempoStore, &id(401)).unwrap().memory, 99);
+    e.repo_unchanged();
+}
+
+// ---- the count-in ----
+
+#[test]
+fn ac_count_in_before_the_first_beat() {
+    // (track, file, first beat frame in the original, lead frames, original length in frames)
+    for (n, first, lead) in [(406u32, 22050usize, 88200usize), (407, 132300, 105840)] {
+        let e = Env::new();
+        let wav_base = e.rc5("rc5");
+        let out = e.folder("out");
+        let (_, s) = e.export(n, rc5("7"), &wav_base);
+        assert_eq!(s.phase, ExportPhase::Done, "{n} {s:?}");
+        let (_, wl, wr) = read_wav(&wav_path(&wav_base, 7));
+        let (_, s) = e.export(n, TargetReq::Mp3, &out);
+        assert_eq!(s.phase, ExportPhase::Done, "{n} {s:?}");
+        let mp3 = std::fs::read_dir(&out).unwrap().next().unwrap().unwrap().path();
+        let (ml, _) = decode(&mp3);
+
+        let original = e.repo.join("tracks").join(id(n));
+        let src = if n == 406 { original.join("backings/backing.flac") } else { original.join("intro.flac") };
+        let (ol, or) = decode(&src);
+        // Length: the original + 4 beats.
+        assert_eq!(wl.len(), lead + ol.len(), "{n}");
+        assert_seconds(ml.len(), (lead + ol.len()) as f64 / 44100.0, 0.03);
+        // The ticks sit at first + {0, 1, 2, 2.5, 3, 3.5} beats; the count ends on the first beat.
+        let beat = lead / 4;
+        let ticks: Vec<usize> =
+            [0.0, 1.0, 2.0, 2.5, 3.0, 3.5].iter().map(|o| first + (o * beat as f64).round() as usize).collect();
+        assert_eq!(first + 4 * beat, lead + first, "the count ends on the first beat");
+        // WAV: silence + exactly six ticks until the original starts; the original after the lead
+        // is bit-exact except under a tick that overlaps it.
+        for (k, v) in wl[..lead].iter().enumerate() {
+            if !ticks.iter().any(|&t| k >= t && k < t + 1400) {
+                assert_eq!(*v, 0.0, "{n}: frame {k} should be silent");
+            }
+        }
+        for &t in &ticks {
+            assert!(goertzel(&wl[t..t + 1300], 1500.0) > 0.05, "{n}: no tick at {t}");
+        }
+        let untouched = |k: usize| !ticks.iter().any(|&t| k >= t && k < t + 1400);
+        for k in (lead..wl.len()).step_by(7) {
+            if untouched(k) {
+                assert_eq!(wl[k], ol[k - lead], "{n}: frame {k}");
+                assert_eq!(wr[k], or[k - lead], "{n}: frame {k}");
+            }
+        }
+        // MP3: the same ticks in the lossy copy (only those in the digital silence are checked).
+        for &t in ticks.iter().filter(|&&t| t + 3000 < lead.max(first)) {
+            let quiet = &ml[t + 3000..t + 4300];
+            assert!(goertzel(&ml[t + 50..t + 1350], 1500.0) > 10.0 * goertzel(quiet, 1500.0).max(1e-6), "{n}: mp3 tick at {t}");
+        }
+        e.repo_unchanged();
+    }
+}

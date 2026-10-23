@@ -1,6 +1,8 @@
 //! Tauri shell. The only module that touches Tauri/GTK.
 
 use crate::{
+    export_ipc,
+    export_job::ExportState,
     import_job::ImportState,
     ipc::{self, RepoState},
     picker::{Picker, TauriPicker},
@@ -26,6 +28,16 @@ fn choose_picker(app: &tauri::AppHandle) -> Box<dyn Picker> {
     Box::new(TauriPicker::new(app.clone()))
 }
 
+/// The export job; its pace (tests only) comes from `CALLIOPE_E2E_EXPORT_PACE` in `e2e-hooks` builds.
+fn new_export_state(discover: impl Fn() -> Tools + Send + Sync + 'static) -> ExportState {
+    let state = ExportState::new(Box::new(discover));
+    #[cfg(feature = "e2e-hooks")]
+    if let Some(f) = std::env::var("CALLIOPE_E2E_EXPORT_PACE").ok().and_then(|v| v.parse::<f64>().ok()).filter(|f| *f > 0.0) {
+        return state.with_pace(f);
+    }
+    state
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -43,6 +55,7 @@ pub fn run() {
             let discover = || Tools::discover(&std::env::var_os("PATH").unwrap_or_default());
             app.manage(ImportState::new(discover(), repo.repo_lock(), ipc::IMPORT_POLL).with_rediscovery(discover));
             app.manage(repo);
+            app.manage(new_export_state(discover));
             let backend = crate::audio_out::select_backend();
             // One backend for both engines: only one of them sounds at a time.
             let editor = ipc::EditorState::new(backend.clone());
@@ -127,7 +140,13 @@ pub fn run() {
             player_ipc::player_skip,
             player_ipc::player_leave,
             player_ipc::player_tempo,
-            player_ipc::player_loop
+            player_ipc::player_loop,
+            export_ipc::export_info,
+            export_ipc::prepare_export,
+            export_ipc::start_export,
+            export_ipc::cancel_export,
+            export_ipc::get_export,
+            export_ipc::watch_export
         ])
         .build(tauri::generate_context!())
         .expect("error while building calliope-gui")
@@ -139,6 +158,11 @@ pub fn run() {
                 if let Some(editor) = app.try_state::<ipc::EditorState>() {
                     editor.shutdown(ipc::SHUTDOWN_WAIT);
                     editor.with(|m| m.shutdown_detect(ipc::SHUTDOWN_WAIT));
+                }
+                if let Some(export) = app.try_state::<ExportState>() {
+                    if !export.shutdown(ipc::SHUTDOWN_WAIT) {
+                        eprintln!("calliope: export did not stop within the exit grace period");
+                    }
                 }
                 // Stop a running import (child processes, edge-AI job) before the process ends.
                 if let Some(import) = app.try_state::<ImportState>() {

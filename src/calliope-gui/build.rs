@@ -69,6 +69,12 @@ const COMMANDS: &[&str] = &[
     "player_leave",
     "player_tempo",
     "player_loop",
+    "export_info",
+    "prepare_export",
+    "start_export",
+    "cancel_export",
+    "get_export",
+    "watch_export",
 ];
 
 fn git(args: &[&str]) -> Option<String> {

@@ -52,6 +52,12 @@
     "allow-player-skip",
     "allow-player-leave",
     "allow-player-tempo",
-    "allow-player-loop"
+    "allow-player-loop",
+    "allow-export-info",
+    "allow-prepare-export",
+    "allow-start-export",
+    "allow-cancel-export",
+    "allow-get-export",
+    "allow-watch-export"
   ]
 }
