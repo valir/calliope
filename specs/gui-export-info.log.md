@@ -13,3 +13,5 @@ task 9 | library track pane rows | implementer | done
 task 10 | GUI end-to-end tests and visual review | implementer | done (me: library delete test makes a real change on disk)
 task 11 | docs | implementer | done
 gui suite | me | all 9 binaries pass
+tester | tester | all criteria PASS; 4 tests added; no defects
+reviewer | reviewer | APPROVED (minors: loadInfo after done for another track, fragile OGG button y)

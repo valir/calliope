@@ -1680,3 +1680,130 @@ fn ac_info_older_builds_keep_the_info() {
     assert_eq!(back["exports"], orig["exports"]);
     assert_eq!(back["title"], "Renamed");
 }
+
+// ---- QA additions: the cleared holder, failures with a holder, start folders, MP3 info error ----
+
+#[test]
+fn ac_info_cleared_holder_keeps_revision_fields_and_survives_a_stale_save() {
+    let mut e = Env::new();
+    write_exports(
+        &mut e,
+        401,
+        serde_json::json!({
+            "rc5": {"memory": 7, "at": STALE},
+            "mp3": {"path": "/music/a.mp3", "at": STALE}
+        }),
+    );
+    let repo = Repository::new(&e.repo);
+    let a = repo.load_record(&id(401)).unwrap();
+    let base = e.rc5("rc5");
+    e.export(403, rc5("7"), &base);
+    let now = repo.load_record(&id(401)).unwrap();
+    assert!(now.exports.rc5.is_none());
+    assert_eq!(now.exports.mp3, a.exports.mp3);
+    assert_eq!(
+        now.revision, a.revision,
+        "no conflict for an edit open on A"
+    );
+    let j: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(track_json(&e, 401)).unwrap()).unwrap();
+    assert_eq!(j["schema_version"], 2);
+    assert_eq!(j["modified"], "2026-10-23T10:00:00Z");
+    // A save from the stale draft goes through and A stays cleared.
+    let edits = calliope_gui::track_meta::TrackEdits {
+        band: a.band.clone(),
+        album: a.album.clone(),
+        title: "Edited".into(),
+        composers: a.composers.clone(),
+        year: a.year,
+        source_url: None,
+        copyright: None,
+    };
+    let saved = repo
+        .save_track(
+            SaveTrackRequest {
+                id: id(401),
+                revision: a.revision.clone(),
+                edits,
+                tablatures: vec![],
+                position: None,
+                album_position: None,
+                group: vec![],
+            },
+            &|_| None,
+        )
+        .unwrap();
+    assert_eq!(saved.track.title, "Edited");
+    assert!(saved.track.exports.rc5.is_none());
+    assert_eq!(saved.track.exports.mp3, a.exports.mp3);
+}
+
+#[test]
+fn ac_info_cancel_and_failure_leave_the_other_holder_alone() {
+    let hold = serde_json::json!({"rc5": {"memory": 9, "at": STALE}});
+    let mut e = Env::with(ExportState::new(Box::new(real_tools)).with_pace(5.0));
+    write_exports(&mut e, 403, hold.clone());
+    let base = e.rc5("rc5");
+    e.answer(&rc5("9"), &base);
+    let plan = e.prepare(401, rc5("9")).unwrap().unwrap();
+    let snap = e.start(&plan.token, false).unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    e.export.cancel(&snap.job);
+    assert_eq!(e.wait().phase, ExportPhase::Cancelled);
+    e.repo_unchanged();
+    assert_eq!(exports_of(&e, 403).rc5.unwrap().memory, 9);
+    // Declined overwrite.
+    let mut e3 = Env::new();
+    write_exports(&mut e3, 403, hold);
+    let b3 = e3.rc5("rc5");
+    std::fs::create_dir_all(wav_path(&b3, 9).parent().unwrap()).unwrap();
+    std::fs::write(wav_path(&b3, 9), b"old").unwrap();
+    e3.answer(&rc5("9"), &b3);
+    assert!(e3.prepare(401, rc5("9")).unwrap().unwrap().exists);
+    e3.repo_unchanged();
+}
+
+#[test]
+fn ac_info_ogg_dialog_start_and_fallback_to_the_remembered_folder() {
+    let e = Env::new();
+    let d = e.folder("oggs");
+    let other = e.folder("other");
+    e.export(401, TargetReq::Ogg, &d);
+    e.export(403, TargetReq::Mp3, &other); // remembered export folder: other
+    let start_of = |n: u32, t: TargetReq, answer: &Path| {
+        e.answer(&t, answer);
+        e.prepare(n, t).unwrap().unwrap();
+        e.picker.starts().last().unwrap().1.clone()
+    };
+    assert_eq!(start_of(401, TargetReq::Ogg, &other), Some(d.clone()));
+    // The MP3 kind of 401 has no entry: not the OGG folder.
+    assert_eq!(start_of(401, TargetReq::Mp3, &other), Some(other.clone()));
+    // The recorded folder is gone but the remembered one exists.
+    std::fs::remove_dir_all(&d).unwrap();
+    assert_eq!(start_of(401, TargetReq::Ogg, &other), Some(other.clone()));
+}
+
+#[test]
+fn ac_info_mp3_not_saved_is_reported_and_the_file_is_written() {
+    if is_root() {
+        eprintln!("skipped: running as root");
+        return;
+    }
+    let e = Env::new();
+    let d = e.folder("music");
+    e.answer(&TargetReq::Mp3, &d);
+    let plan = e.prepare(401, TargetReq::Mp3).unwrap().unwrap();
+    let dir = e.repo.join("tracks").join(id(401));
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    e.start(&plan.token, false).unwrap();
+    let s = e.wait();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    assert!(d.join(format!("{BAND} - Stem Mix.mp3")).is_file());
+    assert!(s
+        .info_error
+        .unwrap()
+        .starts_with("The export info wasn't saved: "));
+    assert!(exports_of(&e, 401).mp3.is_none());
+    e.repo_unchanged_except_exports();
+}
