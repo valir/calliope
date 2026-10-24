@@ -10,23 +10,26 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
+use crate::editor::{
+    self, EditorEvent, EditorManager, EditorSnapshot, EventSink, LaneState, OpenSpec,
+    TransportState,
+};
 use crate::import_job::{FileKind, ImportEvent, ImportState, JobSnapshot, RepoLock, Sink, UrlPrep};
 use crate::picker::{
     DialogKind, FileReq, FolderReq, PickRegistry, Picker, SaveReq, AUDIO_EXTENSIONS,
     TABLATURE_EXTENSIONS, VIDEO_EXTENSIONS,
 };
-use crate::editor::{self, EditorEvent, EditorManager, EditorSnapshot, EventSink, LaneState, OpenSpec, TransportState};
-use crate::tools::{Tools, ToolState, ToolStatus};
-use crate::track_meta::TrackEdits;
-use calliope_lib::stems_client::{ClientError, StemsClient};
 use crate::repository::{
-    self, DeleteResult, Library, RepoStatus, Repository, SaveResult, SaveTrackRequest, TrackPatch, TrackRef,
-    UpdateResult, MAX_BATCH,
+    self, DeleteResult, Library, RepoStatus, Repository, SaveResult, SaveTrackRequest, TrackPatch,
+    TrackRef, UpdateResult, MAX_BATCH,
 };
 use crate::settings::{self, Settings, SettingsStore, Theme};
-use crate::tempo_store::TempoStore;
 #[cfg(test)]
 use crate::tempo_store::FileTempoStore;
+use crate::tempo_store::TempoStore;
+use crate::tools::{ToolState, ToolStatus, Tools};
+use crate::track_meta::TrackEdits;
+use calliope_lib::stems_client::{ClientError, StemsClient};
 
 /// Managed app state: the current repository root (the lock serialises every repository
 /// operation), the pick-token registry and the dialog implementation.
@@ -38,7 +41,11 @@ pub struct RepoState {
 
 impl RepoState {
     pub fn new(root: PathBuf, picker: Box<dyn Picker>) -> Self {
-        Self { root: Arc::new(Mutex::new(root)), registry: PickRegistry::new(), picker }
+        Self {
+            root: Arc::new(Mutex::new(root)),
+            registry: PickRegistry::new(),
+            picker,
+        }
     }
 
     /// The repository lock for the import jobs: the same mutex that serialises every other
@@ -128,7 +135,11 @@ pub fn do_choose_root(st: &RepoState, home: Option<PathBuf>) -> Option<PickedRoo
     let status = repository::status(&path);
     let root = path_str(&path);
     let token = st.registry.insert(DialogKind::RepositoryRoot, path);
-    Some(PickedRoot { token, root, status })
+    Some(PickedRoot {
+        token,
+        root,
+        status,
+    })
 }
 
 pub fn do_set_root(
@@ -155,8 +166,14 @@ pub fn do_set_root(
     }
     Repository::new(&path).ensure_layout()?;
     // Store `None` for the default location so that it follows the data directory.
-    let setting = if path == default_root { None } else { Some(path.clone()) };
-    store.set_repository_root(setting).map_err(|e| format!("could not save settings: {e}"))?;
+    let setting = if path == default_root {
+        None
+    } else {
+        Some(path.clone())
+    };
+    store
+        .set_repository_root(setting)
+        .map_err(|e| format!("could not save settings: {e}"))?;
     st.registry.take(DialogKind::RepositoryRoot, token);
     *root = path;
     Ok(info(&root, default_root))
@@ -172,7 +189,9 @@ pub fn do_reset_root(
         return Err(IMPORT_RUNNING_MESSAGE.into());
     }
     let mut root = st.lock();
-    store.set_repository_root(None).map_err(|e| format!("could not save settings: {e}"))?;
+    store
+        .set_repository_root(None)
+        .map_err(|e| format!("could not save settings: {e}"))?;
     *root = default_root.to_path_buf();
     Ok(info(&root, default_root))
 }
@@ -370,22 +389,35 @@ fn tool_info(t: ToolStatus) -> ToolInfo {
 
 pub fn do_check_tools(tools: &Tools) -> ToolsInfo {
     let s = tools.check();
-    ToolsInfo { yt_dlp: tool_info(s.yt_dlp), ffmpeg: tool_info(s.ffmpeg), ffprobe: tool_info(s.ffprobe) }
+    ToolsInfo {
+        yt_dlp: tool_info(s.yt_dlp),
+        ffmpeg: tool_info(s.ffmpeg),
+        ffprobe: tool_info(s.ffprobe),
+    }
 }
 
 /// Asks the configured server for its health (blocking, up to the client's connect timeout).
 pub fn do_check_edge_ai(url: Option<&str>) -> EdgeAiStatus {
-    let mk = |state, message: String, models| EdgeAiStatus { state, message, models };
+    let mk = |state, message: String, models| EdgeAiStatus {
+        state,
+        message,
+        models,
+    };
     let Some(url) = url.map(str::trim).filter(|u| !u.is_empty()) else {
         return mk(EdgeAiState::NotConfigured, "Not configured".into(), vec![]);
     };
     match StemsClient::new(url).health() {
         Ok(h) => mk(
             EdgeAiState::Connected,
-            format!("Connected (calliope-stems {}, model {})", h.version, h.default_model),
+            format!(
+                "Connected (calliope-stems {}, model {})",
+                h.version, h.default_model
+            ),
             h.models,
         ),
-        Err(e @ ClientError::Incompatible(_)) => mk(EdgeAiState::Incompatible, e.to_string(), vec![]),
+        Err(e @ ClientError::Incompatible(_)) => {
+            mk(EdgeAiState::Incompatible, e.to_string(), vec![])
+        }
         Err(e) => mk(EdgeAiState::Unreachable, e.to_string(), vec![]),
     }
 }
@@ -395,7 +427,9 @@ pub fn do_set_edge_ai_url(store: &SettingsStore, url: Option<&str>) -> Result<Se
 }
 
 pub fn do_set_keep_original(store: &SettingsStore, keep: bool) -> Result<Settings, String> {
-    store.set_keep_original(keep).map_err(|e| format!("could not save settings: {e}"))
+    store
+        .set_keep_original(keep)
+        .map_err(|e| format!("could not save settings: {e}"))
 }
 
 pub fn do_prepare_url(st: &RepoState, import: &ImportState, url: &str) -> UrlPrep {
@@ -438,7 +472,11 @@ pub fn do_pick_import_file(
     typed: &str,
     home: Option<PathBuf>,
 ) -> Result<Option<PickedFile>, String> {
-    let start = crate::local_source::browse_start(typed, store.get().last_import_dir.as_deref(), home.as_deref());
+    let start = crate::local_source::browse_start(
+        typed,
+        store.get().last_import_dir.as_deref(),
+        home.as_deref(),
+    );
     if start.forget_last {
         eprintln!("calliope: import last-location forgotten");
         if let Err(e) = store.set_last_import_dir(None) {
@@ -447,18 +485,39 @@ pub fn do_pick_import_file(
     }
     let start_dir = start.dir;
     let (dialog, title, filter, exts) = match kind {
-        PickKind::Audio => (DialogKind::ImportAudio, "Choose an audio file", "Audio files", AUDIO_EXTENSIONS),
-        PickKind::Video => (DialogKind::ImportVideo, "Choose a video file", "Video files", VIDEO_EXTENSIONS),
-        PickKind::Directory => (DialogKind::ImportDirectory, "Choose a folder of songs", "", &[][..]),
+        PickKind::Audio => (
+            DialogKind::ImportAudio,
+            "Choose an audio file",
+            "Audio files",
+            AUDIO_EXTENSIONS,
+        ),
+        PickKind::Video => (
+            DialogKind::ImportVideo,
+            "Choose a video file",
+            "Video files",
+            VIDEO_EXTENSIONS,
+        ),
+        PickKind::Directory => (
+            DialogKind::ImportDirectory,
+            "Choose a folder of songs",
+            "",
+            &[][..],
+        ),
     };
     eprintln!(
         "calliope: dialog start kind={} from={} dir={}",
         dialog.as_str(),
         start.from.as_str(),
-        start_dir.as_ref().map_or("none".to_string(), |d| d.display().to_string())
+        start_dir
+            .as_ref()
+            .map_or("none".to_string(), |d| d.display().to_string())
     );
     let picked = if kind == PickKind::Directory {
-        st.picker.pick_folder(&FolderReq { kind: dialog, title: title.into(), start_dir })
+        st.picker.pick_folder(&FolderReq {
+            kind: dialog,
+            title: title.into(),
+            start_dir,
+        })
     } else {
         st.picker.pick_file(&FileReq {
             kind: dialog,
@@ -471,11 +530,19 @@ pub fn do_pick_import_file(
     let Some(path) = picked else {
         return Ok(None);
     };
-    let what = if kind == PickKind::Directory { "folder" } else { "file" };
+    let what = if kind == PickKind::Directory {
+        "folder"
+    } else {
+        "file"
+    };
     let not_utf8 = format!(
         "The chosen {what}'s path has characters Calliope cannot show; rename the {what} or its folder"
     );
-    let name = path.file_name().and_then(|n| n.to_str()).ok_or(not_utf8.as_str())?.to_string();
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or(not_utf8.as_str())?
+        .to_string();
     let path = path.to_str().ok_or(not_utf8.as_str())?.to_string();
     Ok(Some(PickedFile { path, name }))
 }
@@ -503,13 +570,24 @@ pub fn do_import_path(
         return Err(crate::import_job::BUSY_MESSAGE.into());
     }
     let (local, file_kind, k) = match kind {
-        ImportKind::Audio => (crate::local_source::LocalKind::Audio, FileKind::Audio, "audio"),
-        ImportKind::Video => (crate::local_source::LocalKind::Video, FileKind::Video, "video"),
+        ImportKind::Audio => (
+            crate::local_source::LocalKind::Audio,
+            FileKind::Audio,
+            "audio",
+        ),
+        ImportKind::Video => (
+            crate::local_source::LocalKind::Video,
+            FileKind::Video,
+            "video",
+        ),
     };
     let abs = match crate::local_source::resolve(path, local, home.as_deref()) {
         Ok(p) => p,
         Err(p) => {
-            eprintln!("calliope: import path kind={k} result=rejected reason={}", p.reason);
+            eprintln!(
+                "calliope: import path kind={k} result=rejected reason={}",
+                p.reason
+            );
             return Err(p.message);
         }
     };
@@ -534,7 +612,9 @@ pub fn do_import_directory(
     if import.is_active() {
         return Err(crate::import_job::BUSY_MESSAGE.into());
     }
-    let reject = |reason: &str| eprintln!("calliope: import path kind=directory result=rejected reason={reason}");
+    let reject = |reason: &str| {
+        eprintln!("calliope: import path kind=directory result=rejected reason={reason}")
+    };
     let dir = crate::local_source::resolve_dir(path, home.as_deref()).map_err(|p| {
         reject(p.reason);
         p.message
@@ -549,7 +629,14 @@ pub fn do_import_directory(
     }
     let s = store.get();
     let n = files.len();
-    let snap = import.start_batch(&st.current_root(), &dir, files, s.edge_ai_url.as_deref(), s.keep_original, sink)?;
+    let snap = import.start_batch(
+        &st.current_root(),
+        &dir,
+        files,
+        s.edge_ai_url.as_deref(),
+        s.keep_original,
+        sink,
+    )?;
     eprintln!("calliope: import path kind=directory result=accepted files={n}");
     remember_location(store, &dir);
     Ok(snap)
@@ -571,7 +658,12 @@ pub fn startup_health_check(url: Option<String>) {
         return;
     }
     let st = do_check_edge_ai(url.as_deref());
-    eprintln!("calliope: edge-ai state={}", serde_json::to_string(&st.state).unwrap_or_default().trim_matches('"'));
+    eprintln!(
+        "calliope: edge-ai state={}",
+        serde_json::to_string(&st.state)
+            .unwrap_or_default()
+            .trim_matches('"')
+    );
 }
 
 fn channel_sink(events: tauri::ipc::Channel<ImportEvent>) -> Sink {
@@ -607,7 +699,12 @@ impl EditorState {
         // Closing a real device can block: handles are dropped after the lock is released.
         mgr.defer_drops();
         let live_save = mgr.live_save();
-        Self { mgr: Mutex::new(mgr), slot, live_save, before_play: Mutex::new(None) }
+        Self {
+            mgr: Mutex::new(mgr),
+            slot,
+            live_save,
+            before_play: Mutex::new(None),
+        }
     }
 
     /// Runs `f` on the manager. Output handles it retired are dropped after the lock is
@@ -633,7 +730,11 @@ impl EditorState {
     }
 
     fn run_before_play(&self) {
-        let hook = self.before_play.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let hook = self
+            .before_play
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         if let Some(h) = hook {
             h();
         }
@@ -681,7 +782,11 @@ impl EditorState {
             }
             None => {
                 eprintln!("calliope: editor busy at exit; cancelling the save without the lock");
-                let shared = self.live_save.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let shared = self
+                    .live_save
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
                 if let Some(sh) = shared {
                     sh.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
                     while !sh.is_finished() && std::time::Instant::now() < end {
@@ -754,7 +859,10 @@ pub fn do_watch_editor(st: &EditorState, sink: EventSink) -> Option<EditorSnapsh
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum TempoEdit {
     /// Absolute offset in steps from the detected position of change `index`.
-    Move { index: usize, steps: i64 },
+    Move {
+        index: usize,
+        steps: i64,
+    },
     Reload,
 }
 
@@ -766,7 +874,11 @@ pub fn do_editor_play(st: &EditorState, id: &str) -> Result<TransportState, Stri
     st.with(|m| m.play_with(id, opened))
 }
 
-pub fn do_editor_lane_play(st: &EditorState, id: &str, name: &str) -> Result<TransportState, String> {
+pub fn do_editor_lane_play(
+    st: &EditorState,
+    id: &str,
+    name: &str,
+) -> Result<TransportState, String> {
     let req = st.with(|m| m.lane_play_request(id, name))?;
     st.run_before_play();
     let opened = req.map(editor::OutputRequest::open).transpose()?;
@@ -783,7 +895,12 @@ pub fn do_editor_nudge(st: &EditorState, id: &str, delta: i64) -> Result<Transpo
 
 /// Starts the beat detection of the checked stems (plan 2.11). `url` is the edge-AI server
 /// from the settings (empty = not set).
-pub fn do_editor_detect(st: &EditorState, store: Arc<dyn TempoStore>, url: String, id: &str) -> Result<EditorSnapshot, String> {
+pub fn do_editor_detect(
+    st: &EditorState,
+    store: Arc<dyn TempoStore>,
+    url: String,
+    id: &str,
+) -> Result<EditorSnapshot, String> {
     let params = crate::beat_detect::DetectParams {
         url,
         store,
@@ -794,21 +911,33 @@ pub fn do_editor_detect(st: &EditorState, store: Arc<dyn TempoStore>, url: Strin
 }
 
 /// Edits the tempo map of the open track through the store and returns the new snapshot.
-pub fn do_editor_tempo(st: &EditorState, store: &dyn TempoStore, id: &str, action: TempoEdit) -> Result<EditorSnapshot, String> {
+pub fn do_editor_tempo(
+    st: &EditorState,
+    store: &dyn TempoStore,
+    id: &str,
+    action: TempoEdit,
+) -> Result<EditorSnapshot, String> {
     let dir = st.with(|m| m.dir_of(id))?;
     let tempo = match action {
         TempoEdit::Move { index, steps } => {
             if st.with(|m| m.detect_running(id)) {
                 return Err("Beat detection is running; wait for it to finish".into());
             }
-            store.replace(id, &dir, &|old| old.set_change_offset(index, steps).map(|(map, _applied)| map))?
+            store.replace(id, &dir, &|old| {
+                old.set_change_offset(index, steps)
+                    .map(|(map, _applied)| map)
+            })?
         }
         TempoEdit::Reload => store.load(id, &dir)?,
     };
     st.with(|m| m.set_tempo(id, tempo))
 }
 
-pub fn do_save_backing(st: &EditorState, repo: &RepoState, id: &str) -> Result<EditorSnapshot, String> {
+pub fn do_save_backing(
+    st: &EditorState,
+    repo: &RepoState,
+    id: &str,
+) -> Result<EditorSnapshot, String> {
     let r = Repository::new(repo.current_root());
     st.with(|m| m.start_save(id, r, repo.repo_lock()))
 }
@@ -914,12 +1043,18 @@ pub async fn delete_track(
 }
 
 #[tauri::command]
-pub async fn update_tracks(app: tauri::AppHandle, patches: Vec<TrackPatch>) -> Result<UpdateResult, String> {
+pub async fn update_tracks(
+    app: tauri::AppHandle,
+    patches: Vec<TrackPatch>,
+) -> Result<UpdateResult, String> {
     blocking(move || do_update_tracks(&app.state::<RepoState>(), patches)).await
 }
 
 #[tauri::command]
-pub async fn delete_tracks(app: tauri::AppHandle, items: Vec<TrackRef>) -> Result<DeleteResult, String> {
+pub async fn delete_tracks(
+    app: tauri::AppHandle,
+    items: Vec<TrackRef>,
+) -> Result<DeleteResult, String> {
     blocking(move || do_delete_tracks(&app.state::<RepoState>(), items)).await
 }
 
@@ -938,7 +1073,10 @@ pub async fn export_tablature(
 }
 
 #[tauri::command]
-pub async fn set_edge_ai_url(app: tauri::AppHandle, url: Option<String>) -> Result<Settings, String> {
+pub async fn set_edge_ai_url(
+    app: tauri::AppHandle,
+    url: Option<String>,
+) -> Result<Settings, String> {
     blocking(move || do_set_edge_ai_url(&app.state::<SettingsStore>(), url.as_deref())).await
 }
 
@@ -949,8 +1087,12 @@ pub async fn set_keep_original(app: tauri::AppHandle, keep: bool) -> Result<Sett
 
 #[tauri::command]
 pub async fn check_edge_ai(app: tauri::AppHandle) -> Result<EdgeAiStatus, String> {
-    blocking(move || Ok(do_check_edge_ai(app.state::<SettingsStore>().get().edge_ai_url.as_deref())))
-        .await
+    blocking(move || {
+        Ok(do_check_edge_ai(
+            app.state::<SettingsStore>().get().edge_ai_url.as_deref(),
+        ))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -964,8 +1106,14 @@ pub async fn check_tools(app: tauri::AppHandle) -> Result<ToolsInfo, String> {
 
 #[tauri::command]
 pub async fn prepare_url_import(app: tauri::AppHandle, url: String) -> Result<UrlPrep, String> {
-    blocking(move || Ok(do_prepare_url(&app.state::<RepoState>(), &app.state::<ImportState>(), &url)))
-        .await
+    blocking(move || {
+        Ok(do_prepare_url(
+            &app.state::<RepoState>(),
+            &app.state::<ImportState>(),
+            &url,
+        ))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1052,7 +1200,12 @@ pub async fn start_stem_extraction(
     edits: TrackEdits,
 ) -> Result<JobSnapshot, String> {
     blocking(move || {
-        do_start_extraction(&app.state::<ImportState>(), &app.state::<SettingsStore>(), &job, edits)
+        do_start_extraction(
+            &app.state::<ImportState>(),
+            &app.state::<SettingsStore>(),
+            &job,
+            edits,
+        )
     })
     .await
 }
@@ -1093,7 +1246,9 @@ pub async fn open_editor(
             &app.state::<EditorState>(),
             &app.state::<RepoState>(),
             &**app.state::<Arc<dyn TempoStore>>(),
-            &id, event_sink(events))
+            &id,
+            event_sink(events),
+        )
     })
     .await
 }
@@ -1117,7 +1272,13 @@ pub async fn watch_editor(
     app: tauri::AppHandle,
     events: tauri::ipc::Channel<EditorEvent>,
 ) -> Result<Option<EditorSnapshot>, String> {
-    blocking(move || Ok(do_watch_editor(&app.state::<EditorState>(), event_sink(events)))).await
+    blocking(move || {
+        Ok(do_watch_editor(
+            &app.state::<EditorState>(),
+            event_sink(events),
+        ))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1126,7 +1287,11 @@ pub async fn editor_play(app: tauri::AppHandle, id: String) -> Result<TransportS
 }
 
 #[tauri::command]
-pub async fn editor_lane_play(app: tauri::AppHandle, id: String, name: String) -> Result<TransportState, String> {
+pub async fn editor_lane_play(
+    app: tauri::AppHandle,
+    id: String,
+    name: String,
+) -> Result<TransportState, String> {
     blocking(move || do_editor_lane_play(&app.state::<EditorState>(), &id, &name)).await
 }
 
@@ -1146,12 +1311,20 @@ pub async fn editor_stop(app: tauri::AppHandle, id: String) -> Result<TransportS
 }
 
 #[tauri::command]
-pub async fn editor_seek(app: tauri::AppHandle, id: String, position: u64) -> Result<TransportState, String> {
+pub async fn editor_seek(
+    app: tauri::AppHandle,
+    id: String,
+    position: u64,
+) -> Result<TransportState, String> {
     blocking(move || do_editor_seek(&app.state::<EditorState>(), &id, position)).await
 }
 
 #[tauri::command]
-pub async fn editor_nudge(app: tauri::AppHandle, id: String, delta: i64) -> Result<TransportState, String> {
+pub async fn editor_nudge(
+    app: tauri::AppHandle,
+    id: String,
+    delta: i64,
+) -> Result<TransportState, String> {
     blocking(move || do_editor_nudge(&app.state::<EditorState>(), &id, delta)).await
 }
 
@@ -1163,14 +1336,27 @@ pub async fn editor_set_stem(
     gain: Option<f32>,
     unmuted: bool,
 ) -> Result<LaneState, String> {
-    blocking(move || app.state::<EditorState>().with(|m| m.set_stem(&id, &name, gain, unmuted, std::time::Instant::now()))).await
+    blocking(move || {
+        app.state::<EditorState>()
+            .with(|m| m.set_stem(&id, &name, gain, unmuted, std::time::Instant::now()))
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn editor_detect(app: tauri::AppHandle, id: String) -> Result<EditorSnapshot, String> {
     blocking(move || {
-        let url = app.state::<SettingsStore>().get().edge_ai_url.unwrap_or_default();
-        do_editor_detect(&app.state::<EditorState>(), app.state::<Arc<dyn TempoStore>>().inner().clone(), url, &id)
+        let url = app
+            .state::<SettingsStore>()
+            .get()
+            .edge_ai_url
+            .unwrap_or_default();
+        do_editor_detect(
+            &app.state::<EditorState>(),
+            app.state::<Arc<dyn TempoStore>>().inner().clone(),
+            url,
+            &id,
+        )
     })
     .await
 }
@@ -1181,13 +1367,26 @@ pub async fn editor_cancel_detect(app: tauri::AppHandle, id: String) -> Result<(
 }
 
 #[tauri::command]
-pub async fn editor_tempo(app: tauri::AppHandle, id: String, action: TempoEdit) -> Result<EditorSnapshot, String> {
-    blocking(move || do_editor_tempo(&app.state::<EditorState>(), &**app.state::<Arc<dyn TempoStore>>(), &id, action)).await
+pub async fn editor_tempo(
+    app: tauri::AppHandle,
+    id: String,
+    action: TempoEdit,
+) -> Result<EditorSnapshot, String> {
+    blocking(move || {
+        do_editor_tempo(
+            &app.state::<EditorState>(),
+            &**app.state::<Arc<dyn TempoStore>>(),
+            &id,
+            action,
+        )
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn save_backing(app: tauri::AppHandle, id: String) -> Result<EditorSnapshot, String> {
-    blocking(move || do_save_backing(&app.state::<EditorState>(), &app.state::<RepoState>(), &id)).await
+    blocking(move || do_save_backing(&app.state::<EditorState>(), &app.state::<RepoState>(), &id))
+        .await
 }
 
 #[tauri::command]
@@ -1206,10 +1405,7 @@ pub fn get_settings(store: tauri::State<'_, SettingsStore>) -> Settings {
 }
 
 #[tauri::command]
-pub fn set_theme(
-    store: tauri::State<'_, SettingsStore>,
-    theme: Theme,
-) -> Result<Settings, String> {
+pub fn set_theme(store: tauri::State<'_, SettingsStore>, theme: Theme) -> Result<Settings, String> {
     store
         .set_theme(theme)
         .map_err(|e| format!("could not save settings: {e}"))
@@ -1285,7 +1481,16 @@ mod tests {
         let st = RepoState::new(default.clone(), Box::new(picker.clone()));
         let store = SettingsStore::open(base.join("settings.json"));
         let import = ImportState::new(Tools::default(), st.repo_lock(), Duration::from_millis(10));
-        Env { _dir: dir, base, st, store, import, default, answers: answers_path, picker }
+        Env {
+            _dir: dir,
+            base,
+            st,
+            store,
+            import,
+            default,
+            answers: answers_path,
+            picker,
+        }
     }
 
     fn seed(e: &Env) -> crate::repository::TrackRecord {
@@ -1324,7 +1529,10 @@ mod tests {
         }
     }
 
-    fn save_request(r: &crate::repository::TrackRecord, group: Vec<TrackPatch>) -> SaveTrackRequest {
+    fn save_request(
+        r: &crate::repository::TrackRecord,
+        group: Vec<TrackPatch>,
+    ) -> SaveTrackRequest {
         SaveTrackRequest {
             id: r.id.clone(),
             revision: r.revision.clone(),
@@ -1349,7 +1557,11 @@ mod tests {
         let e = env("");
         let (a, b, c) = (seed(&e), seed(&e), seed(&e));
         let files = |ids: [&str; 3]| -> Vec<Vec<u8>> {
-            ids.iter().map(|i| std::fs::read(e.default.join("tracks").join(i).join("track.json")).unwrap()).collect()
+            ids.iter()
+                .map(|i| {
+                    std::fs::read(e.default.join("tracks").join(i).join("track.json")).unwrap()
+                })
+                .collect()
         };
         let ids = [a.id.as_str(), b.id.as_str(), c.id.as_str()];
         let before = files(ids);
@@ -1363,7 +1575,10 @@ mod tests {
         assert_eq!(files(ids), before);
 
         let res = do_save_track(&e.st, save_request(&a, vec![patch_of(&b), patch_of(&c)])).unwrap();
-        assert_eq!((res.track.album.as_str(), res.track.position), ("A2", Some(1)));
+        assert_eq!(
+            (res.track.album.as_str(), res.track.position),
+            ("A2", Some(1))
+        );
         assert_eq!(res.updated.len(), 2);
         assert!(res.failed.is_empty() && res.updated.iter().all(|t| t.album == "A2"));
         let lib = do_list_tracks(&e.st, &e.default).unwrap();
@@ -1379,8 +1594,14 @@ mod tests {
         let err = do_delete_tracks(&e.st, vec![]).unwrap_err();
         assert!(!err.is_empty());
         let items = vec![
-            TrackRef { id: res.tracks[0].id.clone(), revision: res.tracks[0].revision.clone() },
-            TrackRef { id: b.id.clone(), revision: "stale".into() },
+            TrackRef {
+                id: res.tracks[0].id.clone(),
+                revision: res.tracks[0].revision.clone(),
+            },
+            TrackRef {
+                id: b.id.clone(),
+                revision: "stale".into(),
+            },
         ];
         let out = do_delete_tracks(&e.st, items).unwrap();
         assert_eq!(out.deleted, vec![a.id]);
@@ -1402,11 +1623,17 @@ mod tests {
     fn configured_missing_root_is_not_created() {
         let e = env("");
         let missing = e.base.join("usb/lib");
-        let st = RepoState::new(missing.clone(), Box::new(ScriptedPicker::new(e.answers.clone())));
+        let st = RepoState::new(
+            missing.clone(),
+            Box::new(ScriptedPicker::new(e.answers.clone())),
+        );
         let lib = do_list_tracks(&st, &e.default).unwrap();
         assert!(lib.tracks.is_empty());
         assert!(!missing.exists());
-        assert_eq!(do_get_repository(&st, &e.default).status, RepoStatus::Missing);
+        assert_eq!(
+            do_get_repository(&st, &e.default).status,
+            RepoStatus::Missing
+        );
     }
 
     #[test]
@@ -1414,7 +1641,11 @@ mod tests {
         let e = env("");
         let chosen = e.base.join("mylib");
         std::fs::create_dir(&chosen).unwrap();
-        std::fs::write(&e.answers, format!("repository-root {}\n", chosen.display())).unwrap();
+        std::fs::write(
+            &e.answers,
+            format!("repository-root {}\n", chosen.display()),
+        )
+        .unwrap();
         let p = do_choose_root(&e.st, None).unwrap();
         assert_eq!(p.status, RepoStatus::Empty);
         assert!(!p.token.contains('/'));
@@ -1435,11 +1666,23 @@ mod tests {
         let e = env("");
         let chosen = e.base.join("new");
         std::fs::create_dir(&chosen).unwrap();
-        std::fs::write(chosen.join("calliope-repository.json"), "{\"schema_version\": 9}").unwrap();
-        std::fs::write(&e.answers, format!("repository-root {}\n", chosen.display())).unwrap();
+        std::fs::write(
+            chosen.join("calliope-repository.json"),
+            "{\"schema_version\": 9}",
+        )
+        .unwrap();
+        std::fs::write(
+            &e.answers,
+            format!("repository-root {}\n", chosen.display()),
+        )
+        .unwrap();
         let p = do_choose_root(&e.st, None).unwrap();
         assert_eq!(p.status, RepoStatus::Newer);
-        assert!(do_set_root(&e.st, &e.store, &e.import, &e.default, &p.token).unwrap_err().contains("newer"));
+        assert!(
+            do_set_root(&e.st, &e.store, &e.import, &e.default, &p.token)
+                .unwrap_err()
+                .contains("newer")
+        );
         assert_eq!(e.store.get().repository_root, None);
     }
 
@@ -1456,13 +1699,21 @@ mod tests {
         let bad = e.base.join("notes.txt");
         std::fs::write(
             &e.answers,
-            format!("add-tablature {}\nadd-tablature {}\nupdate-tablature CANCEL\n", good.display(), bad.display()),
+            format!(
+                "add-tablature {}\nadd-tablature {}\nupdate-tablature CANCEL\n",
+                good.display(),
+                bad.display()
+            ),
         )
         .unwrap();
-        let p = do_pick_tablature(&e.st, PickPurpose::Add, None).unwrap().unwrap();
+        let p = do_pick_tablature(&e.st, PickPurpose::Add, None)
+            .unwrap()
+            .unwrap();
         assert_eq!(p.name, "riff.gp5");
         assert!(do_pick_tablature(&e.st, PickPurpose::Add, None).is_err());
-        assert!(do_pick_tablature(&e.st, PickPurpose::Update, None).unwrap().is_none());
+        assert!(do_pick_tablature(&e.st, PickPurpose::Update, None)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -1472,7 +1723,9 @@ mod tests {
         let tab = e.base.join("riff.gp5");
         std::fs::write(&tab, b"gp").unwrap();
         std::fs::write(&e.answers, format!("add-tablature {}\n", tab.display())).unwrap();
-        let p = do_pick_tablature(&e.st, PickPurpose::Add, None).unwrap().unwrap();
+        let p = do_pick_tablature(&e.st, PickPurpose::Add, None)
+            .unwrap()
+            .unwrap();
         let req = SaveTrackRequest {
             id: rec.id.clone(),
             revision: rec.revision.clone(),
@@ -1485,7 +1738,9 @@ mod tests {
                 source_url: None,
                 copyright: None,
             },
-            tablatures: vec![TabEntry::Add { token: p.token.clone() }],
+            tablatures: vec![TabEntry::Add {
+                token: p.token.clone(),
+            }],
             position: None,
             album_position: None,
             group: vec![],
@@ -1493,24 +1748,36 @@ mod tests {
         let res = do_save_track(&e.st, req.clone()).unwrap();
         assert_eq!(res.track.tablatures, vec!["riff.gp5"]);
         // the token was consumed
-        assert!(e.st.registry.get(DialogKind::AddTablature, &p.token).is_none());
+        assert!(e
+            .st
+            .registry
+            .get(DialogKind::AddTablature, &p.token)
+            .is_none());
 
         let out = e.base.join("out");
         std::fs::create_dir(&out).unwrap();
         let tabout = e.base.join("out/riff-copy.gp5");
         std::fs::write(
             &e.answers,
-            format!("export-track {}\nexport-tablature {}\nexport-track CANCEL\n", out.display(), tabout.display()),
+            format!(
+                "export-track {}\nexport-tablature {}\nexport-track CANCEL\n",
+                out.display(),
+                tabout.display()
+            ),
         )
         .unwrap();
         let dest = do_export_track(&e.st, &rec.id, None).unwrap().unwrap();
         assert!(std::path::Path::new(&dest).join("track.json").is_file());
-        assert!(do_export_tablature(&e.st, &rec.id, "riff.gp5", None).unwrap().is_some());
+        assert!(do_export_tablature(&e.st, &rec.id, "riff.gp5", None)
+            .unwrap()
+            .is_some());
         assert_eq!(std::fs::read(&tabout).unwrap(), b"gp");
         assert!(do_export_track(&e.st, &rec.id, None).unwrap().is_none());
 
         // stale revision is a conflict, ids are validated
-        assert!(do_delete_track(&e.st, &rec.id, &rec.revision).unwrap_err().contains("conflict"));
+        assert!(do_delete_track(&e.st, &rec.id, &rec.revision)
+            .unwrap_err()
+            .contains("conflict"));
         assert!(do_delete_track(&e.st, "../x", "r").is_err());
         do_delete_track(&e.st, &rec.id, &res.track.revision).unwrap();
         assert!(do_list_tracks(&e.st, &e.default).unwrap().tracks.is_empty());
@@ -1526,7 +1793,10 @@ mod tests {
     #[test]
     fn edge_ai_status_not_configured_and_unreachable() {
         assert_eq!(do_check_edge_ai(None).state, EdgeAiState::NotConfigured);
-        assert_eq!(do_check_edge_ai(Some("  ")).state, EdgeAiState::NotConfigured);
+        assert_eq!(
+            do_check_edge_ai(Some("  ")).state,
+            EdgeAiState::NotConfigured
+        );
         // nothing listens on port 1 of the loopback
         let st = do_check_edge_ai(Some("http://127.0.0.1:1"));
         assert_eq!(st.state, EdgeAiState::Unreachable);
@@ -1539,7 +1809,10 @@ mod tests {
         let s = do_set_edge_ai_url(&e.store, Some("http://archserver:8765")).unwrap();
         assert_eq!(s.edge_ai_url.as_deref(), Some("http://archserver:8765"));
         assert!(do_set_edge_ai_url(&e.store, Some("ftp://x")).is_err());
-        assert_eq!(do_set_edge_ai_url(&e.store, None).unwrap().edge_ai_url, None);
+        assert_eq!(
+            do_set_edge_ai_url(&e.store, None).unwrap().edge_ai_url,
+            None
+        );
         assert!(do_set_keep_original(&e.store, true).unwrap().keep_original);
         assert!(!do_set_keep_original(&e.store, false).unwrap().keep_original);
     }
@@ -1559,15 +1832,29 @@ mod tests {
         let f = e.base.join("My Song.mp3");
         std::fs::write(
             &e.answers,
-            format!("import-audio CANCEL\nimport-audio {}\nimport-video {}\n", f.display(), f.display()),
+            format!(
+                "import-audio CANCEL\nimport-audio {}\nimport-video {}\n",
+                f.display(),
+                f.display()
+            ),
         )
         .unwrap();
-        assert!(do_pick_import_file(&e.st, &e.store, PickKind::Audio, "", None).unwrap().is_none());
-        let p = do_pick_import_file(&e.st, &e.store, PickKind::Audio, "", None).unwrap().unwrap();
+        assert!(
+            do_pick_import_file(&e.st, &e.store, PickKind::Audio, "", None)
+                .unwrap()
+                .is_none()
+        );
+        let p = do_pick_import_file(&e.st, &e.store, PickKind::Audio, "", None)
+            .unwrap()
+            .unwrap();
         assert_eq!(p.path, f.to_str().unwrap());
         assert_eq!(p.name, "My Song.mp3");
         // no validation at pick time
-        assert!(do_pick_import_file(&e.st, &e.store, PickKind::Video, "", None).unwrap().is_some());
+        assert!(
+            do_pick_import_file(&e.st, &e.store, PickKind::Video, "", None)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -1583,7 +1870,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         let ans = |lines: &[String]| std::fs::write(&e.answers, lines.join("\n") + "\n").unwrap();
         ans(&vec!["import-audio CANCEL".to_string(); 5]);
-        let pick = |k, typed: &str| do_pick_import_file(&e.st, &e.store, k, typed, Some(home.clone())).unwrap();
+        let pick = |k, typed: &str| {
+            do_pick_import_file(&e.st, &e.store, k, typed, Some(home.clone())).unwrap()
+        };
         // typed file -> its folder; typed dir -> itself
         pick(PickKind::Audio, song.to_str().unwrap());
         pick(PickKind::Audio, album.to_str().unwrap());
@@ -1598,7 +1887,10 @@ mod tests {
         // directory kind uses pick_folder
         ans(&[format!("import-directory {}", album.display())]);
         let got = pick(PickKind::Directory, "").unwrap();
-        assert_eq!((got.path.as_str(), got.name.as_str()), (album.to_str().unwrap(), "album"));
+        assert_eq!(
+            (got.path.as_str(), got.name.as_str()),
+            (album.to_str().unwrap(), "album")
+        );
         assert_eq!(
             e.picker.starts(),
             vec![
@@ -1616,12 +1908,22 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let bin = e.base.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-        for (n, body) in [("ffmpeg", "echo ffmpeg version 7.1"), ("ffprobe", "if [ \"$1\" = -version ]; then echo ffprobe version 7.1; else sleep 30; fi")] {
+        for (n, body) in [
+            ("ffmpeg", "echo ffmpeg version 7.1"),
+            (
+                "ffprobe",
+                "if [ \"$1\" = -version ]; then echo ffprobe version 7.1; else sleep 30; fi",
+            ),
+        ] {
             let f = bin.join(n);
             std::fs::write(&f, format!("#!/bin/sh\n{body}\n")).unwrap();
             std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
-        ImportState::new(Tools::discover(bin.as_os_str()), e.st.repo_lock(), Duration::from_millis(10))
+        ImportState::new(
+            Tools::discover(bin.as_os_str()),
+            e.st.repo_lock(),
+            Duration::from_millis(10),
+        )
     }
 
     #[test]
@@ -1636,17 +1938,43 @@ mod tests {
         let notes = e.base.join("notes.txt");
         std::fs::write(&notes, b"x").unwrap();
         // a rejected path changes nothing
-        do_import_path(&e.st, &import, &e.store, ImportKind::Audio, notes.to_str().unwrap(), None, null_sink()).unwrap_err();
+        do_import_path(
+            &e.st,
+            &import,
+            &e.store,
+            ImportKind::Audio,
+            notes.to_str().unwrap(),
+            None,
+            null_sink(),
+        )
+        .unwrap_err();
         assert_eq!(e.store.get().last_import_dir, None);
         // an accepted file remembers its folder
-        let snap = do_import_path(&e.st, &import, &e.store, ImportKind::Audio, song.to_str().unwrap(), None, null_sink()).unwrap();
+        let snap = do_import_path(
+            &e.st,
+            &import,
+            &e.store,
+            ImportKind::Audio,
+            song.to_str().unwrap(),
+            None,
+            null_sink(),
+        )
+        .unwrap();
         assert_eq!(e.store.get().last_import_dir, Some(album.clone()));
         let _ = import.cancel(&snap.job);
         // an accepted directory remembers the directory itself
         e.store.set_last_import_dir(None).unwrap();
         e.store.set_edge_ai_url("http://127.0.0.1:1").unwrap();
         let import = slow_import(&e);
-        let snap = do_import_directory(&e.st, &import, &e.store, album.to_str().unwrap(), None, null_sink()).unwrap();
+        let snap = do_import_directory(
+            &e.st,
+            &import,
+            &e.store,
+            album.to_str().unwrap(),
+            None,
+            null_sink(),
+        )
+        .unwrap();
         assert_eq!(e.store.get().last_import_dir, Some(album));
         let _ = import.cancel(&snap.job);
     }
@@ -1658,12 +1986,26 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let empty = e.base.join("empty");
         std::fs::create_dir_all(&empty).unwrap();
-        let go = |p: &str| do_import_directory(&e.st, &e.import, &e.store, p, None, null_sink()).unwrap_err();
+        let go = |p: &str| {
+            do_import_directory(&e.st, &e.import, &e.store, p, None, null_sink()).unwrap_err()
+        };
         let missing = e.base.join("nope");
-        assert_eq!(go(missing.to_str().unwrap()), format!("No folder found at {}", missing.display()));
-        assert_eq!(go(file.to_str().unwrap()), format!("{} is not a folder", file.display()));
-        assert_eq!(go(empty.to_str().unwrap()), format!("Directory {} has no audio files", empty.display()));
-        assert_eq!(go(""), "Enter the path of a folder or choose one with Browse");
+        assert_eq!(
+            go(missing.to_str().unwrap()),
+            format!("No folder found at {}", missing.display())
+        );
+        assert_eq!(
+            go(file.to_str().unwrap()),
+            format!("{} is not a folder", file.display())
+        );
+        assert_eq!(
+            go(empty.to_str().unwrap()),
+            format!("Directory {} has no audio files", empty.display())
+        );
+        assert_eq!(
+            go(""),
+            "Enter the path of a folder or choose one with Browse"
+        );
         assert!(e.import.snapshot().is_none());
         assert_eq!(e.store.get().last_import_dir, None);
     }
@@ -1675,7 +2017,9 @@ mod tests {
         let clip = e.base.join("clip.mp4");
         std::fs::write(&notes, b"x").unwrap();
         std::fs::write(&clip, b"x").unwrap();
-        let go = |k, p: &str| do_import_path(&e.st, &e.import, &e.store, k, p, None, null_sink()).unwrap_err();
+        let go = |k, p: &str| {
+            do_import_path(&e.st, &e.import, &e.store, k, p, None, null_sink()).unwrap_err()
+        };
         let err = go(ImportKind::Audio, clip.to_str().unwrap());
         assert!(err.contains("not an audio file"), "{err}");
         let err = go(ImportKind::Video, notes.to_str().unwrap());
@@ -1694,8 +2038,16 @@ mod tests {
         do_list_tracks(&e.st, &e.default).unwrap();
         let f = e.base.join("song.mp3");
         std::fs::write(&f, b"x").unwrap();
-        let err = do_import_path(&e.st, &e.import, &e.store, ImportKind::Audio, f.to_str().unwrap(), None, null_sink())
-            .unwrap_err();
+        let err = do_import_path(
+            &e.st,
+            &e.import,
+            &e.store,
+            ImportKind::Audio,
+            f.to_str().unwrap(),
+            None,
+            null_sink(),
+        )
+        .unwrap_err();
         assert!(err.contains("ffmpeg"), "{err}");
         assert!(e.import.snapshot().is_none());
     }
@@ -1707,7 +2059,13 @@ mod tests {
         do_list_tracks(&e.st, &e.default).unwrap();
         let bin = e.base.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-        for (n, body) in [("ffmpeg", "echo ffmpeg version 7.1"), ("ffprobe", "if [ \"$1\" = -version ]; then echo ffprobe version 7.1; else sleep 30; fi")] {
+        for (n, body) in [
+            ("ffmpeg", "echo ffmpeg version 7.1"),
+            (
+                "ffprobe",
+                "if [ \"$1\" = -version ]; then echo ffprobe version 7.1; else sleep 30; fi",
+            ),
+        ] {
             let f = bin.join(n);
             std::fs::write(&f, format!("#!/bin/sh\n{body}\n")).unwrap();
             std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1716,9 +2074,26 @@ mod tests {
         let import = ImportState::new(tools, e.st.repo_lock(), Duration::from_millis(10));
         let f = e.base.join("song.mp3");
         std::fs::write(&f, b"x").unwrap();
-        let snap = do_import_path(&e.st, &import, &e.store, ImportKind::Audio, f.to_str().unwrap(), None, null_sink()).unwrap();
-        let err = do_import_path(&e.st, &import, &e.store, ImportKind::Audio, f.to_str().unwrap(), None, null_sink())
-            .unwrap_err();
+        let snap = do_import_path(
+            &e.st,
+            &import,
+            &e.store,
+            ImportKind::Audio,
+            f.to_str().unwrap(),
+            None,
+            null_sink(),
+        )
+        .unwrap();
+        let err = do_import_path(
+            &e.st,
+            &import,
+            &e.store,
+            ImportKind::Audio,
+            f.to_str().unwrap(),
+            None,
+            null_sink(),
+        )
+        .unwrap_err();
         assert_eq!(err, crate::import_job::BUSY_MESSAGE);
         let _ = import.cancel(&snap.job);
     }
@@ -1728,12 +2103,24 @@ mod tests {
         let e = env("");
         std::fs::write(e.base.join("song.mp3"), b"x").unwrap();
         let err = do_import_path(
-            &e.st, &e.import, &e.store, ImportKind::Audio, "~/song.mp3", Some(e.base.clone()), null_sink(),
+            &e.st,
+            &e.import,
+            &e.store,
+            ImportKind::Audio,
+            "~/song.mp3",
+            Some(e.base.clone()),
+            null_sink(),
         )
         .unwrap_err();
         assert!(err.contains("ffmpeg"), "{err}");
         let err = do_import_path(
-            &e.st, &e.import, &e.store, ImportKind::Audio, "~/other.mp3", Some(e.base.clone()), null_sink(),
+            &e.st,
+            &e.import,
+            &e.store,
+            ImportKind::Audio,
+            "~/other.mp3",
+            Some(e.base.clone()),
+            null_sink(),
         )
         .unwrap_err();
         assert!(err.starts_with("No file found at "), "{err}");
@@ -1789,9 +2176,16 @@ mod tests {
         assert!(st.mgr().current().is_none());
         assert!(do_watch_editor(&st, null_editor_sink()).is_none());
         assert_eq!(st.mgr().play("x").unwrap_err(), "no editor session for x");
-        assert!(do_editor_seek(&st, "x", 1000).unwrap_err().contains("no editor session"));
-        assert!(do_editor_nudge(&st, "x", -100).unwrap_err().contains("no editor session"));
-        assert!(st.mgr().set_stem("x", "drums", None, true, std::time::Instant::now()).is_err());
+        assert!(do_editor_seek(&st, "x", 1000)
+            .unwrap_err()
+            .contains("no editor session"));
+        assert!(do_editor_nudge(&st, "x", -100)
+            .unwrap_err()
+            .contains("no editor session"));
+        assert!(st
+            .mgr()
+            .set_stem("x", "drums", None, true, std::time::Instant::now())
+            .is_err());
         do_close_editor(&st);
         st.tick(std::time::Instant::now());
     }
@@ -1800,8 +2194,17 @@ mod tests {
     fn open_editor_of_unknown_track_fails_and_save_needs_a_session() {
         let e = env("");
         let st = editor_state();
-        assert!(do_open_editor(&st, &e.st, &FileTempoStore, "0199b0a0-0000-7000-8000-00000000dead", null_editor_sink()).is_err());
-        assert!(do_save_backing(&st, &e.st, "x").unwrap_err().contains("no editor session"));
+        assert!(do_open_editor(
+            &st,
+            &e.st,
+            &FileTempoStore,
+            "0199b0a0-0000-7000-8000-00000000dead",
+            null_editor_sink()
+        )
+        .is_err());
+        assert!(do_save_backing(&st, &e.st, "x")
+            .unwrap_err()
+            .contains("no editor session"));
     }
 
     #[test]

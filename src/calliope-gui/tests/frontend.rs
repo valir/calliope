@@ -7,7 +7,10 @@ fn root() -> &'static Path {
 
 /// The repository root (workspace): `target/`, `docs/`, `specs/` and the workspace Cargo.toml.
 fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
 }
 
 #[test]
@@ -23,7 +26,9 @@ fn tauri_conf_points_at_frontend() {
 fn tauri_conf_has_strict_csp() {
     let text = fs::read_to_string(root().join("tauri.conf.json")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let csp = v["app"]["security"]["csp"].as_str().expect("csp must be a string");
+    let csp = v["app"]["security"]["csp"]
+        .as_str()
+        .expect("csp must be a string");
     assert!(csp.contains("default-src 'self'"));
     assert!(csp.contains("object-src 'none'"));
     assert!(!csp.contains("unsafe-inline"));
@@ -59,8 +64,14 @@ fn window_config_has_min_size_and_title() {
 #[test]
 fn tauri_conf_has_no_dev_settings() {
     let v = conf();
-    assert!(v["build"].get("devUrl").is_none(), "devUrl belongs in tauri.dev.conf.json");
-    assert!(v["app"]["security"].get("devCsp").is_none(), "devCsp belongs in tauri.dev.conf.json");
+    assert!(
+        v["build"].get("devUrl").is_none(),
+        "devUrl belongs in tauri.dev.conf.json"
+    );
+    assert!(
+        v["app"]["security"].get("devCsp").is_none(),
+        "devCsp belongs in tauri.dev.conf.json"
+    );
 }
 
 fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
@@ -98,10 +109,14 @@ fn no_static_style_attributes_in_svelte() {
 
 #[test]
 fn dist_has_no_inline_code() {
-    let html = fs::read_to_string(root().join("dist/index.html")).expect("run `npm run build` first");
+    let html =
+        fs::read_to_string(root().join("dist/index.html")).expect("run `npm run build` first");
     for part in html.split("<script").skip(1) {
         let tag = &part[..part.find('>').unwrap()];
-        assert!(tag.contains("src="), "inline <script> in dist/index.html: <script{tag}>");
+        assert!(
+            tag.contains("src="),
+            "inline <script> in dist/index.html: <script{tag}>"
+        );
     }
     assert!(!html.contains("<style"));
     assert!(!html.contains("style="));
@@ -128,8 +143,19 @@ fn dist_assets_are_local() {
     assert!(!html.contains("http://") && !html.contains("https://"));
     for f in files_under(&dist, "css") {
         let css = strip_css_comments(&fs::read_to_string(&f).unwrap());
-        let compact: String = css.chars().filter(|c| !c.is_whitespace() && *c != '"' && *c != '\'').collect();
-        for bad in ["url(http", "url(//", "url(data:", "@importhttp", "@import//", "@importurl(http", "@importurl(//"] {
+        let compact: String = css
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '"' && *c != '\'')
+            .collect();
+        for bad in [
+            "url(http",
+            "url(//",
+            "url(data:",
+            "@importhttp",
+            "@import//",
+            "@importurl(http",
+            "@importurl(//",
+        ] {
             assert!(!compact.contains(bad), "{} contains `{bad}`", f.display());
         }
     }
@@ -165,7 +191,10 @@ fn production_csp_has_no_dev_relaxations() {
         assert!(!csp.contains(bad), "production CSP contains {bad}");
     }
     for key in ["devUrl", "devCsp", "beforeDevCommand"] {
-        assert!(!text.contains(key), "tauri.conf.json must not contain {key}");
+        assert!(
+            !text.contains(key),
+            "tauri.conf.json must not contain {key}"
+        );
     }
 }
 
@@ -173,13 +202,24 @@ fn production_csp_has_no_dev_relaxations() {
 fn dev_csp_is_minimal_and_separate() {
     let dev = dev_conf();
     assert_eq!(dev["build"]["devUrl"], "http://localhost:5173");
-    assert!(dev["app"]["security"].get("csp").is_none(), "dev overlay must not override csp");
-    let dev_csp = dev["app"]["security"]["devCsp"].as_str().expect("devCsp must be a string");
+    assert!(
+        dev["app"]["security"].get("csp").is_none(),
+        "dev overlay must not override csp"
+    );
+    let dev_csp = dev["app"]["security"]["devCsp"]
+        .as_str()
+        .expect("devCsp must be a string");
     assert!(!dev_csp.contains("unsafe-eval"));
     let prod = conf();
     let mut expected = parse_csp(prod["app"]["security"]["csp"].as_str().unwrap());
-    expected.get_mut("style-src").unwrap().insert("'unsafe-inline'".into());
-    expected.get_mut("connect-src").unwrap().insert("ws://localhost:5173".into());
+    expected
+        .get_mut("style-src")
+        .unwrap()
+        .insert("'unsafe-inline'".into());
+    expected
+        .get_mut("connect-src")
+        .unwrap()
+        .insert("ws://localhost:5173".into());
     assert_eq!(parse_csp(dev_csp), expected);
 }
 
@@ -188,17 +228,26 @@ fn e2e_hooks_feature_is_never_default_or_in_release_scripts() {
     let cargo = fs::read_to_string(root().join("Cargo.toml")).unwrap();
     let features = &cargo[cargo.find("[features]").expect("[features] section")..];
     assert!(features.contains("e2e-hooks = []"));
-    if let Some(i) = features.lines().position(|l| l.trim_start().starts_with("default")) {
+    if let Some(i) = features
+        .lines()
+        .position(|l| l.trim_start().starts_with("default"))
+    {
         let start: usize = features.lines().take(i).map(|l| l.len() + 1).sum();
         let rest = &features[start..];
         let list = &rest[..rest.find(']').expect("default list end")];
-        assert!(!list.contains("e2e-hooks"), "e2e-hooks must not be a default feature");
+        assert!(
+            !list.contains("e2e-hooks"),
+            "e2e-hooks must not be a default feature"
+        );
     }
     let pkg: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(root().join("package.json")).unwrap()).unwrap();
     for name in ["app", "build:app", "build"] {
         let s = pkg["scripts"][name].as_str().unwrap();
-        assert!(!s.contains("e2e-hooks"), "script {name} must not use e2e-hooks: {s}");
+        assert!(
+            !s.contains("e2e-hooks"),
+            "script {name} must not use e2e-hooks: {s}"
+        );
     }
 }
 
@@ -207,7 +256,14 @@ fn names_between(text: &str, start: &str, end: &str) -> std::collections::BTreeS
     let e = s + text[s..].find(end).expect("end marker");
     text[s..e]
         .split(',')
-        .map(|n| n.trim().trim_matches('"').rsplit("::").next().unwrap().to_string())
+        .map(|n| {
+            n.trim()
+                .trim_matches('"')
+                .rsplit("::")
+                .next()
+                .unwrap()
+                .to_string()
+        })
         .filter(|n| !n.is_empty())
         .collect()
 }
@@ -221,16 +277,27 @@ fn handler_list_build_list_and_capability_agree() {
     let cap: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(root().join("capabilities/main.json")).unwrap())
             .unwrap();
-    let perms: Vec<&str> =
-        cap["permissions"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
+    let perms: Vec<&str> = cap["permissions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.as_str().unwrap())
+        .collect();
     let allow: std::collections::BTreeSet<String> = perms
         .iter()
-        .map(|p| p.strip_prefix("allow-").expect("only allow-* entries").replace('-', "_"))
+        .map(|p| {
+            p.strip_prefix("allow-")
+                .expect("only allow-* entries")
+                .replace('-', "_")
+        })
         .collect();
     assert_eq!(perms.len(), allow.len(), "duplicate permission");
     assert!(handlers.len() >= 26);
     assert_eq!(handlers, commands, "generate_handler! vs build.rs COMMANDS");
-    assert_eq!(handlers, allow, "generate_handler! vs capabilities/main.json");
+    assert_eq!(
+        handlers, allow,
+        "generate_handler! vs capabilities/main.json"
+    );
     assert_eq!(cap["windows"], serde_json::json!(["main"]));
     assert_eq!(cap["local"], true);
     for p in perms {
@@ -250,8 +317,10 @@ fn cargo_dependency_names(toml: &str) -> Vec<String> {
     for line in toml.lines() {
         let line = line.trim();
         if line.starts_with('[') {
-            in_deps = matches!(line, "[dependencies]" | "[build-dependencies]" | "[dev-dependencies]")
-                || (line.starts_with("[target.") && line.ends_with(".dependencies]"));
+            in_deps = matches!(
+                line,
+                "[dependencies]" | "[build-dependencies]" | "[dev-dependencies]"
+            ) || (line.starts_with("[target.") && line.ends_with(".dependencies]"));
         } else if in_deps && !line.is_empty() && !line.starts_with('#') {
             if let Some((name, _)) = line.split_once('=') {
                 names.push(name.trim().to_string());
@@ -266,19 +335,32 @@ fn licence_record_lists_every_direct_dependency() {
     let record = fs::read_to_string(repo().join("docs/licences.md")).expect("docs/licences.md");
     let gui_toml = fs::read_to_string(root().join("Cargo.toml")).unwrap();
     let mut names = cargo_dependency_names(&gui_toml);
-    assert!(names.len() >= 8, "Cargo.toml parsing found too few dependencies: {names:?}");
+    assert!(
+        names.len() >= 8,
+        "Cargo.toml parsing found too few dependencies: {names:?}"
+    );
     // Every workspace member's manifest too (the `members = [...]` list of the workspace root).
     let workspace_toml = fs::read_to_string(repo().join("Cargo.toml")).unwrap();
     let members = names_between(&workspace_toml, "members = [", "]");
-    assert!(members.len() >= 3, "workspace members not found: {members:?}");
+    assert!(
+        members.len() >= 3,
+        "workspace members not found: {members:?}"
+    );
     for m in &members {
-        let toml = fs::read_to_string(repo().join(m).join("Cargo.toml")).unwrap_or_else(|e| panic!("{m}/Cargo.toml: {e}"));
+        let toml = fs::read_to_string(repo().join(m).join("Cargo.toml"))
+            .unwrap_or_else(|e| panic!("{m}/Cargo.toml: {e}"));
         let member_names = cargo_dependency_names(&toml);
-        assert!(!member_names.is_empty(), "no dependencies parsed in {m}/Cargo.toml");
+        assert!(
+            !member_names.is_empty(),
+            "no dependencies parsed in {m}/Cargo.toml"
+        );
         names.extend(member_names);
     }
     for n in ["libc", "ureq", "tiny_http"] {
-        assert!(names.iter().any(|x| x == n), "member dependency {n} not found by the parser");
+        assert!(
+            names.iter().any(|x| x == n),
+            "member dependency {n} not found by the parser"
+        );
     }
     let pkg: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(root().join("package.json")).unwrap()).unwrap();
@@ -289,12 +371,16 @@ fn licence_record_lists_every_direct_dependency() {
         .iter()
         .filter(|n| !record.contains(&format!("`{n}`")))
         .collect();
-    assert!(missing.is_empty(), "docs/licences.md is missing: {missing:?}");
+    assert!(
+        missing.is_empty(),
+        "docs/licences.md is missing: {missing:?}"
+    );
 }
 
 #[test]
 fn dist_ships_the_inter_font_licence() {
-    let src = fs::read_to_string(root().join("node_modules/@fontsource-variable/inter/LICENSE")).unwrap();
+    let src =
+        fs::read_to_string(root().join("node_modules/@fontsource-variable/inter/LICENSE")).unwrap();
     let shipped = fs::read_to_string(root().join("dist/licenses/Inter-OFL-1.1.txt"))
         .expect("dist/licenses/Inter-OFL-1.1.txt missing; run `npm run build` first");
     assert_eq!(shipped, src);
@@ -307,20 +393,42 @@ fn dist_ships_the_inter_font_licence() {
 fn dist_ships_third_party_notices_for_every_linked_crate() {
     let notices = fs::read_to_string(root().join("dist/licenses/THIRD-PARTY-NOTICES.txt"))
         .expect("dist/licenses/THIRD-PARTY-NOTICES.txt missing; run `npm run build` first");
-    let rustc = std::process::Command::new("rustc").arg("-vV").output().expect("run rustc -vV");
+    let rustc = std::process::Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .expect("run rustc -vV");
     let host = String::from_utf8(rustc.stdout).unwrap();
-    let host = host.lines().find_map(|l| l.strip_prefix("host: ")).unwrap().to_string();
+    let host = host
+        .lines()
+        .find_map(|l| l.strip_prefix("host: "))
+        .unwrap()
+        .to_string();
     let out = std::process::Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-        .args(["metadata", "--format-version", "1", "--locked", "--filter-platform", &host])
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--locked",
+            "--filter-platform",
+            &host,
+        ])
         .current_dir(root())
         .output()
         .expect("run cargo metadata");
-    assert!(out.status.success(), "cargo metadata failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "cargo metadata failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let members = meta["workspace_members"].as_array().unwrap();
     let packages = meta["packages"].as_array().unwrap();
     let nodes = meta["resolve"]["nodes"].as_array().unwrap();
-    let start = packages.iter().find(|p| p["name"] == "calliope-gui").unwrap()["id"].clone();
+    let start = packages
+        .iter()
+        .find(|p| p["name"] == "calliope-gui")
+        .unwrap()["id"]
+        .clone();
     let mut seen = std::collections::BTreeSet::new();
     let mut todo = vec![start];
     while let Some(id) = todo.pop() {
@@ -329,28 +437,63 @@ fn dist_ships_third_party_notices_for_every_linked_crate() {
         }
         let node = nodes.iter().find(|n| n["id"] == id).unwrap();
         for d in node["deps"].as_array().unwrap() {
-            if d["dep_kinds"].as_array().unwrap().iter().any(|k| k["kind"].is_null()) {
+            if d["dep_kinds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|k| k["kind"].is_null())
+            {
                 todo.push(d["pkg"].clone());
             }
         }
     }
     let mut missing = Vec::new();
-    for p in packages.iter().filter(|p| seen.contains(&p["id"].to_string()) && !members.contains(&p["id"])) {
-        let line = format!("\n{} {}  [", p["name"].as_str().unwrap(), p["version"].as_str().unwrap());
+    for p in packages
+        .iter()
+        .filter(|p| seen.contains(&p["id"].to_string()) && !members.contains(&p["id"]))
+    {
+        let line = format!(
+            "\n{} {}  [",
+            p["name"].as_str().unwrap(),
+            p["version"].as_str().unwrap()
+        );
         if !notices.contains(&line) {
             missing.push(line.trim().to_string());
         }
     }
-    assert!(missing.is_empty(), "crates missing from THIRD-PARTY-NOTICES.txt: {missing:?}");
+    assert!(
+        missing.is_empty(),
+        "crates missing from THIRD-PARTY-NOTICES.txt: {missing:?}"
+    );
     for needle in ["signalsmith-stretch", "Geraint Luff", "Signalsmith Audio"] {
-        assert!(notices.contains(needle), "{needle} missing from the notices");
+        assert!(
+            notices.contains(needle),
+            "{needle} missing from the notices"
+        );
     }
     assert!(seen.len() > 100, "suspiciously few crates: {}", seen.len());
-    for pkg in ["@tauri-apps/api", "@fontsource-variable/inter", "svelte", "bits-ui", "tailwindcss"] {
-        assert!(notices.contains(&format!("\n{pkg} ")), "npm package {pkg} missing from the notices");
+    for pkg in [
+        "@tauri-apps/api",
+        "@fontsource-variable/inter",
+        "svelte",
+        "bits-ui",
+        "tailwindcss",
+    ] {
+        assert!(
+            notices.contains(&format!("\n{pkg} ")),
+            "npm package {pkg} missing from the notices"
+        );
     }
-    for text in ["Apache License", "Permission is hereby granted", "Mozilla Public License Version 2.0", "SIL OPEN FONT LICENSE"] {
-        assert!(notices.contains(text), "licence text {text:?} missing from the notices");
+    for text in [
+        "Apache License",
+        "Permission is hereby granted",
+        "Mozilla Public License Version 2.0",
+        "SIL OPEN FONT LICENSE",
+    ] {
+        assert!(
+            notices.contains(text),
+            "licence text {text:?} missing from the notices"
+        );
     }
 }
 
@@ -359,9 +502,15 @@ fn reachable_packages(meta: &serde_json::Value, start: &str) -> std::collections
     let nodes = meta["resolve"]["nodes"].as_array().unwrap();
     let packages = meta["packages"].as_array().unwrap();
     let name_of = |id: &str| -> String {
-        packages.iter().find(|p| p["id"] == id).unwrap()["name"].as_str().unwrap().to_string()
+        packages.iter().find(|p| p["id"] == id).unwrap()["name"]
+            .as_str()
+            .unwrap()
+            .to_string()
     };
-    let start_id = packages.iter().find(|p| p["name"] == start).unwrap_or_else(|| panic!("no package {start}"))["id"]
+    let start_id = packages
+        .iter()
+        .find(|p| p["name"] == start)
+        .unwrap_or_else(|| panic!("no package {start}"))["id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -382,36 +531,69 @@ fn reachable_packages(meta: &serde_json::Value, start: &str) -> std::collections
 #[test]
 fn server_side_crates_stay_separate_from_the_gui() {
     let out = std::process::Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-        .args(["metadata", "--format-version", "1", "--locked", "--all-features"])
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--locked",
+            "--all-features",
+        ])
         .current_dir(root())
         .output()
         .expect("run cargo metadata");
-    assert!(out.status.success(), "cargo metadata failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "cargo metadata failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let members: Vec<&str> = meta["packages"]
         .as_array()
         .unwrap()
         .iter()
-        .filter(|p| meta["workspace_members"].as_array().unwrap().contains(&p["id"]))
+        .filter(|p| {
+            meta["workspace_members"]
+                .as_array()
+                .unwrap()
+                .contains(&p["id"])
+        })
         .map(|p| p["name"].as_str().unwrap())
         .collect();
-    assert!(members.contains(&"calliope-gui") && members.contains(&"calliope-lib"), "{members:?}");
+    assert!(
+        members.contains(&"calliope-gui") && members.contains(&"calliope-lib"),
+        "{members:?}"
+    );
 
     let is_ui = |n: &str| n.starts_with("tauri") || n.starts_with("gtk") || n.starts_with("webkit");
     // calliope-stems is added by a later task; check it as soon as it exists.
     for krate in ["calliope-lib", "calliope-stems"] {
         if !members.contains(&krate) {
-            assert_eq!(krate, "calliope-stems", "{krate} must be a workspace member");
+            assert_eq!(
+                krate, "calliope-stems",
+                "{krate} must be a workspace member"
+            );
             continue;
         }
-        let bad: Vec<_> = reachable_packages(&meta, krate).into_iter().filter(|n| is_ui(n)).collect();
-        assert!(bad.is_empty(), "{krate} must not depend on the GUI stack: {bad:?}");
+        let bad: Vec<_> = reachable_packages(&meta, krate)
+            .into_iter()
+            .filter(|n| is_ui(n))
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "{krate} must not depend on the GUI stack: {bad:?}"
+        );
     }
     let gui = reachable_packages(&meta, "calliope-gui");
-    assert!(!gui.contains("calliope-stems"), "calliope-gui must not depend on calliope-stems");
+    assert!(
+        !gui.contains("calliope-stems"),
+        "calliope-gui must not depend on calliope-stems"
+    );
     assert!(!reachable_packages(&meta, "calliope-lib").contains("calliope-gui"));
     for server in ["tiny_http", "hyper", "axum", "actix-web", "warp"] {
-        assert!(!reachable_packages(&meta, "calliope-lib").contains(server), "calliope-lib must not contain an HTTP server ({server})");
+        assert!(
+            !reachable_packages(&meta, "calliope-lib").contains(server),
+            "calliope-lib must not contain an HTTP server ({server})"
+        );
     }
 }
 
@@ -426,7 +608,11 @@ fn cpal_backend_is_only_named_in_audio_out_and_gui() {
             continue;
         }
         let text = fs::read_to_string(&f).unwrap();
-        assert!(!text.contains("CpalBackend"), "{} must not name CpalBackend", f.display());
+        assert!(
+            !text.contains("CpalBackend"),
+            "{} must not name CpalBackend",
+            f.display()
+        );
     }
 }
 
@@ -434,15 +620,21 @@ fn cpal_backend_is_only_named_in_audio_out_and_gui() {
 fn project_licence_is_mpl_2_0() {
     let cargo = fs::read_to_string(repo().join("Cargo.toml")).unwrap();
     assert!(
-        cargo.lines().any(|l| l.starts_with("package.license = \"MPL-2.0\"")),
+        cargo
+            .lines()
+            .any(|l| l.starts_with("package.license = \"MPL-2.0\"")),
         "root Cargo.toml must set package.license = \"MPL-2.0\""
     );
-    let pkg: serde_json::Value = serde_json::from_str(&fs::read_to_string(root().join("package.json")).unwrap()).unwrap();
+    let pkg: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root().join("package.json")).unwrap()).unwrap();
     assert_eq!(pkg["license"], "MPL-2.0");
     let licence = fs::read(repo().join("LICENSE")).unwrap();
     assert!(licence.starts_with(b"Mozilla Public License Version 2.0"));
     let template = fs::read(root().join("licence-templates/MPL-2.0.txt")).unwrap();
-    assert!(licence == template, "LICENSE must equal licence-templates/MPL-2.0.txt byte for byte");
+    assert!(
+        licence == template,
+        "LICENSE must equal licence-templates/MPL-2.0.txt byte for byte"
+    );
     let apache = fs::read_to_string(root().join("licence-templates/Apache-2.0.txt")).unwrap();
     assert!(apache.trim_start().starts_with("Apache License"));
 }

@@ -28,8 +28,14 @@ extern "C" fn on_signal(_: libc::c_int) {
 fn install_signal_handlers() {
     // SAFETY: the handler only stores to an atomic, which is async-signal-safe.
     unsafe {
-        libc::signal(libc::SIGTERM, on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
-        libc::signal(libc::SIGINT, on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
+        libc::signal(
+            libc::SIGTERM,
+            on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGINT,
+            on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t,
+        );
     }
 }
 
@@ -40,7 +46,8 @@ fn measure(files: &[std::path::PathBuf]) -> i32 {
     for f in files {
         match scan(f, AUDIBLE_LEVEL_DBFS, None) {
             Ok(a) => {
-                let peak = to_dbfs(a.peak, a.bits).map_or("-inf".to_string(), |d| format!("{d:.1}"));
+                let peak =
+                    to_dbfs(a.peak, a.bits).map_or("-inf".to_string(), |d| format!("{d:.1}"));
                 println!(
                     "{} audible_ms={} windows={} level_dbfs={AUDIBLE_LEVEL_DBFS} peak_dbfs={peak}",
                     f.display(),
@@ -80,7 +87,10 @@ fn main() {
     };
 
     if let Err(e) = workdir::ensure(&cfg.work_dir) {
-        eprintln!("calliope-stems: cannot create the work directory {}: {e}", cfg.work_dir.display());
+        eprintln!(
+            "calliope-stems: cannot create the work directory {}: {e}",
+            cfg.work_dir.display()
+        );
         std::process::exit(1);
     }
     let removed = workdir::clean_start(&cfg.work_dir);
@@ -105,8 +115,15 @@ fn main() {
         let m = mgr.clone();
         std::thread::spawn(move || m.run_janitor());
     }
-    let tracker = cfg.beat_tracker.as_ref().map_or("none".to_string(), |t| t.display().to_string());
-    log(format_args!("listening addr={addr} model={} separator={} beat_tracker={tracker}", cfg.model, cfg.separator.display()));
+    let tracker = cfg
+        .beat_tracker
+        .as_ref()
+        .map_or("none".to_string(), |t| t.display().to_string());
+    log(format_args!(
+        "listening addr={addr} model={} separator={} beat_tracker={tracker}",
+        cfg.model,
+        cfg.separator.display()
+    ));
 
     while !TERMINATE.load(Ordering::SeqCst) {
         match http.recv_timeout(Duration::from_millis(200)) {

@@ -16,7 +16,7 @@
     "notices:stems": "node third-party-notices.ts calliope-stems ../calliope-stems/THIRD-PARTY-NOTICES.txt",
     "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "test:ui": "vitest run",
-    "test": "npm run check && npm run test:ui && npm run build && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
+    "test": "cargo fmt --all --check && npm run check && npm run test:ui && npm run build && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
     "test:gui": "scripts/test-gui.sh",
     "test:gui:serial": "scripts/test-gui.sh --serial"
   },

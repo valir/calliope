@@ -6,9 +6,9 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::thread::JoinHandle;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -18,12 +18,12 @@ use crate::audio_out::{OutputBackend, OutputHandle};
 use crate::backing_render::{self, RenderInput, RenderStem, SaveParams, SaveShared};
 use crate::beat_detect::{self, DetectJob, DetectOutcome, DetectParams, DetectShared, DetectState};
 use crate::import_job::RepoLock;
-use crate::repository::{Repository, TrackRecord};
 use crate::mix_waveform::{self, Debounce};
 use crate::mixer;
 use crate::player::SnapTempo;
-use crate::tempo_map::TempoMap;
+use crate::repository::{Repository, TrackRecord};
 use crate::stem_audio::{self, Common, StemPcm};
+use crate::tempo_map::TempoMap;
 use crate::track_meta::{BackingVariant, StemEntry};
 use crate::transport::Transport;
 
@@ -89,14 +89,24 @@ pub struct EditorSnapshot {
 #[allow(clippy::large_enum_variant)] // short-lived values, serialised at once
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum EditorEvent {
-    Loading { id: String, done: usize, total: usize },
+    Loading {
+        id: String,
+        done: usize,
+        total: usize,
+    },
     Transport {
         id: String,
         #[serde(flatten)]
         state: TransportState,
     },
-    AudioError { id: String, message: String },
-    Saving { id: String, progress: f32 },
+    AudioError {
+        id: String,
+        message: String,
+    },
+    Saving {
+        id: String,
+        progress: f32,
+    },
     Saved {
         id: String,
         file: String,
@@ -104,21 +114,41 @@ pub enum EditorEvent {
         track: TrackRecord,
         warnings: Vec<String>,
     },
-    Peaks { id: String, gen: u64, peaks: Vec<f32> },
-    SaveFailed { id: String, message: String },
-    SaveCancelled { id: String },
+    Peaks {
+        id: String,
+        gen: u64,
+        peaks: Vec<f32>,
+    },
+    SaveFailed {
+        id: String,
+        message: String,
+    },
+    SaveCancelled {
+        id: String,
+    },
     Detect {
         id: String,
         #[serde(flatten)]
         state: DetectState,
     },
-    Detected { id: String, tempo: SnapTempo, beats: usize, replaced: bool },
-    DetectFailed { id: String, message: String },
-    DetectCancelled { id: String },
+    Detected {
+        id: String,
+        tempo: SnapTempo,
+        beats: usize,
+        replaced: bool,
+    },
+    DetectFailed {
+        id: String,
+        message: String,
+    },
+    DetectCancelled {
+        id: String,
+    },
 }
 
 /// The computation behind the waveform; tests replace it (`EditorManager::set_peaks_fn`).
-pub type PeaksFn = Arc<dyn Fn(&[StemPcm], &[f32], u64, usize, &AtomicBool) -> Option<Vec<f32>> + Send + Sync>;
+pub type PeaksFn =
+    Arc<dyn Fn(&[StemPcm], &[f32], u64, usize, &AtomicBool) -> Option<Vec<f32>> + Send + Sync>;
 
 pub type EventSink = Arc<dyn Fn(EditorEvent) + Send + Sync>;
 
@@ -153,7 +183,11 @@ pub struct Loaded {
 }
 
 /// Decodes every stem (long; call it without the manager lock). Emits `loading` events.
-pub fn load(spec: &OpenSpec, ticket: &OpenTicket, sink: &dyn Fn(EditorEvent)) -> Result<Loaded, String> {
+pub fn load(
+    spec: &OpenSpec,
+    ticket: &OpenTicket,
+    sink: &dyn Fn(EditorEvent),
+) -> Result<Loaded, String> {
     let superseded = || ticket.cancel.load(Ordering::Relaxed);
     if spec.stems.is_empty() {
         return Err(format!("{} has no stems.", spec.title));
@@ -172,7 +206,13 @@ pub fn load(spec: &OpenSpec, ticket: &OpenTicket, sink: &dyn Fn(EditorEvent)) ->
     }
     let common = stem_audio::check_compatible(&infos)?;
     let total = spec.stems.len();
-    let loading = |done| sink(EditorEvent::Loading { id: spec.id.clone(), done, total });
+    let loading = |done| {
+        sink(EditorEvent::Loading {
+            id: spec.id.clone(),
+            done,
+            total,
+        })
+    };
     loading(0);
     let mut stems = Vec::new();
     for (i, s) in spec.stems.iter().enumerate() {
@@ -180,7 +220,13 @@ pub fn load(spec: &OpenSpec, ticket: &OpenTicket, sink: &dyn Fn(EditorEvent)) ->
             return Err(SUPERSEDED.into());
         }
         let pcm = stem_audio::decode_i16(&spec.dir.join(&s.file), &ticket.cancel, &mut |_, _| {})
-            .map_err(|e| if superseded() { SUPERSEDED.to_string() } else { e })?;
+            .map_err(|e| {
+            if superseded() {
+                SUPERSEDED.to_string()
+            } else {
+                e
+            }
+        })?;
         stems.push(pcm);
         loading(i + 1);
     }
@@ -195,14 +241,24 @@ fn parse_mix(mix: &Value, names: &[String]) -> Vec<LaneState> {
     names
         .iter()
         .map(|name| {
-            let entry = entries.and_then(|a| a.iter().find(|e| e.get("name").and_then(Value::as_str) == Some(name)));
+            let entry = entries.and_then(|a| {
+                a.iter()
+                    .find(|e| e.get("name").and_then(Value::as_str) == Some(name))
+            });
             let gain_db = match entry.and_then(|e| e.get("gain_db")) {
                 None => Some(0.0),
                 Some(Value::Null) => None,
                 Some(v) => v.as_f64().map_or(Some(0.0), |f| mixer::clamp_db(f as f32)),
             };
-            let unmuted = entry.and_then(|e| e.get("unmuted")).and_then(Value::as_bool).unwrap_or(false);
-            LaneState { name: name.clone(), gain_db, unmuted }
+            let unmuted = entry
+                .and_then(|e| e.get("unmuted"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            LaneState {
+                name: name.clone(),
+                gain_db,
+                unmuted,
+            }
         })
         .collect()
 }
@@ -247,7 +303,11 @@ fn render(shared: &PlayerShared, scratch: &mut [Vec<f32>], out: &mut [f32]) {
         for k in 0..n_stems {
             inputs[k] = &scratch[k][..n * 2];
         }
-        clipped += u64::from(mixer::mix(&inputs[..n_stems], &gains[..n_stems], &mut out[done * 2..(done + n) * 2]));
+        clipped += u64::from(mixer::mix(
+            &inputs[..n_stems],
+            &gains[..n_stems],
+            &mut out[done * 2..(done + n) * 2],
+        ));
         done += n;
     }
     out[done * 2..].fill(0.0);
@@ -256,7 +316,10 @@ fn render(shared: &PlayerShared, scratch: &mut [Vec<f32>], out: &mut [f32]) {
     }
     let new = start + done as u64;
     // A concurrent seek (plain store) wins over this advance.
-    if shared.position.compare_exchange(start, new, Ordering::AcqRel, Ordering::Acquire).is_ok()
+    if shared
+        .position
+        .compare_exchange(start, new, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
         && new >= shared.total_frames
     {
         shared.ended.store(true, Ordering::Release);
@@ -300,7 +363,10 @@ struct Session {
 
 impl Session {
     fn position_ms(&self) -> u64 {
-        frames_to_ms(self.shared.position.load(Ordering::Acquire), self.sample_rate)
+        frames_to_ms(
+            self.shared.position.load(Ordering::Acquire),
+            self.sample_rate,
+        )
     }
 
     fn state(&self) -> TransportState {
@@ -331,7 +397,9 @@ impl Session {
             };
             self.shared.gains[i].store(g.to_bits(), Ordering::Relaxed);
         }
-        self.shared.audible.store(self.transport.audible(), Ordering::Release);
+        self.shared
+            .audible
+            .store(self.transport.audible(), Ordering::Release);
     }
 
     fn snapshot(&self) -> EditorSnapshot {
@@ -434,9 +502,14 @@ pub struct OpenedOutput {
 impl OutputRequest {
     pub fn open(self) -> Result<OpenedOutput, String> {
         let shared = self.shared.clone();
-        let mut scratch: Vec<Vec<f32>> = (0..shared.stems.len()).map(|_| vec![0.0; CHUNK * 2]).collect();
+        let mut scratch: Vec<Vec<f32>> = (0..shared.stems.len())
+            .map(|_| vec![0.0; CHUNK * 2])
+            .collect();
         let render_shared = self.shared.clone();
-        let handle = self.backend.open(self.rate, Box::new(move |out| render(&render_shared, &mut scratch, out)))?;
+        let handle = self.backend.open(
+            self.rate,
+            Box::new(move |out| render(&render_shared, &mut scratch, out)),
+        )?;
         Ok(OpenedOutput { shared, handle })
     }
 }
@@ -461,8 +534,15 @@ struct DetectRun {
 pub(crate) fn detect_stem_indices(names: &[&str]) -> Vec<usize> {
     let find = |n: &str| names.iter().position(|x| *x == n);
     let guitar = find("guitar").or_else(|| find("other"));
-    let picked: Vec<usize> = [find("drums"), find("bass"), guitar].into_iter().flatten().collect();
-    if picked.is_empty() { (0..names.len()).collect() } else { picked }
+    let picked: Vec<usize> = [find("drums"), find("bass"), guitar]
+        .into_iter()
+        .flatten()
+        .collect();
+    if picked.is_empty() {
+        (0..names.len()).collect()
+    } else {
+        picked
+    }
 }
 
 impl EditorManager {
@@ -524,7 +604,10 @@ impl EditorManager {
     pub fn begin_open(&mut self) -> OpenTicket {
         self.close();
         self.generation += 1;
-        let ticket = OpenTicket { gen: self.generation, cancel: Arc::new(AtomicBool::new(false)) };
+        let ticket = OpenTicket {
+            gen: self.generation,
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
         self.pending = Some(ticket.clone());
         ticket
     }
@@ -552,17 +635,33 @@ impl EditorManager {
     }
 
     /// Installs a loaded track unless a newer `begin_open`/`close` superseded the ticket.
-    pub fn finish_open(&mut self, ticket: &OpenTicket, spec: &OpenSpec, loaded: Loaded) -> Result<EditorSnapshot, String> {
+    pub fn finish_open(
+        &mut self,
+        ticket: &OpenTicket,
+        spec: &OpenSpec,
+        loaded: Loaded,
+    ) -> Result<EditorSnapshot, String> {
         if ticket.gen != self.generation || ticket.cancel.load(Ordering::Relaxed) {
             return Err(SUPERSEDED.into());
         }
         self.pending = None;
         let names: Vec<String> = spec.stems.iter().map(|s| s.name.clone()).collect();
         let lanes = match self.remembered.get(&spec.id) {
-            Some(r) if r.len() == names.len() && r.iter().zip(&names).all(|(l, n)| &l.name == n) => r.clone(),
+            Some(r)
+                if r.len() == names.len() && r.iter().zip(&names).all(|(l, n)| &l.name == n) =>
+            {
+                r.clone()
+            }
             _ => match &spec.variant {
                 Some(v) => parse_mix(&v.mix, &names),
-                None => names.iter().map(|n| LaneState { name: n.clone(), gain_db: Some(0.0), unmuted: false }).collect(),
+                None => names
+                    .iter()
+                    .map(|n| LaneState {
+                        name: n.clone(),
+                        gain_db: Some(0.0),
+                        unmuted: false,
+                    })
+                    .collect(),
             },
         };
         let variant = match &spec.variant {
@@ -605,7 +704,12 @@ impl EditorManager {
             clip_seen: 0,
             clip_until: None,
             clipping: false,
-            last_key: EventKey { playing: false, resume_pending: false, solo: None, clipping: false },
+            last_key: EventKey {
+                playing: false,
+                resume_pending: false,
+                solo: None,
+                clipping: false,
+            },
             last_position: 0,
             last_emit: None,
             wave: Wave::new(),
@@ -613,7 +717,12 @@ impl EditorManager {
         };
         session.sync_shared();
         let snap = session.snapshot();
-        eprintln!("calliope: editor open id={} stems={} duration_ms={}", snap.id, snap.stems.len(), snap.duration_ms);
+        eprintln!(
+            "calliope: editor open id={} stems={} duration_ms={}",
+            snap.id,
+            snap.stems.len(),
+            snap.duration_ms
+        );
         let old = self.session.replace(session).and_then(|s| s.output);
         self.retire(old);
         Ok(self.decorate(snap))
@@ -690,7 +799,11 @@ impl EditorManager {
                 snap.saving = Some(run.shared.progress());
             }
         }
-        if let Some(run) = self.detect.as_ref().filter(|r| r.id == snap.id && !r.shared.is_finished()) {
+        if let Some(run) = self
+            .detect
+            .as_ref()
+            .filter(|r| r.id == snap.id && !r.shared.is_finished())
+        {
             snap.detect = Some(run.shared.state());
         }
         snap
@@ -698,7 +811,9 @@ impl EditorManager {
 
     /// Drops a finished save job; a successful one updates the session's target variant.
     fn reap(&mut self) {
-        let Some(run) = self.save.as_ref().filter(|r| r.shared.is_finished()) else { return };
+        let Some(run) = self.save.as_ref().filter(|r| r.shared.is_finished()) else {
+            return;
+        };
         let (id, outcome) = (run.id.clone(), run.shared.outcome());
         self.save = None;
         *self.live_save.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -711,7 +826,12 @@ impl EditorManager {
 
     /// Starts the save job for the checked stems (solo ignored). The mix is the current
     /// lanes; the file is the session's target variant, replaced if it exists.
-    pub fn start_save(&mut self, id: &str, repo: Repository, lock: Arc<dyn RepoLock>) -> Result<EditorSnapshot, String> {
+    pub fn start_save(
+        &mut self,
+        id: &str,
+        repo: Repository,
+        lock: Arc<dyn RepoLock>,
+    ) -> Result<EditorSnapshot, String> {
         self.reap();
         if self.save.is_some() {
             return Err("A save is already running".into());
@@ -726,7 +846,10 @@ impl EditorManager {
             .iter()
             .zip(&s.stems)
             .filter(|(l, _)| l.unmuted)
-            .map(|(l, e)| RenderStem { path: s.dir.join(&e.file), gain: mixer::gain_factor(l.gain_db, l.unmuted) })
+            .map(|(l, e)| RenderStem {
+                path: s.dir.join(&e.file),
+                gain: mixer::gain_factor(l.gain_db, l.unmuted),
+            })
             .collect();
         let mix = serde_json::json!({
             "stems": s.lanes.iter().map(|l| serde_json::json!({
@@ -751,7 +874,11 @@ impl EditorManager {
         let shared = SaveShared::new();
         let handle = backing_render::spawn(params, shared.clone(), sink);
         *self.live_save.lock().unwrap_or_else(|e| e.into_inner()) = Some(shared.clone());
-        self.save = Some(SaveRun { id: id.to_string(), shared, handle });
+        self.save = Some(SaveRun {
+            id: id.to_string(),
+            shared,
+            handle,
+        });
         self.snapshot(id)
     }
 
@@ -777,7 +904,11 @@ impl EditorManager {
     /// Starts the beat detection (plan 2.8). Its input is the drums, bass and guitar stems at
     /// unity gain whatever the Editor's checks, volumes and solo say (see `detect_stem_indices`).
     /// The job runs on its own thread; `tick` emits the one final event.
-    pub fn start_detect(&mut self, id: &str, params: DetectParams) -> Result<EditorSnapshot, String> {
+    pub fn start_detect(
+        &mut self,
+        id: &str,
+        params: DetectParams,
+    ) -> Result<EditorSnapshot, String> {
         self.reap_detect();
         let sink = self.sink.clone();
         let busy = self.detect.is_some();
@@ -795,24 +926,38 @@ impl EditorManager {
         let names: Vec<&str> = s.lanes.iter().map(|l| l.name.as_str()).collect();
         let stems = detect_stem_indices(&names)
             .into_iter()
-            .map(|i| RenderStem { path: s.dir.join(&s.stems[i].file), gain: 1.0 })
+            .map(|i| RenderStem {
+                path: s.dir.join(&s.stems[i].file),
+                gain: 1.0,
+            })
             .collect();
         let job = DetectJob {
             id: s.id.clone(),
             dir: s.dir.clone(),
-            input: RenderInput { stems, sample_rate: s.sample_rate, bits: s.bits_out, frames: s.shared.total_frames },
+            input: RenderInput {
+                stems,
+                sample_rate: s.sample_rate,
+                bits: s.bits_out,
+                frames: s.shared.total_frames,
+            },
             duration_s,
             params,
         };
         let shared = DetectShared::new();
         let handle = beat_detect::spawn(job, shared.clone(), sink);
-        self.detect = Some(DetectRun { id: id.to_string(), shared, handle });
+        self.detect = Some(DetectRun {
+            id: id.to_string(),
+            shared,
+            handle,
+        });
         self.snapshot(id)
     }
 
     /// Whether a beat detection for `id` is running (not yet finished).
     pub fn detect_running(&self, id: &str) -> bool {
-        self.detect.as_ref().is_some_and(|r| r.id == id && !r.shared.is_finished())
+        self.detect
+            .as_ref()
+            .is_some_and(|r| r.id == id && !r.shared.is_finished())
     }
 
     /// Test hook: registers a detection that never finishes by itself.
@@ -836,7 +981,9 @@ impl EditorManager {
 
     /// App exit: cancels a running detection and waits up to `cap` for it to clean up.
     pub fn shutdown_detect(&mut self, cap: Duration) {
-        let Some(run) = self.detect.take() else { return };
+        let Some(run) = self.detect.take() else {
+            return;
+        };
         run.shared.cancel.store(true, Ordering::SeqCst);
         let end = Instant::now() + cap;
         while !run.handle.is_finished() && Instant::now() < end {
@@ -846,19 +993,34 @@ impl EditorManager {
 
     /// Emits the final event of a finished detection and forgets the job.
     fn reap_detect(&mut self) {
-        let Some(run) = self.detect.as_ref().filter(|r| r.shared.is_finished()) else { return };
+        let Some(run) = self.detect.as_ref().filter(|r| r.shared.is_finished()) else {
+            return;
+        };
         let outcome = run.shared.outcome().unwrap_or(DetectOutcome::Cancelled);
         let run = self.detect.take().expect("checked above");
         let _ = run.handle.join();
         let id = run.id;
         let sink = self.sink.clone();
         match outcome {
-            DetectOutcome::Done { tempo, beats, replaced } => {
-                let snap = SnapTempo { beats_per_bar: tempo.beats_per_bar, segments: tempo.segments.clone(), multi: tempo.is_multi() };
+            DetectOutcome::Done {
+                tempo,
+                beats,
+                replaced,
+            } => {
+                let snap = SnapTempo {
+                    beats_per_bar: tempo.beats_per_bar,
+                    segments: tempo.segments.clone(),
+                    multi: tempo.is_multi(),
+                };
                 if let Some(s) = self.session.as_mut().filter(|s| s.id == id) {
                     s.tempo = tempo;
                 }
-                sink(EditorEvent::Detected { id, tempo: snap, beats, replaced });
+                sink(EditorEvent::Detected {
+                    id,
+                    tempo: snap,
+                    beats,
+                    replaced,
+                });
             }
             DetectOutcome::Failed(message) => {
                 eprintln!("calliope: editor detect failed id={id} message={message}");
@@ -880,7 +1042,8 @@ impl EditorManager {
         let immediate = key != s.last_key || (!state.playing && pos != s.last_position);
         let due = state.playing
             && pos != s.last_position
-            && s.last_emit.is_none_or(|t| now.saturating_duration_since(t) >= EVENT_INTERVAL);
+            && s.last_emit
+                .is_none_or(|t| now.saturating_duration_since(t) >= EVENT_INTERVAL);
         if immediate || due {
             if immediate {
                 eprintln!(
@@ -895,7 +1058,10 @@ impl EditorManager {
             s.last_key = key;
             s.last_position = pos;
             s.last_emit = Some(now);
-            sink(EditorEvent::Transport { id: s.id.clone(), state: state.clone() });
+            sink(EditorEvent::Transport {
+                id: s.id.clone(),
+                state: state.clone(),
+            });
         }
         state
     }
@@ -906,7 +1072,11 @@ impl EditorManager {
             Some(s) if s.id == id => Ok(if s.output.is_some() {
                 None
             } else {
-                Some(OutputRequest { backend: self.backend.clone(), shared: s.shared.clone(), rate: s.sample_rate })
+                Some(OutputRequest {
+                    backend: self.backend.clone(),
+                    shared: s.shared.clone(),
+                    rate: s.sample_rate,
+                })
             }),
             _ => Err(format!("no editor session for {id}")),
         }
@@ -916,14 +1086,22 @@ impl EditorManager {
     /// be opened (by the caller, without the lock).
     pub fn play_request(&self, id: &str) -> Result<Option<OutputRequest>, String> {
         let req = self.output_request(id)?;
-        if !self.session.as_ref().is_some_and(|s| s.lanes.iter().any(|l| l.unmuted)) {
+        if !self
+            .session
+            .as_ref()
+            .is_some_and(|s| s.lanes.iter().any(|l| l.unmuted))
+        {
             return Err("Check a stem first".into());
         }
         Ok(req)
     }
 
     /// Mix Play, step 2: ends solo and starts. Nothing changes if the device failed to open.
-    pub fn play_with(&mut self, id: &str, opened: Option<OpenedOutput>) -> Result<TransportState, String> {
+    pub fn play_with(
+        &mut self,
+        id: &str,
+        opened: Option<OpenedOutput>,
+    ) -> Result<TransportState, String> {
         self.session(id)?;
         self.install(opened);
         let sink = self.sink.clone();
@@ -940,7 +1118,10 @@ impl EditorManager {
 
     /// Mix Play in one call (opens the device while holding `&mut self`).
     pub fn play(&mut self, id: &str) -> Result<TransportState, String> {
-        let opened = self.play_request(id)?.map(OutputRequest::open).transpose()?;
+        let opened = self
+            .play_request(id)?
+            .map(OutputRequest::open)
+            .transpose()?;
         self.play_with(id, opened)
     }
 
@@ -948,7 +1129,9 @@ impl EditorManager {
     fn install(&mut self, opened: Option<OpenedOutput>) {
         let Some(o) = opened else { return };
         match self.session.as_mut() {
-            Some(s) if s.output.is_none() && Arc::ptr_eq(&s.shared, &o.shared) => s.output = Some(o.handle),
+            Some(s) if s.output.is_none() && Arc::ptr_eq(&s.shared, &o.shared) => {
+                s.output = Some(o.handle)
+            }
             _ => self.retire(Some(o.handle)),
         }
     }
@@ -968,7 +1151,11 @@ impl EditorManager {
             Some(s) if s.id == id => s,
             _ => return Err(format!("no editor session for {id}")),
         };
-        let idx = s.lanes.iter().position(|l| l.name == name).ok_or_else(|| format!("no stem {name}"))?;
+        let idx = s
+            .lanes
+            .iter()
+            .position(|l| l.name == name)
+            .ok_or_else(|| format!("no stem {name}"))?;
         if s.solo == Some(idx) {
             return Ok(None);
         }
@@ -977,12 +1164,21 @@ impl EditorManager {
 
     /// Lane Play, step 2: checks the stem, solos it and plays; on the soloed stem it ends
     /// the solo. Nothing changes if the device failed to open.
-    pub fn lane_play_with(&mut self, id: &str, name: &str, opened: Option<OpenedOutput>) -> Result<TransportState, String> {
+    pub fn lane_play_with(
+        &mut self,
+        id: &str,
+        name: &str,
+        opened: Option<OpenedOutput>,
+    ) -> Result<TransportState, String> {
         self.session(id)?;
         self.install(opened);
         let sink = self.sink.clone();
         let s = self.session(id)?;
-        let idx = s.lanes.iter().position(|l| l.name == name).ok_or_else(|| format!("no stem {name}"))?;
+        let idx = s
+            .lanes
+            .iter()
+            .position(|l| l.name == name)
+            .ok_or_else(|| format!("no stem {name}"))?;
         if s.solo == Some(idx) {
             s.solo = None;
             return Ok(Self::publish(&sink, s, Instant::now()));
@@ -997,7 +1193,10 @@ impl EditorManager {
 
     /// Lane Play in one call (opens the device while holding `&mut self`).
     pub fn lane_play(&mut self, id: &str, name: &str) -> Result<TransportState, String> {
-        let opened = self.lane_play_request(id, name)?.map(OutputRequest::open).transpose()?;
+        let opened = self
+            .lane_play_request(id, name)?
+            .map(OutputRequest::open)
+            .transpose()?;
         self.lane_play_with(id, name, opened)
     }
 
@@ -1027,7 +1226,11 @@ impl EditorManager {
 
     /// Silences first, then resets; the closed output is handed back to the caller to drop
     /// (after the manager lock is released).
-    fn stop_session(sink: &EventSink, s: &mut Session, now: Instant) -> (TransportState, Option<Box<dyn OutputHandle>>) {
+    fn stop_session(
+        sink: &EventSink,
+        s: &mut Session,
+        now: Instant,
+    ) -> (TransportState, Option<Box<dyn OutputHandle>>) {
         s.transport.stop();
         s.shared.audible.store(false, Ordering::Release);
         let old = s.output.take();
@@ -1037,14 +1240,24 @@ impl EditorManager {
         (Self::publish(sink, s, now), old)
     }
 
-    pub fn seek(&mut self, id: &str, position_ms: u64, now: Instant) -> Result<TransportState, String> {
+    pub fn seek(
+        &mut self,
+        id: &str,
+        position_ms: u64,
+        now: Instant,
+    ) -> Result<TransportState, String> {
         let sink = self.sink.clone();
         let s = self.session(id)?;
         let frames = ms_to_frames(position_ms, s.sample_rate).min(s.shared.total_frames);
         Ok(Self::seek_frames(&sink, s, frames, now))
     }
 
-    pub fn nudge(&mut self, id: &str, delta_ms: i64, now: Instant) -> Result<TransportState, String> {
+    pub fn nudge(
+        &mut self,
+        id: &str,
+        delta_ms: i64,
+        now: Instant,
+    ) -> Result<TransportState, String> {
         let sink = self.sink.clone();
         let s = self.session(id)?;
         let cur = s.shared.position.load(Ordering::Acquire) as i64;
@@ -1062,10 +1275,21 @@ impl EditorManager {
     }
 
     /// Sets a lane. `gain_db` is snapped to the 0.5 dB grid (below -59.75 it is Off).
-    pub fn set_stem(&mut self, id: &str, name: &str, gain_db: Option<f32>, unmuted: bool, now: Instant) -> Result<LaneState, String> {
+    pub fn set_stem(
+        &mut self,
+        id: &str,
+        name: &str,
+        gain_db: Option<f32>,
+        unmuted: bool,
+        now: Instant,
+    ) -> Result<LaneState, String> {
         let sink = self.sink.clone();
         let s = self.session(id)?;
-        let idx = s.lanes.iter().position(|l| l.name == name).ok_or_else(|| format!("no stem {name}"))?;
+        let idx = s
+            .lanes
+            .iter()
+            .position(|l| l.name == name)
+            .ok_or_else(|| format!("no stem {name}"))?;
         s.lanes[idx].gain_db = gain_db.and_then(mixer::clamp_db);
         s.lanes[idx].unmuted = unmuted;
         if !unmuted && s.solo == Some(idx) {
@@ -1084,7 +1308,11 @@ impl EditorManager {
             if let (true, Some(peaks)) = (gen == s.wave.gen, result) {
                 eprintln!("calliope: editor peaks id={} gen={gen} ms={ms}", s.id);
                 s.wave.peaks = peaks.clone();
-                sink(EditorEvent::Peaks { id: s.id.clone(), gen, peaks });
+                sink(EditorEvent::Peaks {
+                    id: s.id.clone(),
+                    gen,
+                    peaks,
+                });
             }
         }
         let due = s.wave.debounce.take_due(now);
@@ -1097,21 +1325,37 @@ impl EditorManager {
         s.wave.gen += 1;
         s.wave.slot.lock().unwrap_or_else(|e| e.into_inner()).take();
         let gen = s.wave.gen;
-        let gains: Vec<f32> = s.lanes.iter().map(|l| mixer::gain_factor(l.gain_db, l.unmuted)).collect();
+        let gains: Vec<f32> = s
+            .lanes
+            .iter()
+            .map(|l| mixer::gain_factor(l.gain_db, l.unmuted))
+            .collect();
         let shared = s.shared.clone();
         let cancel = s.wave.cancel.clone();
         let slot = s.wave.slot.clone();
         let f = peaks_fn.clone();
-        let spawned = std::thread::Builder::new().name("editor-peaks".into()).spawn(move || {
-            let t = Instant::now();
-            let result = f(&shared.stems, &gains, shared.total_frames, mix_waveform::BUCKETS, &cancel);
-            if !cancel.load(Ordering::Relaxed) {
-                *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some((gen, result, t.elapsed().as_millis() as u64));
-            }
-        });
+        let spawned = std::thread::Builder::new()
+            .name("editor-peaks".into())
+            .spawn(move || {
+                let t = Instant::now();
+                let result = f(
+                    &shared.stems,
+                    &gains,
+                    shared.total_frames,
+                    mix_waveform::BUCKETS,
+                    &cancel,
+                );
+                if !cancel.load(Ordering::Relaxed) {
+                    *slot.lock().unwrap_or_else(|e| e.into_inner()) =
+                        Some((gen, result, t.elapsed().as_millis() as u64));
+                }
+            });
         match spawned {
             Ok(_) => s.wave.first = false,
-            Err(_) => eprintln!("calliope: editor peaks id={} could not start the worker", s.id),
+            Err(_) => eprintln!(
+                "calliope: editor peaks id={} could not start the worker",
+                s.id
+            ),
         }
     }
 
@@ -1120,7 +1364,9 @@ impl EditorManager {
         let sink = self.sink.clone();
         self.reap();
         self.reap_detect();
-        let Some(s) = self.session.as_mut() else { return };
+        let Some(s) = self.session.as_mut() else {
+            return;
+        };
         let failed = s.output.as_ref().and_then(|o| o.error());
         if failed.is_some() || s.shared.ended.swap(false, Ordering::AcqRel) {
             let (_, old) = Self::stop_session(&sink, s, now);

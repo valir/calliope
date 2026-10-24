@@ -44,7 +44,9 @@ pub fn pct_of_factor(speed: f64) -> u32 {
     if !speed.is_finite() {
         return 100;
     }
-    (speed * 100.0).round().clamp(MIN_PCT as f64, MAX_PCT as f64) as u32
+    (speed * 100.0)
+        .round()
+        .clamp(MIN_PCT as f64, MAX_PCT as f64) as u32
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,7 +60,13 @@ pub struct Training {
 
 impl Default for Training {
     fn default() -> Self {
-        Training { on: false, start: 70, end: 100, step: 5, repeats: 2 }
+        Training {
+            on: false,
+            start: 70,
+            end: 100,
+            step: 5,
+            repeats: 2,
+        }
     }
 }
 
@@ -112,9 +120,17 @@ impl Training {
         let steps = self.steps();
         let speed_pct = self.pass_speed(pass);
         if pass / repeats < steps {
-            Progress { speed_pct, repeat: pass % repeats + 1, of: Some(repeats) }
+            Progress {
+                speed_pct,
+                repeat: pass % repeats + 1,
+                of: Some(repeats),
+            }
         } else {
-            Progress { speed_pct, repeat: pass - steps * repeats + 1, of: None }
+            Progress {
+                speed_pct,
+                repeat: pass - steps * repeats + 1,
+                of: None,
+            }
         }
     }
 }
@@ -124,15 +140,31 @@ mod tests {
     use super::*;
 
     fn t(start: u32, end: u32, step: u32, repeats: u32) -> Training {
-        Training { on: true, start, end, step, repeats }
+        Training {
+            on: true,
+            start,
+            end,
+            step,
+            repeats,
+        }
     }
 
     #[test]
     fn step_pct_moves_to_multiples_of_five() {
         for (pct, steps, want) in [
-            (100, -3, 85), (73, -1, 70), (73, 1, 75), (70, 1, 75), (70, -1, 65),
-            (25, -1, 25), (27, -1, 25), (200, 1, 200), (198, 1, 200), (100, 0, 100),
-            (300, -1, 195), (100, i32::MAX, 200), (100, i32::MIN, 25),
+            (100, -3, 85),
+            (73, -1, 70),
+            (73, 1, 75),
+            (70, 1, 75),
+            (70, -1, 65),
+            (25, -1, 25),
+            (27, -1, 25),
+            (200, 1, 200),
+            (198, 1, 200),
+            (100, 0, 100),
+            (300, -1, 195),
+            (100, i32::MAX, 200),
+            (100, i32::MIN, 25),
         ] {
             assert_eq!(step_pct(pct, steps), want, "({pct}, {steps})");
         }
@@ -149,14 +181,30 @@ mod tests {
 
     #[test]
     fn pct_of_factor_rounds_and_clamps() {
-        for (f, want) in [(1.0, 100), (0.8, 80), (0.73, 73), (0.1, 25), (9.0, 200), (f64::NAN, 100)] {
+        for (f, want) in [
+            (1.0, 100),
+            (0.8, 80),
+            (0.73, 73),
+            (0.1, 25),
+            (9.0, 200),
+            (f64::NAN, 100),
+        ] {
             assert_eq!(pct_of_factor(f), want, "{f}");
         }
     }
 
     #[test]
     fn default_and_validate() {
-        assert_eq!(Training::default(), Training { on: false, start: 70, end: 100, step: 5, repeats: 2 });
+        assert_eq!(
+            Training::default(),
+            Training {
+                on: false,
+                start: 70,
+                end: 100,
+                step: 5,
+                repeats: 2
+            }
+        );
         assert_eq!(Training::default().validate(), Ok(()));
         assert_eq!(t(60, 80, 10, 2).validate(), Ok(()));
         for bad in [t(20, 80, 10, 2), t(60, 201, 10, 2)] {
@@ -177,11 +225,24 @@ mod tests {
         let speeds: Vec<u32> = (0..=6).map(|p| tr.pass_speed(p)).collect();
         assert_eq!(speeds, [60, 60, 70, 70, 80, 80, 80]);
         let want = [
-            (60, 1, Some(2)), (60, 2, Some(2)), (70, 1, Some(2)), (70, 2, Some(2)),
-            (80, 1, None), (80, 2, None), (80, 3, None),
+            (60, 1, Some(2)),
+            (60, 2, Some(2)),
+            (70, 1, Some(2)),
+            (70, 2, Some(2)),
+            (80, 1, None),
+            (80, 2, None),
+            (80, 3, None),
         ];
         for (p, (speed_pct, repeat, of)) in want.into_iter().enumerate() {
-            assert_eq!(tr.progress(p as u32), Progress { speed_pct, repeat, of }, "pass {p}");
+            assert_eq!(
+                tr.progress(p as u32),
+                Progress {
+                    speed_pct,
+                    repeat,
+                    of
+                },
+                "pass {p}"
+            );
         }
     }
 
@@ -204,7 +265,21 @@ mod tests {
         let tr = t(80, 80, 5, 3);
         assert_eq!(tr.steps(), 0);
         assert_eq!(tr.pass_speed(0), 80);
-        assert_eq!(tr.progress(0), Progress { speed_pct: 80, repeat: 1, of: None });
-        assert_eq!(tr.progress(4), Progress { speed_pct: 80, repeat: 5, of: None });
+        assert_eq!(
+            tr.progress(0),
+            Progress {
+                speed_pct: 80,
+                repeat: 1,
+                of: None
+            }
+        );
+        assert_eq!(
+            tr.progress(4),
+            Progress {
+                speed_pct: 80,
+                repeat: 5,
+                of: None
+            }
+        );
     }
 }

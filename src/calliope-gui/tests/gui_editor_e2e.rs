@@ -33,7 +33,10 @@ fn select(app: &mut App, wid: &str, query: &str, id: &str) {
     app.typ(wid, query);
     settle();
     app.key(wid, "Down Down Down Return");
-    app.wait_line(|l| l.trim_end().ends_with(&format!("select id={id}")), Duration::from_secs(10));
+    app.wait_line(
+        |l| l.trim_end().ends_with(&format!("select id={id}")),
+        Duration::from_secs(10),
+    );
     settle();
 }
 
@@ -77,7 +80,11 @@ fn states_and_lanes() {
     app.key(&wid, "space");
     app.click(&wid, MIX_PLAY.0, MIX_PLAY.1);
     std::thread::sleep(Duration::from_millis(700));
-    assert_eq!(app.count("editor play"), 0, "Mix Play must be disabled with nothing checked");
+    assert_eq!(
+        app.count("editor play"),
+        0,
+        "Mix Play must be disabled with nothing checked"
+    );
 
     // Six lanes.
     select(&mut app, &wid, "six lanes", ED_SIX);
@@ -115,7 +122,10 @@ fn play_solo_nudge_save_clip() {
     // Check vocals and drums.
     for (i, name) in ["vocals", "drums"].iter().enumerate() {
         app.click(&wid, CHECK_X, LANE_Y[i]);
-        let l = app.wait_line(|l| l.contains(&format!("editor stem name={name}")), secs(10));
+        let l = app.wait_line(
+            |l| l.contains(&format!("editor stem name={name}")),
+            secs(10),
+        );
         assert!(l.contains("unmuted=true"), "{l}");
     }
 
@@ -131,8 +141,15 @@ fn play_solo_nudge_save_clip() {
     settle();
     shot("editor-playing");
     let mix = capture_from(&cap, start);
-    let (p440, p220, p660) = (tone_power(&mix, rate, 440.0), tone_power(&mix, rate, 220.0), tone_power(&mix, rate, 660.0));
-    assert!(db(p440, p660) > 40.0 && db(p220, p660) > 40.0, "mix of vocals and drums: 440={p440} 220={p220} 660={p660}");
+    let (p440, p220, p660) = (
+        tone_power(&mix, rate, 440.0),
+        tone_power(&mix, rate, 220.0),
+        tone_power(&mix, rate, 660.0),
+    );
+    assert!(
+        db(p440, p660) > 40.0 && db(p220, p660) > 40.0,
+        "mix of vocals and drums: 440={p440} 220={p220} 660={p660}"
+    );
 
     // The moving slider must not seek by itself (it used to, on every transport event).
     assert_eq!(app.count("editor seek"), 0, "playing caused seeks");
@@ -145,7 +162,11 @@ fn play_solo_nudge_save_clip() {
     assert!(app.count("calliope: editor transport playing=false") >= 1);
     let n = app.count("editor transport");
     std::thread::sleep(secs(1));
-    assert_eq!(app.count("editor transport"), n, "the position moved while paused");
+    assert_eq!(
+        app.count("editor transport"),
+        n,
+        "the position moved while paused"
+    );
 
     // Lane Play on guitar: solo, and the guitar checkbox becomes checked.
     app.click(&wid, LANE_PLAY_X, LANE_Y[3]);
@@ -155,16 +176,25 @@ fn play_solo_nudge_save_clip() {
     let start = capture_len(&cap);
     std::thread::sleep(Duration::from_millis(1200));
     let solo = capture_from(&cap, start);
-    let (p440, p660) = (tone_power(&solo, rate, 440.0), tone_power(&solo, rate, 660.0));
+    let (p440, p660) = (
+        tone_power(&solo, rate, 440.0),
+        tone_power(&solo, rate, 660.0),
+    );
     assert!(db(p660, p440) > 40.0, "solo guitar: 660={p660} 440={p440}");
 
     // Mix Pause keeps the solo; the following Mix Play ends it (the mix returns).
     app.click(&wid, MIX_PLAY.0, MIX_PLAY.1);
-    let l = app.wait_line(|l| l.contains("calliope: editor transport playing=false"), secs(10));
+    let l = app.wait_line(
+        |l| l.contains("calliope: editor transport playing=false"),
+        secs(10),
+    );
     assert!(l.contains("solo=guitar"), "{l}");
     app.wait_line(|l| l.contains("editor pause"), secs(10));
     app.click(&wid, MIX_PLAY.0, MIX_PLAY.1);
-    let l = app.wait_line(|l| l.contains("calliope: editor transport playing=true"), secs(10));
+    let l = app.wait_line(
+        |l| l.contains("calliope: editor transport playing=true"),
+        secs(10),
+    );
     assert!(l.contains("solo=none"), "{l}");
 
     // Wheel up over the time field: three nudges of -100 ms, a pause, then the sound resumes
@@ -174,7 +204,10 @@ fn play_solo_nudge_save_clip() {
         app.wait_line(|l| l.contains("editor nudge delta=-100"), secs(10));
     }
     let last = Instant::now();
-    app.wait_line(|l| l.contains("calliope: editor transport") && l.contains("audible=true"), secs(5));
+    app.wait_line(
+        |l| l.contains("calliope: editor transport") && l.contains("audible=true"),
+        secs(5),
+    );
     let gap = last.elapsed();
     assert!(
         gap > Duration::from_millis(150) && gap < Duration::from_millis(900),
@@ -182,7 +215,9 @@ fn play_solo_nudge_save_clip() {
     );
     let lines = app.all_lines();
     assert!(
-        lines.iter().any(|l| l.contains("calliope: editor transport") && l.contains("audible=false")),
+        lines
+            .iter()
+            .any(|l| l.contains("calliope: editor transport") && l.contains("audible=false")),
         "no audible=false line during the nudges"
     );
     assert_eq!(app.count("editor nudge delta=-100"), 3);
@@ -190,7 +225,10 @@ fn play_solo_nudge_save_clip() {
     // Leaving the Editor while playing stops the playback.
     app.key(&wid, "alt+1");
     app.wait_contains("editor leave stop");
-    app.wait_line(|l| l.contains("calliope: editor transport playing=false"), secs(5));
+    app.wait_line(
+        |l| l.contains("calliope: editor transport playing=false"),
+        secs(5),
+    );
 
     // Back in the Editor: uncheck guitar (it was checked by the solo) and Save.
     app.key(&wid, "alt+3");
@@ -198,7 +236,10 @@ fn play_solo_nudge_save_clip() {
     settle();
     app.click(&wid, CHECK_X, LANE_Y[3]);
     let l = app.wait_line(|l| l.contains("editor stem name=guitar"), secs(10));
-    assert!(l.contains("unmuted=false"), "guitar was not checked by the solo: {l}");
+    assert!(
+        l.contains("unmuted=false"),
+        "guitar was not checked by the solo: {l}"
+    );
     app.click(&wid, SAVE.0, SAVE.1);
     let l = app.wait_line(|l| l.contains("editor saved"), secs(60));
     assert_eq!(field(&l, "clipped"), "0", "{l}");
@@ -211,14 +252,28 @@ fn play_solo_nudge_save_clip() {
     let b = &v["backings"][0];
     assert_eq!(b["file"], "backings/backing.flac", "{v}");
     let stems = b["mix"]["stems"].as_array().unwrap();
-    let on: Vec<&str> = stems.iter().filter(|s| s["unmuted"] == true).map(|s| s["name"].as_str().unwrap()).collect();
+    let on: Vec<&str> = stems
+        .iter()
+        .filter(|s| s["unmuted"] == true)
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
     assert_eq!(on, ["vocals", "drums"], "{b}");
     let samples = decode(&flac);
     let brate = b["sample_rate"].as_f64().unwrap();
-    let (p440, p220, p660) = (tone_power(&samples, brate, 440.0), tone_power(&samples, brate, 220.0), tone_power(&samples, brate, 660.0));
+    let (p440, p220, p660) = (
+        tone_power(&samples, brate, 440.0),
+        tone_power(&samples, brate, 220.0),
+        tone_power(&samples, brate, 660.0),
+    );
     assert!(db(p660, p440) < -40.0, "saved file: 660={p660} 440={p440}");
-    assert!(db(p220, p440) > -20.0, "drums missing from the saved file: 220={p220} 440={p440}");
-    assert!(dirs.trash().iter().all(|t| !t.ends_with("-backing")), "first save trashed something");
+    assert!(
+        db(p220, p440) > -20.0,
+        "drums missing from the saved file: 220={p220} 440={p440}"
+    );
+    assert!(
+        dirs.trash().iter().all(|t| !t.ends_with("-backing")),
+        "first save trashed something"
+    );
 
     // Second Save: vocals, drums and bass pushed to +12 dB. The CLIP badge lights and the old
     // file goes to the trash.
@@ -229,12 +284,18 @@ fn play_solo_nudge_save_clip() {
         app.key(&wid, "End");
     }
     for name in ["vocals", "drums", "bass"] {
-        app.wait_line(|l| l.contains(&format!("editor stem name={name} gain=12")), secs(10));
+        app.wait_line(
+            |l| l.contains(&format!("editor stem name={name} gain=12")),
+            secs(10),
+        );
     }
     app.click(&wid, MIX_PLAY.0, MIX_PLAY.1);
     // The backend's clipping line can come before or after the frontend's "editor play" line, and
     // wait_line consumes lines in order, so only the clipping line is waited for.
-    app.wait_line(|l| l.contains("calliope: editor transport") && l.contains("clipping=true"), secs(10));
+    app.wait_line(
+        |l| l.contains("calliope: editor transport") && l.contains("clipping=true"),
+        secs(10),
+    );
     settle();
     shot("editor-clip");
     app.click(&wid, MIX_PLAY.0, MIX_PLAY.1);
@@ -246,10 +307,22 @@ fn play_solo_nudge_save_clip() {
     assert!(clipped > 0, "{l}");
     settle();
     shot("editor-saved-clipped");
-    let trashed: Vec<String> = dirs.trash().into_iter().filter(|t| t.ends_with("-backing")).collect();
+    let trashed: Vec<String> = dirs
+        .trash()
+        .into_iter()
+        .filter(|t| t.ends_with("-backing"))
+        .collect();
     assert_eq!(trashed.len(), 1, "{:?}", dirs.trash());
-    let moved = dirs.repo().join("trash").join(&trashed[0]).join("backing.flac");
-    assert_eq!(std::fs::read(moved).unwrap(), old, "the old backing is not in the trash");
+    let moved = dirs
+        .repo()
+        .join("trash")
+        .join(&trashed[0])
+        .join("backing.flac");
+    assert_eq!(
+        std::fs::read(moved).unwrap(),
+        old,
+        "the old backing is not in the trash"
+    );
     assert_ne!(std::fs::read(&flac).unwrap(), old);
     finish(&app);
 }
@@ -271,18 +344,28 @@ fn wave_x(ms: f64) -> i32 {
 }
 
 /// The tempo changes of `player.json` (`tempo.segments`), waiting up to 4 s for `ok`.
-fn wait_segments(dirs: &Dirs, id: &str, ok: impl Fn(&[serde_json::Value]) -> bool) -> Vec<serde_json::Value> {
+fn wait_segments(
+    dirs: &Dirs,
+    id: &str,
+    ok: impl Fn(&[serde_json::Value]) -> bool,
+) -> Vec<serde_json::Value> {
     let end = Instant::now() + secs(4);
     loop {
         if let Ok(b) = std::fs::read(dirs.player_json(id)) {
             if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&b) {
-                let segs = v["tempo"]["segments"].as_array().cloned().unwrap_or_default();
+                let segs = v["tempo"]["segments"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
                 if ok(&segs) {
                     return segs;
                 }
             }
         }
-        assert!(Instant::now() < end, "player.json of {id} did not reach the expected state");
+        assert!(
+            Instant::now() < end,
+            "player.json of {id} did not reach the expected state"
+        );
         std::thread::sleep(Duration::from_millis(100));
     }
 }
@@ -309,7 +392,10 @@ fn mix_waveform_and_autodetect() {
 
     // A checked stem: the Mix waveform shows its peaks soon after.
     app.click(&wid, CHECK_X, LANE_Y[0]);
-    app.wait_line(|l| l.contains("editor waveform peaks=") && peaks_max(l) > 0.0, secs(3));
+    app.wait_line(
+        |l| l.contains("editor waveform peaks=") && peaks_max(l) > 0.0,
+        secs(3),
+    );
 
     // Three quick toggles: one recomputation, no earlier than 300 ms after the last change,
     // while a Play is not held up by it.
@@ -323,10 +409,17 @@ fn mix_waveform_and_autodetect() {
     let played = Instant::now();
     app.wait_line(|l| l.contains("editor waveform peaks="), secs(5));
     let gap = last.elapsed();
-    assert!(gap >= Duration::from_millis(300), "the peaks came {gap:?} after the last change");
+    assert!(
+        gap >= Duration::from_millis(300),
+        "the peaks came {gap:?} after the last change"
+    );
     assert!(played < last + gap, "Play waited for the peaks");
     std::thread::sleep(secs(1));
-    assert_eq!(app.count("editor peaks id="), before + 1, "three toggles must give one recomputation");
+    assert_eq!(
+        app.count("editor peaks id="),
+        before + 1,
+        "three toggles must give one recomputation"
+    );
     app.click(&wid, MIX_PLAY.0, MIX_PLAY.1);
     app.wait_line(|l| l.contains("editor pause"), secs(10));
 
@@ -334,7 +427,10 @@ fn mix_waveform_and_autodetect() {
     for y in [LANE_Y[0], LANE_Y[2]] {
         app.click(&wid, CHECK_X, y);
     }
-    let l = app.wait_line(|l| l.contains("editor waveform peaks=") && peaks_max(l) == 0.0, secs(5));
+    let l = app.wait_line(
+        |l| l.contains("editor waveform peaks=") && peaks_max(l) == 0.0,
+        secs(5),
+    );
     assert_eq!(field(&l, "max"), "0.00", "{l}");
     settle();
     shot("editor-mix-nothing-checked");
@@ -343,7 +439,10 @@ fn mix_waveform_and_autodetect() {
     for y in [LANE_Y[0], LANE_Y[1]] {
         app.click(&wid, CHECK_X, y);
     }
-    app.wait_line(|l| l.contains("editor waveform peaks=") && peaks_max(l) > 0.0, secs(5));
+    app.wait_line(
+        |l| l.contains("editor waveform peaks=") && peaks_max(l) > 0.0,
+        secs(5),
+    );
     settle();
     app.click(&wid, AUTODETECT.0, AUTODETECT.1);
     app.wait_contains("editor detect start");
@@ -356,8 +455,12 @@ fn mix_waveform_and_autodetect() {
         .filter(|l| l.contains("editor detect phase="))
         .map(|l| field(l, "phase"))
         .collect();
-    assert!(phases.len() >= 2 && phases.contains(&"detecting".to_string()), "phases {phases:?}");
-    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(dirs.player_json(ED_FOUR)).unwrap()).unwrap();
+    assert!(
+        phases.len() >= 2 && phases.contains(&"detecting".to_string()),
+        "phases {phases:?}"
+    );
+    let v: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dirs.player_json(ED_FOUR)).unwrap()).unwrap();
     assert_eq!(v["schema_version"], 6, "{v}");
     let segs = wait_segments(&dirs, ED_FOUR, |s| s.len() == 2);
     assert_eq!(start_ms(&segs[1]), CHANGE_MS, "{segs:?}");
@@ -374,7 +477,9 @@ fn mix_waveform_and_autodetect() {
     app.key(&wid, "Right");
     let l = app.wait_line(|l| l.contains("editor tempo move"), secs(10));
     assert_eq!(field(&l, "applied"), "65", "{l}");
-    let segs = wait_segments(&dirs, ED_FOUR, |s| s.len() == 2 && (start_ms(&s[1]) - (CHANGE_MS + 65.0 * FINE_MS)).abs() < 0.01);
+    let segs = wait_segments(&dirs, ED_FOUR, |s| {
+        s.len() == 2 && (start_ms(&s[1]) - (CHANGE_MS + 65.0 * FINE_MS)).abs() < 0.01
+    });
     assert_eq!(segs[1]["detected_ms"].as_f64(), Some(CHANGE_MS), "{segs:?}");
     settle();
     shot("editor-mix-moved");
@@ -383,8 +488,13 @@ fn mix_waveform_and_autodetect() {
     for _ in 0..4 {
         app.key(&wid, "shift+Right");
     }
-    app.wait_line(|l| l.contains("editor tempo move") && field(l, "applied") == "256", secs(10));
-    let segs = wait_segments(&dirs, ED_FOUR, |s| s.len() == 2 && (start_ms(&s[1]) - (CHANGE_MS + 256.0 * FINE_MS)).abs() < 0.01);
+    app.wait_line(
+        |l| l.contains("editor tempo move") && field(l, "applied") == "256",
+        secs(10),
+    );
+    let segs = wait_segments(&dirs, ED_FOUR, |s| {
+        s.len() == 2 && (start_ms(&s[1]) - (CHANGE_MS + 256.0 * FINE_MS)).abs() < 0.01
+    });
     assert_eq!(segs[1]["detected_ms"].as_f64(), Some(CHANGE_MS), "{segs:?}");
 
     // Dragging the bar 40 px back.
@@ -410,12 +520,19 @@ fn mix_waveform_and_autodetect() {
 
     // The same track in the light theme, after a restart: the tempo comes back from player.json.
     drop(app);
-    std::fs::write(dirs.app_config().join("settings.json"), r#"{"theme":"light"}"#).unwrap();
+    std::fs::write(
+        dirs.app_config().join("settings.json"),
+        r#"{"theme":"light"}"#,
+    )
+    .unwrap();
     let (mut app, wid) = start_detect_app(&dirs, "ok");
     select(&mut app, &wid, "four lanes", ED_FOUR);
     app.wait_contains("editor active");
     app.click(&wid, CHECK_X, LANE_Y[0]);
-    app.wait_line(|l| l.contains("editor waveform peaks=") && peaks_max(l) > 0.0, secs(5));
+    app.wait_line(
+        |l| l.contains("editor waveform peaks=") && peaks_max(l) > 0.0,
+        secs(5),
+    );
     settle();
     shot("editor-mix-detected-light");
     finish(&app);
@@ -429,11 +546,20 @@ const PLAYER_LOOP_ADD: (i32, i32) = (1009, 368); // 1280x800, track tree collaps
 fn assert_no_tracker(app: &App) {
     let end = Instant::now() + secs(5);
     loop {
-        let left: Vec<_> = app.leftovers().into_iter().filter(|(_, cmd)| runs_program(cmd, "stub-beat-tracker") && !runs_program(cmd, "calliope-stems")).collect();
+        let left: Vec<_> = app
+            .leftovers()
+            .into_iter()
+            .filter(|(_, cmd)| {
+                runs_program(cmd, "stub-beat-tracker") && !runs_program(cmd, "calliope-stems")
+            })
+            .collect();
         if left.is_empty() {
             return;
         }
-        assert!(Instant::now() < end, "the stub beat tracker is still running: {left:?}");
+        assert!(
+            Instant::now() < end,
+            "the stub beat tracker is still running: {left:?}"
+        );
         std::thread::sleep(Duration::from_millis(100));
     }
 }
@@ -479,7 +605,10 @@ fn autodetect_errors_cancel_and_player_reload() {
     app.wait_view("editor");
     settle();
     app.click(&wid, CHECK_X, LANE_Y[0]);
-    app.wait_line(|l| l.contains("editor waveform peaks=") && peaks_max(l) > 0.0, secs(5));
+    app.wait_line(
+        |l| l.contains("editor waveform peaks=") && peaks_max(l) > 0.0,
+        secs(5),
+    );
     app.click(&wid, AUTODETECT.0, AUTODETECT.1);
     app.wait_contains("player released");
     let l = app.wait_line(|l| l.contains("editor detected segments="), secs(30));
@@ -491,8 +620,13 @@ fn autodetect_errors_cancel_and_player_reload() {
     settle();
     shot("player-reopened-with-loop");
     assert_eq!(loops(&dirs), 1, "the loop is gone after the reopen");
-    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(dirs.player_json(ED_FOUR)).unwrap()).unwrap();
-    assert_eq!(v["tempo"]["segments"][0]["bpm"].as_f64(), Some(120.0), "{v}");
+    let v: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dirs.player_json(ED_FOUR)).unwrap()).unwrap();
+    assert_eq!(
+        v["tempo"]["segments"][0]["bpm"].as_f64(),
+        Some(120.0),
+        "{v}"
+    );
 
     // A failing tracker: the message appears in the Editor.
     set_tracker_mode(&dirs, "fail");
@@ -531,11 +665,18 @@ fn autodetect_errors_cancel_and_player_reload() {
     select(&mut app, &wid, "four lanes", ED_FOUR);
     app.wait_contains("editor active");
     app.click(&wid, CHECK_X, LANE_Y[0]);
-    app.wait_line(|l| l.contains("editor waveform peaks=") && peaks_max(l) > 0.0, secs(5));
+    app.wait_line(
+        |l| l.contains("editor waveform peaks=") && peaks_max(l) > 0.0,
+        secs(5),
+    );
     settle();
     shot("editor-autodetect-no-server");
     app.click(&wid, AUTODETECT.0, AUTODETECT.1);
     std::thread::sleep(Duration::from_millis(700));
-    assert_eq!(app.count("editor detect start"), 0, "Autodetect must be disabled without a server");
+    assert_eq!(
+        app.count("editor detect start"),
+        0,
+        "Autodetect must be disabled without a server"
+    );
     finish(&app);
 }

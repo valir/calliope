@@ -10,7 +10,8 @@ use tauri::Manager;
 
 use crate::export_audio::LEAD_BEATS;
 use crate::export_job::{
-    ExportEvent, ExportPlan, ExportSnapshot, ExportState, PlanInput, Sink, TargetReq, BUSY_MESSAGE, STALE_MESSAGE,
+    ExportEvent, ExportPlan, ExportSnapshot, ExportState, PlanInput, Sink, TargetReq, BUSY_MESSAGE,
+    STALE_MESSAGE,
 };
 use crate::export_rules::{self, ExportKind, NO_TEMPO_REASON};
 use crate::ipc::RepoState;
@@ -58,8 +59,14 @@ pub fn do_export_info(
 ) -> Result<ExportInfo, String> {
     let (rec, dir) = load(repo, id)?;
     let memory = export_rules::suggest_memory(settings.get().rc5_memory);
-    let mut info =
-        ExportInfo { id: id.to_string(), available: false, reason: None, source: None, count_in: None, memory };
+    let mut info = ExportInfo {
+        id: id.to_string(),
+        available: false,
+        reason: None,
+        source: None,
+        count_in: None,
+        memory,
+    };
     let src = match export_rules::export_source(&rec) {
         Ok(s) => s,
         Err(reason) => {
@@ -84,7 +91,10 @@ pub fn do_export_info(
 }
 
 fn refused<T>(kind: ExportKind, reason: &str, message: impl Into<String>) -> Result<T, String> {
-    eprintln!("calliope: export refused target={} reason={reason}", kind.as_str());
+    eprintln!(
+        "calliope: export refused target={} reason={reason}",
+        kind.as_str()
+    );
     Err(message.into())
 }
 
@@ -123,18 +133,34 @@ pub fn do_prepare_export(
     }
 
     let (dialog, title) = match kind {
-        ExportKind::Rc5 => (DialogKind::ExportRc5, "Choose the RC-5 drive (its root folder)"),
-        _ => (DialogKind::ExportAudio, "Choose a folder for the MP3/OGG file"),
+        ExportKind::Rc5 => (
+            DialogKind::ExportRc5,
+            "Choose the RC-5 drive (its root folder)",
+        ),
+        _ => (
+            DialogKind::ExportAudio,
+            "Choose a folder for the MP3/OGG file",
+        ),
     };
     let s = settings.get();
-    let remembered = if kind == ExportKind::Rc5 { s.rc5_dir } else { s.export_dir };
+    let remembered = if kind == ExportKind::Rc5 {
+        s.rc5_dir
+    } else {
+        s.export_dir
+    };
     let (from, start_dir) = export_rules::start_dir(remembered.as_deref(), home.as_deref());
     eprintln!(
         "calliope: dialog start kind={} from={from} dir={}",
         dialog.as_str(),
-        start_dir.as_ref().map_or("none".to_string(), |d| d.display().to_string())
+        start_dir
+            .as_ref()
+            .map_or("none".to_string(), |d| d.display().to_string())
     );
-    let Some(chosen) = repo.picker.pick_folder(&FolderReq { kind: dialog, title: title.into(), start_dir }) else {
+    let Some(chosen) = repo.picker.pick_folder(&FolderReq {
+        kind: dialog,
+        title: title.into(),
+        start_dir,
+    }) else {
         return Ok(None);
     };
 
@@ -158,7 +184,11 @@ pub fn do_prepare_export(
         match saved {
             Ok(_) => eprintln!(
                 "calliope: export remembered kind={} dir={}",
-                if kind == ExportKind::Rc5 { "rc5" } else { "file" },
+                if kind == ExportKind::Rc5 {
+                    "rc5"
+                } else {
+                    "file"
+                },
                 chosen.display()
             ),
             Err(e) => eprintln!("calliope: could not save settings: {e}"),
@@ -273,7 +303,10 @@ pub async fn start_export(
 }
 
 #[tauri::command]
-pub async fn cancel_export(app: tauri::AppHandle, job: String) -> Result<Option<ExportSnapshot>, String> {
+pub async fn cancel_export(
+    app: tauri::AppHandle,
+    job: String,
+) -> Result<Option<ExportSnapshot>, String> {
     Ok(app.state::<ExportState>().cancel(&job))
 }
 

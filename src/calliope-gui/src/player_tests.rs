@@ -36,7 +36,12 @@ fn spec_of(title: &str) -> (tempfile::TempDir, OpenSpec) {
         v["metronome"] = serde_json::json!({"on": true, "count_in": false});
         std::fs::write(&p, v.to_string()).unwrap();
     }
-    let t = Repository::new(&root).scan().tracks.into_iter().find(|t| t.title == title).unwrap();
+    let t = Repository::new(&root)
+        .scan()
+        .tracks
+        .into_iter()
+        .find(|t| t.title == title)
+        .unwrap();
     let spec = OpenSpec {
         id: t.id.clone(),
         title: t.title.clone(),
@@ -54,10 +59,22 @@ fn manager() -> (PlayerManager, ManualBackend, Events) {
     let events: Events = Arc::new(Mutex::new(Vec::new()));
     let ev = events.clone();
     let sink: EventSink = Arc::new(move |e| ev.lock().unwrap().push(e));
-    (PlayerManager::new(Arc::new(backend.clone()), sink), backend, events)
+    (
+        PlayerManager::new(Arc::new(backend.clone()), sink),
+        backend,
+        events,
+    )
 }
 
-fn opened(title: &str) -> (tempfile::TempDir, OpenSpec, PlayerManager, ManualBackend, Events) {
+fn opened(
+    title: &str,
+) -> (
+    tempfile::TempDir,
+    OpenSpec,
+    PlayerManager,
+    ManualBackend,
+    Events,
+) {
     let (t, spec) = spec_of(title);
     let (mut m, b, e) = manager();
     m.open(&spec).unwrap();
@@ -70,7 +87,13 @@ fn ms(n: u64) -> Duration {
 
 fn decoded(spec: &OpenSpec, key: &str) -> Pcm {
     let f = &spec.sources.iter().find(|s| s.key == key).unwrap().file;
-    player_source::decode(&spec.dir.join(f), None, &AtomicBool::new(false), &mut |_, _| {}).unwrap()
+    player_source::decode(
+        &spec.dir.join(f),
+        None,
+        &AtomicBool::new(false),
+        &mut |_, _| {},
+    )
+    .unwrap()
 }
 
 /// Interleaved stereo f32 of `frames` frames from `start` (mono copied to both channels).
@@ -79,7 +102,11 @@ fn expected(pcm: &Pcm, start: usize, frames: usize) -> Vec<f32> {
     let mut v = Vec::new();
     for i in start..start + frames {
         let l = f32::from(pcm.samples[i * ch]) / 32768.0;
-        let r = if ch >= 2 { f32::from(pcm.samples[i * ch + 1]) / 32768.0 } else { l };
+        let r = if ch >= 2 {
+            f32::from(pcm.samples[i * ch + 1]) / 32768.0
+        } else {
+            l
+        };
         v.push(l);
         v.push(r);
     }
@@ -127,7 +154,10 @@ fn open_without_audio_fails_and_unknown_session_is_refused() {
     let (mut m, _b, _e) = manager();
     assert!(m.open(&spec).unwrap_err().contains("no audio to play"));
     assert!(!m.is_opening());
-    assert!(m.play("x", Instant::now()).unwrap_err().contains("no player session for x"));
+    assert!(m
+        .play("x", Instant::now())
+        .unwrap_err()
+        .contains("no player session for x"));
 }
 
 #[test]
@@ -142,8 +172,14 @@ fn play_equals_decoded_samples() {
     let n = fade_frames();
     assert_eq!(got[n * 2..], want[n * 2..]);
     assert_eq!(got[0], 0.0, "fade-in starts at zero");
-    assert!(got[..n * 2].iter().zip(&want).all(|(g, w)| g.abs() <= w.abs() + 1e-6));
-    assert_eq!(m.snapshot(&spec.id).unwrap().transport.position_ms, 2000 * 1000 / RATE as u64);
+    assert!(got[..n * 2]
+        .iter()
+        .zip(&want)
+        .all(|(g, w)| g.abs() <= w.abs() + 1e-6));
+    assert_eq!(
+        m.snapshot(&spec.id).unwrap().transport.position_ms,
+        2000 * 1000 / RATE as u64
+    );
 }
 
 #[test]
@@ -212,7 +248,9 @@ fn source_change_stops_and_keeps_position() {
     b.pull(10);
     m.seek(&spec.id, 4000, t0).unwrap();
     m.tick(t0 + ms(300));
-    let snap = m.select_source(&spec.id, "stem:guitar", t0 + ms(300)).unwrap();
+    let snap = m
+        .select_source(&spec.id, "stem:guitar", t0 + ms(300))
+        .unwrap();
     assert_eq!(snap.source, "stem:guitar");
     assert!(!snap.transport.playing);
     assert_eq!(snap.transport.position_ms, 4000);
@@ -233,7 +271,10 @@ fn source_change_stops_and_keeps_position() {
     assert_eq!(disk(&spec).unwrap()["source"], "stem:guitar");
     // unknown key and same key
     assert!(m.select_source(&spec.id, "stem:nope", t0).is_err());
-    assert_eq!(m.select_source(&spec.id, "stem:guitar", t0).unwrap().source, "stem:guitar");
+    assert_eq!(
+        m.select_source(&spec.id, "stem:guitar", t0).unwrap().source,
+        "stem:guitar"
+    );
 }
 
 #[test]
@@ -352,7 +393,11 @@ fn device_failure_stops_and_reports() {
     b.fail("gone");
     m.tick(t0 + ms(20));
     assert!(!m.snapshot(&spec.id).unwrap().transport.playing);
-    assert!(e.lock().unwrap().iter().any(|x| matches!(x, PlayerEvent::AudioError { message, .. } if message == "gone")));
+    assert!(e
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|x| matches!(x, PlayerEvent::AudioError { message, .. } if message == "gone")));
 }
 
 #[test]
@@ -360,7 +405,13 @@ fn transport_events_are_throttled_while_playing() {
     let (_t, spec, mut m, b, e) = opened(PRACTICE);
     let t0 = Instant::now();
     m.play(&spec.id, t0).unwrap();
-    let count = |e: &Events| e.lock().unwrap().iter().filter(|x| matches!(x, PlayerEvent::Transport { .. })).count();
+    let count = |e: &Events| {
+        e.lock()
+            .unwrap()
+            .iter()
+            .filter(|x| matches!(x, PlayerEvent::Transport { .. }))
+            .count()
+    };
     let base = count(&e);
     b.pull(1000);
     for i in 1..5 {
@@ -373,7 +424,12 @@ fn transport_events_are_throttled_while_playing() {
 
 #[test]
 fn engine_end_of_source_sets_flag() {
-    let pcm = Arc::new(Pcm { rate: 1000, channels: 1, frames: 10, samples: vec![16384; 10] });
+    let pcm = Arc::new(Pcm {
+        rate: 1000,
+        channels: 1,
+        frames: 10,
+        samples: vec![16384; 10],
+    });
     let shared = Arc::new(Shared::default());
     let mut en = Engine::new(pcm, 8, shared.clone());
     en.apply(Cmd::Play { count_in: None });
@@ -451,7 +507,11 @@ fn looped(pcm: &Pcm, pos: usize, start: usize, end: usize, total: usize) -> Vec<
     let mut out = Vec::new();
     let (mut p, mut since) = (pos, 0usize);
     while out.len() < total * 2 {
-        let mut g = if since < n { since as f32 / n as f32 } else { 1.0 };
+        let mut g = if since < n {
+            since as f32 / n as f32
+        } else {
+            1.0
+        };
         if end - p <= n {
             g *= (end - p) as f32 / n as f32;
         }
@@ -477,14 +537,26 @@ fn fade_in(v: &mut [f32], from: usize) {
     }
 }
 
-fn with_tempo() -> (tempfile::TempDir, OpenSpec, PlayerManager, ManualBackend, Events, Pcm) {
+fn with_tempo() -> (
+    tempfile::TempDir,
+    OpenSpec,
+    PlayerManager,
+    ManualBackend,
+    Events,
+    Pcm,
+) {
     let (t, spec, m, b, e) = opened(WITH_TEMPO);
     let pcm = decoded(&spec, GUITAR);
     (t, spec, m, b, e, pcm)
 }
 
 fn wraps(m: &PlayerManager) -> u64 {
-    m.session.as_ref().unwrap().shared.wraps.load(Ordering::Acquire)
+    m.session
+        .as_ref()
+        .unwrap()
+        .shared
+        .wraps
+        .load(Ordering::Acquire)
 }
 
 fn pos_ms(m: &PlayerManager, id: &str) -> u64 {
@@ -492,8 +564,26 @@ fn pos_ms(m: &PlayerManager, id: &str) -> u64 {
 }
 
 /// The Click and Count In of the section `index` (starting at `at` ms).
-fn flags(m: &mut PlayerManager, id: &str, index: usize, at: f64, metronome: bool, count_in: bool, t: Instant) {
-    m.edit_sections(id, SectionEdit::Flags { index, at, metronome, count_in }, t).unwrap();
+fn flags(
+    m: &mut PlayerManager,
+    id: &str,
+    index: usize,
+    at: f64,
+    metronome: bool,
+    count_in: bool,
+    t: Instant,
+) {
+    m.edit_sections(
+        id,
+        SectionEdit::Flags {
+            index,
+            at,
+            metronome,
+            count_in,
+        },
+        t,
+    )
+    .unwrap();
 }
 
 /// Click off in both sections of the fixture (the loop tests compare the plain audio).
@@ -599,7 +689,10 @@ fn loop_play_repeats_without_count_in() {
     let len = LOOP1_END - LOOP1_START;
     let total = len + 3000;
     let got = b.pull(total);
-    close(&got, &looped(&pcm, LOOP1_START, LOOP1_START, LOOP1_END, total));
+    close(
+        &got,
+        &looped(&pcm, LOOP1_START, LOOP1_START, LOOP1_END, total),
+    );
     assert_eq!(wraps(&m), 1);
     m.tick(t0 + ms(20));
     assert!(m.snapshot(&spec.id).unwrap().transport.loop_playing);
@@ -613,7 +706,15 @@ fn loop_with_count_in_plays_it_before_the_first_pass_and_every_repeat() {
     let t0 = Instant::now();
     quiet(&mut m, &spec.id, t0);
     m.loop_action(&spec.id, LoopAction::Select(1), t0).unwrap();
-    m.loop_action(&spec.id, LoopAction::Flags { repeat: true, count_in: true }, t0).unwrap();
+    m.loop_action(
+        &spec.id,
+        LoopAction::Flags {
+            repeat: true,
+            count_in: true,
+        },
+        t0,
+    )
+    .unwrap();
     let snap = m.loop_action(&spec.id, LoopAction::Play, t0).unwrap();
     assert!(snap.transport.counting_in && snap.transport.loop_playing);
     // 90 BPM: one beat is 14700 frames
@@ -646,7 +747,10 @@ fn loop_with_count_in_plays_it_before_the_first_pass_and_every_repeat() {
         want[(again + 44100) * 2 + k] = *x;
     }
     fade_in(&mut want, again + 44100);
-    close(&got[..(again + 44100 + 500) * 2], &want[..(again + 44100 + 500) * 2]);
+    close(
+        &got[..(again + 44100 + 500) * 2],
+        &want[..(again + 44100 + 500) * 2],
+    );
     assert_eq!(wraps(&m), 1);
 }
 
@@ -655,7 +759,15 @@ fn loop_on_off_stops_at_the_end_and_returns_to_the_start() {
     let (_t, spec, mut m, b, _e, pcm) = with_tempo();
     let t0 = Instant::now();
     quiet(&mut m, &spec.id, t0);
-    m.loop_action(&spec.id, LoopAction::Flags { repeat: false, count_in: false }, t0).unwrap();
+    m.loop_action(
+        &spec.id,
+        LoopAction::Flags {
+            repeat: false,
+            count_in: false,
+        },
+        t0,
+    )
+    .unwrap();
     m.loop_action(&spec.id, LoopAction::Play, t0).unwrap();
     let len = LOOP1_END - LOOP1_START;
     let got = b.pull(len + 5000);
@@ -728,9 +840,20 @@ fn incomplete_loop_is_refused_and_never_repeats() {
     let s = m.snapshot(&spec.id).unwrap();
     assert_eq!(s.current_loop, Some(2));
     assert_eq!(s.transport.position_ms, 18500);
-    assert_eq!(m.loop_action(&spec.id, LoopAction::Play, t0).unwrap_err(), "Set the loop end first");
     assert_eq!(
-        m.loop_action(&spec.id, LoopAction::Flags { repeat: false, count_in: true }, t0).unwrap_err(),
+        m.loop_action(&spec.id, LoopAction::Play, t0).unwrap_err(),
+        "Set the loop end first"
+    );
+    assert_eq!(
+        m.loop_action(
+            &spec.id,
+            LoopAction::Flags {
+                repeat: false,
+                count_in: true
+            },
+            t0
+        )
+        .unwrap_err(),
         "Set the loop end first"
     );
     assert!(!b.is_open(), "a refused loop Play opens no device");
@@ -750,11 +873,18 @@ fn mark_end_completes_the_loop_and_a_bad_end_leaves_a_message() {
     let t0 = Instant::now();
     m.loop_action(&spec.id, LoopAction::Select(2), t0).unwrap();
     m.seek(&spec.id, 18000, t0).unwrap();
-    let s = m.loop_action(&spec.id, LoopAction::Mark(Mark::End), t0).unwrap();
-    assert_eq!(s.loop_message.as_deref(), Some("The end must be after the start"));
+    let s = m
+        .loop_action(&spec.id, LoopAction::Mark(Mark::End), t0)
+        .unwrap();
+    assert_eq!(
+        s.loop_message.as_deref(),
+        Some("The end must be after the start")
+    );
     assert!(s.loops[2].end.is_none());
     m.seek(&spec.id, 19500, t0).unwrap();
-    let s = m.loop_action(&spec.id, LoopAction::Mark(Mark::End), t0).unwrap();
+    let s = m
+        .loop_action(&spec.id, LoopAction::Mark(Mark::End), t0)
+        .unwrap();
     assert!(s.loop_message.is_none());
     assert_eq!(s.loops[2].end_ms, Some(19500.0));
     assert!(m.loop_action(&spec.id, LoopAction::Play, t0).is_ok());
@@ -785,7 +915,12 @@ fn tempo_change_keeps_loops_in_time_and_keeps_speed() {
     let s = m.set_bpm(&spec.id, 100.0, t0).unwrap();
     assert_eq!(s.speed_pct, 80);
     for (a, b) in before.loops.iter().zip(&s.loops) {
-        assert!((a.start_ms - b.start_ms).abs() <= 21.0, "{} vs {}", a.start_ms, b.start_ms);
+        assert!(
+            (a.start_ms - b.start_ms).abs() <= 21.0,
+            "{} vs {}",
+            a.start_ms,
+            b.start_ms
+        );
         assert_eq!(a.end_ms.is_some(), b.end_ms.is_some());
         if let (Some(x), Some(y)) = (a.end_ms, b.end_ms) {
             assert!((x - y).abs() <= 21.0);
@@ -794,10 +929,12 @@ fn tempo_change_keeps_loops_in_time_and_keeps_speed() {
     assert!(s.loops[2].end.is_none());
     assert!(s.tempo.segments.iter().any(|g| g.bpm == 100.0));
     m.tick(t0 + ms(500));
-    assert!(disk(&spec).unwrap()["tempo"]["segments"].to_string().contains("100"));
+    assert!(disk(&spec).unwrap()["tempo"]["segments"]
+        .to_string()
+        .contains("100"));
 
     m.speed(&spec.id, SpeedAction::Reset, t0).unwrap(); // the audio below is compared at 100 %
-    // the new grid is live: 100 BPM beats are 13230 frames apart from 3000 ms
+                                                        // the new grid is live: 100 BPM beats are 13230 frames apart from 3000 ms
     m.seek(&spec.id, 3000, t0).unwrap();
     m.play(&spec.id, t0).unwrap();
     let got = b.pull(20000);
@@ -817,18 +954,34 @@ fn section_edits_reach_the_engine_loops_and_disk() {
     let (_t, spec, mut m, b, _e, pcm) = with_tempo();
     let t0 = Instant::now();
     let before = m.snapshot(&spec.id).unwrap();
-    let s = m.edit_sections(&spec.id, SectionEdit::Add { position: 3000.0, bpm: 100.0 }, t0).unwrap();
+    let s = m
+        .edit_sections(
+            &spec.id,
+            SectionEdit::Add {
+                position: 3000.0,
+                bpm: 100.0,
+            },
+            t0,
+        )
+        .unwrap();
     assert_eq!(starts(&s), vec![500.0, 3000.0, 10500.0]);
     assert!(s.tempo.segments[1].on_beat);
     assert_eq!(s.speed_pct, 100);
     for (a, b) in before.loops.iter().zip(&s.loops) {
-        assert!((a.start_ms - b.start_ms).abs() <= 21.0, "{} vs {}", a.start_ms, b.start_ms);
+        assert!(
+            (a.start_ms - b.start_ms).abs() <= 21.0,
+            "{} vs {}",
+            a.start_ms,
+            b.start_ms
+        );
     }
     let fixture = disk(&spec).unwrap();
     m.tick(t0 + ms(499));
     assert_eq!(disk(&spec).unwrap(), fixture, "not before the debounce");
     m.tick(t0 + ms(500));
-    assert!(disk(&spec).unwrap()["tempo"]["segments"].to_string().contains("on_beat"));
+    assert!(disk(&spec).unwrap()["tempo"]["segments"]
+        .to_string()
+        .contains("on_beat"));
 
     // the new grid is live: 100 BPM beats from the placed change
     m.seek(&spec.id, 3000, t0).unwrap();
@@ -842,10 +995,41 @@ fn section_edits_reach_the_engine_loops_and_disk() {
 
     // the other edits: each marks dirty (written 500 ms later, not before) and keeps the loops in time
     let edits = [
-        (SectionEdit::Bpm { index: 1, at: 3000.0 , bpm: 110.0 }, 1, 110.0),
-        (SectionEdit::Scale { index: 1, at: 3000.0, factor: Scale::Halve }, 1, 55.0),
-        (SectionEdit::Move { index: 1, at: 3000.0, steps: 384 }, 1, 55.0),
-        (SectionEdit::Remove { index: 1, at: 3500.0 }, 0, 120.0),
+        (
+            SectionEdit::Bpm {
+                index: 1,
+                at: 3000.0,
+                bpm: 110.0,
+            },
+            1,
+            110.0,
+        ),
+        (
+            SectionEdit::Scale {
+                index: 1,
+                at: 3000.0,
+                factor: Scale::Halve,
+            },
+            1,
+            55.0,
+        ),
+        (
+            SectionEdit::Move {
+                index: 1,
+                at: 3000.0,
+                steps: 384,
+            },
+            1,
+            55.0,
+        ),
+        (
+            SectionEdit::Remove {
+                index: 1,
+                at: 3500.0,
+            },
+            0,
+            120.0,
+        ),
     ];
     for (k, (e, i, want_bpm)) in edits.into_iter().enumerate() {
         let t = t0 + ms(1000 * (k as u64 + 1));
@@ -868,25 +1052,76 @@ fn section_guard_accepts_starts_that_went_through_json() {
     use crate::player_ipc::TempoAction;
     let (_t, spec, mut m, _b, _e, _pcm) = with_tempo();
     let t0 = Instant::now();
-    m.edit_sections(&spec.id, SectionEdit::Bpm { index: 0, at: 500.0, bpm: 93.0 }, t0).unwrap();
+    m.edit_sections(
+        &spec.id,
+        SectionEdit::Bpm {
+            index: 0,
+            at: 500.0,
+            bpm: 93.0,
+        },
+        t0,
+    )
+    .unwrap();
     for n in 0..60 {
         let pos = 1500.0 + n as f64 * 97.3;
-        let s = m.edit_sections(&spec.id, SectionEdit::Add { position: pos, bpm: 100.0 }, t0).unwrap();
-        let seg = s.tempo.segments.iter().find(|g| (g.start_ms - pos).abs() < 40.0).unwrap();
+        let s = m
+            .edit_sections(
+                &spec.id,
+                SectionEdit::Add {
+                    position: pos,
+                    bpm: 100.0,
+                },
+                t0,
+            )
+            .unwrap();
+        let seg = s
+            .tempo
+            .segments
+            .iter()
+            .find(|g| (g.start_ms - pos).abs() < 40.0)
+            .unwrap();
         let text = serde_json::to_string(seg).unwrap();
         let back: crate::tempo_map::Segment = serde_json::from_str(&text).unwrap();
-        let index = s.tempo.segments.iter().position(|g| g.start_ms == seg.start_ms).unwrap();
-        let json = format!(r#"{{"kind":"section-bpm","index":{index},"at":{},"bpm":110}}"#, back.start_ms);
-        let TempoAction::SectionBpm { index, at, bpm } = serde_json::from_str(&json).unwrap() else { panic!() };
+        let index = s
+            .tempo
+            .segments
+            .iter()
+            .position(|g| g.start_ms == seg.start_ms)
+            .unwrap();
+        let json = format!(
+            r#"{{"kind":"section-bpm","index":{index},"at":{},"bpm":110}}"#,
+            back.start_ms
+        );
+        let TempoAction::SectionBpm { index, at, bpm } = serde_json::from_str(&json).unwrap()
+        else {
+            panic!()
+        };
         assert_eq!(at, seg.start_ms, "{json}");
-        let s = m.edit_sections(&spec.id, SectionEdit::Bpm { index, at, bpm }, t0).unwrap();
+        let s = m
+            .edit_sections(&spec.id, SectionEdit::Bpm { index, at, bpm }, t0)
+            .unwrap();
         // a one-ulp difference is still the same section, a real difference is not
         let at1 = s.tempo.segments[index].start_ms;
-        let e = SectionEdit::Bpm { index, at: f64::from_bits(at1.to_bits() + 1), bpm: 100.0 };
-        assert!(m.edit_sections(&spec.id, e, t0).is_ok(), "one ulp off at index {index}");
-        let e = SectionEdit::Bpm { index, at: at1 + 1e-3, bpm: 100.0 };
-        assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), "The tempo sections changed; try again");
-        m.edit_sections(&spec.id, SectionEdit::Remove { index, at }, t0).unwrap();
+        let e = SectionEdit::Bpm {
+            index,
+            at: f64::from_bits(at1.to_bits() + 1),
+            bpm: 100.0,
+        };
+        assert!(
+            m.edit_sections(&spec.id, e, t0).is_ok(),
+            "one ulp off at index {index}"
+        );
+        let e = SectionEdit::Bpm {
+            index,
+            at: at1 + 1e-3,
+            bpm: 100.0,
+        };
+        assert_eq!(
+            m.edit_sections(&spec.id, e, t0).unwrap_err(),
+            "The tempo sections changed; try again"
+        );
+        m.edit_sections(&spec.id, SectionEdit::Remove { index, at }, t0)
+            .unwrap();
     }
 }
 
@@ -897,15 +1132,38 @@ fn stale_or_refused_section_edits_change_nothing() {
     let before = m.snapshot(&spec.id).unwrap();
     let fixture = disk(&spec).unwrap();
     let stale = "The tempo sections changed; try again";
-    let e = SectionEdit::Remove { index: 1, at: 10499.0 };
+    let e = SectionEdit::Remove {
+        index: 1,
+        at: 10499.0,
+    };
     assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), stale);
-    let e = SectionEdit::Move { index: 7, at: 0.0, steps: 1 };
+    let e = SectionEdit::Move {
+        index: 7,
+        at: 0.0,
+        steps: 1,
+    };
     assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), stale);
-    let e = SectionEdit::Bpm { index: 1, at: 10500.0, bpm: 0.0 };
-    assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), "Enter a BPM between 20 and 300");
-    let e = SectionEdit::Remove { index: 0, at: 500.0 };
-    assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), "The first section has no tempo change to remove");
-    let e = SectionEdit::Add { position: 100.0, bpm: 100.0 };
+    let e = SectionEdit::Bpm {
+        index: 1,
+        at: 10500.0,
+        bpm: 0.0,
+    };
+    assert_eq!(
+        m.edit_sections(&spec.id, e, t0).unwrap_err(),
+        "Enter a BPM between 20 and 300"
+    );
+    let e = SectionEdit::Remove {
+        index: 0,
+        at: 500.0,
+    };
+    assert_eq!(
+        m.edit_sections(&spec.id, e, t0).unwrap_err(),
+        "The first section has no tempo change to remove"
+    );
+    let e = SectionEdit::Add {
+        position: 100.0,
+        bpm: 100.0,
+    };
     assert!(m.edit_sections(&spec.id, e, t0).is_err());
     let after = m.snapshot(&spec.id).unwrap();
     assert_eq!(starts(&after), starts(&before));
@@ -923,14 +1181,26 @@ const STALE: &str = "The tempo sections changed; try again";
 fn section_metronome_toggle_is_heard_from_the_next_beat_and_saved() {
     let (_t, spec, mut m, b, _e, pcm) = with_tempo();
     let t0 = Instant::now();
-    let e = SectionEdit::Flags { index: 1, at: 10500.0, metronome: false, count_in: false };
+    let e = SectionEdit::Flags {
+        index: 1,
+        at: 10500.0,
+        metronome: false,
+        count_in: false,
+    };
     let s = m.edit_sections(&spec.id, e, t0).unwrap();
     assert!(!s.tempo.segments[1].meta.metronome);
     let on_disk = disk(&spec).unwrap()["tempo"]["segments"].clone();
     m.tick(t0 + ms(499));
-    assert_eq!(disk(&spec).unwrap()["tempo"]["segments"], on_disk, "not before the debounce");
+    assert_eq!(
+        disk(&spec).unwrap()["tempo"]["segments"],
+        on_disk,
+        "not before the debounce"
+    );
     m.tick(t0 + ms(500));
-    assert_eq!(disk(&spec).unwrap()["tempo"]["segments"][1]["metronome"], false);
+    assert_eq!(
+        disk(&spec).unwrap()["tempo"]["segments"][1]["metronome"],
+        false
+    );
 
     // from 10000: 120 BPM clicks at 10000 only; the 90 BPM section is silent
     let start = 10000 * RATE / 1000;
@@ -944,7 +1214,12 @@ fn section_metronome_toggle_is_heard_from_the_next_beat_and_saved() {
     close(&got, &want);
 
     // on again at 11500 ms: the next 90 BPM beat is at 11833.33 ms
-    let e = SectionEdit::Flags { index: 1, at: 10500.0, metronome: true, count_in: false };
+    let e = SectionEdit::Flags {
+        index: 1,
+        at: 10500.0,
+        metronome: true,
+        count_in: false,
+    };
     m.edit_sections(&spec.id, e, t0 + ms(1000)).unwrap();
     let next = ((35500.0f64 / 3.0) * RATE as f64 / 1000.0).round() as usize - (start + first);
     let got = b.pull(RATE);
@@ -952,14 +1227,24 @@ fn section_metronome_toggle_is_heard_from_the_next_beat_and_saved() {
     add_click(&mut want, next);
     close(&got, &want);
 
-    let e = SectionEdit::Name { index: 1, at: 10500.0, name: " Verse ".into() };
+    let e = SectionEdit::Name {
+        index: 1,
+        at: 10500.0,
+        name: " Verse ".into(),
+    };
     let t1 = t0 + ms(2000);
     let s = m.edit_sections(&spec.id, e, t1).unwrap();
     assert_eq!(s.tempo.segments[1].meta.name, "Verse");
     m.tick(t1 + ms(499));
-    assert_ne!(disk(&spec).unwrap()["tempo"]["segments"][1]["name"], "Verse");
+    assert_ne!(
+        disk(&spec).unwrap()["tempo"]["segments"][1]["name"],
+        "Verse"
+    );
     m.tick(t1 + ms(500));
-    assert_eq!(disk(&spec).unwrap()["tempo"]["segments"][1]["name"], "Verse");
+    assert_eq!(
+        disk(&spec).unwrap()["tempo"]["segments"][1]["name"],
+        "Verse"
+    );
 }
 
 #[test]
@@ -968,20 +1253,46 @@ fn stale_section_flags_name_and_jump_change_nothing() {
     let t0 = Instant::now();
     let before = m.snapshot(&spec.id).unwrap().tempo;
     let fixture = disk(&spec).unwrap();
-    let e = SectionEdit::Flags { index: 1, at: 10499.0, metronome: false, count_in: true };
+    let e = SectionEdit::Flags {
+        index: 1,
+        at: 10499.0,
+        metronome: false,
+        count_in: true,
+    };
     assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), STALE);
-    let e = SectionEdit::Name { index: 5, at: 0.0, name: "x".into() };
+    let e = SectionEdit::Name {
+        index: 5,
+        at: 0.0,
+        name: "x".into(),
+    };
     assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), STALE);
-    assert_eq!(m.jump_section(&spec.id, 1, 10499.0, Edge::Start, t0).unwrap_err(), STALE);
-    let e = SectionEdit::Name { index: 1, at: 10500.0, name: "a".repeat(41) };
-    assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), "Section names can have at most 40 characters");
+    assert_eq!(
+        m.jump_section(&spec.id, 1, 10499.0, Edge::Start, t0)
+            .unwrap_err(),
+        STALE
+    );
+    let e = SectionEdit::Name {
+        index: 1,
+        at: 10500.0,
+        name: "a".repeat(41),
+    };
+    assert_eq!(
+        m.edit_sections(&spec.id, e, t0).unwrap_err(),
+        "Section names can have at most 40 characters"
+    );
     assert_eq!(m.snapshot(&spec.id).unwrap().tempo, before);
     m.tick(t0 + ms(5000));
     assert_eq!(disk(&spec).unwrap(), fixture);
 }
 
 fn grid_frames(m: &PlayerManager) -> Vec<u64> {
-    m.session.as_ref().unwrap().grid().iter().map(|b| b.0).collect()
+    m.session
+        .as_ref()
+        .unwrap()
+        .grid()
+        .iter()
+        .map(|b| b.0)
+        .collect()
 }
 
 #[test]
@@ -989,15 +1300,41 @@ fn a_repeating_loop_ending_at_a_count_in_section_skips_that_count_in() {
     let (_t, spec, mut m, _b, _e, _pcm) = with_tempo();
     let t0 = Instant::now();
     // loop-1 repeats; make it end at the start of the 90 BPM section
-    m.loop_action(&spec.id, LoopAction::Set(Mark::End, Boundary::Tick { tick: 304 }), t0).unwrap();
-    let e = SectionEdit::Flags { index: 1, at: 10500.0, metronome: true, count_in: true };
+    m.loop_action(
+        &spec.id,
+        LoopAction::Set(Mark::End, Boundary::Tick { tick: 304 }),
+        t0,
+    )
+    .unwrap();
+    let e = SectionEdit::Flags {
+        index: 1,
+        at: 10500.0,
+        metronome: true,
+        count_in: true,
+    };
     m.edit_sections(&spec.id, e, t0).unwrap();
     // 90 BPM: count-in clicks at 8500, 9166.67 and 9833.33 ms
     let count_in = ((29500.0f64 / 3.0) * RATE as f64 / 1000.0).round() as u64;
     assert!(!grid_frames(&m).contains(&count_in), "loop on: no count-in");
-    m.loop_action(&spec.id, LoopAction::Flags { repeat: false, count_in: false }, t0).unwrap();
+    m.loop_action(
+        &spec.id,
+        LoopAction::Flags {
+            repeat: false,
+            count_in: false,
+        },
+        t0,
+    )
+    .unwrap();
     assert!(grid_frames(&m).contains(&count_in), "loop off: back");
-    m.loop_action(&spec.id, LoopAction::Flags { repeat: true, count_in: false }, t0).unwrap();
+    m.loop_action(
+        &spec.id,
+        LoopAction::Flags {
+            repeat: true,
+            count_in: false,
+        },
+        t0,
+    )
+    .unwrap();
     assert!(!grid_frames(&m).contains(&count_in));
 }
 
@@ -1052,7 +1389,10 @@ fn play_counts_in_per_section_at_that_sections_tempo() {
     m.seek(&spec.id, 3000, t0).unwrap();
     assert!(!m.play(&spec.id, t0).unwrap().counting_in);
     let got = b.pull(2000);
-    let first = got.chunks(2).position(|f| f[0] != 0.0 || f[1] != 0.0).unwrap();
+    let first = got
+        .chunks(2)
+        .position(|f| f[0] != 0.0 || f[1] != 0.0)
+        .unwrap();
     assert!(first <= fade_frames() + 1, "first sound at frame {first}");
     // a play that is already running never counts in again
     flags(&mut m, &spec.id, 0, 500.0, false, true, t0);
@@ -1067,7 +1407,15 @@ fn loop_play_counts_in_only_with_the_loops_own_count_in() {
     let snap = m.loop_action(&spec.id, LoopAction::Play, t0).unwrap();
     assert!(snap.transport.loop_playing && !snap.transport.counting_in);
     m.pause(&spec.id, t0).unwrap();
-    m.loop_action(&spec.id, LoopAction::Flags { repeat: true, count_in: true }, t0).unwrap();
+    m.loop_action(
+        &spec.id,
+        LoopAction::Flags {
+            repeat: true,
+            count_in: true,
+        },
+        t0,
+    )
+    .unwrap();
     let snap = m.loop_action(&spec.id, LoopAction::Play, t0).unwrap();
     assert!(snap.transport.counting_in);
 }
@@ -1098,7 +1446,8 @@ fn jump_section_is_instant_while_playing_and_moves_the_playhead_while_paused() {
     flags(&mut m, &spec.id, 0, 500.0, false, false, t0);
     flags(&mut m, &spec.id, 1, 10500.0, false, false, t0);
     m.seek(&spec.id, 1000, t0).unwrap();
-    m.jump_section(&spec.id, 1, 10500.0, Edge::Start, t0).unwrap();
+    m.jump_section(&spec.id, 1, 10500.0, Edge::Start, t0)
+        .unwrap();
     assert_eq!(pos_ms(&m, &spec.id), 10500);
     assert_eq!(peak(&b.pull(500)), 0.0, "paused: nothing sounds");
     m.tick(t0 + ms(500));
@@ -1110,7 +1459,14 @@ fn jump_section_is_instant_while_playing_and_moves_the_playhead_while_paused() {
     let st = m.snapshot(&spec.id).unwrap();
     let end_ms = st.duration_ms as f64;
     // End of section 0 (the last section's End would leave nothing to play)
-    let target = m.session.as_ref().unwrap().state.tempo.section_jump_ms(0, Edge::End, end_ms).unwrap();
+    let target = m
+        .session
+        .as_ref()
+        .unwrap()
+        .state
+        .tempo
+        .section_jump_ms(0, Edge::End, end_ms)
+        .unwrap();
     assert_eq!(target, 10500.0);
     let s = m.jump_section(&spec.id, 0, 500.0, Edge::End, t0).unwrap();
     assert!(s.transport.playing && !s.transport.resume_pending);
@@ -1144,7 +1500,10 @@ fn start_jump_on_a_fractional_section_start_stays_in_that_section() {
         for _ in 0..3 {
             let s = m.jump_section(&spec.id, 1, AT, Edge::Start, t0).unwrap();
             assert_eq!(s.transport.tempo_index, Some(1), "playing={playing}");
-            assert_eq!(s.transport.bpm, m.session.as_ref().unwrap().state.tempo.segments[1].bpm);
+            assert_eq!(
+                s.transport.bpm,
+                m.session.as_ref().unwrap().state.tempo.segments[1].bpm
+            );
             let pos = m.session.as_ref().unwrap().pos();
             assert_eq!(*first.get_or_insert(pos), pos);
         }
@@ -1161,7 +1520,8 @@ fn jump_section_cancels_a_pre_roll_count_in() {
     m.play(&spec.id, t0).unwrap();
     b.pull(15000);
     assert!(m.snapshot(&spec.id).unwrap().transport.counting_in);
-    m.jump_section(&spec.id, 1, 10500.0, Edge::Start, t0).unwrap();
+    m.jump_section(&spec.id, 1, 10500.0, Edge::Start, t0)
+        .unwrap();
     assert!(peak(&b.pull(2000)) > 0.0);
     let t = m.snapshot(&spec.id).unwrap().transport;
     assert!(!t.counting_in && t.playing);
@@ -1187,8 +1547,16 @@ fn removing_the_tempo_clears_the_grid_and_count_in() {
     let st = m.play(&spec.id, t0).unwrap();
     assert!(!st.counting_in);
     let got = b.pull(RATE);
-    assert!(peak(&got[2 * 3000..2 * 3200]) > 0.0, "audio from the start, no count-in");
-    let e = SectionEdit::Flags { index: 0, at: 500.0, metronome: true, count_in: true };
+    assert!(
+        peak(&got[2 * 3000..2 * 3200]) > 0.0,
+        "audio from the start, no count-in"
+    );
+    let e = SectionEdit::Flags {
+        index: 0,
+        at: 500.0,
+        metronome: true,
+        count_in: true,
+    };
     assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), STALE);
 }
 
@@ -1196,11 +1564,19 @@ fn removing_the_tempo_clears_the_grid_and_count_in() {
 fn section_flags_are_refused_without_a_tempo() {
     let (_t, spec, mut m, _b, _e) = opened(PRACTICE);
     let t0 = Instant::now();
-    let e = SectionEdit::Flags { index: 0, at: 0.0, metronome: true, count_in: false };
+    let e = SectionEdit::Flags {
+        index: 0,
+        at: 0.0,
+        metronome: true,
+        count_in: false,
+    };
     assert_eq!(m.edit_sections(&spec.id, e, t0).unwrap_err(), STALE);
     // the speed works without a tempo; there is no BPM to play
     let s = m.speed(&spec.id, SpeedAction::Step(-1), t0).unwrap();
-    assert_eq!((s.speed_pct, s.transport.bpm, s.transport.played_bpm), (95, 0.0, 0.0));
+    assert_eq!(
+        (s.speed_pct, s.transport.bpm, s.transport.played_bpm),
+        (95, 0.0, 0.0)
+    );
 }
 
 #[test]
@@ -1211,8 +1587,17 @@ fn speed_actions_clamp_refuse_and_save() {
     assert_eq!(speed(&mut m, SpeedAction::Set(80)).unwrap().speed_pct, 80);
     let t = speed(&mut m, SpeedAction::Step(0)).unwrap().transport;
     assert_eq!((t.bpm, t.played_bpm, t.speed_pct), (120.0, 96.0, 80));
-    assert_eq!(speed(&mut m, SpeedAction::Set(50)).unwrap().transport.played_bpm, 60.0);
-    assert_eq!(speed(&mut m, SpeedAction::Set(250)).unwrap_err(), crate::speed::SPEED_RANGE);
+    assert_eq!(
+        speed(&mut m, SpeedAction::Set(50))
+            .unwrap()
+            .transport
+            .played_bpm,
+        60.0
+    );
+    assert_eq!(
+        speed(&mut m, SpeedAction::Set(250)).unwrap_err(),
+        crate::speed::SPEED_RANGE
+    );
     assert_eq!(m.snapshot(&spec.id).unwrap().speed_pct, 50);
     assert_eq!(speed(&mut m, SpeedAction::Set(25)).unwrap().speed_pct, 25);
     assert_eq!(speed(&mut m, SpeedAction::Step(-1)).unwrap().speed_pct, 25);
@@ -1228,21 +1613,44 @@ fn speed_actions_clamp_refuse_and_save() {
 fn a_training_run_refuses_speed_actions_and_reports_progress() {
     let (_t, spec, mut m, b, _e) = opened(WITH_TEMPO);
     let t0 = Instant::now();
-    let t = Training { on: true, start: 60, end: 80, step: 10, repeats: 2 };
-    let s = m.loop_action(&spec.id, LoopAction::Training(t), t0).unwrap();
+    let t = Training {
+        on: true,
+        start: 60,
+        end: 80,
+        step: 10,
+        repeats: 2,
+    };
+    let s = m
+        .loop_action(&spec.id, LoopAction::Training(t), t0)
+        .unwrap();
     assert_eq!(s.loops[0].training, t);
     assert_eq!(s.transport.training, None);
     assert_eq!(s.loops[1].training, Training::default());
     m.speed(&spec.id, SpeedAction::Set(90), t0).unwrap();
     m.loop_action(&spec.id, LoopAction::Play, t0).unwrap();
     // before the callback has shown the run, the manager knows it started
-    assert_eq!(m.speed(&spec.id, SpeedAction::Set(70), t0).unwrap_err(), TRAINING_RUNNING);
+    assert_eq!(
+        m.speed(&spec.id, SpeedAction::Set(70), t0).unwrap_err(),
+        TRAINING_RUNNING
+    );
     b.pull(4000);
     m.tick(t0 + ms(20));
     let tr = m.snapshot(&spec.id).unwrap().transport;
-    assert_eq!(tr.training, Some(TrainingProgress { loop_index: 0, speed_pct: 60, repeat: 1, of: Some(2) }));
+    assert_eq!(
+        tr.training,
+        Some(TrainingProgress {
+            loop_index: 0,
+            speed_pct: 60,
+            repeat: 1,
+            of: Some(2)
+        })
+    );
     assert_eq!(tr.speed_pct, 60);
-    for a in [SpeedAction::Step(1), SpeedAction::Reset, SpeedAction::Set(70)] {
+    for a in [
+        SpeedAction::Step(1),
+        SpeedAction::Reset,
+        SpeedAction::Set(70),
+    ] {
         assert_eq!(m.speed(&spec.id, a, t0).unwrap_err(), TRAINING_RUNNING);
     }
     assert_eq!(m.snapshot(&spec.id).unwrap().speed_pct, 90);
@@ -1250,7 +1658,10 @@ fn a_training_run_refuses_speed_actions_and_reports_progress() {
     b.pull(4000);
     m.tick(t0 + ms(40));
     let snap = m.snapshot(&spec.id).unwrap();
-    assert_eq!((snap.transport.training, snap.transport.speed_pct), (None, 90));
+    assert_eq!(
+        (snap.transport.training, snap.transport.speed_pct),
+        (None, 90)
+    );
     assert!(m.speed(&spec.id, SpeedAction::Reset, t0).is_ok());
 }
 
@@ -1258,9 +1669,24 @@ fn a_training_run_refuses_speed_actions_and_reports_progress() {
 fn loop_play_with_training_counts_in_at_the_first_pass_speed() {
     let (_t, spec, mut m, _b, _e) = opened(WITH_TEMPO);
     let t0 = Instant::now();
-    let t = Training { on: true, start: 60, end: 80, step: 10, repeats: 2 };
-    m.loop_action(&spec.id, LoopAction::Training(t), t0).unwrap();
-    m.loop_action(&spec.id, LoopAction::Flags { repeat: true, count_in: true }, t0).unwrap();
+    let t = Training {
+        on: true,
+        start: 60,
+        end: 80,
+        step: 10,
+        repeats: 2,
+    };
+    m.loop_action(&spec.id, LoopAction::Training(t), t0)
+        .unwrap();
+    m.loop_action(
+        &spec.id,
+        LoopAction::Flags {
+            repeat: true,
+            count_in: true,
+        },
+        t0,
+    )
+    .unwrap();
     let snap = m.loop_action(&spec.id, LoopAction::Play, t0).unwrap();
     assert!(snap.transport.counting_in);
     let s = m.session.as_ref().unwrap();
@@ -1270,7 +1696,10 @@ fn loop_play_with_training_counts_in_at_the_first_pass_speed() {
     let spec_loop = s.loop_spec().unwrap();
     assert_eq!(spec_loop.training, Some(t));
     assert_eq!(spec_loop.count_in_bpm_milli, Some(120_000));
-    assert_eq!(spec_loop.count_in_lead, 0, "a loop starting on a tick of the grid");
+    assert_eq!(
+        spec_loop.count_in_lead, 0,
+        "a loop starting on a tick of the grid"
+    );
 }
 
 #[test]
@@ -1297,7 +1726,14 @@ fn engine_callback_never_allocates() {
     let mut en = Engine::new(pcm.clone(), 0, shared.clone()).with_trash(tx);
     let grid: Vec<Beat> = (0..40).map(|k| (k * 11025, k % 4 == 1)).collect();
     let plan = count_in_plan(120.0, 22050);
-    let spec_loop = LoopSpec { start: 20000, end: 40000, repeat: true, count_in_bpm_milli: Some(120_000), count_in_lead: 0, training: None };
+    let spec_loop = LoopSpec {
+        start: 20000,
+        end: 40000,
+        repeat: true,
+        count_in_bpm_milli: Some(120_000),
+        count_in_lead: 0,
+        training: None,
+    };
     let g2 = Arc::new(grid.clone());
     let mut out = vec![0.0f32; 2 * 1024];
     let empty = Arc::new(Vec::new());
@@ -1307,7 +1743,9 @@ fn engine_callback_never_allocates() {
     en.apply(Cmd::SetGrid(g2));
     en.apply(Cmd::SetMetronome(true));
     en.apply(Cmd::SetLoop(Some(spec_loop)));
-    en.apply(Cmd::Play { count_in: Some(plan) });
+    en.apply(Cmd::Play {
+        count_in: Some(plan),
+    });
     for _ in 0..120 {
         en.render(&mut out);
     }
@@ -1327,12 +1765,22 @@ fn engine_callback_never_allocates() {
 fn new_map() -> crate::tempo_map::TempoMap {
     crate::tempo_map::TempoMap {
         beats_per_bar: 4,
-        segments: vec![crate::tempo_map::Segment { start_ms: 0.0, bpm: 100.0, detected_ms: None, on_beat: false, meta: Default::default() }],
+        segments: vec![crate::tempo_map::Segment {
+            start_ms: 0.0,
+            bpm: 100.0,
+            detected_ms: None,
+            on_beat: false,
+            meta: Default::default(),
+        }],
     }
 }
 
 fn closed(e: &Events, id: &str) -> usize {
-    e.lock().unwrap().iter().filter(|x| **x == PlayerEvent::Closed { id: id.into() }).count()
+    e.lock()
+        .unwrap()
+        .iter()
+        .filter(|x| **x == PlayerEvent::Closed { id: id.into() })
+        .count()
 }
 
 #[test]
@@ -1345,7 +1793,11 @@ fn release_flushes_the_pending_state_then_the_tempo_write_keeps_it() {
     let loops = m.snapshot(&spec.id).unwrap().loops;
     assert_eq!(loops.len(), 4);
     let before = disk(&spec).unwrap();
-    assert_eq!(before["loops"].as_array().unwrap().len(), 3, "the add is still pending");
+    assert_eq!(
+        before["loops"].as_array().unwrap().len(),
+        3,
+        "the add is still pending"
+    );
 
     assert!(m.release(&spec.id).unwrap());
     assert!(!m.is_open(&spec.id));
@@ -1356,7 +1808,9 @@ fn release_flushes_the_pending_state_then_the_tempo_write_keeps_it() {
     assert_eq!(flushed["position_ms"], 7000);
     assert_eq!(flushed["loops"].as_array().unwrap().len(), 4);
 
-    FileTempoStore.replace(&spec.id, &spec.dir, &|_| Ok(new_map())).unwrap();
+    FileTempoStore
+        .replace(&spec.id, &spec.dir, &|_| Ok(new_map()))
+        .unwrap();
     let v = disk(&spec).unwrap();
     assert_eq!(v["position_ms"], 7000);
     assert_eq!(v["loops"].as_array().unwrap().len(), 4);
@@ -1377,11 +1831,16 @@ fn a_failed_flush_keeps_the_session_and_refuses_the_replace() {
     m.seek(&spec.id, 3000, Instant::now()).unwrap();
     std::fs::remove_dir_all(&spec.dir).unwrap();
     let err = m.release(&spec.id).unwrap_err();
-    assert!(err.starts_with("Could not save the Player's settings first:"), "{err}");
+    assert!(
+        err.starts_with("Could not save the Player's settings first:"),
+        "{err}"
+    );
     assert!(m.is_open(&spec.id));
     assert_eq!(closed(&e, &spec.id), 0);
     // the store only writes after a successful release, and never creates the folder
-    assert!(FileTempoStore.replace(&spec.id, &spec.dir, &|_| Ok(new_map())).is_err());
+    assert!(FileTempoStore
+        .replace(&spec.id, &spec.dir, &|_| Ok(new_map()))
+        .is_err());
     assert!(!spec.dir.exists());
 }
 
@@ -1420,7 +1879,9 @@ fn finish_open_installs_a_player_json_written_after_the_read() {
     // a second open: read, then the Editor writes, then install
     let ticket = m.begin_open();
     let loaded = load(&spec, &ticket, &m.sink()).unwrap();
-    FileTempoStore.replace(&spec.id, &spec.dir, &|_| Ok(new_map())).unwrap();
+    FileTempoStore
+        .replace(&spec.id, &spec.dir, &|_| Ok(new_map()))
+        .unwrap();
     let snap = m.finish_open(&ticket, &spec, loaded).unwrap();
     assert_eq!(snap.tempo.segments.len(), 1);
     assert_eq!(snap.tempo.segments[0].bpm, 100.0);
@@ -1428,7 +1889,14 @@ fn finish_open_installs_a_player_json_written_after_the_read() {
     // an unchanged file is not re-read
     let ticket = m.begin_open();
     let loaded = load(&spec, &ticket, &m.sink()).unwrap();
-    assert_eq!(m.finish_open(&ticket, &spec, loaded).unwrap().tempo.segments.len(), 1);
+    assert_eq!(
+        m.finish_open(&ticket, &spec, loaded)
+            .unwrap()
+            .tempo
+            .segments
+            .len(),
+        1
+    );
 }
 
 // ------------------------------------------------------------- stretch mode (plan 2.4)
@@ -1437,7 +1905,12 @@ const BEAT: usize = RATE / 2; // one beat at 120 BPM
 const PULL: usize = 64;
 
 fn pcm_of(f: impl Fn(usize) -> f32, frames: usize) -> Pcm {
-    Pcm { rate: RATE as u32, channels: 1, frames: frames as u64, samples: (0..frames).map(|i| (f(i) * 32767.0) as i16).collect() }
+    Pcm {
+        rate: RATE as u32,
+        channels: 1,
+        frames: frames as u64,
+        samples: (0..frames).map(|i| (f(i) * 32767.0) as i16).collect(),
+    }
 }
 
 /// A 300 Hz burst of 10 ms (sine-squared envelope) on every beat of 120 BPM.
@@ -1457,11 +1930,18 @@ fn burst_pcm(secs: usize) -> Pcm {
 }
 
 fn tone_pcm(secs: usize) -> Pcm {
-    pcm_of(|i| 0.5 * (std::f32::consts::TAU * 440.0 * i as f32 / RATE as f32).sin(), secs * RATE)
+    pcm_of(
+        |i| 0.5 * (std::f32::consts::TAU * 440.0 * i as f32 / RATE as f32).sin(),
+        secs * RATE,
+    )
 }
 
 fn beat_grid(frames: usize) -> Arc<Vec<Beat>> {
-    Arc::new((0..frames / BEAT + 1).map(|k| ((k * BEAT) as u64, false)).collect())
+    Arc::new(
+        (0..frames / BEAT + 1)
+            .map(|k| ((k * BEAT) as u64, false))
+            .collect(),
+    )
 }
 
 /// Renders `total` frames in 64-frame pulls, applying each command before the first pull at or after its frame.
@@ -1487,7 +1967,9 @@ fn render_cmds(pcm: Pcm, cmds: &[(usize, Cmd)], total: usize) -> (Vec<f32>, Vec<
 /// RMS per 5 ms window.
 fn envelope(x: &[f32]) -> Vec<f32> {
     let w = RATE / 200;
-    x.chunks(w).map(|c| (c.iter().map(|v| v * v).sum::<f32>() / c.len() as f32).sqrt()).collect()
+    x.chunks(w)
+        .map(|c| (c.iter().map(|v| v * v).sum::<f32>() / c.len() as f32).sqrt())
+        .collect()
 }
 
 /// Energy centres (in frames) of the clusters of 5 ms windows above 30 % of the maximum, i.e. the bursts.
@@ -1532,7 +2014,11 @@ fn assert_no_gap(x: &[f32], from: usize, to: usize, what: &str) {
     let w = RATE / 100;
     for (k, c) in x[from..to.min(x.len())].chunks_exact(w).enumerate() {
         let rms = (c.iter().map(|v| v * v).sum::<f32>() / w as f32).sqrt();
-        assert!(rms >= 0.5 * tone_rms(), "{what}: window at frame {} has rms {rms}", from + k * w);
+        assert!(
+            rms >= 0.5 * tone_rms(),
+            "{what}: window at frame {} has rms {rms}",
+            from + k * w
+        );
     }
 }
 
@@ -1545,18 +2031,37 @@ fn scenario(name: &str, pct: u32) -> (Vec<(usize, Cmd)>, usize) {
             (c, 6 * sec)
         }
         "jump" => {
-            c.extend([(0, Cmd::SetSpeed(pct)), (0, Cmd::Play { count_in: None }), (3 * sec / 2, Cmd::Jump(72_765))]);
+            c.extend([
+                (0, Cmd::SetSpeed(pct)),
+                (0, Cmd::Play { count_in: None }),
+                (3 * sec / 2, Cmd::Jump(72_765)),
+            ]);
             (c, 6 * sec)
         }
         "wrap" => {
-            let l = LoopSpec { start: 2 * sec as u64, end: 4 * sec as u64, repeat: true, count_in_bpm_milli: None, count_in_lead: 0, training: None };
-            c.extend([(0, Cmd::SetSpeed(pct)), (0, Cmd::SetLoop(Some(l))), (0, Cmd::Play { count_in: None })]);
+            let l = LoopSpec {
+                start: 2 * sec as u64,
+                end: 4 * sec as u64,
+                repeat: true,
+                count_in_bpm_milli: None,
+                count_in_lead: 0,
+                training: None,
+            };
+            c.extend([
+                (0, Cmd::SetSpeed(pct)),
+                (0, Cmd::SetLoop(Some(l))),
+                (0, Cmd::Play { count_in: None }),
+            ]);
             (c, 12 * sec)
         }
         _ => {
             // 100 % -> pct while playing, then on to another stretched speed
             let other = if pct == 150 { 50 } else { 150 };
-            c.extend([(0, Cmd::Play { count_in: None }), (3 * sec / 2, Cmd::SetSpeed(pct)), (4 * sec, Cmd::SetSpeed(other))]);
+            c.extend([
+                (0, Cmd::Play { count_in: None }),
+                (3 * sec / 2, Cmd::SetSpeed(pct)),
+                (4 * sec, Cmd::SetSpeed(other)),
+            ]);
             (c, 8 * sec)
         }
     }
@@ -1572,27 +2077,47 @@ fn clicks_stay_on_the_beats_of_the_music_at_any_speed() {
             let (clicks, _, _) = render_cmds(pcm_of(|_| 0.0, 30 * RATE), &click_cmds, total);
             let (music, _, _) = render_cmds(burst_pcm(30), &cmds, total);
             let (on, pk) = (onsets(&clicks), burst_peaks(&music));
-            assert!(on.len() >= 5 && pk.len() >= 4, "{name} {pct}: {} clicks, {} bursts", on.len(), pk.len());
+            assert!(
+                on.len() >= 5 && pk.len() >= 4,
+                "{name} {pct}: {} clicks, {} bursts",
+                on.len(),
+                pk.len()
+            );
             let tol = RATE / 100; // 10 ms
             for &o in &on {
                 // the burst's peak is the middle of its 10 ms, stretched
                 let centre = o + (RATE as f64 / 200.0 * 100.0 / f64::from(pct)) as usize;
                 let near = pk.iter().map(|&p| p.abs_diff(centre)).min().unwrap();
-                assert!(near <= tol, "{name} {pct} %: click at {o} is {near} frames from the nearest burst peak");
+                assert!(
+                    near <= tol,
+                    "{name} {pct} %: click at {o} is {near} frames from the nearest burst peak"
+                );
             }
             if name == "play" {
                 for w in on.windows(2) {
                     let want = BEAT as f64 * 100.0 / f64::from(pct);
-                    assert!((w[1] - w[0]) as f64 - want <= 1.0 && want - (w[1] - w[0]) as f64 <= 1.0, "{name} {pct}: spacing {}", w[1] - w[0]);
+                    assert!(
+                        (w[1] - w[0]) as f64 - want <= 1.0 && want - (w[1] - w[0]) as f64 <= 1.0,
+                        "{name} {pct}: spacing {}",
+                        w[1] - w[0]
+                    );
                 }
             }
             if name == "change" {
                 // 5.5 s on, the speed is `other`: spacing follows it
                 let other = if pct == 150 { 50.0 } else { 150.0 };
-                let tail: Vec<usize> = on.iter().cloned().filter(|&o| o > 5 * RATE + RATE / 2).collect();
+                let tail: Vec<usize> = on
+                    .iter()
+                    .cloned()
+                    .filter(|&o| o > 5 * RATE + RATE / 2)
+                    .collect();
                 for w in tail.windows(2) {
                     let want = BEAT as f64 * 100.0 / other;
-                    assert!(((w[1] - w[0]) as f64 - want).abs() <= 1.0, "{name} {pct}: tail spacing {}", w[1] - w[0]);
+                    assert!(
+                        ((w[1] - w[0]) as f64 - want).abs() <= 1.0,
+                        "{name} {pct}: tail spacing {}",
+                        w[1] - w[0]
+                    );
                 }
             }
         }
@@ -1617,10 +2142,17 @@ fn speed_100_with_set_speed_is_still_bit_exact() {
 #[test]
 fn speed_change_while_playing_has_no_gap_and_the_position_never_goes_back() {
     let sec = RATE;
-    let cmds = [(0, Cmd::Play { count_in: None }), (sec, Cmd::SetSpeed(70)), (3 * sec, Cmd::SetSpeed(100))];
+    let cmds = [
+        (0, Cmd::Play { count_in: None }),
+        (sec, Cmd::SetSpeed(70)),
+        (3 * sec, Cmd::SetSpeed(100)),
+    ];
     let (x, pos, shared) = render_cmds(tone_pcm(10), &cmds, 6 * sec);
     assert_no_gap(&x, 0, 6 * sec, "100 -> 70 -> 100 %");
-    assert!(pos.windows(2).all(|w| w[1] >= w[0]), "the position went back");
+    assert!(
+        pos.windows(2).all(|w| w[1] >= w[0]),
+        "the position went back"
+    );
     let at = |s: f64| pos[(s * sec as f64) as usize / PULL] as f64;
     let rate = (at(2.9) - at(1.9)) / sec as f64;
     assert!((rate - 0.7).abs() < 0.07, "advances {rate} s per second");
@@ -1630,7 +2162,11 @@ fn speed_change_while_playing_has_no_gap_and_the_position_never_goes_back() {
     for k in from..6 * sec / PULL {
         for j in 0..PULL {
             let f = pos[k] as usize - PULL + j;
-            assert_eq!(x[k * PULL + j], f32::from(src.samples[f]) / 32768.0, "pull {k} frame {j}");
+            assert_eq!(
+                x[k * PULL + j],
+                f32::from(src.samples[f]) / 32768.0,
+                "pull {k} frame {j}"
+            );
         }
     }
     assert_eq!(shared.speed_pct.load(Ordering::Acquire), 100);
@@ -1639,13 +2175,33 @@ fn speed_change_while_playing_has_no_gap_and_the_position_never_goes_back() {
 #[test]
 fn a_repeating_loop_at_80_percent_wraps_without_a_gap() {
     let sec = RATE;
-    let l = LoopSpec { start: sec as u64, end: 2 * sec as u64, repeat: true, count_in_bpm_milli: None, count_in_lead: 0, training: None };
-    let cmds = [(0, Cmd::SetSpeed(80)), (0, Cmd::SetLoop(Some(l))), (0, Cmd::Seek(sec as u64)), (0, Cmd::Play { count_in: None }), (0, Cmd::Resume)];
+    let l = LoopSpec {
+        start: sec as u64,
+        end: 2 * sec as u64,
+        repeat: true,
+        count_in_bpm_milli: None,
+        count_in_lead: 0,
+        training: None,
+    };
+    let cmds = [
+        (0, Cmd::SetSpeed(80)),
+        (0, Cmd::SetLoop(Some(l))),
+        (0, Cmd::Seek(sec as u64)),
+        (0, Cmd::Play { count_in: None }),
+        (0, Cmd::Resume),
+    ];
     let (x, pos, shared) = render_cmds(tone_pcm(10), &cmds, 5 * sec);
     assert!(shared.wraps.load(Ordering::Acquire) >= 2);
     // after the first wrap the heard position is back at the loop start
-    let first = pos.windows(2).position(|w| w[1] + 1000 < w[0]).expect("the position wrapped");
-    assert!(pos[first + 1].abs_diff(sec as u64) < 2000, "back at {}", pos[first + 1]);
+    let first = pos
+        .windows(2)
+        .position(|w| w[1] + 1000 < w[0])
+        .expect("the position wrapped");
+    assert!(
+        pos[first + 1].abs_diff(sec as u64) < 2000,
+        "back at {}",
+        pos[first + 1]
+    );
     assert!(pos.iter().all(|&p| p <= 2 * sec as u64 + 100));
     assert_no_gap(&x, fade_frames() * 4, 5 * sec, "loop wrap");
 }
@@ -1653,8 +2209,19 @@ fn a_repeating_loop_at_80_percent_wraps_without_a_gap() {
 #[test]
 fn loop_end_with_count_in_at_50_percent_counts_three_clicks_then_the_music() {
     let sec = RATE;
-    let l = LoopSpec { start: 2 * BEAT as u64, end: 6 * BEAT as u64, repeat: true, count_in_bpm_milli: Some(120_000), count_in_lead: 0, training: None };
-    let cmds = [(0, Cmd::SetSpeed(50)), (0, Cmd::SetLoop(Some(l))), (0, Cmd::PlayLoop { count_in: None })];
+    let l = LoopSpec {
+        start: 2 * BEAT as u64,
+        end: 6 * BEAT as u64,
+        repeat: true,
+        count_in_bpm_milli: Some(120_000),
+        count_in_lead: 0,
+        training: None,
+    };
+    let cmds = [
+        (0, Cmd::SetSpeed(50)),
+        (0, Cmd::SetLoop(Some(l))),
+        (0, Cmd::PlayLoop { count_in: None }),
+    ];
     let total = 9 * sec;
     let (clicks, _, shared) = render_cmds(pcm_of(|_| 0.0, 30 * sec), &cmds, total);
     let (music, _, _) = render_cmds(burst_pcm(30), &cmds, total);
@@ -1662,35 +2229,73 @@ fn loop_end_with_count_in_at_50_percent_counts_three_clicks_then_the_music() {
     let on = onsets(&clicks);
     assert!(on.len() >= 3, "{on:?}");
     for w in on[..3].windows(2) {
-        assert!(w[1].abs_diff(w[0] + sec) <= 2, "clicks {} frames apart", w[1] - w[0]);
+        assert!(
+            w[1].abs_diff(w[0] + sec) <= 2,
+            "clicks {} frames apart",
+            w[1] - w[0]
+        );
     }
     // the burst on the silent fourth beat: the loop start is a beat
-    let after: Vec<usize> = burst_peaks(&music[on[2] + sec / 2..]).iter().map(|p| p + on[2] + sec / 2).collect();
+    let after: Vec<usize> = burst_peaks(&music[on[2] + sec / 2..])
+        .iter()
+        .map(|p| p + on[2] + sec / 2)
+        .collect();
     let want = on[2] + sec + RATE / 100; // the middle of the burst, stretched to 20 ms
-    assert!(after[0].abs_diff(want) <= RATE / 100, "burst at {} want {want}", after[0]);
+    assert!(
+        after[0].abs_diff(want) <= RATE / 100,
+        "burst at {} want {want}",
+        after[0]
+    );
 }
 
 /// A silent track's clicks after `cmds`: the count-in, then the 120 BPM grid (a click on every beat).
 fn count_in_then_grid(pct: u32, cmds: Vec<(usize, Cmd)>) -> Vec<i64> {
     let grid: Vec<Beat> = (0..60).map(|k| ((k * BEAT) as u64, false)).collect();
-    let mut all = vec![(0, Cmd::SetGrid(Arc::new(grid))), (0, Cmd::SetMetronome(true)), (0, Cmd::SetSpeed(pct))];
+    let mut all = vec![
+        (0, Cmd::SetGrid(Arc::new(grid))),
+        (0, Cmd::SetMetronome(true)),
+        (0, Cmd::SetSpeed(pct)),
+    ];
     all.extend(cmds);
     let (x, _, _) = render_cmds(pcm_of(|_| 0.0, 30 * RATE), &all, 10 * RATE);
-    onsets(&x).windows(2).map(|w| w[1] as i64 - w[0] as i64).take(6).collect()
+    onsets(&x)
+        .windows(2)
+        .map(|w| w[1] as i64 - w[0] as i64)
+        .take(6)
+        .collect()
 }
 
 #[test]
 fn a_count_in_between_beats_lands_on_the_grid_at_every_speed() {
     for pct in [100u32, 50, 75] {
         let out_beat = BEAT as f64 * 100.0 / f64::from(pct);
-        for start in [4 * BEAT, 4 * BEAT + BEAT / 2, 4 * BEAT + BEAT / 10, 5 * BEAT - BEAT / 10] {
+        for start in [
+            4 * BEAT,
+            4 * BEAT + BEAT / 2,
+            4 * BEAT + BEAT / 10,
+            5 * BEAT - BEAT / 10,
+        ] {
             let lead = (((5 * BEAT - start) % BEAT) as f64 * 100.0 / f64::from(pct)).round() as u64;
             let plan = count_in_plan(120.0 * f64::from(pct) / 100.0, RATE as u32).lead_in(lead);
-            let gaps = count_in_then_grid(pct, vec![(0, Cmd::Seek(start as u64)), (0, Cmd::Play { count_in: Some(plan) })]);
+            let gaps = count_in_then_grid(
+                pct,
+                vec![
+                    (0, Cmd::Seek(start as u64)),
+                    (
+                        0,
+                        Cmd::Play {
+                            count_in: Some(plan),
+                        },
+                    ),
+                ],
+            );
             assert_eq!(gaps.len(), 6, "{pct} % from {start}: {gaps:?}");
             for g in &gaps {
                 // the stretch path places a click within a sub-block
-                assert!((*g as f64 - out_beat).abs() <= 300.0, "{pct} % from {start}: {gaps:?}");
+                assert!(
+                    (*g as f64 - out_beat).abs() <= 300.0,
+                    "{pct} % from {start}: {gaps:?}"
+                );
             }
         }
     }
@@ -1709,23 +2314,40 @@ fn a_loop_count_in_between_beats_lands_on_the_grid_on_every_pass() {
             count_in_lead: (BEAT / 2) as u64,
             training: None,
         };
-        let plan = count_in_plan(120.0 * f64::from(pct) / 100.0, RATE as u32).lead_in((BEAT as f64 / 2.0 * 100.0 / f64::from(pct)).round() as u64);
+        let plan = count_in_plan(120.0 * f64::from(pct) / 100.0, RATE as u32)
+            .lead_in((BEAT as f64 / 2.0 * 100.0 / f64::from(pct)).round() as u64);
         let grid: Vec<Beat> = (0..60).map(|k| ((k * BEAT) as u64, false)).collect();
         let cmds = [
             (0, Cmd::SetGrid(Arc::new(grid))),
             (0, Cmd::SetMetronome(true)),
             (0, Cmd::SetSpeed(pct)),
             (0, Cmd::SetLoop(Some(l))),
-            (0, Cmd::PlayLoop { count_in: Some(plan) }),
+            (
+                0,
+                Cmd::PlayLoop {
+                    count_in: Some(plan),
+                },
+            ),
         ];
-        let (x, _, shared) = render_cmds(pcm_of(|_| 0.0, 30 * RATE), &cmds, 14 * RATE * 100 / pct as usize / 2);
+        let (x, _, shared) = render_cmds(
+            pcm_of(|_| 0.0, 30 * RATE),
+            &cmds,
+            14 * RATE * 100 / pct as usize / 2,
+        );
         assert!(shared.wraps.load(Ordering::Acquire) >= 1);
         // count-in 3 clicks, beats 3, 4, 5 of the pass, the loop end on beat 6 starts the next count-in, ...:
         // one beat apart all the way
-        let gaps: Vec<i64> = onsets(&x).windows(2).map(|w| w[1] as i64 - w[0] as i64).take(11).collect();
+        let gaps: Vec<i64> = onsets(&x)
+            .windows(2)
+            .map(|w| w[1] as i64 - w[0] as i64)
+            .take(11)
+            .collect();
         assert_eq!(gaps.len(), 11, "{pct} %: {gaps:?}");
         for (k, g) in gaps.iter().enumerate() {
-            assert!((*g as f64 - out_beat).abs() <= 300.0, "{pct} %: gap {k} in {gaps:?}");
+            assert!(
+                (*g as f64 - out_beat).abs() <= 300.0,
+                "{pct} %: gap {k} in {gaps:?}"
+            );
         }
     }
 }
@@ -1733,7 +2355,11 @@ fn a_loop_count_in_between_beats_lands_on_the_grid_on_every_pass() {
 #[test]
 fn the_track_end_at_150_percent_plays_the_last_50ms_then_ends() {
     let sec = RATE;
-    let cmds = [(0, Cmd::SetSpeed(150)), (0, Cmd::Seek(sec as u64)), (0, Cmd::Play { count_in: None })];
+    let cmds = [
+        (0, Cmd::SetSpeed(150)),
+        (0, Cmd::Seek(sec as u64)),
+        (0, Cmd::Play { count_in: None }),
+    ];
     let shared = Arc::new(Shared::default());
     let mut en = Engine::new(Arc::new(tone_pcm(3)), 0, shared.clone());
     for (_, c) in cmds {
@@ -1762,10 +2388,17 @@ fn seek_while_playing_at_85_percent_stays_silent_until_resume_then_plays_from_th
     ];
     let (x, _, _) = render_cmds(burst_pcm(30), &cmds, 3 * RATE);
     let resume = RATE + 8 * RATE / 10;
-    assert!(x[RATE + PULL..resume].iter().all(|v| *v == 0.0), "not silent while scrubbing");
+    assert!(
+        x[RATE + PULL..resume].iter().all(|v| *v == 0.0),
+        "not silent while scrubbing"
+    );
     let pk = burst_peaks(&x[resume..]);
     let want = (8075.0 / 0.85) as usize;
-    assert!(pk[0].abs_diff(want) <= RATE / 100, "burst at {} want {want}", pk[0]);
+    assert!(
+        pk[0].abs_diff(want) <= RATE / 100,
+        "burst at {} want {want}",
+        pk[0]
+    );
 }
 
 // ------------------------------------------------------------ speed training (engine)
@@ -1782,7 +2415,12 @@ impl Rig {
     fn new(pcm: Pcm) -> Rig {
         let shared = Arc::new(Shared::default());
         let en = Engine::new(Arc::new(pcm), 0, shared.clone());
-        Rig { en, shared, left: Vec::new(), buf: vec![0.0; 2 * PULL] }
+        Rig {
+            en,
+            shared,
+            left: Vec::new(),
+            buf: vec![0.0; 2 * PULL],
+        }
     }
 
     fn cmd(&mut self, c: Cmd) -> &mut Rig {
@@ -1806,7 +2444,12 @@ impl Rig {
     /// Pulls until `pass()` is `n` (at most `limit` frames).
     fn until_pass(&mut self, n: u64, limit: usize) {
         while self.pass() != n {
-            assert!(self.left.len() < limit, "pass {n} not reached (pass {} at {} %)", self.pass(), self.pct());
+            assert!(
+                self.left.len() < limit,
+                "pass {n} not reached (pass {} at {} %)",
+                self.pass(),
+                self.pct()
+            );
             self.pull();
         }
     }
@@ -1831,13 +2474,20 @@ fn loop_2s(training: Option<Training>, count_in: bool) -> LoopSpec {
 }
 
 fn plan(start: u32, end: u32, step: u32, repeats: u32) -> Option<Training> {
-    Some(Training { on: true, start, end, step, repeats })
+    Some(Training {
+        on: true,
+        start,
+        end,
+        step,
+        repeats,
+    })
 }
 
 #[test]
 fn a_training_run_plays_each_pass_at_its_speed_without_a_gap() {
     let mut r = Rig::new(tone_pcm(30));
-    r.cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 2), false)))).cmd(Cmd::PlayLoop { count_in: None });
+    r.cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 2), false))))
+        .cmd(Cmd::PlayLoop { count_in: None });
     let mut bounds = vec![0usize];
     let mut seen = vec![(r.pass(), r.pct())];
     r.pull();
@@ -1853,18 +2503,31 @@ fn a_training_run_plays_each_pass_at_its_speed_without_a_gap() {
     for k in 0..6 {
         let len = (bounds[k + 1] - bounds[k]) as f64;
         let want = 2.0 * RATE as f64 * 100.0 / f64::from(speeds[k]);
-        assert!((len - want).abs() <= 0.02 * want, "pass {} is {len} frames, want {want}", k + 1);
+        assert!(
+            (len - want).abs() <= 0.02 * want,
+            "pass {} is {len} frames, want {want}",
+            k + 1
+        );
         assert_eq!(seen[k].0, k as u64 + 1);
     }
     // each pass is published with its speed as it is heard
-    assert_eq!(seen.iter().map(|s| s.1).collect::<Vec<_>>(), [60, 60, 70, 70, 80, 80, 80]);
-    assert_no_gap(&r.left, fade_frames() * 4, r.left.len() - 2 * PULL, "pass changes");
+    assert_eq!(
+        seen.iter().map(|s| s.1).collect::<Vec<_>>(),
+        [60, 60, 70, 70, 80, 80, 80]
+    );
+    assert_no_gap(
+        &r.left,
+        fade_frames() * 4,
+        r.left.len() - 2 * PULL,
+        "pass changes",
+    );
 }
 
 #[test]
 fn every_pass_is_counted_in_at_its_own_speed() {
     let mut r = Rig::new(pcm_of(|_| 0.0, 30 * RATE));
-    r.cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 1), true)))).cmd(Cmd::PlayLoop { count_in: None });
+    r.cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 1), true))))
+        .cmd(Cmd::PlayLoop { count_in: None });
     r.until_pass(5, 40 * RATE);
     let on = onsets(&r.left);
     // no count-in before pass 1 (none was asked for); three clicks before each of passes 2, 3 and 4 (70/80/80 %)
@@ -1872,7 +2535,11 @@ fn every_pass_is_counted_in_at_its_own_speed() {
     for (g, pct) in [70.0, 80.0, 80.0].into_iter().enumerate() {
         let want = BEAT as f64 * 100.0 / pct;
         for w in on[3 * g..3 * g + 3].windows(2) {
-            assert!(((w[1] - w[0]) as f64 - want).abs() <= 2.0, "group {g}: {} apart, want {want}", w[1] - w[0]);
+            assert!(
+                ((w[1] - w[0]) as f64 - want).abs() <= 2.0,
+                "group {g}: {} apart, want {want}",
+                w[1] - w[0]
+            );
         }
     }
 }
@@ -1880,7 +2547,8 @@ fn every_pass_is_counted_in_at_its_own_speed() {
 #[test]
 fn pause_ends_the_run_and_the_next_loop_play_starts_at_the_first_speed() {
     let mut r = Rig::new(tone_pcm(30));
-    r.cmd(Cmd::SetSpeed(90)).cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 2), false))));
+    r.cmd(Cmd::SetSpeed(90))
+        .cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 2), false))));
     r.cmd(Cmd::PlayLoop { count_in: None });
     r.until_pass(3, 20 * RATE);
     assert_eq!(r.pct(), 70);
@@ -1895,26 +2563,40 @@ fn pause_ends_the_run_and_the_next_loop_play_starts_at_the_first_speed() {
 #[test]
 fn a_jump_outside_the_loop_ends_the_run_and_a_jump_inside_keeps_it() {
     let mut r = Rig::new(tone_pcm(30));
-    r.cmd(Cmd::SetSpeed(90)).cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 2), false))));
+    r.cmd(Cmd::SetSpeed(90))
+        .cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 2), false))));
     r.cmd(Cmd::PlayLoop { count_in: None });
     r.until_pass(3, 20 * RATE);
     r.cmd(Cmd::Jump(RATE as u64 + RATE as u64 / 2));
     r.pull_for(RATE / 2);
-    assert_eq!((r.pass(), r.pct()), (3, 70), "a jump inside the loop keeps the run");
+    assert_eq!(
+        (r.pass(), r.pct()),
+        (3, 70),
+        "a jump inside the loop keeps the run"
+    );
     let from = r.left.len();
     r.cmd(Cmd::Jump(10 * RATE as u64));
     r.pull();
     assert_eq!((r.pass(), r.pct()), (0, 90));
     r.pull_for(2 * RATE);
     assert_eq!((r.pass(), r.pct()), (0, 90));
-    assert_no_gap(&r.left, from + fade_frames() * 4 + 2 * PULL, r.left.len(), "after the jump");
-    assert!(r.shared.position.load(Ordering::Acquire) > 10 * RATE as u64, "playback continues past the jump target");
+    assert_no_gap(
+        &r.left,
+        from + fade_frames() * 4 + 2 * PULL,
+        r.left.len(),
+        "after the jump",
+    );
+    assert!(
+        r.shared.position.load(Ordering::Acquire) > 10 * RATE as u64,
+        "playback continues past the jump target"
+    );
 }
 
 #[test]
 fn set_loop_without_training_ends_the_run_at_once_and_new_settings_apply_from_the_next_pass() {
     let mut r = Rig::new(tone_pcm(30));
-    r.cmd(Cmd::SetSpeed(90)).cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 2), false))));
+    r.cmd(Cmd::SetSpeed(90))
+        .cmd(Cmd::SetLoop(Some(loop_2s(plan(60, 80, 10, 2), false))));
     r.cmd(Cmd::PlayLoop { count_in: None });
     r.until_pass(2, 20 * RATE);
     // repeats 2 -> 1 in the middle of pass 2: this pass stays at 60 %, the next one is pass 3 of (60, 80, 10, 1) = 80 %
@@ -1939,7 +2621,8 @@ fn set_loop_without_training_ends_the_run_at_once_and_new_settings_apply_from_th
 #[test]
 fn a_run_from_100_to_100_stays_in_stretch_mode_with_2s_passes() {
     let mut r = Rig::new(tone_pcm(30));
-    r.cmd(Cmd::SetLoop(Some(loop_2s(plan(100, 100, 5, 1), false)))).cmd(Cmd::PlayLoop { count_in: None });
+    r.cmd(Cmd::SetLoop(Some(loop_2s(plan(100, 100, 5, 1), false))))
+        .cmd(Cmd::PlayLoop { count_in: None });
     r.pull();
     assert!(r.en.mode == Mode::Stretch);
     let mut bounds = vec![0usize];
@@ -1949,7 +2632,10 @@ fn a_run_from_100_to_100_stays_in_stretch_mode_with_2s_passes() {
     }
     for w in bounds.windows(2) {
         let len = (w[1] - w[0]) as f64;
-        assert!((len - 2.0 * RATE as f64).abs() <= 0.02 * 2.0 * RATE as f64, "pass of {len} frames");
+        assert!(
+            (len - 2.0 * RATE as f64).abs() <= 0.02 * 2.0 * RATE as f64,
+            "pass of {len} frames"
+        );
     }
     assert!(r.en.mode == Mode::Stretch);
 }
@@ -1958,13 +2644,21 @@ fn a_run_from_100_to_100_stays_in_stretch_mode_with_2s_passes() {
 fn a_jump_into_the_last_100ms_of_a_repeating_loop_still_wraps() {
     for pct in [100u32, 85] {
         let mut r = Rig::new(tone_pcm(30));
-        r.cmd(Cmd::SetSpeed(pct)).cmd(Cmd::SetLoop(Some(loop_2s(None, false)))).cmd(Cmd::Seek(RATE as u64 * 2));
+        r.cmd(Cmd::SetSpeed(pct))
+            .cmd(Cmd::SetLoop(Some(loop_2s(None, false))))
+            .cmd(Cmd::Seek(RATE as u64 * 2));
         r.cmd(Cmd::Play { count_in: None }).cmd(Cmd::Resume);
         r.pull_for(RATE / 4);
         r.cmd(Cmd::Jump(3 * RATE as u64 - RATE as u64 / 20));
         r.pull_for(RATE / 2);
-        assert!(r.shared.wraps.load(Ordering::Acquire) >= 1, "{pct} %: the loop end was ignored");
+        assert!(
+            r.shared.wraps.load(Ordering::Acquire) >= 1,
+            "{pct} %: the loop end was ignored"
+        );
         let pos = r.shared.position.load(Ordering::Acquire);
-        assert!(pos < 2 * RATE as u64, "{pct} %: position {pos} is not back in the loop");
+        assert!(
+            pos < 2 * RATE as u64,
+            "{pct} %: position {pos} is not back in the loop"
+        );
     }
 }

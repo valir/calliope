@@ -9,17 +9,23 @@
 //! reaches the internet, the LAN or the real model.
 //!
 //! Crash tests re-run this test binary as a child (`qa_child`) and SIGKILL it mid-import.
-#![allow(dead_code, unused_imports, unused_variables, clippy::type_complexity, clippy::all)]
+#![allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    clippy::type_complexity,
+    clippy::all
+)]
 
+use calliope_gui::download;
 use calliope_gui::fsutil;
-use calliope_gui::track_meta;
-use calliope_gui::repository;
+use calliope_gui::import_job;
 use calliope_gui::import_tmp;
 use calliope_gui::media;
-use calliope_gui::download;
-use calliope_gui::tools;
+use calliope_gui::repository;
 use calliope_gui::stem_audio;
-use calliope_gui::import_job;
+use calliope_gui::tools;
+use calliope_gui::track_meta;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -46,12 +52,22 @@ fn fixture(name: &str) -> PathBuf {
     project().join("tests/fixtures/import").join(name)
 }
 fn tool(name: &str) -> PathBuf {
-    tools::find_in_path(name, &std::env::var_os("PATH").unwrap_or_default()).unwrap_or_else(|| panic!("{name} is needed"))
+    tools::find_in_path(name, &std::env::var_os("PATH").unwrap_or_default())
+        .unwrap_or_else(|| panic!("{name} is needed"))
 }
 fn stems_binary() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
-    let bin = exe.parent().unwrap().parent().unwrap().join("calliope-stems");
-    assert!(bin.is_file(), "{} is missing: cargo build -p calliope-stems", bin.display());
+    let bin = exe
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("calliope-stems");
+    assert!(
+        bin.is_file(),
+        "{} is missing: cargo build -p calliope-stems",
+        bin.display()
+    );
     bin
 }
 
@@ -76,7 +92,11 @@ fn fingerprint(dir: &Path) -> BTreeMap<String, String> {
             let p = e.path();
             let rel = p.strip_prefix(base).unwrap().to_string_lossy().to_string();
             let md = fs::symlink_metadata(&p).unwrap();
-            let mt = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+            let mt = md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
             if md.file_type().is_symlink() {
                 out.insert(rel, format!("link -> {:?}", fs::read_link(&p).unwrap()));
             } else if md.is_dir() {
@@ -88,7 +108,14 @@ fn fingerprint(dir: &Path) -> BTreeMap<String, String> {
                 for b in &bytes {
                     h = (h ^ *b as u64).wrapping_mul(0x100000001b3);
                 }
-                out.insert(rel, format!("file {} {mt} {h:x} mode={:o}", bytes.len(), md.permissions().mode()));
+                out.insert(
+                    rel,
+                    format!(
+                        "file {} {mt} {h:x} mode={:o}",
+                        bytes.len(),
+                        md.permissions().mode()
+                    ),
+                );
             }
         }
     }
@@ -102,7 +129,9 @@ fn procs_mentioning(needle: &str) -> Vec<(u32, String)> {
     let me = std::process::id();
     let mut v = Vec::new();
     for e in fs::read_dir("/proc").unwrap().flatten() {
-        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
+            continue;
+        };
         if pid == me {
             continue;
         }
@@ -142,7 +171,13 @@ fn until(what: &str, secs: u64, mut f: impl FnMut() -> bool) {
 }
 
 fn names_in(dir: &Path) -> Vec<String> {
-    let mut v: Vec<String> = fs::read_dir(dir).map(|r| r.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+    let mut v: Vec<String> = fs::read_dir(dir)
+        .map(|r| {
+            r.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
     v.sort();
     v
 }
@@ -185,7 +220,10 @@ impl RealServer {
         let mut line = String::new();
         let addr: SocketAddr = loop {
             line.clear();
-            assert!(lines.read_line(&mut line).unwrap() > 0, "server exited before listening");
+            assert!(
+                lines.read_line(&mut line).unwrap() > 0,
+                "server exited before listening"
+            );
             if let Some(rest) = line.split("listening addr=").nth(1) {
                 break rest.split_whitespace().next().unwrap().parse().unwrap();
             }
@@ -200,13 +238,24 @@ impl RealServer {
                 s.clear();
             }
         });
-        RealServer { child, url: format!("http://{addr}"), work, log, _outer: outer }
+        RealServer {
+            child,
+            url: format!("http://{addr}"),
+            work,
+            log,
+            _outer: outer,
+        }
     }
     fn saw(&self, needle: &str) -> bool {
         self.log.lock().unwrap().iter().any(|l| l.contains(needle))
     }
     fn count(&self, needle: &str) -> usize {
-        self.log.lock().unwrap().iter().filter(|l| l.contains(needle)).count()
+        self.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.contains(needle))
+            .count()
     }
     fn job_dirs(&self) -> Vec<String> {
         names_in(&self.work.join("jobs"))
@@ -232,8 +281,14 @@ impl AiConfig {
     fn good() -> AiConfig {
         AiConfig {
             job_id: "0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b".into(),
-            stems: ["vocals", "drums", "bass", "guitar", "piano", "other"].iter().map(|s| s.to_string()).collect(),
-            body: Arc::new(|n| fs::read(fixture(&format!("stems/{n}.flac"))).unwrap_or_else(|_| b"fLaC-generic-body".to_vec())),
+            stems: ["vocals", "drums", "bass", "guitar", "piano", "other"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            body: Arc::new(|n| {
+                fs::read(fixture(&format!("stems/{n}.flac")))
+                    .unwrap_or_else(|_| b"fLaC-generic-body".to_vec())
+            }),
             slow_stem_ms: 0,
             max_upload: 300 << 20,
             final_state: "done",
@@ -294,17 +349,27 @@ fn fake_ai(cfg: AiConfig) -> FakeAi {
                 hits.lock().unwrap().push(line.clone());
                 let clen: usize = text
                     .lines()
-                    .find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0)))
+                    .find_map(|l| {
+                        l.to_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|v| v.trim().parse().unwrap_or(0))
+                    })
                     .unwrap_or(0);
                 let send = |s: &mut TcpStream, status: &str, ctype: &str, body: &[u8]| {
                     let h = format!("HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
                     let _ = s.write_all(h.as_bytes());
                     let _ = s.write_all(body);
                 };
-                let json = |s: &mut TcpStream, status: &str, v: serde_json::Value| send(s, status, "application/json", v.to_string().as_bytes());
+                let json = |s: &mut TcpStream, status: &str, v: serde_json::Value| {
+                    send(s, status, "application/json", v.to_string().as_bytes())
+                };
                 if line.starts_with("GET /v1/health") {
-                    json(&mut s, "200 OK", serde_json::json!({"service":"calliope-stems","api":1,"version":"x","models":["htdemucs_6s"],
-                        "default_model":"htdemucs_6s","busy":false,"max_duration_s":900,"max_upload_bytes":cfg.max_upload}));
+                    json(
+                        &mut s,
+                        "200 OK",
+                        serde_json::json!({"service":"calliope-stems","api":1,"version":"x","models":["htdemucs_6s"],
+                        "default_model":"htdemucs_6s","busy":false,"max_duration_s":900,"max_upload_bytes":cfg.max_upload}),
+                    );
                 } else if line.starts_with("POST /v1/jobs") {
                     let mut left = clen;
                     let mut buf = vec![0u8; 65536];
@@ -314,11 +379,19 @@ fn fake_ai(cfg: AiConfig) -> FakeAi {
                             Ok(n) => left -= n,
                         }
                     }
-                    json(&mut s, "202 Accepted", serde_json::json!({"job": cfg.job_id, "state": "queued"}));
+                    json(
+                        &mut s,
+                        "202 Accepted",
+                        serde_json::json!({"job": cfg.job_id, "state": "queued"}),
+                    );
                 } else if line.starts_with("DELETE") {
                     let _ = s.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
                 } else if line.contains("/stems/") {
-                    let name = line.split("/stems/").nth(1).and_then(|r| r.split(' ').next()).unwrap_or("");
+                    let name = line
+                        .split("/stems/")
+                        .nth(1)
+                        .and_then(|r| r.split(' ').next())
+                        .unwrap_or("");
                     let body = (cfg.body)(name);
                     let h = format!("HTTP/1.1 200 OK\r\nContent-Type: audio/flac\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
                     let _ = s.write_all(h.as_bytes());
@@ -331,9 +404,13 @@ fn fake_ai(cfg: AiConfig) -> FakeAi {
                         }
                     }
                 } else if line.starts_with("GET /v1/jobs/") {
-                    json(&mut s, "200 OK", serde_json::json!({"job": cfg.job_id, "state": cfg.final_state, "progress": cfg.progress,
+                    json(
+                        &mut s,
+                        "200 OK",
+                        serde_json::json!({"job": cfg.job_id, "state": cfg.final_state, "progress": cfg.progress,
                         "stems": if cfg.final_state == "done" { serde_json::json!(cfg.stems) } else { serde_json::Value::Null },
-                        "error": cfg.error}));
+                        "error": cfg.error}),
+                    );
                 } else {
                     json(&mut s, "404 Not Found", serde_json::json!({"error":"x"}));
                 }
@@ -374,7 +451,15 @@ impl Rig {
             Repository::new(&root).ensure_layout().unwrap();
         }
         fs::write(outside.join("precious.txt"), "do not touch").unwrap();
-        for f in ["tagged.mp3", "tagged.ogg", "with-audio.mp4", "no-audio.mp4", "long.flac", "untagged.flac", "not-audio.mp3"] {
+        for f in [
+            "tagged.mp3",
+            "tagged.ogg",
+            "with-audio.mp4",
+            "no-audio.mp4",
+            "long.flac",
+            "untagged.flac",
+            "not-audio.mp3",
+        ] {
             fs::copy(fixture(f), sources.join(f)).unwrap();
         }
         // wrapper so that each rig has its own fake-yt-dlp log
@@ -382,11 +467,19 @@ impl Rig {
         let wrapper = dir.path().join("yt-dlp");
         fs::write(
             &wrapper,
-            format!("#!/bin/sh\nexport FAKE_YTDLP_LOG='{}'\nexec python3 '{}' \"$@\"\n", ytlog.display(), project().join("tests/support/bin/yt-dlp").display()),
+            format!(
+                "#!/bin/sh\nexport FAKE_YTDLP_LOG='{}'\nexec python3 '{}' \"$@\"\n",
+                ytlog.display(),
+                project().join("tests/support/bin/yt-dlp").display()
+            ),
         )
         .unwrap();
         fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
-        let tools = Tools { yt_dlp: Some(wrapper), ffmpeg: Some(tool("ffmpeg")), ffprobe: Some(tool("ffprobe")) };
+        let tools = Tools {
+            yt_dlp: Some(wrapper),
+            ffmpeg: Some(tool("ffmpeg")),
+            ffprobe: Some(tool("ffprobe")),
+        };
         let repo_lock = Arc::new(Mutex::new(()));
         let lock: Arc<dyn RepoLock> = Arc::new(move |f: &mut dyn FnMut()| {
             let _g = repo_lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -396,7 +489,17 @@ impl Rig {
         let e2 = events.clone();
         let sink: Sink = Arc::new(move |ev| e2.lock().unwrap().push(ev));
         let state = ImportState::new(tools.clone(), lock, Duration::from_millis(40));
-        Rig { dir, root, outside, sources, state, tools, events, sink, ytlog }
+        Rig {
+            dir,
+            root,
+            outside,
+            sources,
+            state,
+            tools,
+            events,
+            sink,
+            ytlog,
+        }
     }
 
     fn needle(&self) -> String {
@@ -404,11 +507,17 @@ impl Rig {
     }
 
     fn url(&self, url: &str, resume: bool) -> Result<JobSnapshot, String> {
-        self.state.start_url(&self.root, url, resume, self.sink.clone())
+        self.state
+            .start_url(&self.root, url, resume, self.sink.clone())
     }
     fn file_at(&self, path: &Path) -> Result<JobSnapshot, String> {
-        let kind = if path.extension().is_some_and(|e| e == "mp4") { FileKind::Video } else { FileKind::Audio };
-        self.state.start_file(&self.root, kind, path, self.sink.clone())
+        let kind = if path.extension().is_some_and(|e| e == "mp4") {
+            FileKind::Video
+        } else {
+            FileKind::Audio
+        };
+        self.state
+            .start_file(&self.root, kind, path, self.sink.clone())
     }
     fn file(&self, name: &str) -> Result<JobSnapshot, String> {
         self.file_at(&self.sources.join(name))
@@ -422,7 +531,11 @@ impl Rig {
                     return s;
                 }
             }
-            assert!(Instant::now() < end, "timed out waiting for {what}; at {:?}", self.state.snapshot().map(|s| (s.phase, s.error)));
+            assert!(
+                Instant::now() < end,
+                "timed out waiting for {what}; at {:?}",
+                self.state.snapshot().map(|s| (s.phase, s.error))
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
     }
@@ -444,14 +557,23 @@ impl Rig {
         assert_eq!(s.phase, Phase::Ready, "{:?}", s.error);
         s
     }
-    fn extract(&self, s: &JobSnapshot, server_url: &str, keep: bool) -> Result<JobSnapshot, String> {
-        self.state.start_extraction(&s.job, s.metadata.clone().unwrap(), Some(server_url), keep)
+    fn extract(
+        &self,
+        s: &JobSnapshot,
+        server_url: &str,
+        keep: bool,
+    ) -> Result<JobSnapshot, String> {
+        self.state
+            .start_extraction(&s.job, s.metadata.clone().unwrap(), Some(server_url), keep)
     }
     fn tracks(&self) -> Vec<String> {
         names_in(&self.root.join("tracks"))
     }
     fn staging(&self) -> Vec<String> {
-        self.tracks().into_iter().filter(|n| n.starts_with(".staging")).collect()
+        self.tracks()
+            .into_iter()
+            .filter(|n| n.starts_with(".staging"))
+            .collect()
     }
     fn import_tmp(&self) -> Vec<String> {
         names_in(&self.root.join("import-tmp"))
@@ -464,12 +586,17 @@ impl Rig {
             .collect()
     }
     fn outside_ok(&self) {
-        assert_eq!(fs::read_to_string(self.outside.join("precious.txt")).unwrap(), "do not touch");
+        assert_eq!(
+            fs::read_to_string(self.outside.join("precious.txt")).unwrap(),
+            "do not touch"
+        );
         assert_eq!(names_in(&self.outside), ["precious.txt"]);
     }
     fn no_stray_processes(&self) {
         until("no process mentioning the rig remains", 10, || {
-            procs_mentioning(&self.needle()).iter().all(|(_, c)| c.contains("calliope-stems") && false)
+            procs_mentioning(&self.needle())
+                .iter()
+                .all(|(_, c)| c.contains("calliope-stems") && false)
         });
     }
 }
@@ -480,7 +607,12 @@ const WATCH: &str = "https://media.example/watch?v=ok";
 fn part_has_bytes(rig: &Rig) -> bool {
     rig.import_tmp().iter().any(|d| {
         let dir = rig.root.join("import-tmp").join(d);
-        names_in(&dir).iter().any(|n| n.ends_with(".part") && fs::metadata(dir.join(n)).map(|m| m.len() > 0).unwrap_or(false))
+        names_in(&dir).iter().any(|n| {
+            n.ends_with(".part")
+                && fs::metadata(dir.join(n))
+                    .map(|m| m.len() > 0)
+                    .unwrap_or(false)
+        })
     })
 }
 
@@ -501,12 +633,19 @@ fn v1_repository_is_never_rewritten_by_scan_prepare_import_cancel_or_discard() {
     let lib = Repository::new(&rig.root).scan();
     assert!(lib.problems.is_empty(), "{:?}", lib.problems);
     assert_eq!(lib.tracks.len(), v1_ids().len());
-    assert!(lib.tracks.iter().all(|t| t.track_type == TrackType::Backing));
-    assert_eq!(fingerprint(&rig.root), before, "scan changed the repository");
+    assert!(lib
+        .tracks
+        .iter()
+        .all(|t| t.track_type == TrackType::Backing));
+    assert_eq!(
+        fingerprint(&rig.root),
+        before,
+        "scan changed the repository"
+    );
 
     // prepare_url is a pure question
     let p = rig.state.prepare_url(&rig.root, WATCH);
-    // 
+    //
     let mut now = fingerprint(&rig.root);
     now.remove("import-tmp");
     assert_eq!(now, before, "prepare_url changed something: {:?}", p.status);
@@ -527,7 +666,9 @@ fn v1_repository_is_never_rewritten_by_scan_prepare_import_cancel_or_discard() {
     rig.extract(&ready, &server_hang.url, false).unwrap();
     rig.wait("working", |s| s.phase == Phase::Working);
     rig.state.cancel(&ready.job).unwrap();
-    rig.wait("back to ready", |s| s.phase == Phase::Ready && !rig.state.is_running());
+    rig.wait("back to ready", |s| {
+        s.phase == Phase::Ready && !rig.state.is_running()
+    });
     assert!(rig.staging().is_empty(), "staging left after a cancel");
     rig.extract(&ready, &server.url, true).unwrap();
     let done = rig.wait("saved", |s| s.phase == Phase::Saved);
@@ -536,7 +677,11 @@ fn v1_repository_is_never_rewritten_by_scan_prepare_import_cancel_or_discard() {
     // every pre-existing file is byte-identical with the same mtime; only the new track was added
     let after = fingerprint(&rig.root);
     for (k, v) in &before {
-        assert_eq!(after.get(k), Some(v), "pre-existing entry changed or vanished: {k}");
+        assert_eq!(
+            after.get(k),
+            Some(v),
+            "pre-existing entry changed or vanished: {k}"
+        );
     }
     for k in after.keys() {
         if before.contains_key(k) {
@@ -545,11 +690,18 @@ fn v1_repository_is_never_rewritten_by_scan_prepare_import_cancel_or_discard() {
         let ok = k == "import-tmp" || k.starts_with(&format!("tracks/{new_id}"));
         assert!(ok, "unexpected new entry: {k}");
     }
-    assert_eq!(fingerprint(&rig.sources), src_before, "a source file changed");
+    assert_eq!(
+        fingerprint(&rig.sources),
+        src_before,
+        "a source file changed"
+    );
     rig.outside_ok();
     // The v1 tracks are still schema 1 on disk.
     for id in v1_ids() {
-        let j: serde_json::Value = serde_json::from_slice(&fs::read(rig.root.join("tracks").join(&id).join("track.json")).unwrap()).unwrap();
+        let j: serde_json::Value = serde_json::from_slice(
+            &fs::read(rig.root.join("tracks").join(&id).join("track.json")).unwrap(),
+        )
+        .unwrap();
         assert_eq!(j["schema_version"], 1, "{id} was rewritten");
     }
     assert!(Repository::new(&rig.root).scan().problems.is_empty());
@@ -592,8 +744,16 @@ fn cleanup_never_deletes_what_is_not_calliopes() {
     fs::write(target.join(".calliope-staging"), "").unwrap();
     fs::write(target.join("job.json"), "{}").unwrap();
     fs::write(target.join("data.txt"), "mine").unwrap();
-    symlink(&target, tracks.join(format!(".staging-0190b1c2-3d4e-7f50-8a6b-000000000001"))).unwrap();
-    symlink(&target, tmp.join("file-0190b1c2-3d4e-7f50-8a6b-000000000002")).unwrap();
+    symlink(
+        &target,
+        tracks.join(format!(".staging-0190b1c2-3d4e-7f50-8a6b-000000000001")),
+    )
+    .unwrap();
+    symlink(
+        &target,
+        tmp.join("file-0190b1c2-3d4e-7f50-8a6b-000000000002"),
+    )
+    .unwrap();
     symlink(&target, tmp.join("url-aaaaaaaaaaaaaaaa")).unwrap();
     // A genuinely stale folder of ours, with a symlink inside pointing outside
     let ours = tmp.join("file-0190b1c2-3d4e-7f50-8a6b-000000000003");
@@ -613,7 +773,10 @@ fn cleanup_never_deletes_what_is_not_calliopes() {
 
     let after = fingerprint(root);
     // our own stale folders are gone ...
-    assert!(!ours.exists() && !ours_staging.exists(), "stale Calliope folders should be removed");
+    assert!(
+        !ours.exists() && !ours_staging.exists(),
+        "stale Calliope folders should be removed"
+    );
     // ... and nothing else that existed is missing
     for (k, v) in &before {
         if k.starts_with("import-tmp/file-0190b1c2-3d4e-7f50-8a6b-000000000003")
@@ -621,9 +784,17 @@ fn cleanup_never_deletes_what_is_not_calliopes() {
         {
             continue;
         }
-        assert_eq!(after.get(k), Some(v), "foreign entry changed or deleted: {k}");
+        assert_eq!(
+            after.get(k),
+            Some(v),
+            "foreign entry changed or deleted: {k}"
+        );
     }
-    assert_eq!(fingerprint(&rig.outside), out_before, "something outside the repository changed (symlink followed?)");
+    assert_eq!(
+        fingerprint(&rig.outside),
+        out_before,
+        "something outside the repository changed (symlink followed?)"
+    );
     assert_eq!(fs::read_to_string(target.join("data.txt")).unwrap(), "mine");
 }
 
@@ -638,7 +809,11 @@ fn symlinked_import_tmp_or_tracks_is_refused_and_the_target_untouched() {
     assert!(r.is_err(), "import started through a symlinked import-tmp");
     let r = rig.url(WATCH, false);
     assert!(r.is_err());
-    assert_eq!(names_in(&victim), ["data.txt"], "the symlink target was written to");
+    assert_eq!(
+        names_in(&victim),
+        ["data.txt"],
+        "the symlink target was written to"
+    );
     rig.outside_ok();
 }
 
@@ -646,7 +821,15 @@ fn symlinked_import_tmp_or_tracks_is_refused_and_the_target_untouched() {
 fn start_with_missing_or_foreign_root_fails_without_creating_anything() {
     let rig = Rig::new(false);
     let missing = rig.dir.path().join("not-there");
-    let e = rig.state.start_file(&missing, FileKind::Audio, &rig.sources.join("untagged.flac"), rig.sink.clone()).unwrap_err();
+    let e = rig
+        .state
+        .start_file(
+            &missing,
+            FileKind::Audio,
+            &rig.sources.join("untagged.flac"),
+            rig.sink.clone(),
+        )
+        .unwrap_err();
     assert!(e.contains("missing") || e.contains("repository"), "{e}");
     assert!(!missing.exists());
     // a folder that is not a Calliope repository (has foreign files)
@@ -654,8 +837,16 @@ fn start_with_missing_or_foreign_root_fails_without_creating_anything() {
     fs::create_dir_all(&foreign).unwrap();
     fs::write(foreign.join("my-photo.jpg"), "x").unwrap();
     let before = fingerprint(&foreign);
-    let r = rig.state.start_file(&foreign, FileKind::Audio, &rig.sources.join("untagged.flac"), rig.sink.clone());
-    assert!(r.is_err(), "an import started in a folder that is not a Calliope repository");
+    let r = rig.state.start_file(
+        &foreign,
+        FileKind::Audio,
+        &rig.sources.join("untagged.flac"),
+        rig.sink.clone(),
+    );
+    assert!(
+        r.is_err(),
+        "an import started in a folder that is not a Calliope repository"
+    );
     assert_eq!(fingerprint(&foreign), before);
 }
 
@@ -703,18 +894,28 @@ fn file_names_that_look_like_options_or_shell_are_plain_data() {
     let dir = rig.dir.path().join("odd names");
     fs::create_dir_all(&dir).unwrap();
     for n in &names {
-        let src = if n.ends_with(".mp3") { "tagged.mp3" } else if n.ends_with(".ogg") { "tagged.ogg" } else { "untagged.flac" };
+        let src = if n.ends_with(".mp3") {
+            "tagged.mp3"
+        } else if n.ends_with(".ogg") {
+            "tagged.ogg"
+        } else {
+            "untagged.flac"
+        };
         fs::copy(fixture(src), dir.join(n)).unwrap();
     }
     let before = fingerprint(&dir);
     for n in &names {
         std::env::set_current_dir(&dir).ok(); // a relative `-n.mp3` would hit cwd
-        rig.file_at(&dir.join(n)).unwrap_or_else(|e| panic!("{n:?}: {e}"));
+        rig.file_at(&dir.join(n))
+            .unwrap_or_else(|e| panic!("{n:?}: {e}"));
         let s = rig.idle();
         assert_eq!(s.phase, Phase::Ready, "{n:?}: {:?}", s.error);
         let m = s.metadata.clone().unwrap();
         assert!(!m.title.is_empty(), "{n:?}");
-        assert!(!m.title.chars().any(|c| c.is_control()), "control characters in the title for {n:?}");
+        assert!(
+            !m.title.chars().any(|c| c.is_control()),
+            "control characters in the title for {n:?}"
+        );
         rig.state.discard(&s.job).unwrap();
         assert!(!canary.exists(), "{n:?} executed something");
     }
@@ -724,7 +925,10 @@ fn file_names_that_look_like_options_or_shell_are_plain_data() {
     rig.file_at(&dir.join("-n.mp3")).unwrap();
     let ready = rig.ready();
     rig.extract(&ready, &server.url, false).unwrap();
-    let t = rig.wait("saved", |s| s.phase == Phase::Saved).track.unwrap();
+    let t = rig
+        .wait("saved", |s| s.phase == Phase::Saved)
+        .track
+        .unwrap();
     assert_eq!(t.stems.len(), 6);
     assert!(!canary.exists());
 }
@@ -734,7 +938,11 @@ fn urls_reach_yt_dlp_as_one_argv_entry_after_double_dash() {
     let rig = Rig::new(false);
     let urls = [
         "https://media.example/watch?v=--exec=touch%20pwned",
-        "https://media.example/watch?v=a;touch pwned".replace(' ', "%20").as_str().to_owned().leak() as &str,
+        "https://media.example/watch?v=a;touch pwned"
+            .replace(' ', "%20")
+            .as_str()
+            .to_owned()
+            .leak() as &str,
         "https://media.example/watch?v=$(touch%20pwned)",
         "https://media.example/watch?v=`id`&list=-x",
         "  https://media.example/watch?v=trim#frag  ",
@@ -748,13 +956,27 @@ fn urls_reach_yt_dlp_as_one_argv_entry_after_double_dash() {
     let runs = rig.ytdlp_runs();
     assert_eq!(runs.len(), urls.len());
     for r in &runs {
-        let argv: Vec<&str> = r["argv"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        let argv: Vec<&str> = r["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         let sep = argv.iter().position(|a| *a == "--").expect("-- present");
         assert_eq!(argv.len(), sep + 2, "exactly one entry after --: {argv:?}");
         assert!(argv.contains(&"--ignore-config"));
         assert!(argv[sep + 1].starts_with("http"));
-        assert!(!argv[..sep].iter().any(|a| a.contains("touch") || a.contains("media.example")), "{argv:?}");
-        assert!(argv[sep + 1].find('#').is_none(), "fragment must be dropped: {}", argv[sep + 1]);
+        assert!(
+            !argv[..sep]
+                .iter()
+                .any(|a| a.contains("touch") || a.contains("media.example")),
+            "{argv:?}"
+        );
+        assert!(
+            argv[sep + 1].find('#').is_none(),
+            "fragment must be dropped: {}",
+            argv[sep + 1]
+        );
     }
     assert!(!rig.dir.path().join("pwned").exists());
     assert!(!Path::new("pwned").exists());
@@ -765,10 +987,29 @@ fn invalid_urls_start_nothing_and_touch_nothing() {
     let rig = Rig::new(true);
     let before = fingerprint(&rig.root);
     let bad = [
-        "", "   ", "not a url", "example.com/x", "ftp://media.example/x", "file:///etc/passwd", "javascript:alert(1)", "data:text/plain,hi",
-        "http://", "http://user:pass@media.example/", "http://user@media.example/", "-o /tmp/x", "--exec=id",
-        "-", "http://media.example/a b", "http://media.example/\u{0}", "http://media.example/\u{7f}", "http://media.ex\tample/", "http://[::1", "http://media.example:99999/",
-        "gopher://media.example", "ws://media.example/", "//media.example/x",
+        "",
+        "   ",
+        "not a url",
+        "example.com/x",
+        "ftp://media.example/x",
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "data:text/plain,hi",
+        "http://",
+        "http://user:pass@media.example/",
+        "http://user@media.example/",
+        "-o /tmp/x",
+        "--exec=id",
+        "-",
+        "http://media.example/a b",
+        "http://media.example/\u{0}",
+        "http://media.example/\u{7f}",
+        "http://media.ex\tample/",
+        "http://[::1",
+        "http://media.example:99999/",
+        "gopher://media.example",
+        "ws://media.example/",
+        "//media.example/x",
     ];
     for u in bad {
         let p = rig.state.prepare_url(&rig.root, u);
@@ -796,20 +1037,36 @@ fn url_flow_end_to_end_with_edits_and_temp_removal() {
     let tmp_dirs = rig.import_tmp();
     assert_eq!(tmp_dirs.len(), 1);
     let jd = rig.root.join("import-tmp").join(&tmp_dirs[0]);
-    assert!(names_in(&jd).iter().any(|n| n.starts_with("download.")), "{:?}", names_in(&jd));
+    assert!(
+        names_in(&jd).iter().any(|n| n.starts_with("download.")),
+        "{:?}",
+        names_in(&jd)
+    );
     let m = ready.metadata.clone().unwrap();
-    assert_eq!((m.band.as_str(), m.title.as_str(), m.year), ("The Example Band", "Night Drive", Some(2020)));
+    assert_eq!(
+        (m.band.as_str(), m.title.as_str(), m.year),
+        ("The Example Band", "Night Drive", Some(2020))
+    );
     // user edits
     let mut edits = m.clone();
     edits.album = "Edited Album".into();
     edits.title = "  Edited Title  ".into();
-    let started = rig.state.start_extraction(&ready.job, edits, Some(&server.url), false).unwrap();
+    let started = rig
+        .state
+        .start_extraction(&ready.job, edits, Some(&server.url), false)
+        .unwrap();
     assert_eq!(started.phase, Phase::Uploading);
     let done = rig.wait("saved", |s| s.phase == Phase::Saved);
     let t = done.track.unwrap();
-    assert_eq!((t.title.as_str(), t.album.as_str()), ("Edited Title", "Edited Album"));
+    assert_eq!(
+        (t.title.as_str(), t.album.as_str()),
+        ("Edited Title", "Edited Album")
+    );
     assert_eq!(t.track_type, TrackType::Stem);
-    let json: serde_json::Value = serde_json::from_slice(&fs::read(rig.root.join("tracks").join(&t.id).join("track.json")).unwrap()).unwrap();
+    let json: serde_json::Value = serde_json::from_slice(
+        &fs::read(rig.root.join("tracks").join(&t.id).join("track.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(json["type"], "stem");
     assert_eq!(json["schema_version"], 2);
     assert_eq!(json["title"], "Edited Title");
@@ -819,13 +1076,35 @@ fn url_flow_end_to_end_with_edits_and_temp_removal() {
     assert!(rig.staging().is_empty());
     // "Working..." is reported only via the Working phase; a poll can legitimately go queued -> done
     // against the instant stub, so it is optional, but when present it sits between queued and receiving.
-    let phase_list = || -> Vec<String> { rig.events.lock().unwrap().iter().map(|e| serde_json::to_value(e).unwrap()["phase"].as_str().unwrap().to_string()).collect() };
-    until("saved event emitted", 10, || phase_list().iter().any(|x| x == "saved"));
+    let phase_list = || -> Vec<String> {
+        rig.events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                serde_json::to_value(e).unwrap()["phase"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect()
+    };
+    until("saved event emitted", 10, || {
+        phase_list().iter().any(|x| x == "saved")
+    });
     let phases = phase_list();
     let pos = |p: &str| phases.iter().position(|x| x == p);
-    assert!(pos("queued").is_some() && pos("queued") < pos("receiving") && pos("receiving") < pos("saved"), "{phases:?}");
+    assert!(
+        pos("queued").is_some()
+            && pos("queued") < pos("receiving")
+            && pos("receiving") < pos("saved"),
+        "{phases:?}"
+    );
     if let Some(w) = pos("working") {
-        assert!(pos("queued") < Some(w) && Some(w) < pos("receiving"), "{phases:?}");
+        assert!(
+            pos("queued") < Some(w) && Some(w) < pos("receiving"),
+            "{phases:?}"
+        );
     }
     // server job deleted
     until("server job gone", 10, || server.job_dirs().is_empty());
@@ -841,7 +1120,10 @@ fn http_403_message_and_failed_download_keeps_resume_state() {
     let e = s.error.unwrap();
     assert_eq!(e.message, "Error 403 when attempting download");
     assert_eq!(e.http_status, Some(403));
-    assert!(!rig.state.is_active(), "after a download failure a new import must be possible");
+    assert!(
+        !rig.state.is_active(),
+        "after a download failure a new import must be possible"
+    );
     rig.url("https://media.example/offline", false).unwrap();
     let s = rig.idle();
     assert!(s.error.unwrap().message.starts_with("Download failed"));
@@ -851,7 +1133,10 @@ fn http_403_message_and_failed_download_keeps_resume_state() {
 fn resume_and_start_over_and_the_prompt() {
     let rig = Rig::new(false);
     let url = "https://media.example/slow?v=1";
-    assert_eq!(rig.state.prepare_url(&rig.root, url).status, UrlPrepStatus::Ready);
+    assert_eq!(
+        rig.state.prepare_url(&rig.root, url).status,
+        UrlPrepStatus::Ready
+    );
     let s = rig.url(url, false).unwrap();
     // wait for some bytes then cancel
     until("a .part file with bytes", 20, || part_has_bytes(&rig));
@@ -859,18 +1144,39 @@ fn resume_and_start_over_and_the_prompt() {
     rig.wait("cancelled", |s| s.phase == Phase::Cancelled);
     let p = rig.state.prepare_url(&rig.root, url);
     assert_eq!(p.status, UrlPrepStatus::Partial);
-    assert_eq!(p.message, "Incomplete download file from the same URL found");
+    assert_eq!(
+        p.message,
+        "Incomplete download file from the same URL found"
+    );
     assert!(p.partial_bytes > 0);
     // a different URL is not offered the partial; the fragment does not matter
-    assert_eq!(rig.state.prepare_url(&rig.root, "https://media.example/slow?v=2").status, UrlPrepStatus::Ready);
-    assert_eq!(rig.state.prepare_url(&rig.root, &format!("{url}#frag")).status, UrlPrepStatus::Partial);
+    assert_eq!(
+        rig.state
+            .prepare_url(&rig.root, "https://media.example/slow?v=2")
+            .status,
+        UrlPrepStatus::Ready
+    );
+    assert_eq!(
+        rig.state
+            .prepare_url(&rig.root, &format!("{url}#frag"))
+            .status,
+        UrlPrepStatus::Partial
+    );
     // Resume
     rig.url(url, true).unwrap();
     rig.ready();
     let runs = rig.ytdlp_runs();
     let last = runs.last().unwrap();
-    assert!(last["resume_from"].as_u64().unwrap_or(0) > 0, "resume must continue the partial: {last}");
-    let argv: Vec<&str> = last["argv"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    assert!(
+        last["resume_from"].as_u64().unwrap_or(0) > 0,
+        "resume must continue the partial: {last}"
+    );
+    let argv: Vec<&str> = last["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
     assert!(argv.contains(&"--continue") && !argv.contains(&"--no-continue"));
 
     // Start Over (on a fresh partial)
@@ -883,15 +1189,29 @@ fn resume_and_start_over_and_the_prompt() {
     rig.ready();
     let runs = rig.ytdlp_runs();
     let last = runs.last().unwrap();
-    assert_eq!(last["resume_from"].as_u64().unwrap_or(0), 0, "Start Over must restart at 0: {last}");
-    let argv: Vec<&str> = last["argv"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    assert_eq!(
+        last["resume_from"].as_u64().unwrap_or(0),
+        0,
+        "Start Over must restart at 0: {last}"
+    );
+    let argv: Vec<&str> = last["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
     assert!(argv.contains(&"--no-continue"));
 }
 
 #[test]
 fn local_files_metadata_and_errors() {
     let rig = Rig::new(false);
-    for (f, title, band) in [("tagged.mp3", "Glass Harbour", "The Example Band"), ("tagged.ogg", "Glass Harbour", "The Example Band"), ("untagged.flac", "untagged", ""), ("with-audio.mp4", "Clip Title", "")] {
+    for (f, title, band) in [
+        ("tagged.mp3", "Glass Harbour", "The Example Band"),
+        ("tagged.ogg", "Glass Harbour", "The Example Band"),
+        ("untagged.flac", "untagged", ""),
+        ("with-audio.mp4", "Clip Title", ""),
+    ] {
         rig.file(f).unwrap();
         let s = rig.ready();
         let m = s.metadata.unwrap();
@@ -899,9 +1219,18 @@ fn local_files_metadata_and_errors() {
         rig.state.discard(&s.job).unwrap();
     }
     for (f, msg) in [
-        ("no-audio.mp4", "Selected file no-audio.mp4 has no audio track"),
-        ("not-audio.mp3", "Selected file not-audio.mp3 could not be read as audio or video"),
-        ("long.flac", "Tracks longer than 15 minutes are not supported"),
+        (
+            "no-audio.mp4",
+            "Selected file no-audio.mp4 has no audio track",
+        ),
+        (
+            "not-audio.mp3",
+            "Selected file not-audio.mp3 could not be read as audio or video",
+        ),
+        (
+            "long.flac",
+            "Tracks longer than 15 minutes are not supported",
+        ),
     ] {
         rig.file(f).unwrap();
         let s = rig.idle();
@@ -922,10 +1251,21 @@ fn unusual_source_files_are_handled_without_hanging() {
     // missing, directory, empty file, fifo, dangling symlink, text, relative path
     fs::create_dir(d.join("dir.mp3")).unwrap();
     fs::write(d.join("empty.mp3"), b"").unwrap();
-    assert!(Command::new("mkfifo").arg(d.join("fifo.mp3")).status().unwrap().success());
+    assert!(Command::new("mkfifo")
+        .arg(d.join("fifo.mp3"))
+        .status()
+        .unwrap()
+        .success());
     symlink(d.join("nowhere"), d.join("dangling.mp3")).unwrap();
     fs::write(d.join("text.flac"), "plain text").unwrap();
-    for n in ["missing.mp3", "dir.mp3", "empty.mp3", "fifo.mp3", "dangling.mp3", "text.flac"] {
+    for n in [
+        "missing.mp3",
+        "dir.mp3",
+        "empty.mp3",
+        "fifo.mp3",
+        "dangling.mp3",
+        "text.flac",
+    ] {
         let t = Instant::now();
         let r = rig.file_at(&d.join(n));
         if r.is_ok() {
@@ -934,11 +1274,26 @@ fn unusual_source_files_are_handled_without_hanging() {
             let m = s.error.unwrap().message;
             assert!(m.starts_with("Selected file") && m.contains(n), "{n}: {m}");
         }
-        assert!(t.elapsed() < Duration::from_secs(20), "{n} took {:?}", t.elapsed());
+        assert!(
+            t.elapsed() < Duration::from_secs(20),
+            "{n} took {:?}",
+            t.elapsed()
+        );
         assert!(!rig.state.is_active(), "{n} left the import busy");
     }
-    assert!(rig.state.start_file(&rig.root, FileKind::Audio, Path::new("relative.mp3"), rig.sink.clone()).is_err());
-    assert!(rig.state.start_file(&rig.root, FileKind::Audio, Path::new("/"), rig.sink.clone()).is_err());
+    assert!(rig
+        .state
+        .start_file(
+            &rig.root,
+            FileKind::Audio,
+            Path::new("relative.mp3"),
+            rig.sink.clone()
+        )
+        .is_err());
+    assert!(rig
+        .state
+        .start_file(&rig.root, FileKind::Audio, Path::new("/"), rig.sink.clone())
+        .is_err());
     assert_eq!(rig.import_tmp(), Vec::<String>::new());
     rig.no_stray_processes();
 }
@@ -968,8 +1323,20 @@ fn hostile_tags_are_cleaned_and_bounded() {
     let st = Command::new(tool("ffmpeg"))
         .args(["-nostdin", "-loglevel", "error", "-y", "-i"])
         .arg(fixture("untagged.flac"))
-        .args(["-metadata", &format!("title={evil}\nsecond line"), "-metadata", &format!("artist={long}"), "-metadata", "date=99999999",
-            "-metadata", "composer=A;B/C;;;/", "-metadata", "album=../../etc/passwd", "-c:a", "flac"])
+        .args([
+            "-metadata",
+            &format!("title={evil}\nsecond line"),
+            "-metadata",
+            &format!("artist={long}"),
+            "-metadata",
+            "date=99999999",
+            "-metadata",
+            "composer=A;B/C;;;/",
+            "-metadata",
+            "album=../../etc/passwd",
+            "-c:a",
+            "flac",
+        ])
         .arg(&out)
         .status()
         .unwrap();
@@ -978,14 +1345,26 @@ fn hostile_tags_are_cleaned_and_bounded() {
     let s = rig.ready();
     let m = s.metadata.clone().unwrap();
     assert!(m.title.chars().all(|c| !c.is_control()), "{:?}", m.title);
-    assert!(m.title.chars().count() <= 200 && m.band.chars().count() <= 200, "{} {}", m.title.len(), m.band.len());
+    assert!(
+        m.title.chars().count() <= 200 && m.band.chars().count() <= 200,
+        "{} {}",
+        m.title.len(),
+        m.band.len()
+    );
     assert_eq!(m.composers, ["A", "B", "C"]);
-    assert!(m.year.map_or(true, |y| (1..=9999).contains(&y)), "{:?}", m.year);
+    assert!(
+        m.year.map_or(true, |y| (1..=9999).contains(&y)),
+        "{:?}",
+        m.year
+    );
     assert_eq!(m.album, "../../etc/passwd"); // text is text; it is only ever a JSON string
-    // The edits are accepted by the strict validation (the edit pane would send them)
+                                             // The edits are accepted by the strict validation (the edit pane would send them)
     let server = RealServer::start("ok");
     rig.extract(&s, &server.url, false).unwrap();
-    let t = rig.wait("saved", |s| s.phase == Phase::Saved).track.unwrap();
+    let t = rig
+        .wait("saved", |s| s.phase == Phase::Saved)
+        .track
+        .unwrap();
     // the album never became a path
     assert!(rig.root.join("tracks").join(&t.id).is_dir());
     assert_eq!(names_in(&rig.root.join("tracks")).len(), 1);
@@ -999,7 +1378,20 @@ fn the_15_minute_limit_boundaries_and_nothing_is_uploaded_when_too_long() {
     let mk = |secs: f64, name: &str| {
         let p = rig.dir.path().join(name);
         let st = Command::new(tool("ffmpeg"))
-            .args(["-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=8000:cl=mono", "-t", &secs.to_string(), "-c:a", "flac"])
+            .args([
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=8000:cl=mono",
+                "-t",
+                &secs.to_string(),
+                "-c:a",
+                "flac",
+            ])
             .arg(&p)
             .status()
             .unwrap();
@@ -1011,7 +1403,9 @@ fn the_15_minute_limit_boundaries_and_nothing_is_uploaded_when_too_long() {
     rig.file_at(&exact).unwrap();
     let s = rig.ready();
     rig.extract(&s, &server.url, false).unwrap();
-    let done = rig.wait("done", |s| s.phase == Phase::Saved || s.phase == Phase::Failed);
+    let done = rig.wait("done", |s| {
+        s.phase == Phase::Saved || s.phase == Phase::Failed
+    });
     assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
     // 901 s is refused on our side; the server only ever saw health/none
     let over = mk(901.0, "over.flac");
@@ -1019,7 +1413,10 @@ fn the_15_minute_limit_boundaries_and_nothing_is_uploaded_when_too_long() {
     rig.file_at(&over).unwrap();
     let s = rig.idle();
     assert_eq!(s.phase, Phase::Failed);
-    assert_eq!(s.error.unwrap().message, "Tracks longer than 15 minutes are not supported");
+    assert_eq!(
+        s.error.unwrap().message,
+        "Tracks longer than 15 minutes are not supported"
+    );
     assert_eq!(server.count("method=POST"), posts_before);
     // 900.5 s: client and server must agree (either both accept or the client refuses)
     let edge = mk(900.5, "edge.flac");
@@ -1027,10 +1424,20 @@ fn the_15_minute_limit_boundaries_and_nothing_is_uploaded_when_too_long() {
     let s = rig.idle();
     if s.phase == Phase::Ready {
         rig.extract(&s, &server.url, false).unwrap();
-        let d = rig.wait("end", |s| s.phase == Phase::Saved || s.phase == Phase::Failed);
-        assert_eq!(d.phase, Phase::Saved, "the client accepted 900.5 s but the server refused: {:?}", d.error);
+        let d = rig.wait("end", |s| {
+            s.phase == Phase::Saved || s.phase == Phase::Failed
+        });
+        assert_eq!(
+            d.phase,
+            Phase::Saved,
+            "the client accepted 900.5 s but the server refused: {:?}",
+            d.error
+        );
     } else {
-        assert_eq!(s.error.unwrap().message, "Tracks longer than 15 minutes are not supported");
+        assert_eq!(
+            s.error.unwrap().message,
+            "Tracks longer than 15 minutes are not supported"
+        );
     }
 }
 
@@ -1040,20 +1447,38 @@ fn run_against(ai: &FakeAi, rig: &Rig) -> JobSnapshot {
     rig.file("untagged.flac").unwrap();
     let ready = rig.ready();
     rig.extract(&ready, &ai.url(), false).unwrap();
-    rig.wait("end", |s| matches!(s.phase, Phase::Saved | Phase::Failed) && !rig.state.is_running())
+    rig.wait("end", |s| {
+        matches!(s.phase, Phase::Saved | Phase::Failed) && !rig.state.is_running()
+    })
 }
 
 fn assert_nothing_saved(rig: &Rig, tracks_before: usize) {
-    assert!(rig.staging().is_empty(), "staging left: {:?}", rig.staging());
-    assert_eq!(rig.tracks().len(), tracks_before, "a track appeared: {:?}", rig.tracks());
+    assert!(
+        rig.staging().is_empty(),
+        "staging left: {:?}",
+        rig.staging()
+    );
+    assert_eq!(
+        rig.tracks().len(),
+        tracks_before,
+        "a track appeared: {:?}",
+        rig.tracks()
+    );
     rig.outside_ok();
 }
 
 #[test]
 fn hostile_stem_names_from_the_server_never_become_paths() {
     let bad_lists: Vec<Vec<&str>> = vec![
-        vec!["../../../evil"], vec![".."], vec!["a/b"], vec!["Vocals"], vec!["vocals.flac"], vec![""], vec!["vocals\u{0}x"],
-        vec!["con"; 0], vec!["-rf"; 0],
+        vec!["../../../evil"],
+        vec![".."],
+        vec!["a/b"],
+        vec!["Vocals"],
+        vec!["vocals.flac"],
+        vec![""],
+        vec!["vocals\u{0}x"],
+        vec!["con"; 0],
+        vec!["-rf"; 0],
     ];
     for names in bad_lists.into_iter().filter(|l| !l.is_empty()) {
         let mut cfg = AiConfig::good();
@@ -1063,14 +1488,21 @@ fn hostile_stem_names_from_the_server_never_become_paths() {
         let before = fingerprint(&rig.root);
         let s = run_against(&ai, &rig);
         assert_eq!(s.phase, Phase::Failed, "{names:?}");
-        assert!(!ai.saw("/stems/"), "stems must not even be requested for {names:?}: {:?}", ai.hits.lock().unwrap());
+        assert!(
+            !ai.saw("/stems/"),
+            "stems must not even be requested for {names:?}: {:?}",
+            ai.hits.lock().unwrap()
+        );
         assert_nothing_saved(&rig, v1_ids().len());
         // the prepared audio is kept so the user can retry; the repo's tracks are untouched
         let after = fingerprint(&rig.root);
         for (k, v) in &before {
             assert_eq!(after.get(k), Some(v), "{k}");
         }
-        assert!(!rig.dir.path().join("evil.flac").exists() && !rig.dir.path().parent().unwrap().join("evil.flac").exists());
+        assert!(
+            !rig.dir.path().join("evil.flac").exists()
+                && !rig.dir.path().parent().unwrap().join("evil.flac").exists()
+        );
     }
 }
 
@@ -1103,7 +1535,13 @@ fn duplicate_empty_and_too_many_stems_are_refused() {
 #[test]
 fn non_flac_stem_body_fails_cleanly_and_keeps_the_audio_for_a_retry() {
     let mut cfg = AiConfig::good();
-    cfg.body = Arc::new(|n| if n == "drums" { b"<html>captive portal</html>".to_vec() } else { fs::read(fixture(&format!("stems/{n}.flac"))).unwrap() });
+    cfg.body = Arc::new(|n| {
+        if n == "drums" {
+            b"<html>captive portal</html>".to_vec()
+        } else {
+            fs::read(fixture(&format!("stems/{n}.flac"))).unwrap()
+        }
+    });
     let ai = fake_ai(cfg);
     let rig = Rig::new(true);
     let before = fingerprint(&rig.root);
@@ -1111,9 +1549,13 @@ fn non_flac_stem_body_fails_cleanly_and_keeps_the_audio_for_a_retry() {
     assert_eq!(s.phase, Phase::Failed);
     assert_nothing_saved(&rig, v1_ids().len());
     // retry is possible: the audio is still there
-    let again = rig.state.start_extraction(&s.job, s.metadata.clone().unwrap(), Some(&ai.url()), false);
+    let again =
+        rig.state
+            .start_extraction(&s.job, s.metadata.clone().unwrap(), Some(&ai.url()), false);
     assert!(again.is_ok(), "retry refused: {:?}", again.err());
-    rig.wait("end", |s| s.phase == Phase::Failed && !rig.state.is_running());
+    rig.wait("end", |s| {
+        s.phase == Phase::Failed && !rig.state.is_running()
+    });
     assert_nothing_saved(&rig, v1_ids().len());
     // discard cleans the temp folder
     rig.state.discard(&s.job).unwrap();
@@ -1134,13 +1576,23 @@ fn hostile_job_ids_and_failure_states() {
         let rig = Rig::new(false);
         let s = run_against(&ai, &rig);
         assert_eq!(s.phase, Phase::Failed, "{id:?}");
-        assert!(!ai.saw(&format!("/v1/jobs/{id}")) || id.is_empty(), "{id:?} was used in a URL");
+        assert!(
+            !ai.saw(&format!("/v1/jobs/{id}")) || id.is_empty(),
+            "{id:?} was used in a URL"
+        );
         assert_nothing_saved(&rig, 0);
     }
-    for (state, expect) in [("failed", "the separator exploded"), ("cancelled", "cancelled")] {
+    for (state, expect) in [
+        ("failed", "the separator exploded"),
+        ("cancelled", "cancelled"),
+    ] {
         let mut cfg = AiConfig::good();
         cfg.final_state = state;
-        cfg.error = if state == "failed" { Some("the separator exploded".into()) } else { None };
+        cfg.error = if state == "failed" {
+            Some("the separator exploded".into())
+        } else {
+            None
+        };
         let ai = fake_ai(cfg);
         let rig = Rig::new(false);
         let s = run_against(&ai, &rig);
@@ -1168,7 +1620,11 @@ fn server_error_text_is_truncated() {
     let rig = Rig::new(false);
     let s = run_against(&ai, &rig);
     let m = s.error.unwrap().message;
-    assert!(m.chars().count() <= 300, "an unbounded server message ({} bytes) goes to the UI", m.len());
+    assert!(
+        m.chars().count() <= 300,
+        "an unbounded server message ({} bytes) goes to the UI",
+        m.len()
+    );
 }
 
 #[test]
@@ -1179,7 +1635,10 @@ fn a_server_with_a_tiny_upload_limit_gets_nothing_uploaded() {
     let rig = Rig::new(false);
     let s = run_against(&ai, &rig);
     assert_eq!(s.phase, Phase::Failed);
-    assert!(!ai.saw("POST"), "an upload was attempted although the file exceeds the advertised limit");
+    assert!(
+        !ai.saw("POST"),
+        "an upload was attempted although the file exceeds the advertised limit"
+    );
 }
 
 #[test]
@@ -1200,24 +1659,47 @@ fn unreachable_or_unconfigured_server_keeps_the_edit_pane_usable() {
     let rig = Rig::new(false);
     rig.file("untagged.flac").unwrap();
     let ready = rig.ready();
-    assert!(rig.state.start_extraction(&ready.job, ready.metadata.clone().unwrap(), None, false).is_err());
-    assert!(rig.state.start_extraction(&ready.job, ready.metadata.clone().unwrap(), Some("  "), false).is_err());
+    assert!(rig
+        .state
+        .start_extraction(&ready.job, ready.metadata.clone().unwrap(), None, false)
+        .is_err());
+    assert!(rig
+        .state
+        .start_extraction(
+            &ready.job,
+            ready.metadata.clone().unwrap(),
+            Some("  "),
+            false
+        )
+        .is_err());
     // closed port
     let closed = {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         l.local_addr().unwrap()
     };
-    rig.extract(&ready, &format!("http://{closed}"), false).unwrap();
-    let s = rig.wait("failed", |s| s.phase == Phase::Failed && !rig.state.is_running());
-    assert!(s.error.unwrap().message.contains("reach"), "message should say the server cannot be reached");
+    rig.extract(&ready, &format!("http://{closed}"), false)
+        .unwrap();
+    let s = rig.wait("failed", |s| {
+        s.phase == Phase::Failed && !rig.state.is_running()
+    });
+    assert!(
+        s.error.unwrap().message.contains("reach"),
+        "message should say the server cannot be reached"
+    );
     assert_nothing_saved(&rig, 0);
     // invalid edits never start anything
     let mut bad = ready.metadata.clone().unwrap();
     bad.title = "   ".into();
-    assert!(rig.state.start_extraction(&ready.job, bad, Some(&format!("http://{closed}")), false).is_err());
+    assert!(rig
+        .state
+        .start_extraction(&ready.job, bad, Some(&format!("http://{closed}")), false)
+        .is_err());
     let mut bad = ready.metadata.clone().unwrap();
     bad.year = Some(0);
-    assert!(rig.state.start_extraction(&ready.job, bad, Some(&format!("http://{closed}")), false).is_err());
+    assert!(rig
+        .state
+        .start_extraction(&ready.job, bad, Some(&format!("http://{closed}")), false)
+        .is_err());
 }
 
 // ====================================================================== concurrency / lifecycle
@@ -1227,20 +1709,45 @@ fn one_job_at_a_time_and_wrong_ids_are_rejected() {
     let server = RealServer::start("hang");
     let rig = Rig::new(false);
     rig.file("untagged.flac").unwrap();
-    assert_eq!(rig.file("tagged.mp3").unwrap_err(), "An import is already running");
-    assert_eq!(rig.url(WATCH, false).unwrap_err(), "An import is already running");
+    assert_eq!(
+        rig.file("tagged.mp3").unwrap_err(),
+        "An import is already running"
+    );
+    assert_eq!(
+        rig.url(WATCH, false).unwrap_err(),
+        "An import is already running"
+    );
     let ready = rig.ready();
-    assert!(rig.state.start_extraction("nope", ready.metadata.clone().unwrap(), Some(&server.url), false).is_err());
+    assert!(rig
+        .state
+        .start_extraction(
+            "nope",
+            ready.metadata.clone().unwrap(),
+            Some(&server.url),
+            false
+        )
+        .is_err());
     assert!(rig.state.cancel("nope").is_err());
     assert!(rig.state.discard("nope").is_err());
     // still busy while waiting for edits
-    assert_eq!(rig.state.prepare_url(&rig.root, WATCH).status, UrlPrepStatus::Busy);
+    assert_eq!(
+        rig.state.prepare_url(&rig.root, WATCH).status,
+        UrlPrepStatus::Busy
+    );
     rig.extract(&ready, &server.url, false).unwrap();
-    assert!(rig.extract(&ready, &server.url, false).is_err(), "double Extract");
+    assert!(
+        rig.extract(&ready, &server.url, false).is_err(),
+        "double Extract"
+    );
     rig.wait("working", |s| s.phase == Phase::Working);
-    assert!(rig.state.discard(&ready.job).is_err(), "discard while running");
+    assert!(
+        rig.state.discard(&ready.job).is_err(),
+        "discard while running"
+    );
     assert!(rig.state.shutdown(Duration::from_secs(5)));
-    until("server job deleted by shutdown", 10, || server.job_dirs().is_empty());
+    until("server job deleted by shutdown", 10, || {
+        server.job_dirs().is_empty()
+    });
 }
 
 #[test]
@@ -1248,7 +1755,11 @@ fn cancel_storm_leaves_no_zombies_no_staging_and_a_consistent_state() {
     let rig = Rig::new(true);
     let before = fingerprint(&rig.root);
     for i in 0..12 {
-        let r = if i % 2 == 0 { rig.url("https://media.example/slow?v=storm", i % 4 == 0) } else { rig.file("long.flac") };
+        let r = if i % 2 == 0 {
+            rig.url("https://media.example/slow?v=storm", i % 4 == 0)
+        } else {
+            rig.file("long.flac")
+        };
         let s = r.unwrap_or_else(|e| panic!("iteration {i}: {e}"));
         std::thread::sleep(Duration::from_millis((i * 37) % 150));
         let _ = rig.state.cancel(&s.job);
@@ -1270,7 +1781,11 @@ fn cancel_storm_leaves_no_zombies_no_staging_and_a_consistent_state() {
         assert_eq!(after.get(k), Some(v), "{k}");
     }
     // import-tmp holds at most Calliope's own resumable url folder
-    assert!(rig.import_tmp().iter().all(|n| n.starts_with("url-")), "{:?}", rig.import_tmp());
+    assert!(
+        rig.import_tmp().iter().all(|n| n.starts_with("url-")),
+        "{:?}",
+        rig.import_tmp()
+    );
 }
 
 // ====================================================================== crash (SIGKILL) tests
@@ -1278,12 +1793,18 @@ fn cancel_storm_leaves_no_zombies_no_staging_and_a_consistent_state() {
 /// The child side: runs one import scenario forever. Does nothing unless QA_CHILD is set.
 #[test]
 fn qa_child() {
-    let Ok(mode) = std::env::var("QA_CHILD") else { return };
+    let Ok(mode) = std::env::var("QA_CHILD") else {
+        return;
+    };
     let root = PathBuf::from(std::env::var("QA_ROOT").unwrap());
     let server = std::env::var("QA_SERVER").unwrap_or_default();
     let sources = PathBuf::from(std::env::var("QA_SOURCES").unwrap());
     let wrapper = PathBuf::from(std::env::var("QA_YTDLP").unwrap());
-    let tools = Tools { yt_dlp: Some(wrapper), ffmpeg: Some(tool("ffmpeg")), ffprobe: Some(tool("ffprobe")) };
+    let tools = Tools {
+        yt_dlp: Some(wrapper),
+        ffmpeg: Some(tool("ffmpeg")),
+        ffprobe: Some(tool("ffprobe")),
+    };
     let lock: Arc<dyn RepoLock> = Arc::new(|f: &mut dyn FnMut()| f());
     let state = ImportState::new(tools, lock, Duration::from_millis(40));
     let sink: Sink = Arc::new(|_| {});
@@ -1299,15 +1820,23 @@ fn qa_child() {
     };
     match mode.as_str() {
         "url-slow" => {
-            state.start_url(&root, "https://media.example/slow?v=crash", false, sink).unwrap();
+            state
+                .start_url(&root, "https://media.example/slow?v=crash", false, sink)
+                .unwrap();
         }
         "file-long" => {
-            state.start_file(&root, FileKind::Audio, &sources.join("exact.flac"), sink).unwrap();
+            state
+                .start_file(&root, FileKind::Audio, &sources.join("exact.flac"), sink)
+                .unwrap();
         }
         _ => {
-            state.start_file(&root, FileKind::Audio, &sources.join("untagged.flac"), sink).unwrap();
+            state
+                .start_file(&root, FileKind::Audio, &sources.join("untagged.flac"), sink)
+                .unwrap();
             let r = wait_ready(&state);
-            state.start_extraction(&r.job, r.metadata.unwrap(), Some(&server), mode == "keep").unwrap();
+            state
+                .start_extraction(&r.job, r.metadata.unwrap(), Some(&server), mode == "keep")
+                .unwrap();
         }
     }
     loop {
@@ -1347,7 +1876,9 @@ fn spawn_child(rig: &Rig, mode: &str, server_url: &str) -> Child {
 }
 
 fn sigkill(child: &mut Child) {
-    let _ = Command::new("kill").args(["-9", &child.id().to_string()]).status();
+    let _ = Command::new("kill")
+        .args(["-9", &child.id().to_string()])
+        .status();
     let _ = child.wait();
 }
 
@@ -1355,7 +1886,11 @@ fn sigkill(child: &mut Child) {
 fn after_crash_checks(rig: &Rig, before: &BTreeMap<String, String>, v1_count: usize) {
     // the library is intact and shows no half track
     let lib = Repository::new(&rig.root).scan();
-    assert!(lib.problems.is_empty(), "problems after the crash: {:?}", lib.problems);
+    assert!(
+        lib.problems.is_empty(),
+        "problems after the crash: {:?}",
+        lib.problems
+    );
     assert_eq!(lib.tracks.len(), v1_count, "a partial track is visible");
     // all pre-existing files are byte-identical
     let now = fingerprint(&rig.root);
@@ -1364,20 +1899,45 @@ fn after_crash_checks(rig: &Rig, before: &BTreeMap<String, String>, v1_count: us
     }
     // no child process of the dead app survives (PDEATHSIG)
     until("children of the killed app gone", 10, || {
-        procs_mentioning(&rig.needle()).iter().all(|(_, c)| c.contains("calliope-stems"))
+        procs_mentioning(&rig.needle())
+            .iter()
+            .all(|(_, c)| c.contains("calliope-stems"))
     });
     // the next app run: cleans its own leftovers, never the user's
     fs::write(rig.root.join("tracks/.staging-mine-no-marker.txt"), "mine").unwrap();
-    let state = ImportState::new(rig.tools.clone(), Arc::new(|f: &mut dyn FnMut()| f()), Duration::from_millis(40));
-    state.start_file(&rig.root, FileKind::Audio, &rig.sources.join("untagged.flac"), Arc::new(|_| {})).unwrap();
+    let state = ImportState::new(
+        rig.tools.clone(),
+        Arc::new(|f: &mut dyn FnMut()| f()),
+        Duration::from_millis(40),
+    );
+    state
+        .start_file(
+            &rig.root,
+            FileKind::Audio,
+            &rig.sources.join("untagged.flac"),
+            Arc::new(|_| {}),
+        )
+        .unwrap();
     let mut waited = 0;
     while state.is_running() && waited < 3000 {
         std::thread::sleep(Duration::from_millis(10));
         waited += 10;
     }
-    assert!(rig.staging().iter().all(|n| n == ".staging-mine-no-marker.txt"), "stale staging not cleaned: {:?}", rig.staging());
-    assert!(rig.import_tmp().iter().all(|n| n.starts_with("url-") || n.starts_with("file-")));
-    assert_eq!(fs::read_to_string(rig.root.join("tracks/.staging-mine-no-marker.txt")).unwrap(), "mine");
+    assert!(
+        rig.staging()
+            .iter()
+            .all(|n| n == ".staging-mine-no-marker.txt"),
+        "stale staging not cleaned: {:?}",
+        rig.staging()
+    );
+    assert!(rig
+        .import_tmp()
+        .iter()
+        .all(|n| n.starts_with("url-") || n.starts_with("file-")));
+    assert_eq!(
+        fs::read_to_string(rig.root.join("tracks/.staging-mine-no-marker.txt")).unwrap(),
+        "mine"
+    );
     let s = state.snapshot().unwrap();
     state.discard(&s.job).ok();
     rig.outside_ok();
@@ -1390,9 +1950,13 @@ fn sigkill_during_a_url_download_keeps_a_resumable_partial_and_the_library_intac
     let mut child = spawn_child(&rig, "url-slow", "");
     until("a .part file with bytes", 30, || part_has_bytes(&rig));
     sigkill(&mut child);
-    until("yt-dlp gone", 10, || procs_mentioning(&rig.needle()).is_empty());
+    until("yt-dlp gone", 10, || {
+        procs_mentioning(&rig.needle()).is_empty()
+    });
     // the partial is offered for resume by the next run
-    let p = rig.state.prepare_url(&rig.root, "https://media.example/slow?v=crash");
+    let p = rig
+        .state
+        .prepare_url(&rig.root, "https://media.example/slow?v=crash");
     assert_eq!(p.status, UrlPrepStatus::Partial);
     let now = fingerprint(&rig.root);
     for (k, v) in &before {
@@ -1401,7 +1965,12 @@ fn sigkill_during_a_url_download_keeps_a_resumable_partial_and_the_library_intac
     // resume really resumes
     rig.url("https://media.example/slow?v=crash", true).unwrap();
     rig.ready();
-    assert!(rig.ytdlp_runs().last().unwrap()["resume_from"].as_u64().unwrap_or(0) > 0);
+    assert!(
+        rig.ytdlp_runs().last().unwrap()["resume_from"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0
+    );
     let s = rig.state.snapshot().unwrap();
     rig.state.discard(&s.job).unwrap();
     rig.outside_ok();
@@ -1413,32 +1982,57 @@ fn sigkill_during_conversion_leaves_nothing_visible() {
     // a 900 s source takes ffmpeg a moment
     let p = rig.sources.join("exact.flac");
     assert!(Command::new(tool("ffmpeg"))
-        .args(["-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=8000:cl=mono", "-t", "900", "-c:a", "flac"])
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=8000:cl=mono",
+            "-t",
+            "900",
+            "-c:a",
+            "flac"
+        ])
         .arg(&p)
         .status()
         .unwrap()
         .success());
     let before = fingerprint(&rig.root);
     let mut child = spawn_child(&rig, "file-long", "");
-    until("ffmpeg working", 30, || procs_mentioning(&rig.needle()).iter().any(|(_, c)| c.contains("-c:a flac")));
+    until("ffmpeg working", 30, || {
+        procs_mentioning(&rig.needle())
+            .iter()
+            .any(|(_, c)| c.contains("-c:a flac"))
+    });
     sigkill(&mut child);
     after_crash_checks(&rig, &before, v1_ids().len());
 }
 
 #[test]
-fn sigkill_while_the_server_works_leaves_nothing_visible_and_the_server_job_is_not_left_running_forever() {
+fn sigkill_while_the_server_works_leaves_nothing_visible_and_the_server_job_is_not_left_running_forever(
+) {
     let server = RealServer::start("hang");
     let rig = Rig::new(true);
     let before = fingerprint(&rig.root);
     let mut child = spawn_child(&rig, "extract", &server.url);
-    until("server running the separator", 30, || server.saw("state=running"));
+    until("server running the separator", 30, || {
+        server.saw("state=running")
+    });
     sigkill(&mut child);
     after_crash_checks(&rig, &before, v1_ids().len());
     // The dead app cannot DELETE its job. The server keeps it until the separator timeout or the
     // retention; that is the documented design. The job folder is still marked (cleanable).
     let dirs = server.job_dirs();
     assert_eq!(dirs.len(), 1, "{dirs:?}");
-    assert!(server.work.join("jobs").join(&dirs[0]).join(".calliope-stems-job").is_file());
+    assert!(server
+        .work
+        .join("jobs")
+        .join(&dirs[0])
+        .join(".calliope-stems-job")
+        .is_file());
 }
 
 #[test]
@@ -1455,14 +2049,21 @@ fn sigkill_while_receiving_stems_leaves_no_visible_partial_track() {
     let before = fingerprint(&rig.root);
     let mut child = spawn_child(&rig, "keep", &ai.url());
     until("a staging folder with a .part", 40, || {
-        rig.staging().iter().any(|d| names_in(&rig.root.join("tracks").join(d).join("stems")).iter().any(|n| n.ends_with(".part")))
+        rig.staging().iter().any(|d| {
+            names_in(&rig.root.join("tracks").join(d).join("stems"))
+                .iter()
+                .any(|n| n.ends_with(".part"))
+        })
     });
     // while it is mid-download the library must not show it
     let lib = Repository::new(&rig.root).scan();
     assert_eq!(lib.tracks.len(), v1_ids().len());
     assert!(lib.problems.is_empty(), "{:?}", lib.problems);
     sigkill(&mut child);
-    assert!(!rig.staging().is_empty(), "the crash should leave the staging folder behind (cleaned next start)");
+    assert!(
+        !rig.staging().is_empty(),
+        "the crash should leave the staging folder behind (cleaned next start)"
+    );
     after_crash_checks(&rig, &before, v1_ids().len());
 }
 
@@ -1480,7 +2081,11 @@ fn hostile_v2_track_json_is_a_problem_and_never_followed() {
             fs::create_dir_all(p.parent().unwrap()).unwrap();
             fs::write(p, b"fLaC").unwrap();
         }
-        fs::write(d.join("track.json"), serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+        fs::write(
+            d.join("track.json"),
+            serde_json::to_vec_pretty(&json).unwrap(),
+        )
+        .unwrap();
     };
     let base = |extra: serde_json::Value| {
         let mut v = serde_json::json!({"schema_version":2,"id":"","type":"stem","band":"b","album":"a","title":"t","composers":[],
@@ -1492,21 +2097,68 @@ fn hostile_v2_track_json_is_a_problem_and_never_followed() {
         v
     };
     let good = "0190b1c2-3d4e-7f50-8a6b-000000000001";
-    mk(good, { let mut j = base(serde_json::json!({})); j["id"] = good.into(); j }, &["stems/vocals.flac"]);
+    mk(
+        good,
+        {
+            let mut j = base(serde_json::json!({}));
+            j["id"] = good.into();
+            j
+        },
+        &["stems/vocals.flac"],
+    );
     let hostile: Vec<(&str, serde_json::Value)> = vec![
-        ("0190b1c2-3d4e-7f50-8a6b-000000000002", serde_json::json!({"stems":[{"name":"vocals","file":"stems/../../outside/x.flac"}]})),
-        ("0190b1c2-3d4e-7f50-8a6b-000000000003", serde_json::json!({"stems":[{"name":"vocals","file":"/etc/passwd"}]})),
-        ("0190b1c2-3d4e-7f50-8a6b-000000000004", serde_json::json!({"stems":[{"name":"../x","file":"stems/x.flac"}]})),
-        ("0190b1c2-3d4e-7f50-8a6b-000000000005", serde_json::json!({"stems":[{"name":"vocals","file":"vocals.flac"}]})),
-        ("0190b1c2-3d4e-7f50-8a6b-000000000006", serde_json::json!({"stems":[{"name":"vocals","file":"stems/a.flac"},{"name":"vocals","file":"stems/b.flac"}]})),
-        ("0190b1c2-3d4e-7f50-8a6b-000000000007", serde_json::json!({"stems":[{"name":"a","file":"stems/X.flac"},{"name":"b","file":"stems/x.flac"}]})),
-        ("0190b1c2-3d4e-7f50-8a6b-000000000008", serde_json::json!({"stems":[]})),
-        ("0190b1c2-3d4e-7f50-8a6b-000000000009", serde_json::json!({"type":"video"})),
-        ("0190b1c2-3d4e-7f50-8a6b-00000000000a", serde_json::json!({"original":"../x.flac"})),
-        ("0190b1c2-3d4e-7f50-8a6b-00000000000b", serde_json::json!({"original":"/abs.flac"})),
-        ("0190b1c2-3d4e-7f50-8a6b-00000000000c", serde_json::json!({"stems":(0..17).map(|i| serde_json::json!({"name":format!("s{i}"),"file":format!("stems/s{i}.flac")})).collect::<Vec<_>>()})),
-        ("0190b1c2-3d4e-7f50-8a6b-00000000000e", serde_json::json!({"schema_version":3})),
-        ("0190b1c2-3d4e-7f50-8a6b-00000000000f", serde_json::json!({"audio":"x.mp3","type":"backing"})),
+        (
+            "0190b1c2-3d4e-7f50-8a6b-000000000002",
+            serde_json::json!({"stems":[{"name":"vocals","file":"stems/../../outside/x.flac"}]}),
+        ),
+        (
+            "0190b1c2-3d4e-7f50-8a6b-000000000003",
+            serde_json::json!({"stems":[{"name":"vocals","file":"/etc/passwd"}]}),
+        ),
+        (
+            "0190b1c2-3d4e-7f50-8a6b-000000000004",
+            serde_json::json!({"stems":[{"name":"../x","file":"stems/x.flac"}]}),
+        ),
+        (
+            "0190b1c2-3d4e-7f50-8a6b-000000000005",
+            serde_json::json!({"stems":[{"name":"vocals","file":"vocals.flac"}]}),
+        ),
+        (
+            "0190b1c2-3d4e-7f50-8a6b-000000000006",
+            serde_json::json!({"stems":[{"name":"vocals","file":"stems/a.flac"},{"name":"vocals","file":"stems/b.flac"}]}),
+        ),
+        (
+            "0190b1c2-3d4e-7f50-8a6b-000000000007",
+            serde_json::json!({"stems":[{"name":"a","file":"stems/X.flac"},{"name":"b","file":"stems/x.flac"}]}),
+        ),
+        (
+            "0190b1c2-3d4e-7f50-8a6b-000000000008",
+            serde_json::json!({"stems":[]}),
+        ),
+        (
+            "0190b1c2-3d4e-7f50-8a6b-000000000009",
+            serde_json::json!({"type":"video"}),
+        ),
+        (
+            "0190b1c2-3d4e-7f50-8a6b-00000000000a",
+            serde_json::json!({"original":"../x.flac"}),
+        ),
+        (
+            "0190b1c2-3d4e-7f50-8a6b-00000000000b",
+            serde_json::json!({"original":"/abs.flac"}),
+        ),
+        (
+            "0190b1c2-3d4e-7f50-8a6b-00000000000c",
+            serde_json::json!({"stems":(0..17).map(|i| serde_json::json!({"name":format!("s{i}"),"file":format!("stems/s{i}.flac")})).collect::<Vec<_>>()}),
+        ),
+        (
+            "0190b1c2-3d4e-7f50-8a6b-00000000000e",
+            serde_json::json!({"schema_version":3}),
+        ),
+        (
+            "0190b1c2-3d4e-7f50-8a6b-00000000000f",
+            serde_json::json!({"audio":"x.mp3","type":"backing"}),
+        ),
     ];
     for (id, extra) in &hostile {
         let mut j = base(extra.clone());
@@ -1525,10 +2177,16 @@ fn hostile_v2_track_json_is_a_problem_and_never_followed() {
         }
         assert!(!loaded, "hostile track.json loaded: {extra}");
     }
-    assert!(lib.problems.len() >= hostile.len() - 2, "{} problems for {} hostile tracks", lib.problems.len(), hostile.len());
+    assert!(
+        lib.problems.len() >= hostile.len() - 2,
+        "{} problems for {} hostile tracks",
+        lib.problems.len(),
+        hostile.len()
+    );
     // nothing was rewritten
     for (id, _) in &hostile {
-        let j: serde_json::Value = serde_json::from_slice(&fs::read(tracks.join(id).join("track.json")).unwrap()).unwrap();
+        let j: serde_json::Value =
+            serde_json::from_slice(&fs::read(tracks.join(id).join("track.json")).unwrap()).unwrap();
         assert!(j["id"] == *id);
     }
 }
@@ -1560,8 +2218,16 @@ fn a_v1_track_with_a_type_key_is_handled_per_the_rule() {
 #[test]
 fn yt_dlp_has_a_download_size_and_duration_cap() {
     let args = download::ytdlp_args(Path::new("/tmp/x"), "https://media.example/x", false);
-    assert!(args.windows(2).any(|w| w[0] == "--max-filesize" && w[1] == "1G"), "no --max-filesize in {args:?}");
-    assert!(args.windows(2).any(|w| w[0] == "--match-filter" && w[1].contains("!is_live") && w[1].contains("900")), "{args:?}");
+    assert!(
+        args.windows(2)
+            .any(|w| w[0] == "--max-filesize" && w[1] == "1G"),
+        "no --max-filesize in {args:?}"
+    );
+    assert!(
+        args.windows(2)
+            .any(|w| w[0] == "--match-filter" && w[1].contains("!is_live") && w[1].contains("900")),
+        "{args:?}"
+    );
 }
 
 #[test]
@@ -1577,8 +2243,14 @@ fn prepare_url_does_not_create_import_tmp() {
 fn ytdlp_skip_outputs_show_the_right_message_and_leave_no_job() {
     let rig = Rig::new(false);
     for (path, msg) in [
-        ("live", "Download refused: the video is a live stream or longer than 15 minutes"),
-        ("long", "Download refused: the video is a live stream or longer than 15 minutes"),
+        (
+            "live",
+            "Download refused: the video is a live stream or longer than 15 minutes",
+        ),
+        (
+            "long",
+            "Download refused: the video is a live stream or longer than 15 minutes",
+        ),
         ("huge", "Download refused: the file is larger than 1 GiB"),
     ] {
         let url = format!("https://media.example/{path}");
@@ -1591,7 +2263,12 @@ fn ytdlp_skip_outputs_show_the_right_message_and_leave_no_job() {
         for d in rig.import_tmp() {
             let dir = rig.root.join("import-tmp").join(&d);
             let inner = names_in(&dir);
-            assert!(!inner.iter().any(|n| n.starts_with("download.") || n == "audio.flac"), "{path}: {inner:?}");
+            assert!(
+                !inner
+                    .iter()
+                    .any(|n| n.starts_with("download.") || n == "audio.flac"),
+                "{path}: {inner:?}"
+            );
         }
         assert!(rig.tracks().is_empty(), "{path}");
         // the app is not stuck: the next URL starts
@@ -1610,12 +2287,23 @@ fn match_filter_and_max_filesize_arrive_as_single_argv_entries_before_the_double
     rig.state.discard(&s.job).unwrap();
     let runs = rig.ytdlp_runs();
     assert_eq!(runs.len(), 1);
-    let argv: Vec<&str> = runs[0]["argv"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    let argv: Vec<&str> = runs[0]["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
     let sep = argv.iter().position(|a| *a == "--").unwrap();
-    let i = argv.iter().position(|a| *a == "--match-filter").expect("--match-filter");
+    let i = argv
+        .iter()
+        .position(|a| *a == "--match-filter")
+        .expect("--match-filter");
     assert_eq!(argv[i + 1], "!is_live & duration <=? 900", "{argv:?}");
     assert!(i + 1 < sep);
-    let j = argv.iter().position(|a| *a == "--max-filesize").expect("--max-filesize");
+    let j = argv
+        .iter()
+        .position(|a| *a == "--max-filesize")
+        .expect("--max-filesize");
     assert_eq!(argv[j + 1], "1G");
     assert!(j + 1 < sep);
     assert_eq!(argv.iter().filter(|a| a.contains("is_live")).count(), 1);
@@ -1671,7 +2359,11 @@ fn ffmpeg_never_follows_playlist_concat_or_hls_inputs_to_other_protocols() {
     }
     std::thread::sleep(Duration::from_millis(300));
     stop.store(true, Ordering::SeqCst);
-    assert_eq!(hits.load(Ordering::SeqCst), 0, "ffmpeg/ffprobe connected to the loopback trap");
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        0,
+        "ffmpeg/ffprobe connected to the loopback trap"
+    );
     rig.outside_ok();
     assert!(rig.staging().is_empty());
 }
@@ -1693,7 +2385,9 @@ fn lying_wav(path: &Path, declared_s: u32, real_s: u32) {
     f.write_all(&16u16.to_le_bytes()).unwrap();
     f.write_all(b"data").unwrap();
     f.write_all(&data_declared.to_le_bytes()).unwrap();
-    let chunk: Vec<u8> = (0..rate * 2).map(|i| (i.wrapping_mul(2654435761) >> 24) as u8 / 64).collect();
+    let chunk: Vec<u8> = (0..rate * 2)
+        .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8 / 64)
+        .collect();
     for _ in 0..real_s {
         f.write_all(&chunk).unwrap();
     }
@@ -1706,7 +2400,26 @@ fn a_source_whose_header_understates_its_length_never_yields_a_flac_over_15_minu
     let mk = |secs: &str, xing: &str, name: &str| {
         let p = rig.dir.path().join(name);
         let st = Command::new(tool("ffmpeg"))
-            .args(["-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050", "-t", secs, "-ac", "1", "-c:a", "libmp3lame", "-b:a", "16k", "-write_xing", xing])
+            .args([
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=22050",
+                "-t",
+                secs,
+                "-ac",
+                "1",
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "16k",
+                "-write_xing",
+                xing,
+            ])
             .arg(&p)
             .status()
             .unwrap();
@@ -1720,17 +2433,46 @@ fn a_source_whose_header_understates_its_length_never_yields_a_flac_over_15_minu
     bytes.extend(fs::read(&body).unwrap());
     fs::write(&liar, bytes).unwrap();
     let declared: f64 = {
-        let o = Command::new(tool("ffprobe")).args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"]).arg(&liar).output().unwrap();
+        let o = Command::new(tool("ffprobe"))
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(&liar)
+            .output()
+            .unwrap();
         String::from_utf8_lossy(&o.stdout).trim().parse().unwrap()
     };
     eprintln!("ffprobe declared duration of the liar: {declared}");
     rig.file_at(&liar).unwrap();
     let s = rig.idle();
     match s.phase {
-        Phase::Failed => assert_eq!(s.error.unwrap().message, "Tracks longer than 15 minutes are not supported"),
+        Phase::Failed => assert_eq!(
+            s.error.unwrap().message,
+            "Tracks longer than 15 minutes are not supported"
+        ),
         Phase::Ready => {
-            let flac = rig.root.join("import-tmp").join(&rig.import_tmp()[0]).join("audio.flac");
-            let out = Command::new(tool("ffprobe")).args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"]).arg(&flac).output().unwrap();
+            let flac = rig
+                .root
+                .join("import-tmp")
+                .join(&rig.import_tmp()[0])
+                .join("audio.flac");
+            let out = Command::new(tool("ffprobe"))
+                .args([
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "csv=p=0",
+                ])
+                .arg(&flac)
+                .output()
+                .unwrap();
             let dur: f64 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
             eprintln!("understated-header FLAC duration: {dur} (declared {declared})");
             assert!(dur <= 906.0, "converted FLAC is {dur} s long");
@@ -1748,7 +2490,22 @@ fn conversion_is_capped_even_when_the_probe_was_told_a_short_length() {
     let mk = |secs: &str, name: &str| {
         let p = d.path().join(name);
         let st = Command::new(tool("ffmpeg"))
-            .args(["-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=8000", "-t", secs, "-ac", "1", "-c:a", "pcm_s16le"])
+            .args([
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=8000",
+                "-t",
+                secs,
+                "-ac",
+                "1",
+                "-c:a",
+                "pcm_s16le",
+            ])
             .arg(&p)
             .status()
             .unwrap();
@@ -1759,8 +2516,26 @@ fn conversion_is_capped_even_when_the_probe_was_told_a_short_length() {
     let long = mk("1200", "long.wav");
     let probe = media::probe(&tool("ffprobe"), &short, &media::Cancel::new()).unwrap();
     let job = tempfile::tempdir().unwrap();
-    let flac = media::to_flac(&tool("ffmpeg"), &long, &probe, job.path(), &media::Cancel::new()).unwrap();
-    let o = Command::new(tool("ffprobe")).args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"]).arg(&flac).output().unwrap();
+    let flac = media::to_flac(
+        &tool("ffmpeg"),
+        &long,
+        &probe,
+        job.path(),
+        &media::Cancel::new(),
+    )
+    .unwrap();
+    let o = Command::new(tool("ffprobe"))
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(&flac)
+        .output()
+        .unwrap();
     let dur: f64 = String::from_utf8_lossy(&o.stdout).trim().parse().unwrap();
     assert!(dur <= 906.0 && dur > 890.0, "FLAC is {dur} s");
 }
@@ -1785,7 +2560,11 @@ fn cancel_while_receiving_stems_stops_quickly_and_leaves_no_part_or_track() {
     let t = Instant::now();
     rig.state.cancel(&ready.job).unwrap();
     rig.wait("stopped", |s| !rig.state.is_running());
-    assert!(t.elapsed() < Duration::from_secs(5), "cancel took {:?}", t.elapsed());
+    assert!(
+        t.elapsed() < Duration::from_secs(5),
+        "cancel took {:?}",
+        t.elapsed()
+    );
     assert!(rig.staging().is_empty(), "{:?}", rig.staging());
     assert_eq!(rig.tracks().len(), v1_ids().len());
     // no *.part anywhere below the repo
@@ -1818,7 +2597,10 @@ fn prepare_url_creates_nothing_on_disk() {
     for u in [WATCH, "https://media.example/other", "not a url", ""] {
         let _ = rig.state.prepare_url(&rig.root, u);
     }
-    assert!(!rig.root.join("import-tmp").exists(), "prepare_url created import-tmp");
+    assert!(
+        !rig.root.join("import-tmp").exists(),
+        "prepare_url created import-tmp"
+    );
     assert_eq!(fingerprint(&rig.root), before);
     // an unrelated root path that does not exist is not created either
     let ghost = rig.dir.path().join("ghost");
@@ -1831,7 +2613,9 @@ fn prepare_url_creates_nothing_on_disk() {
     rig.state.cancel(&s.job).unwrap();
     rig.idle();
     let snap = fingerprint(&rig.root);
-    let prep = rig.state.prepare_url(&rig.root, "https://media.example/slow?v=p");
+    let prep = rig
+        .state
+        .prepare_url(&rig.root, "https://media.example/slow?v=p");
     assert_eq!(format!("{:?}", prep.status), "Partial");
     assert_eq!(fingerprint(&rig.root), snap);
 }
@@ -1839,7 +2623,16 @@ fn prepare_url_creates_nothing_on_disk() {
 #[test]
 fn fragment_files_are_not_taken_as_the_download() {
     let d = tempfile::tempdir().unwrap();
-    for n in ["download.f251.webm", "download.f137.mp4", "download.f140-1.m4a", "download.webm.part", "download.f251.webm.part", "download.webm.ytdl", "download.mp4.part-Frag3", "download.temp"] {
+    for n in [
+        "download.f251.webm",
+        "download.f137.mp4",
+        "download.f140-1.m4a",
+        "download.webm.part",
+        "download.f251.webm.part",
+        "download.webm.ytdl",
+        "download.mp4.part-Frag3",
+        "download.temp",
+    ] {
         fs::write(d.path().join(n), b"x").unwrap();
     }
     assert_eq!(download::find_download(d.path()), None);

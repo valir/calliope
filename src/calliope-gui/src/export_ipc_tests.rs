@@ -43,7 +43,10 @@ impl Rig {
     fn with(export: ExportState) -> Self {
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("repo");
-        copy_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-export"), &repo);
+        copy_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-export"),
+            &repo,
+        );
         let home = tmp.path().join("home");
         std::fs::create_dir(&home).unwrap();
         let answers = tmp.path().join("answers");
@@ -51,7 +54,16 @@ impl Rig {
         let picker = Arc::new(ScriptedPicker::new(answers.clone()));
         let st = RepoState::new(repo.clone(), Box::new(picker.clone()));
         let settings = SettingsStore::open(tmp.path().join("settings.json"));
-        Rig { _tmp: tmp, repo, home, st, picker, answers, settings, export }
+        Rig {
+            _tmp: tmp,
+            repo,
+            home,
+            st,
+            picker,
+            answers,
+            settings,
+            export,
+        }
     }
 
     fn id(n: u32) -> String {
@@ -59,7 +71,11 @@ impl Rig {
     }
 
     fn answer(&self, lines: &[String]) {
-        std::fs::write(&self.answers, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+        std::fs::write(
+            &self.answers,
+            lines.iter().map(|l| format!("{l}\n")).collect::<String>(),
+        )
+        .unwrap();
     }
 
     fn base(&self, name: &str) -> PathBuf {
@@ -73,11 +89,21 @@ impl Rig {
     }
 
     fn prepare(&self, n: u32, t: TargetReq) -> Result<Option<ExportPlan>, String> {
-        do_prepare_export(&self.st, &self.settings, &self.export, &FileTempoStore, Some(self.home.clone()), &Self::id(n), t)
+        do_prepare_export(
+            &self.st,
+            &self.settings,
+            &self.export,
+            &FileTempoStore,
+            Some(self.home.clone()),
+            &Self::id(n),
+            t,
+        )
     }
 
     fn rc5(memory: &str) -> TargetReq {
-        TargetReq::Rc5 { memory: memory.into() }
+        TargetReq::Rc5 {
+            memory: memory.into(),
+        }
     }
 
     fn start(&self, token: &str, overwrite: bool) -> Result<ExportSnapshot, String> {
@@ -117,18 +143,46 @@ fn info_for_each_fixture() {
     let i = rig.info(401);
     assert!(i.available && i.reason.is_none());
     assert_eq!(i.source.as_deref(), Some("backings/backing.flac"));
-    assert_eq!(i.count_in, Some(CountInInfo { bpm: 120.0, first_beat_ms: 0.0, lead_ms: 2500.0 }));
+    assert_eq!(
+        i.count_in,
+        Some(CountInInfo {
+            bpm: 120.0,
+            first_beat_ms: 0.0,
+            lead_ms: 2500.0
+        })
+    );
     assert_eq!(i.memory, 1);
-    assert_eq!(rig.info(402).reason.as_deref(), Some("No mix saved yet: save one in the Editor"));
-    assert!(!rig.info(402).available && rig.info(402).source.is_none() && rig.info(402).count_in.is_none());
+    assert_eq!(
+        rig.info(402).reason.as_deref(),
+        Some("No mix saved yet: save one in the Editor")
+    );
+    assert!(
+        !rig.info(402).available
+            && rig.info(402).source.is_none()
+            && rig.info(402).count_in.is_none()
+    );
     let i = rig.info(403);
     assert!(i.available);
     assert_eq!(i.source.as_deref(), Some("backing.mp3"));
     assert!(rig.info(404).available);
-    assert_eq!(rig.info(405).count_in, Some(CountInInfo { bpm: 100.0, first_beat_ms: 0.0, lead_ms: 3000.0 }));
+    assert_eq!(
+        rig.info(405).count_in,
+        Some(CountInInfo {
+            bpm: 100.0,
+            first_beat_ms: 0.0,
+            lead_ms: 3000.0
+        })
+    );
     assert_eq!(rig.info(406).count_in.unwrap().first_beat_ms, 500.0);
     let i = rig.info(407);
-    assert_eq!(i.count_in, Some(CountInInfo { bpm: 100.0, first_beat_ms: 3000.0, lead_ms: 3000.0 }));
+    assert_eq!(
+        i.count_in,
+        Some(CountInInfo {
+            bpm: 100.0,
+            first_beat_ms: 3000.0,
+            lead_ms: 3000.0
+        })
+    );
     assert_eq!(
         rig.info(408).reason.as_deref(),
         Some("The saved mix (backings/backing.flac) is missing: save it again in the Editor")
@@ -147,8 +201,14 @@ fn prepare_refuses_no_tempo_and_no_backing_without_a_dialog() {
     let rig = Rig::new();
     let base = rig.base("rc5");
     rig.answer(&[format!("export-rc5 {}", base.display())]);
-    assert_eq!(rig.prepare(410, Rig::rc5("7")).unwrap_err(), NO_TEMPO_REASON);
-    assert_eq!(rig.prepare(402, Rig::rc5("7")).unwrap_err(), "No mix saved yet: save one in the Editor");
+    assert_eq!(
+        rig.prepare(410, Rig::rc5("7")).unwrap_err(),
+        NO_TEMPO_REASON
+    );
+    assert_eq!(
+        rig.prepare(402, Rig::rc5("7")).unwrap_err(),
+        "No mix saved yet: save one in the Editor"
+    );
     assert!(rig.picker.starts().is_empty());
     assert!(!base.join("ROLAND/WAVE").exists());
 }
@@ -157,7 +217,10 @@ fn prepare_refuses_no_tempo_and_no_backing_without_a_dialog() {
 fn prepare_checks_before_the_dialog() {
     let rig = Rig::new();
     for bad in ["abc", "0", "100", ""] {
-        assert_eq!(rig.prepare(401, Rig::rc5(bad)).unwrap_err(), "Enter a memory number from 1 to 99");
+        assert_eq!(
+            rig.prepare(401, Rig::rc5(bad)).unwrap_err(),
+            "Enter a memory number from 1 to 99"
+        );
     }
     assert!(rig.picker.starts().is_empty());
     // An ffmpeg that lists no encoders.
@@ -166,14 +229,23 @@ fn prepare_checks_before_the_dialog() {
     std::fs::write(&fake, "#!/bin/sh\necho ' A..... aac AAC'\n").unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
     let f2 = fake.clone();
-    let rig = Rig::with(ExportState::new(Box::new(move || Tools { ffmpeg: Some(f2.clone()), ..real_tools() })));
+    let rig = Rig::with(ExportState::new(Box::new(move || Tools {
+        ffmpeg: Some(f2.clone()),
+        ..real_tools()
+    })));
     let e = rig.prepare(401, TargetReq::Mp3).unwrap_err();
     assert!(e.contains("libmp3lame"), "{e}");
-    assert!(rig.prepare(401, TargetReq::Ogg).unwrap_err().contains("libvorbis"));
+    assert!(rig
+        .prepare(401, TargetReq::Ogg)
+        .unwrap_err()
+        .contains("libvorbis"));
     assert!(rig.picker.starts().is_empty());
     // No tools at all.
     let rig = Rig::with(ExportState::new(Box::new(Tools::default)));
-    assert!(rig.prepare(401, Rig::rc5("1")).unwrap_err().starts_with("Install ffmpeg"));
+    assert!(rig
+        .prepare(401, Rig::rc5("1"))
+        .unwrap_err()
+        .starts_with("Install ffmpeg"));
     assert!(rig.picker.starts().is_empty());
 }
 
@@ -183,9 +255,17 @@ fn prepare_uses_and_remembers_folders() {
     let base = rig.base("rc5");
     rig.answer(&[format!("export-rc5 {}", base.display())]);
     let plan = rig.prepare(401, Rig::rc5(" 7 ")).unwrap().unwrap();
-    assert_eq!(plan.path, base.join("ROLAND/WAVE/007_1/007_1.WAV").display().to_string());
+    assert_eq!(
+        plan.path,
+        base.join("ROLAND/WAVE/007_1/007_1.WAV")
+            .display()
+            .to_string()
+    );
     assert!(!plan.exists);
-    assert_eq!(rig.picker.starts(), [(DialogKind::ExportRc5, Some(rig.home.clone()))]);
+    assert_eq!(
+        rig.picker.starts(),
+        [(DialogKind::ExportRc5, Some(rig.home.clone()))]
+    );
     assert_eq!(rig.settings.get().rc5_dir, Some(base.clone()));
     assert_eq!(rig.settings.get().export_dir, None);
 
@@ -193,7 +273,10 @@ fn prepare_uses_and_remembers_folders() {
     let other = rig.base("other");
     rig.answer(&[format!("export-rc5 {}", other.display())]);
     rig.prepare(401, Rig::rc5("8")).unwrap().unwrap();
-    assert_eq!(rig.picker.starts()[1], (DialogKind::ExportRc5, Some(base.clone())));
+    assert_eq!(
+        rig.picker.starts()[1],
+        (DialogKind::ExportRc5, Some(base.clone()))
+    );
     assert_eq!(rig.settings.get().rc5_dir, Some(other.clone()));
 
     // A missing remembered base: the dialog opens at home and the setting is kept.
@@ -204,22 +287,39 @@ fn prepare_uses_and_remembers_folders() {
     rig.answer(&[format!("export-rc5 {}", plain.display())]);
     let e = rig.prepare(401, Rig::rc5("8")).unwrap_err();
     assert!(e.starts_with("No ROLAND folder in"), "{e}");
-    assert_eq!(rig.picker.starts()[2], (DialogKind::ExportRc5, Some(rig.home.clone())));
+    assert_eq!(
+        rig.picker.starts()[2],
+        (DialogKind::ExportRc5, Some(rig.home.clone()))
+    );
     // A refused base is not remembered; the old (missing) one stays.
     assert_eq!(rig.settings.get().rc5_dir, Some(other));
 
     // MP3: its own folder setting and dialog kind.
     let out = rig.home.join("out");
     std::fs::create_dir(&out).unwrap();
-    rig.answer(&[format!("export-audio {}", out.display()), format!("export-audio {}", out.display())]);
+    rig.answer(&[
+        format!("export-audio {}", out.display()),
+        format!("export-audio {}", out.display()),
+    ]);
     let plan = rig.prepare(401, TargetReq::Mp3).unwrap().unwrap();
-    assert_eq!(plan.path, out.join("The Example Band - Stem Mix.mp3").display().to_string());
-    assert_eq!(rig.picker.starts()[3], (DialogKind::ExportAudio, Some(rig.home.clone())));
+    assert_eq!(
+        plan.path,
+        out.join("The Example Band - Stem Mix.mp3")
+            .display()
+            .to_string()
+    );
+    assert_eq!(
+        rig.picker.starts()[3],
+        (DialogKind::ExportAudio, Some(rig.home.clone()))
+    );
     assert_eq!(rig.settings.get().export_dir, Some(out.clone()));
     rig.prepare(401, TargetReq::Ogg).unwrap().unwrap();
     assert_eq!(rig.picker.starts()[4], (DialogKind::ExportAudio, Some(out)));
     // After a restart.
-    assert_eq!(SettingsStore::open(rig.settings_path()).get().rc5_dir, rig.settings.get().rc5_dir);
+    assert_eq!(
+        SettingsStore::open(rig.settings_path()).get().rc5_dir,
+        rig.settings.get().rc5_dir
+    );
 }
 
 #[test]
@@ -240,7 +340,11 @@ fn start_rereads_the_tempo() {
     rig.answer(&[format!("export-rc5 {}", base.display())]);
     let plan = rig.prepare(406, Rig::rc5("7")).unwrap().unwrap();
     // The first beat moves between prepare and start (500 ms -> 1500 ms).
-    let pj = rig.repo.join("tracks").join(Rig::id(406)).join("player.json");
+    let pj = rig
+        .repo
+        .join("tracks")
+        .join(Rig::id(406))
+        .join("player.json");
     std::fs::write(
         &pj,
         r#"{"schema_version": 6, "tempo": {"beats_per_bar": 4, "segments": [{"start_ms": 1500, "bpm": 120}]}}"#,
@@ -249,7 +353,10 @@ fn start_rereads_the_tempo() {
     rig.start(&plan.token, false).unwrap();
     assert_eq!(rig.wait().phase, ExportPhase::Done);
     let b = std::fs::read(base.join("ROLAND/WAVE/007_1/007_1.WAV")).unwrap();
-    let left: Vec<f32> = b[44..].chunks_exact(8).map(|f| f32::from_le_bytes([f[0], f[1], f[2], f[3]])).collect();
+    let left: Vec<f32> = b[44..]
+        .chunks_exact(8)
+        .map(|f| f32::from_le_bytes([f[0], f[1], f[2], f[3]]))
+        .collect();
     let click = Click::new(44100).samples().to_vec();
     assert_eq!(&left[66150..66150 + click.len()], &click[..]);
     assert!(left[22050..22050 + click.len()].iter().all(|&v| v == 0.0));
@@ -274,9 +381,19 @@ fn memory_is_remembered_after_done() {
     // The settings file was written by the finished export (a second store reads it).
     let reopened = SettingsStore::open(rig.settings_path());
     assert_eq!(reopened.get().rc5_memory, Some(7));
-    assert_eq!(do_export_info(&rig.st, &reopened, &FileTempoStore, &Rig::id(401)).unwrap().memory, 8);
+    assert_eq!(
+        do_export_info(&rig.st, &reopened, &FileTempoStore, &Rig::id(401))
+            .unwrap()
+            .memory,
+        8
+    );
     reopened.set_rc5_memory(Some(99)).unwrap();
-    assert_eq!(do_export_info(&rig.st, &reopened, &FileTempoStore, &Rig::id(401)).unwrap().memory, 99);
+    assert_eq!(
+        do_export_info(&rig.st, &reopened, &FileTempoStore, &Rig::id(401))
+            .unwrap()
+            .memory,
+        99
+    );
 
     // An MP3 export does not touch the memory.
     let out = rig.home.join("out");

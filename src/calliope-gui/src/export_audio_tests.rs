@@ -6,7 +6,13 @@ use std::time::Instant;
 fn map(start_ms: f64, bpm: f64) -> TempoMap {
     TempoMap {
         beats_per_bar: 4,
-        segments: vec![Segment { start_ms, bpm, detected_ms: None, on_beat: false, meta: SectionMeta::default() }],
+        segments: vec![Segment {
+            start_ms,
+            bpm,
+            detected_ms: None,
+            on_beat: false,
+            meta: SectionMeta::default(),
+        }],
     }
 }
 
@@ -61,7 +67,10 @@ fn plan_extreme_tempos_other_rates_and_meter() {
     assert_eq!((p.beat_frames, p.lead_frames), (28800, 144000));
     let mut three = map(500.0, 120.0);
     three.beats_per_bar = 3;
-    assert_eq!(count_in_plan(&three, 44100), count_in_plan(&map(500.0, 120.0), 44100));
+    assert_eq!(
+        count_in_plan(&three, 44100),
+        count_in_plan(&map(500.0, 120.0), 44100)
+    );
 }
 
 #[test]
@@ -81,7 +90,9 @@ fn mix_ticks_blocks_equal_one_block_and_leave_the_rest_alone() {
     let plan = count_in_plan(&map(0.0, 120.0), 22050).unwrap();
     let click = Click::new(22050).samples().to_vec();
     let total = 4 * 22050usize;
-    let src: Vec<f32> = (0..total * 2).map(|i| ((i % 97) as f32 - 48.0) / 400.0).collect();
+    let src: Vec<f32> = (0..total * 2)
+        .map(|i| ((i % 97) as f32 - 48.0) / 400.0)
+        .collect();
     let mut one = src.clone();
     let c1 = mix_ticks(&mut one, 2, 0, &plan, &click);
     // Uneven blocks, some boundaries inside a click.
@@ -93,13 +104,23 @@ fn mix_ticks_blocks_equal_one_block_and_leave_the_rest_alone() {
             break;
         }
         let n = (*len).min(total - pos);
-        c2 += mix_ticks(&mut many[pos * 2..(pos + n) * 2], 2, pos as u64, &plan, &click);
+        c2 += mix_ticks(
+            &mut many[pos * 2..(pos + n) * 2],
+            2,
+            pos as u64,
+            &plan,
+            &click,
+        );
         pos += n;
     }
     assert_eq!(one, many);
     assert_eq!(c1, c2);
     // Bit-exact away from the ticks.
-    let under = |f: usize| plan.ticks.iter().any(|&t| (f as u64) >= t && (f as u64) < t + click.len() as u64);
+    let under = |f: usize| {
+        plan.ticks
+            .iter()
+            .any(|&t| (f as u64) >= t && (f as u64) < t + click.len() as u64)
+    };
     for f in 0..total {
         if !under(f) {
             assert_eq!(one[f * 2], src[f * 2]);
@@ -111,7 +132,13 @@ fn mix_ticks_blocks_equal_one_block_and_leave_the_rest_alone() {
 
 #[test]
 fn mix_ticks_clamps_and_counts() {
-    let plan = CountInPlan { bpm: 120.0, beat_frames: 10, lead_frames: 40, first_beat_frame: 40, ticks: [2, 100, 200, 300, 400, 500] };
+    let plan = CountInPlan {
+        bpm: 120.0,
+        beat_frames: 10,
+        lead_frames: 40,
+        first_beat_frame: 40,
+        ticks: [2, 100, 200, 300, 400, 500],
+    };
     let click = vec![0.5f32; 4];
     let mut b = vec![0.9f32; 20]; // 10 mono frames
     let n = mix_ticks(&mut b, 1, 0, &plan, &click);
@@ -132,7 +159,10 @@ fn encoder_args_shape() {
     let tags = vec![("title", "T".to_string()), ("artist", "B".to_string())];
     let part = Path::new("/d/.x.part");
     for (kind, q) in [(ExportKind::Mp3, "2"), (ExportKind::Ogg, "6")] {
-        let a: Vec<String> = encoder_args(kind, 48000, 2, &tags, part).iter().map(|s| s.to_string_lossy().into_owned()).collect();
+        let a: Vec<String> = encoder_args(kind, 48000, 2, &tags, part)
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
         assert!(a.contains(&"-y".to_string()));
         assert!(!a.contains(&"-n".to_string()));
         assert_eq!(a.last().unwrap(), "file:/d/.x.part");
@@ -143,9 +173,15 @@ fn encoder_args_shape() {
         assert!(a.contains(&"title=T".to_string()) && a.contains(&"artist=B".to_string()));
         assert!(a.contains(&"pipe:0".to_string()));
     }
-    let d: Vec<String> = decoder_args(Path::new("/a b/x.flac"), 44100, 2).iter().map(|s| s.to_string_lossy().into_owned()).collect();
+    let d: Vec<String> = decoder_args(Path::new("/a b/x.flac"), 44100, 2)
+        .iter()
+        .map(|s| s.to_string_lossy().into_owned())
+        .collect();
     assert!(d.contains(&"file:/a b/x.flac".to_string()) && d.contains(&"pipe:1".to_string()));
-    assert!(!d.contains(&"-t".to_string()), "the decoder must not truncate the source");
+    assert!(
+        !d.contains(&"-t".to_string()),
+        "the decoder must not truncate the source"
+    );
 }
 
 // ---- helpers for the real ffmpeg ----
@@ -176,7 +212,15 @@ fn reference(src: &Path, rate: u32, ch: u32) -> Vec<f32> {
     let out = Command::new("ffmpeg")
         .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-i"])
         .arg(src)
-        .args(["-map", "0:a:0", "-f", "f32le", "-acodec", "pcm_f32le", "-ac"])
+        .args([
+            "-map",
+            "0:a:0",
+            "-f",
+            "f32le",
+            "-acodec",
+            "pcm_f32le",
+            "-ac",
+        ])
         .arg(ch.to_string())
         .arg("-ar")
         .arg(rate.to_string())
@@ -184,11 +228,22 @@ fn reference(src: &Path, rate: u32, ch: u32) -> Vec<f32> {
         .output()
         .unwrap();
     assert!(out.status.success());
-    out.stdout.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
+    out.stdout
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect()
 }
 
 fn pipeline(src: &Path, rate: u32, ch: u32, plan: CountInPlan, part: &Path) -> Pipeline {
-    Pipeline { ffmpeg: "ffmpeg".into(), source: src.to_path_buf(), rate, channels: ch, plan, part: part.to_path_buf(), pace: None }
+    Pipeline {
+        ffmpeg: "ffmpeg".into(),
+        source: src.to_path_buf(),
+        rate,
+        channels: ch,
+        plan,
+        part: part.to_path_buf(),
+        pace: None,
+    }
 }
 
 fn no_progress() -> impl FnMut(u64) {
@@ -202,13 +257,22 @@ fn render_wav(src: &Path, start_ms: f64, bpm: f64) -> (RunStats, Vec<f32>, Count
     let part = d.path().join("out.wav");
     let w = WavWriter::create(&part, 44100).unwrap();
     let p = pipeline(src, 44100, 2, plan.clone(), &part);
-    let stats = run(&p, Output::Wav(w), &AtomicBool::new(false), &mut no_progress()).unwrap();
+    let stats = run(
+        &p,
+        Output::Wav(w),
+        &AtomicBool::new(false),
+        &mut no_progress(),
+    )
+    .unwrap();
     let bytes = std::fs::read(&part).unwrap();
     assert_eq!(&bytes[..4], b"RIFF");
     assert_eq!(&bytes[36..40], b"data");
     let n = u32::from_le_bytes(bytes[40..44].try_into().unwrap()) as usize;
     assert_eq!(bytes.len(), 44 + n);
-    let s = bytes[44..].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+    let s = bytes[44..]
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
     (stats, s, plan)
 }
 
@@ -239,7 +303,10 @@ fn expected(src: &Path, plan: &CountInPlan) -> Vec<f32> {
 
 #[test]
 fn wav_equals_lead_plus_original_with_ticks() {
-    for (n, file, start, bpm) in [(401, "backings/backing.flac", 0.0, 120.0), (406, "backings/backing.flac", 500.0, 120.0)] {
+    for (n, file, start, bpm) in [
+        (401, "backings/backing.flac", 0.0, 120.0),
+        (406, "backings/backing.flac", 500.0, 120.0),
+    ] {
         let (_d, dir) = fixture(n);
         let src = dir.join(file);
         let (stats, got, plan) = render_wav(&src, start, bpm);
@@ -262,7 +329,10 @@ fn long_intro_ticks_fall_in_silence() {
     let click = Click::new(44100).samples().to_vec();
     let mut want = vec![0.0f32; 264600 * 2];
     mix_ticks(&mut want, 2, 0, &plan, &click);
-    assert!(got[..264600 * 2] == want[..], "silence + exactly the six ticks until the first beat");
+    assert!(
+        got[..264600 * 2] == want[..],
+        "silence + exactly the six ticks until the first beat"
+    );
     for &t in &plan.ticks {
         let w = &left(&got)[t as usize..t as usize + click.len()];
         assert!(goertzel(w, 1500.0, 44100) > 0.05);
@@ -285,7 +355,11 @@ fn mono_becomes_stereo_and_48k_is_resampled() {
     let (stats, got, plan) = render_wav(&dir.join("backing.flac"), 0.0, 100.0);
     assert_eq!(plan.lead_frames, 132300);
     let want = 132300 + (4.0f64 * 44100.0).round() as u64;
-    assert!(stats.frames.abs_diff(want) <= 1, "{} vs {want}", stats.frames);
+    assert!(
+        stats.frames.abs_diff(want) <= 1,
+        "{} vs {want}",
+        stats.frames
+    );
     let l = left(&got);
     let after = &l[plan.lead_frames as usize + 20000..plan.lead_frames as usize + 40000];
     assert!(goertzel(after, 1000.0, 44100) > 5.0 * goertzel(after, 440.0, 44100));
@@ -310,7 +384,11 @@ fn encodes_mp3_and_ogg_with_tags() {
             let (_d, dir) = fixture(n);
             let src = dir.join("backings/backing.flac");
             let out = tempfile::tempdir().unwrap();
-            let ext = if kind == ExportKind::Mp3 { "mp3" } else { "ogg" };
+            let ext = if kind == ExportKind::Mp3 {
+                "mp3"
+            } else {
+                "ogg"
+            };
             let part = out.path().join(format!(".t.{ext}.part"));
             std::fs::File::create(&part).unwrap();
             let plan = count_in_plan(&map(start, 120.0), 44100).unwrap();
@@ -323,22 +401,41 @@ fn encodes_mp3_and_ogg_with_tags() {
             ];
             let args = encoder_args(kind, 44100, 2, &tags, &part);
             let p = pipeline(&src, 44100, 2, plan, &part);
-            let stats = run(&p, Output::Encode { ffmpeg: "ffmpeg".into(), args }, &AtomicBool::new(false), &mut no_progress())
-                .unwrap_or_else(|e| panic!("{n} {kind:?}: {e}"));
+            let stats = run(
+                &p,
+                Output::Encode {
+                    ffmpeg: "ffmpeg".into(),
+                    args,
+                },
+                &AtomicBool::new(false),
+                &mut no_progress(),
+            )
+            .unwrap_or_else(|e| panic!("{n} {kind:?}: {e}"));
             assert_eq!(stats.frames, 286650);
             let back = reference(&part, 44100, 2);
             let secs = (back.len() / 2) as f64 / 44100.0;
             assert!((secs - 6.5).abs() <= 0.03, "{n} {kind:?}: {secs}");
             let v = probe(&part, "format_tags:stream_tags");
             let mut tags = v["format"]["tags"].as_object().cloned().unwrap_or_default();
-            tags.extend(v["streams"][0]["tags"].as_object().cloned().unwrap_or_default());
+            tags.extend(
+                v["streams"][0]["tags"]
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default(),
+            );
             let get = |k: &str| {
-                tags.iter().find(|(key, _)| key.eq_ignore_ascii_case(k)).map(|(_, v)| v.as_str().unwrap().to_string())
+                tags.iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case(k))
+                    .map(|(_, v)| v.as_str().unwrap().to_string())
             };
             assert_eq!(get("title").as_deref(), Some("Stem Mix"));
             assert_eq!(get("artist").as_deref(), Some("The Example Band"));
             assert_eq!(get("album").as_deref(), Some("Export Tests"));
-            assert_eq!(get("track").or_else(|| get("tracknumber")).as_deref(), Some("3"), "{kind:?}");
+            assert_eq!(
+                get("track").or_else(|| get("tracknumber")).as_deref(),
+                Some("3"),
+                "{kind:?}"
+            );
             assert_eq!(get("date").as_deref(), Some("2021"));
         }
     }
@@ -367,7 +464,11 @@ fn cancel_returns_promptly_and_leaves_no_child() {
     let fake = script(
         d.path(),
         "ffmpeg",
-        &format!("echo $$ > {}\nprintf '%s\\n' \"$@\" > {}\nexec sleep 60", pidfile.display(), argv.display()),
+        &format!(
+            "echo $$ > {}\nprintf '%s\\n' \"$@\" > {}\nexec sleep 60",
+            pidfile.display(),
+            argv.display()
+        ),
     );
     let plan = count_in_plan(&map(0.0, 120.0), 44100).unwrap();
     let part = d.path().join("out.wav");
@@ -385,10 +486,17 @@ fn cancel_returns_promptly_and_leaves_no_child() {
     t.join().unwrap();
     assert_eq!(e, CANCELLED);
     assert!(t0.elapsed() < Duration::from_secs(3), "{:?}", t0.elapsed());
-    let pid: u32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+    let pid: u32 = std::fs::read_to_string(&pidfile)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
     assert!(!alive(pid));
     let a = std::fs::read_to_string(&argv).unwrap();
-    assert!(a.contains("file:/x/song.flac") && a.contains("pcm_f32le"), "{a}");
+    assert!(
+        a.contains("file:/x/song.flac") && a.contains("pcm_f32le"),
+        "{a}"
+    );
 }
 
 #[test]
@@ -396,12 +504,22 @@ fn encoder_failure_names_its_message_and_decoder_failure_too() {
     let d = tempfile::tempdir().unwrap();
     let (_f, dir) = fixture(401);
     let src = dir.join("backings/backing.flac");
-    let enc = script(d.path(), "ffmpeg", "echo 'No space left on device' >&2\nexit 1");
+    let enc = script(
+        d.path(),
+        "ffmpeg",
+        "echo 'No space left on device' >&2\nexit 1",
+    );
     let part = d.path().join("out.mp3");
     let plan = count_in_plan(&map(0.0, 120.0), 44100).unwrap();
     let p = pipeline(&src, 44100, 2, plan.clone(), &part);
     let args = encoder_args(ExportKind::Mp3, 44100, 2, &[], &part);
-    let e = run(&p, Output::Encode { ffmpeg: enc, args }, &AtomicBool::new(false), &mut no_progress()).unwrap_err();
+    let e = run(
+        &p,
+        Output::Encode { ffmpeg: enc, args },
+        &AtomicBool::new(false),
+        &mut no_progress(),
+    )
+    .unwrap_err();
     assert_eq!(e, "Cannot encode: No space left on device");
 
     // A decoder that fails.
@@ -409,7 +527,13 @@ fn encoder_failure_names_its_message_and_decoder_failure_too() {
     let mut p = pipeline(&src, 44100, 2, plan, &part);
     p.ffmpeg = bad;
     let w = WavWriter::create(&part, 44100).unwrap();
-    let e = run(&p, Output::Wav(w), &AtomicBool::new(false), &mut no_progress()).unwrap_err();
+    let e = run(
+        &p,
+        Output::Wav(w),
+        &AtomicBool::new(false),
+        &mut no_progress(),
+    )
+    .unwrap_err();
     assert_eq!(e, "Cannot decode backing.flac: broken file");
 }
 

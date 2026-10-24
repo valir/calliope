@@ -26,7 +26,9 @@ pub(crate) fn copy_tree(from: &Path, to: &Path) {
 }
 
 pub(crate) fn spec_of(id: &str) -> (tempfile::TempDir, OpenSpec) {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-editor/tracks").join(id);
+    let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/library-editor/tracks")
+        .join(id);
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join(id);
     copy_tree(&src, &dir);
@@ -35,14 +37,29 @@ pub(crate) fn spec_of(id: &str) -> (tempfile::TempDir, OpenSpec) {
         .as_array()
         .unwrap()
         .iter()
-        .map(|s| StemEntry { name: s["name"].as_str().unwrap().into(), file: s["file"].as_str().unwrap().into() })
+        .map(|s| StemEntry {
+            name: s["name"].as_str().unwrap().into(),
+            file: s["file"].as_str().unwrap().into(),
+        })
         .collect();
-    let missing = stems.iter().filter(|s| !dir.join(&s.file).is_file()).map(|s| s.file.clone()).collect();
+    let missing = stems
+        .iter()
+        .filter(|s| !dir.join(&s.file).is_file())
+        .map(|s| s.file.clone())
+        .collect();
     let variant = v["backings"]
         .as_array()
         .and_then(|a| a.first())
         .map(|b| serde_json::from_value::<BackingVariant>(b.clone()).unwrap());
-    let spec = OpenSpec { id: id.into(), title: v["title"].as_str().unwrap().into(), dir, stems, missing, variant, tempo: Default::default() };
+    let spec = OpenSpec {
+        id: id.into(),
+        title: v["title"].as_str().unwrap().into(),
+        dir,
+        stems,
+        missing,
+        variant,
+        tempo: Default::default(),
+    };
     (tmp, spec)
 }
 
@@ -53,7 +70,11 @@ pub(crate) fn manager() -> (EditorManager, ManualBackend, Events) {
     let events: Events = Arc::new(Mutex::new(Vec::new()));
     let ev = events.clone();
     let sink: EventSink = Arc::new(move |e| ev.lock().unwrap().push(e));
-    (EditorManager::new(Arc::new(backend.clone()), sink), backend, events)
+    (
+        EditorManager::new(Arc::new(backend.clone()), sink),
+        backend,
+        events,
+    )
 }
 
 fn transports(events: &Events) -> Vec<TransportState> {
@@ -71,7 +92,12 @@ fn transports(events: &Events) -> Vec<TransportState> {
 /// Decoded 16-bit stems of a spec, as stereo f32 per frame range.
 fn decoded(spec: &OpenSpec, name: &str) -> StemPcm {
     let file = &spec.stems.iter().find(|s| s.name == name).unwrap().file;
-    stem_audio::decode_i16(&spec.dir.join(file), &AtomicBool::new(false), &mut |_, _| {}).unwrap()
+    stem_audio::decode_i16(
+        &spec.dir.join(file),
+        &AtomicBool::new(false),
+        &mut |_, _| {},
+    )
+    .unwrap()
 }
 
 fn stereo(pcm: &StemPcm, start: usize, frames: usize) -> Vec<f32> {
@@ -101,7 +127,13 @@ fn peak(v: &[f32]) -> f32 {
     v.iter().fold(0.0, |m, x| m.max(x.abs()))
 }
 
-fn open_four() -> (tempfile::TempDir, OpenSpec, EditorManager, ManualBackend, Events) {
+fn open_four() -> (
+    tempfile::TempDir,
+    OpenSpec,
+    EditorManager,
+    ManualBackend,
+    Events,
+) {
     let (tmp, spec) = spec_of(FOUR);
     let (mut m, b, ev) = manager();
     m.open(&spec).unwrap();
@@ -115,15 +147,32 @@ fn open_four_lanes() {
     assert_eq!(snap.stems.len(), 4);
     assert_eq!(snap.duration_ms, 12000);
     assert_eq!(snap.sample_rate, 22050);
-    assert!(snap.stems.iter().all(|l| !l.unmuted && l.gain_db == Some(0.0)));
-    assert_eq!(snap.variant, VariantTarget { id: "backing".into(), name: "Backing".into(), file: "backings/backing.flac".into(), exists: false });
+    assert!(snap
+        .stems
+        .iter()
+        .all(|l| !l.unmuted && l.gain_db == Some(0.0)));
+    assert_eq!(
+        snap.variant,
+        VariantTarget {
+            id: "backing".into(),
+            name: "Backing".into(),
+            file: "backings/backing.flac".into(),
+            exists: false
+        }
+    );
     assert_eq!(m.play(FOUR).unwrap_err(), "Check a stem first");
     assert_eq!(m.play("other").unwrap_err(), "no editor session for other");
     let loading: Vec<usize> = ev
         .lock()
         .unwrap()
         .iter()
-        .filter_map(|e| if let EditorEvent::Loading { done, total: 4, .. } = e { Some(*done) } else { None })
+        .filter_map(|e| {
+            if let EditorEvent::Loading { done, total: 4, .. } = e {
+                Some(*done)
+            } else {
+                None
+            }
+        })
         .collect();
     assert_eq!(loading, vec![0, 1, 2, 3, 4]);
     assert_eq!(spec.stems.len(), 4);
@@ -137,8 +186,16 @@ fn open_mixed_before_restores_variant_mix() {
     assert_eq!(
         snap.stems,
         vec![
-            LaneState { name: "vocals".into(), gain_db: Some(-6.0), unmuted: true },
-            LaneState { name: "guitar".into(), gain_db: Some(0.0), unmuted: false },
+            LaneState {
+                name: "vocals".into(),
+                gain_db: Some(-6.0),
+                unmuted: true
+            },
+            LaneState {
+                name: "guitar".into(),
+                gain_db: Some(0.0),
+                unmuted: false
+            },
         ]
     );
     assert_eq!(snap.variant.id, "backing");
@@ -164,17 +221,36 @@ fn mix_parsing_is_lenient() {
     ]});
     let lanes = parse_mix(&mix, &names);
     assert_eq!(lanes[0].gain_db, Some(12.0));
-    assert_eq!(lanes[1], LaneState { name: "b".into(), gain_db: None, unmuted: true });
-    assert_eq!(lanes[2], LaneState { name: "c".into(), gain_db: Some(0.0), unmuted: false });
-    assert_eq!(parse_mix(&serde_json::json!("junk"), &names)[0].gain_db, Some(0.0));
+    assert_eq!(
+        lanes[1],
+        LaneState {
+            name: "b".into(),
+            gain_db: None,
+            unmuted: true
+        }
+    );
+    assert_eq!(
+        lanes[2],
+        LaneState {
+            name: "c".into(),
+            gain_db: Some(0.0),
+            unmuted: false
+        }
+    );
+    assert_eq!(
+        parse_mix(&serde_json::json!("junk"), &names)[0].gain_db,
+        Some(0.0)
+    );
 }
 
 #[test]
 fn playback_equals_expected_mix_and_gain_change_applies() {
     let (_t, spec, mut m, b, _e) = open_four();
     let (voc, bass) = (decoded(&spec, "vocals"), decoded(&spec, "bass"));
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
-    m.set_stem(FOUR, "bass", Some(-6.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
+    m.set_stem(FOUR, "bass", Some(-6.0), true, Instant::now())
+        .unwrap();
     assert!(!b.is_open());
     assert!(m.play(FOUR).unwrap().playing);
     assert!(b.is_open());
@@ -182,27 +258,54 @@ fn playback_equals_expected_mix_and_gain_change_applies() {
     // 1300 frames crosses two chunk boundaries
     let out = b.pull(1300);
     assert_close(&out, &expected(&[(&voc, 1.0), (&bass, g)], 0, 1300));
-    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now())
+        .unwrap();
     let out = b.pull(100);
     assert_close(&out, &expected(&[(&voc, 1.0), (&bass, 1.0)], 1300, 100));
-    assert_eq!(m.snapshot(FOUR).unwrap().transport.position_ms, 1400 * 1000 / RATE as u64);
+    assert_eq!(
+        m.snapshot(FOUR).unwrap().transport.position_ms,
+        1400 * 1000 / RATE as u64
+    );
 }
 
 #[test]
 fn set_stem_snaps_gain() {
     let (_t, _s, mut m, _b, _e) = open_four();
-    assert_eq!(m.set_stem(FOUR, "drums", Some(-0.3), true, Instant::now()).unwrap().gain_db, Some(-0.5));
-    assert_eq!(m.set_stem(FOUR, "drums", Some(40.0), true, Instant::now()).unwrap().gain_db, Some(12.0));
-    assert_eq!(m.set_stem(FOUR, "drums", Some(-80.0), true, Instant::now()).unwrap().gain_db, None);
-    assert_eq!(m.set_stem(FOUR, "drums", None, true, Instant::now()).unwrap().gain_db, None);
-    assert!(m.set_stem(FOUR, "nope", Some(0.0), true, Instant::now()).is_err());
+    assert_eq!(
+        m.set_stem(FOUR, "drums", Some(-0.3), true, Instant::now())
+            .unwrap()
+            .gain_db,
+        Some(-0.5)
+    );
+    assert_eq!(
+        m.set_stem(FOUR, "drums", Some(40.0), true, Instant::now())
+            .unwrap()
+            .gain_db,
+        Some(12.0)
+    );
+    assert_eq!(
+        m.set_stem(FOUR, "drums", Some(-80.0), true, Instant::now())
+            .unwrap()
+            .gain_db,
+        None
+    );
+    assert_eq!(
+        m.set_stem(FOUR, "drums", None, true, Instant::now())
+            .unwrap()
+            .gain_db,
+        None
+    );
+    assert!(m
+        .set_stem(FOUR, "nope", Some(0.0), true, Instant::now())
+        .is_err());
 }
 
 #[test]
 fn solo_rules() {
     let (_t, spec, mut m, b, _e) = open_four();
     let (gui, voc) = (decoded(&spec, "guitar"), decoded(&spec, "vocals"));
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     let st = m.lane_play(FOUR, "guitar").unwrap();
     assert!(st.playing);
     assert_eq!(st.solo.as_deref(), Some("guitar"));
@@ -238,9 +341,14 @@ fn solo_rules() {
     assert!(!b.is_open());
     // unchecking the soloed stem
     m.lane_play(FOUR, "guitar").unwrap();
-    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now()).unwrap();
-    assert_eq!(m.snapshot(FOUR).unwrap().transport.solo.as_deref(), Some("guitar"));
-    m.set_stem(FOUR, "guitar", Some(0.0), false, Instant::now()).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now())
+        .unwrap();
+    assert_eq!(
+        m.snapshot(FOUR).unwrap().transport.solo.as_deref(),
+        Some("guitar")
+    );
+    m.set_stem(FOUR, "guitar", Some(0.0), false, Instant::now())
+        .unwrap();
     assert_eq!(m.snapshot(FOUR).unwrap().transport.solo, None);
 }
 
@@ -248,7 +356,8 @@ fn solo_rules() {
 fn solo_gain_is_the_lanes_own() {
     let (_t, spec, mut m, b, _e) = open_four();
     let gui = decoded(&spec, "guitar");
-    m.set_stem(FOUR, "guitar", Some(-6.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "guitar", Some(-6.0), true, Instant::now())
+        .unwrap();
     m.lane_play(FOUR, "guitar").unwrap();
     let g = mixer::gain_factor(Some(-6.0), true);
     assert_close(&b.pull(300), &expected(&[(&gui, g)], 0, 300));
@@ -258,7 +367,8 @@ fn solo_gain_is_the_lanes_own() {
 fn clipping_flag_with_one_second_hold() {
     let (_t, _s, mut m, b, ev) = open_four();
     for n in ["vocals", "drums", "bass"] {
-        m.set_stem(FOUR, n, Some(12.0), true, Instant::now()).unwrap();
+        m.set_stem(FOUR, n, Some(12.0), true, Instant::now())
+            .unwrap();
     }
     m.play(FOUR).unwrap();
     let t0 = Instant::now();
@@ -276,7 +386,8 @@ fn clipping_flag_with_one_second_hold() {
 #[test]
 fn no_clipping_flag_for_a_clean_mix() {
     let (_t, _s, mut m, b, _e) = open_four();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     m.play(FOUR).unwrap();
     b.pull(2000);
     m.tick(Instant::now());
@@ -286,7 +397,8 @@ fn no_clipping_flag_for_a_clean_mix() {
 #[test]
 fn pause_is_silent_and_holds_position() {
     let (_t, _s, mut m, b, _e) = open_four();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     m.play(FOUR).unwrap();
     assert!(peak(&b.pull(1000)) > 0.0);
     let st = m.pause(FOUR).unwrap();
@@ -304,7 +416,8 @@ fn pause_is_silent_and_holds_position() {
 fn seek_while_playing_silences_then_resumes() {
     let (_t, spec, mut m, b, _e) = open_four();
     let voc = decoded(&spec, "vocals");
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     m.play(FOUR).unwrap();
     b.pull(100);
     let t0 = Instant::now();
@@ -324,10 +437,16 @@ fn seek_while_playing_silences_then_resumes() {
 fn seek_while_paused_just_moves() {
     let (_t, _s, mut m, _b, ev) = open_four();
     let st = m.seek(FOUR, 2500, Instant::now()).unwrap();
-    assert_eq!((st.playing, st.resume_pending, st.position_ms), (false, false, 2500));
+    assert_eq!(
+        (st.playing, st.resume_pending, st.position_ms),
+        (false, false, 2500)
+    );
     assert_eq!(transports(&ev).last().unwrap().position_ms, 2500);
     // beyond the end is clamped
-    assert_eq!(m.seek(FOUR, 99_000, Instant::now()).unwrap().position_ms, 12000);
+    assert_eq!(
+        m.seek(FOUR, 99_000, Instant::now()).unwrap().position_ms,
+        12000
+    );
 }
 
 #[test]
@@ -348,7 +467,10 @@ fn a_seek_in_the_callback_window_wins() {
     let (_t, _s, mut m, _b, _e) = open_four();
     let shared = m.session.as_ref().unwrap().shared.clone();
     shared.position.store(100, Ordering::SeqCst);
-    assert!(shared.position.compare_exchange(50, 150, Ordering::SeqCst, Ordering::SeqCst).is_err());
+    assert!(shared
+        .position
+        .compare_exchange(50, 150, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err());
     assert_eq!(shared.position.load(Ordering::SeqCst), 100);
     let _ = &mut m;
 }
@@ -356,7 +478,8 @@ fn a_seek_in_the_callback_window_wins() {
 #[test]
 fn end_of_track_acts_as_stop() {
     let (_t, _s, mut m, b, ev) = open_four();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     let now = Instant::now();
     m.play(FOUR).unwrap();
     m.seek(FOUR, 11_900, now).unwrap();
@@ -376,7 +499,8 @@ fn end_of_track_acts_as_stop() {
 #[test]
 fn transport_events_are_throttled_while_playing() {
     let (_t, _s, mut m, b, ev) = open_four();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     let t0 = Instant::now();
     m.play(FOUR).unwrap();
     let before = transports(&ev).len();
@@ -396,11 +520,16 @@ fn transport_events_are_throttled_while_playing() {
 #[test]
 fn device_error_stops_playback() {
     let (_t, _s, mut m, b, ev) = open_four();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     m.play(FOUR).unwrap();
     b.fail("device lost");
     m.tick(Instant::now());
-    assert!(ev.lock().unwrap().iter().any(|e| matches!(e, EditorEvent::AudioError { message, .. } if message == "device lost")));
+    assert!(ev
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| matches!(e, EditorEvent::AudioError { message, .. } if message == "device lost")));
     assert!(!m.snapshot(FOUR).unwrap().transport.playing);
     assert!(!b.is_open());
 }
@@ -423,7 +552,10 @@ fn second_open_supersedes_a_load_in_progress() {
     let t2 = m.begin_open();
     let loaded = load(&spec, &t2, &|_| {}).unwrap();
     let t3 = m.begin_open();
-    assert_eq!(m.finish_open(&t2, &spec, loaded).err().as_deref(), Some(SUPERSEDED));
+    assert_eq!(
+        m.finish_open(&t2, &spec, loaded).err().as_deref(),
+        Some(SUPERSEDED)
+    );
     assert!(m.current().is_none());
     let loaded = load(&spec, &t3, &|_| {}).unwrap();
     assert!(m.finish_open(&t3, &spec, loaded).is_ok());
@@ -436,15 +568,31 @@ fn second_open_supersedes_a_load_in_progress() {
 #[test]
 fn close_then_open_restores_the_remembered_mix() {
     let (_t, spec, mut m, b, _e) = open_four();
-    m.set_stem(FOUR, "drums", Some(-12.5), true, Instant::now()).unwrap();
-    m.set_stem(FOUR, "bass", None, true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "drums", Some(-12.5), true, Instant::now())
+        .unwrap();
+    m.set_stem(FOUR, "bass", None, true, Instant::now())
+        .unwrap();
     m.play(FOUR).unwrap();
     m.close();
     assert!(!b.is_open());
     assert!(m.current().is_none());
     let snap = m.open(&spec).unwrap();
-    assert_eq!(snap.stems[1], LaneState { name: "drums".into(), gain_db: Some(-12.5), unmuted: true });
-    assert_eq!(snap.stems[2], LaneState { name: "bass".into(), gain_db: None, unmuted: true });
+    assert_eq!(
+        snap.stems[1],
+        LaneState {
+            name: "drums".into(),
+            gain_db: Some(-12.5),
+            unmuted: true
+        }
+    );
+    assert_eq!(
+        snap.stems[2],
+        LaneState {
+            name: "bass".into(),
+            gain_db: None,
+            unmuted: true
+        }
+    );
     assert!(!snap.stems[0].unmuted);
     assert!(!snap.transport.playing);
     assert_eq!(snap.transport.position_ms, 0);
@@ -453,7 +601,8 @@ fn close_then_open_restores_the_remembered_mix() {
 #[test]
 fn opening_another_track_closes_the_first() {
     let (_t, spec, mut m, b, _e) = open_four();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     m.play(FOUR).unwrap();
     let (_t2, spec2) = spec_of(MIXED);
     m.open(&spec2).unwrap();
@@ -471,7 +620,9 @@ use std::time::Instant as Clock;
 
 /// A repository with the fixture track copied to `tracks/<id>`.
 fn repo_spec(id: &str) -> (tempfile::TempDir, Repository, OpenSpec) {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-editor/tracks").join(id);
+    let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/library-editor/tracks")
+        .join(id);
     let tmp = tempfile::tempdir().unwrap();
     let repo = Repository::new(tmp.path().join("repo"));
     repo.ensure_layout().unwrap();
@@ -493,9 +644,19 @@ fn events_only() -> Events {
 fn final_event(events: &Events) -> EditorEvent {
     let end = Clock::now() + Duration::from_secs(60);
     loop {
-        let found = events.lock().unwrap().iter().find(|e| {
-            matches!(e, EditorEvent::Saved { .. } | EditorEvent::SaveFailed { .. } | EditorEvent::SaveCancelled { .. })
-        }).cloned();
+        let found = events
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|e| {
+                matches!(
+                    e,
+                    EditorEvent::Saved { .. }
+                        | EditorEvent::SaveFailed { .. }
+                        | EditorEvent::SaveCancelled { .. }
+                )
+            })
+            .cloned();
         if let Some(e) = found {
             return e;
         }
@@ -524,19 +685,37 @@ fn save_ignores_solo_and_replaces_the_variant() {
     let (_t, repo, spec) = repo_spec(FOUR);
     let (mut m, _b, ev) = manager();
     m.open(&spec).unwrap();
-    m.set_stem(FOUR, "vocals", Some(-6.0), true, Instant::now()).unwrap();
-    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(-6.0), true, Instant::now())
+        .unwrap();
+    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now())
+        .unwrap();
     m.lane_play(FOUR, "vocals").unwrap(); // solo on vocals; drums stays checked
-    assert_eq!(m.snapshot(FOUR).unwrap().transport.solo.as_deref(), Some("vocals"));
+    assert_eq!(
+        m.snapshot(FOUR).unwrap().transport.solo.as_deref(),
+        Some("vocals")
+    );
     let snap = m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
     assert!(snap.saving.is_some());
-    assert_eq!(m.start_save(FOUR, repo.clone(), no_lock()).unwrap_err(), "A save is already running");
-    let EditorEvent::Saved { file, clipped_samples, .. } = final_event(&ev) else { panic!("{:?}", ev.lock().unwrap()) };
+    assert_eq!(
+        m.start_save(FOUR, repo.clone(), no_lock()).unwrap_err(),
+        "A save is already running"
+    );
+    let EditorEvent::Saved {
+        file,
+        clipped_samples,
+        ..
+    } = final_event(&ev)
+    else {
+        panic!("{:?}", ev.lock().unwrap())
+    };
     assert_eq!(file, "backings/backing.flac");
 
     // exactly vocals(-6 dB) + drums(0 dB), as 16 bits
     let (v, d) = (decoded(&spec, "vocals"), decoded(&spec, "drums"));
-    let (gv, gd) = (mixer::gain_factor(Some(-6.0), true), mixer::gain_factor(Some(0.0), true));
+    let (gv, gd) = (
+        mixer::gain_factor(Some(-6.0), true),
+        mixer::gain_factor(Some(0.0), true),
+    );
     let frames = v.frames.max(d.frames) as usize;
     let (sv, sd) = (stereo(&v, 0, frames), stereo(&d, 0, frames));
     let mut clipped = 0;
@@ -548,7 +727,10 @@ fn save_ignores_solo_and_replaces_the_variant() {
         })
         .collect();
     let (info, got) = read_flac(&spec.dir.join(&file));
-    assert_eq!((info.sample_rate, info.bits_per_sample, info.channels), (22050, 16, 2));
+    assert_eq!(
+        (info.sample_rate, info.bits_per_sample, info.channels),
+        (22050, 16, 2)
+    );
     assert!(got == want, "saved mix differs");
     assert_eq!(clipped_samples, clipped);
     assert!(parts_in(&spec.dir).is_empty());
@@ -557,17 +739,32 @@ fn save_ignores_solo_and_replaces_the_variant() {
     m.tick(Clock::now());
     let snap = m.snapshot(FOUR).unwrap();
     assert_eq!(snap.saving, None);
-    assert_eq!(snap.variant, VariantTarget { id: "backing".into(), name: "Backing".into(), file, exists: true });
-    let meta: Value = serde_json::from_slice(&fs::read(spec.dir.join("track.json")).unwrap()).unwrap();
-    assert_eq!(meta["backings"][0]["mix"]["stems"][0], serde_json::json!({"name": "vocals", "gain_db": -6.0, "unmuted": true}));
+    assert_eq!(
+        snap.variant,
+        VariantTarget {
+            id: "backing".into(),
+            name: "Backing".into(),
+            file,
+            exists: true
+        }
+    );
+    let meta: Value =
+        serde_json::from_slice(&fs::read(spec.dir.join("track.json")).unwrap()).unwrap();
+    assert_eq!(
+        meta["backings"][0]["mix"]["stems"][0],
+        serde_json::json!({"name": "vocals", "gain_db": -6.0, "unmuted": true})
+    );
     assert_eq!(meta["backings"][0]["mix"]["stems"][2]["unmuted"], false);
 
     // a second save replaces the same variant (no backing-2) and trashes the old file
     ev.lock().unwrap().clear();
     m.start_save(FOUR, repo, no_lock()).unwrap();
-    let EditorEvent::Saved { file, .. } = final_event(&ev) else { panic!() };
+    let EditorEvent::Saved { file, .. } = final_event(&ev) else {
+        panic!()
+    };
     assert_eq!(file, "backings/backing.flac");
-    let meta: Value = serde_json::from_slice(&fs::read(spec.dir.join("track.json")).unwrap()).unwrap();
+    let meta: Value =
+        serde_json::from_slice(&fs::read(spec.dir.join("track.json")).unwrap()).unwrap();
     assert_eq!(meta["backings"].as_array().unwrap().len(), 1);
 }
 
@@ -576,9 +773,19 @@ fn save_refuses_without_a_checked_stem() {
     let (_t, repo, spec) = repo_spec(FOUR);
     let (mut m, _b, ev) = manager();
     m.open(&spec).unwrap();
-    assert_eq!(m.start_save(FOUR, repo.clone(), no_lock()).unwrap_err(), "Check a stem first");
-    assert_eq!(m.start_save("other", repo, no_lock()).unwrap_err(), "no editor session for other");
-    assert!(ev.lock().unwrap().iter().all(|e| !matches!(e, EditorEvent::Saving { .. })));
+    assert_eq!(
+        m.start_save(FOUR, repo.clone(), no_lock()).unwrap_err(),
+        "Check a stem first"
+    );
+    assert_eq!(
+        m.start_save("other", repo, no_lock()).unwrap_err(),
+        "no editor session for other"
+    );
+    assert!(ev
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|e| !matches!(e, EditorEvent::Saving { .. })));
     assert!(parts_in(&spec.dir).is_empty());
 }
 
@@ -587,13 +794,18 @@ fn save_conflict_fails_and_leaves_no_part() {
     let (_t, repo, spec) = repo_spec(FOUR);
     let (mut m, _b, ev) = manager();
     m.open(&spec).unwrap();
-    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now())
+        .unwrap();
     // the stems change on disk after the session opened
     let path = spec.dir.join("track.json");
-    let text = fs::read_to_string(&path).unwrap().replace("\"name\": \"guitar\"", "\"name\": \"lead\"");
+    let text = fs::read_to_string(&path)
+        .unwrap()
+        .replace("\"name\": \"guitar\"", "\"name\": \"lead\"");
     fs::write(&path, &text).unwrap();
     m.start_save(FOUR, repo, no_lock()).unwrap();
-    let EditorEvent::SaveFailed { message, .. } = final_event(&ev) else { panic!() };
+    let EditorEvent::SaveFailed { message, .. } = final_event(&ev) else {
+        panic!()
+    };
     assert!(message.starts_with("conflict:"), "{message}");
     assert!(parts_in(&spec.dir).is_empty());
     assert!(!spec.dir.join("backings").exists());
@@ -625,7 +837,10 @@ fn save_cancel_leaves_track_json_unchanged() {
         dir: spec.dir.clone(),
         stems: spec.stems.clone(),
         input: crate::backing_render::RenderInput {
-            stems: vec![crate::backing_render::RenderStem { path: spec.dir.join(&spec.stems[2].file), gain: 1.0 }],
+            stems: vec![crate::backing_render::RenderStem {
+                path: spec.dir.join(&spec.stems[2].file),
+                gain: 1.0,
+            }],
             sample_rate: 22050,
             bits: 16,
             frames: 12 * 22050,
@@ -634,8 +849,13 @@ fn save_cancel_leaves_track_json_unchanged() {
         repo,
         lock: no_lock(),
     };
-    crate::backing_render::spawn(params, shared, sink).join().unwrap();
-    assert!(matches!(final_event(&ev), EditorEvent::SaveCancelled { .. }));
+    crate::backing_render::spawn(params, shared, sink)
+        .join()
+        .unwrap();
+    assert!(matches!(
+        final_event(&ev),
+        EditorEvent::SaveCancelled { .. }
+    ));
     assert!(parts_in(&spec.dir).is_empty());
     assert_eq!(fs::read(&path).unwrap(), before);
     assert!(!spec.dir.join("backings").exists());
@@ -646,7 +866,8 @@ fn cancel_through_the_manager_finishes_the_job() {
     let (_t, repo, spec) = repo_spec(FOUR);
     let (mut m, _b, ev) = manager();
     m.open(&spec).unwrap();
-    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now())
+        .unwrap();
     m.start_save(FOUR, repo, no_lock()).unwrap();
     m.cancel_save(FOUR).unwrap();
     // either the cancel won or the (fast) job had already saved; never a leftover part
@@ -660,14 +881,21 @@ fn save_progress_is_monotonic_and_ends_at_one() {
     let (_t, repo, spec) = repo_spec(FOUR);
     let (mut m, _b, ev) = manager();
     m.open(&spec).unwrap();
-    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now())
+        .unwrap();
     m.start_save(FOUR, repo, no_lock()).unwrap();
     assert!(matches!(final_event(&ev), EditorEvent::Saved { .. }));
     let p: Vec<f32> = ev
         .lock()
         .unwrap()
         .iter()
-        .filter_map(|e| if let EditorEvent::Saving { progress, .. } = e { Some(*progress) } else { None })
+        .filter_map(|e| {
+            if let EditorEvent::Saving { progress, .. } = e {
+                Some(*progress)
+            } else {
+                None
+            }
+        })
         .collect();
     assert!(!p.is_empty() && p.windows(2).all(|w| w[0] <= w[1]), "{p:?}");
     assert_eq!(p.last(), Some(&1.0));
@@ -686,9 +914,13 @@ fn a_panic_in_the_save_thread_fails_the_save_and_frees_the_slot() {
     });
     let mut m = EditorManager::new(Arc::new(ManualBackend::new()), sink);
     m.open(&spec).unwrap();
-    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now())
+        .unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
-    assert!(matches!(final_event(&events), EditorEvent::SaveFailed { .. }));
+    assert!(matches!(
+        final_event(&events),
+        EditorEvent::SaveFailed { .. }
+    ));
     assert!(parts_in(&spec.dir).is_empty());
     // the job counts as finished: another save can start
     m.start_save(FOUR, repo, no_lock()).unwrap();
@@ -724,7 +956,13 @@ fn peak_events(events: &Events) -> Vec<(u64, Vec<f32>)> {
         .lock()
         .unwrap()
         .iter()
-        .filter_map(|e| if let EditorEvent::Peaks { gen, peaks, .. } = e { Some((*gen, peaks.clone())) } else { None })
+        .filter_map(|e| {
+            if let EditorEvent::Peaks { gen, peaks, .. } = e {
+                Some((*gen, peaks.clone()))
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
@@ -746,7 +984,14 @@ fn waveform_debounce_restarts_and_starts_once() {
     m.tick(t0); // the first computation is due at once
     assert_eq!(m.peaks_gen_for_test(), 1);
     m.set_stem(FOUR, "vocals", Some(0.0), true, t0).unwrap();
-    m.set_stem(FOUR, "vocals", Some(-3.0), true, t0 + Duration::from_millis(200)).unwrap();
+    m.set_stem(
+        FOUR,
+        "vocals",
+        Some(-3.0),
+        true,
+        t0 + Duration::from_millis(200),
+    )
+    .unwrap();
     m.tick(t0 + Duration::from_millis(499));
     assert_eq!(m.peaks_gen_for_test(), 1);
     m.tick(t0 + Duration::from_millis(500));
@@ -769,7 +1014,9 @@ fn nothing_waits_on_a_running_waveform_computation() {
     }));
     let t0 = Instant::now();
     m.tick(t0);
-    started_rx.recv_timeout(WAIT).expect("the worker did not start");
+    started_rx
+        .recv_timeout(WAIT)
+        .expect("the worker did not start");
     // the computation is held; everything else still returns
     m.set_stem(FOUR, "vocals", Some(0.0), true, t0).unwrap();
     m.play(FOUR).unwrap();
@@ -781,8 +1028,14 @@ fn nothing_waits_on_a_running_waveform_computation() {
     assert!(peak_events(&events).is_empty());
     gate.open();
     tick_until_peaks(&mut m, &events, t0 + Duration::from_millis(40), 1);
-    assert_eq!(peak_events(&events), vec![(1, vec![0.5; mix_waveform::BUCKETS])]);
-    assert_eq!(m.snapshot(FOUR).unwrap().peaks, vec![0.5; mix_waveform::BUCKETS]);
+    assert_eq!(
+        peak_events(&events),
+        vec![(1, vec![0.5; mix_waveform::BUCKETS])]
+    );
+    assert_eq!(
+        m.snapshot(FOUR).unwrap().peaks,
+        vec![0.5; mix_waveform::BUCKETS]
+    );
 }
 
 #[test]
@@ -791,7 +1044,10 @@ fn a_superseded_waveform_is_never_emitted() {
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let started_tx = Mutex::new(started_tx);
     let gate = Arc::new(Gate::default());
-    let (g, calls) = (gate.clone(), Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+    let (g, calls) = (
+        gate.clone(),
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    );
     m.set_peaks_fn(Arc::new(move |_, _, _, b, _| {
         let n = calls.fetch_add(1, Ordering::SeqCst);
         started_tx.lock().unwrap().send(()).unwrap();
@@ -813,7 +1069,10 @@ fn a_superseded_waveform_is_never_emitted() {
         m.tick(t0 + Duration::from_millis(340));
         std::thread::yield_now();
     }
-    assert_eq!(peak_events(&events), vec![(2, vec![1.0; mix_waveform::BUCKETS])]);
+    assert_eq!(
+        peak_events(&events),
+        vec![(2, vec![1.0; mix_waveform::BUCKETS])]
+    );
 }
 
 #[test]
@@ -827,9 +1086,22 @@ fn emitted_peaks_equal_mix_peaks_of_the_checked_stems() {
     let gains: Vec<f32> = spec
         .stems
         .iter()
-        .map(|s| if s.name == "vocals" { mixer::gain_factor(Some(-6.0), true) } else { 0.0 })
+        .map(|s| {
+            if s.name == "vocals" {
+                mixer::gain_factor(Some(-6.0), true)
+            } else {
+                0.0
+            }
+        })
         .collect();
-    let want = mix_waveform::mix_peaks(&stems, &gains, stems[0].frames, mix_waveform::BUCKETS, &AtomicBool::new(false)).unwrap();
+    let want = mix_waveform::mix_peaks(
+        &stems,
+        &gains,
+        stems[0].frames,
+        mix_waveform::BUCKETS,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
     let got = peak_events(&events);
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].1, want);
@@ -848,7 +1120,14 @@ fn closing_cancels_the_waveform_worker() {
         while !cancel.load(Ordering::Relaxed) && Instant::now() < end {
             std::thread::yield_now();
         }
-        tx.lock().unwrap().send(if cancel.load(Ordering::Relaxed) { "cancelled" } else { "timeout" }).unwrap();
+        tx.lock()
+            .unwrap()
+            .send(if cancel.load(Ordering::Relaxed) {
+                "cancelled"
+            } else {
+                "timeout"
+            })
+            .unwrap();
         None
     }));
     m.tick(Instant::now());
@@ -860,14 +1139,26 @@ fn closing_cancels_the_waveform_worker() {
 
 #[test]
 fn the_snapshot_carries_the_tempo_and_set_tempo_replaces_it() {
-    use crate::tempo_map::{Segment, SectionMeta, TempoMap};
+    use crate::tempo_map::{SectionMeta, Segment, TempoMap};
     let (_t, _spec, mut m, _b, _ev) = open_four();
     assert!(m.snapshot(FOUR).unwrap().tempo.segments.is_empty());
     let map = TempoMap {
         beats_per_bar: 4,
         segments: vec![
-            Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false, meta: SectionMeta::default() },
-            Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6500.0), on_beat: false, meta: SectionMeta::default() },
+            Segment {
+                start_ms: 500.0,
+                bpm: 120.0,
+                detected_ms: None,
+                on_beat: false,
+                meta: SectionMeta::default(),
+            },
+            Segment {
+                start_ms: 6500.0,
+                bpm: 90.0,
+                detected_ms: Some(6500.0),
+                on_beat: false,
+                meta: SectionMeta::default(),
+            },
         ],
     };
     let snap = m.set_tempo(FOUR, map.clone()).unwrap();
@@ -881,7 +1172,10 @@ fn the_snapshot_carries_the_tempo_and_set_tempo_replaces_it() {
 fn detection_input_is_drums_bass_guitar_with_fallbacks() {
     use crate::editor::detect_stem_indices as pick;
     // 6 stems: vocals, drums, bass, guitar, keys, other -> drums, bass, guitar (not other)
-    assert_eq!(pick(&["vocals", "drums", "bass", "guitar", "piano", "other"]), vec![1, 2, 3]);
+    assert_eq!(
+        pick(&["vocals", "drums", "bass", "guitar", "piano", "other"]),
+        vec![1, 2, 3]
+    );
     // 4 stems: the guitar lives in other
     assert_eq!(pick(&["vocals", "drums", "bass", "other"]), vec![1, 2, 3]);
     // a missing drums or bass is just left out

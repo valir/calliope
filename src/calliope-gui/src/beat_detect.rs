@@ -74,7 +74,11 @@ pub struct DetectParams {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DetectOutcome {
-    Done { tempo: TempoMap, beats: usize, replaced: bool },
+    Done {
+        tempo: TempoMap,
+        beats: usize,
+        replaced: bool,
+    },
     Failed(String),
     Cancelled,
 }
@@ -91,7 +95,10 @@ impl DetectShared {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             cancel: AtomicBool::new(false),
-            state: Mutex::new(DetectState { phase: DetectPhase::Checking, progress: None }),
+            state: Mutex::new(DetectState {
+                phase: DetectPhase::Checking,
+                progress: None,
+            }),
             finished: AtomicBool::new(false),
             outcome: Mutex::new(None),
         })
@@ -106,7 +113,10 @@ impl DetectShared {
     }
 
     pub fn outcome(&self) -> Option<DetectOutcome> {
-        self.outcome.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.outcome
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -138,9 +148,14 @@ type R<T> = Result<T, Stop>;
 fn client_stop(e: ClientError, url: &str) -> Stop {
     match e {
         ClientError::Cancelled => Stop::Cancelled,
-        ClientError::Unreachable(_) => Stop::Failed(format!("Cannot reach the edge-AI server at {url}")),
+        ClientError::Unreachable(_) => {
+            Stop::Failed(format!("Cannot reach the edge-AI server at {url}"))
+        }
         ClientError::Stalled => Stop::Failed(STALLED.into()),
-        ClientError::Rejected { status: 413, message } => Stop::Failed(format!("The server refused the mix: {message}")),
+        ClientError::Rejected {
+            status: 413,
+            message,
+        } => Stop::Failed(format!("The server refused the mix: {message}")),
         other => Stop::Failed(other.to_string()),
     }
 }
@@ -148,12 +163,20 @@ fn client_stop(e: ClientError, url: &str) -> Stop {
 /// Starts the job on its own thread. After `shared` shows it finished, the outcome is set.
 pub fn spawn(job: DetectJob, shared: Arc<DetectShared>, sink: EventSink) -> JoinHandle<()> {
     std::thread::spawn(move || {
-        let part = job.dir.join(format!(".calliope-beats-{}.part", uuid::Uuid::now_v7()));
+        let part = job
+            .dir
+            .join(format!(".calliope-beats-{}.part", uuid::Uuid::now_v7()));
         let _guard = PartGuard(part.clone());
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&job, &shared, &sink, &part)))
-            .unwrap_or_else(|_| Err(Stop::Failed("Beat detection stopped unexpectedly".into())));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run(&job, &shared, &sink, &part)
+        }))
+        .unwrap_or_else(|_| Err(Stop::Failed("Beat detection stopped unexpectedly".into())));
         let outcome = match result {
-            Ok((tempo, beats, replaced)) => DetectOutcome::Done { tempo, beats, replaced },
+            Ok((tempo, beats, replaced)) => DetectOutcome::Done {
+                tempo,
+                beats,
+                replaced,
+            },
             Err(Stop::Cancelled) => DetectOutcome::Cancelled,
             Err(Stop::Failed(m)) => DetectOutcome::Failed(m),
         };
@@ -173,11 +196,18 @@ struct Reporter<'a> {
 impl Reporter<'_> {
     fn emit(&self, state: DetectState) {
         *self.shared.state.lock().unwrap_or_else(|e| e.into_inner()) = state;
-        (self.sink)(EditorEvent::Detect { id: self.id.to_string(), state });
+        (self.sink)(EditorEvent::Detect {
+            id: self.id.to_string(),
+            state,
+        });
     }
 
     fn phase(&mut self, phase: DetectPhase, progress: Option<f32>) {
-        eprintln!("calliope: editor detect id={} phase={}", self.id, phase.name());
+        eprintln!(
+            "calliope: editor detect id={} phase={}",
+            self.id,
+            phase.name()
+        );
         self.throttle = Throttle::new(PROGRESS_INTERVAL);
         self.throttle.allow(Instant::now());
         self.emit(DetectState { phase, progress });
@@ -191,7 +221,12 @@ impl Reporter<'_> {
     }
 }
 
-fn run(job: &DetectJob, shared: &DetectShared, sink: &EventSink, part: &Path) -> R<(TempoMap, usize, bool)> {
+fn run(
+    job: &DetectJob,
+    shared: &DetectShared,
+    sink: &EventSink,
+    part: &Path,
+) -> R<(TempoMap, usize, bool)> {
     let p = &job.params;
     let mut server_job: Option<String> = None;
     let client = StemsClient::new(&p.url);
@@ -213,8 +248,19 @@ fn run_inner(
     let p = &job.params;
     let url = p.url.as_str();
     let cancel = &shared.cancel;
-    let check_cancel = || if cancel.load(Ordering::SeqCst) { Err(Stop::Cancelled) } else { Ok(()) };
-    let mut rep = Reporter { id: &job.id, shared, sink, throttle: Throttle::new(PROGRESS_INTERVAL) };
+    let check_cancel = || {
+        if cancel.load(Ordering::SeqCst) {
+            Err(Stop::Cancelled)
+        } else {
+            Ok(())
+        }
+    };
+    let mut rep = Reporter {
+        id: &job.id,
+        shared,
+        sink,
+        throttle: Throttle::new(PROGRESS_INTERVAL),
+    };
 
     rep.phase(DetectPhase::Checking, None);
     let health = client.health().map_err(|e| client_stop(e, url))?;
@@ -224,13 +270,24 @@ fn run_inner(
     check_cancel()?;
 
     rep.phase(DetectPhase::Mixing, Some(0.0));
-    backing_render::render_flac(&job.input, part, cancel, &mut |f| rep.progress(DetectPhase::Mixing, Some(f)))
-        .map_err(|m| if m == backing_render::CANCELLED { Stop::Cancelled } else { Stop::Failed(m) })?;
+    backing_render::render_flac(&job.input, part, cancel, &mut |f| {
+        rep.progress(DetectPhase::Mixing, Some(f))
+    })
+    .map_err(|m| {
+        if m == backing_render::CANCELLED {
+            Stop::Cancelled
+        } else {
+            Stop::Failed(m)
+        }
+    })?;
     check_cancel()?;
 
     rep.phase(DetectPhase::Uploading, Some(0.0));
     let sent = client.submit_beats(part, cancel, |sent, total| {
-        rep.progress(DetectPhase::Uploading, Some(sent as f32 / total.max(1) as f32));
+        rep.progress(
+            DetectPhase::Uploading,
+            Some(sent as f32 / total.max(1) as f32),
+        );
     });
     let _ = fs::remove_file(part);
     let id = sent.map_err(|e| client_stop(e, url))?;
@@ -255,16 +312,28 @@ fn run_inner(
     match st.state {
         JobState::Done => {}
         JobState::Failed => {
-            let m = st.error.map(|m| media::clean_text(&m, 300)).filter(|m| !m.is_empty()).unwrap_or_else(|| "no reason given".into());
-            return Err(Stop::Failed(format!("Beat detection failed on the server: {m}")));
+            let m = st
+                .error
+                .map(|m| media::clean_text(&m, 300))
+                .filter(|m| !m.is_empty())
+                .unwrap_or_else(|| "no reason given".into());
+            return Err(Stop::Failed(format!(
+                "Beat detection failed on the server: {m}"
+            )));
         }
-        _ => return Err(Stop::Failed("The job was cancelled on the edge-AI server".into())),
+        _ => {
+            return Err(Stop::Failed(
+                "The job was cancelled on the edge-AI server".into(),
+            ))
+        }
     }
 
     // From here a cancel is too late: the job ends `Detected`.
     check_cancel()?;
     rep.phase(DetectPhase::Applying, None);
-    let beats = client.fetch_beats(&id, job.duration_s).map_err(|e| client_stop(e, url))?;
+    let beats = client
+        .fetch_beats(&id, job.duration_s)
+        .map_err(|e| client_stop(e, url))?;
     let det = tempo_detect::detect(&beats.beats, &beats.downbeats, 4).map_err(Stop::Failed)?;
     eprintln!(
         "calliope: editor detected id={} beats={} downbeats={} bar_beats={} sigma_ms={:.1} segments={} bpm={} starts_ms={}",

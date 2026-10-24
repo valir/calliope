@@ -36,7 +36,9 @@ fn render(hz: f32, rate: u32) -> Vec<f32> {
 
 impl Click {
     pub(crate) fn new(rate: u32) -> Self {
-        Click { samples: render(CLICK_HZ, rate) }
+        Click {
+            samples: render(CLICK_HZ, rate),
+        }
     }
 
     pub(crate) fn samples(&self) -> &[f32] {
@@ -65,7 +67,10 @@ impl CountIn {
     /// frames before the track's next beat: that beat then falls on the 4th beat. Kept under one beat.
     pub fn lead_in(self, lead: u64) -> CountIn {
         let b = self.clicks[1];
-        CountIn { start: self.start - lead.min(b.saturating_sub(1)), ..self }
+        CountIn {
+            start: self.start - lead.min(b.saturating_sub(1)),
+            ..self
+        }
     }
 }
 
@@ -95,7 +100,10 @@ pub(crate) fn section_clicks(map: &TempoMap, dur_ms: f64, wrap: Option<(f64, f64
     let mut clicks: Vec<f64> = map
         .beats_in(0.0, dur_ms)
         .into_iter()
-        .filter(|&(t, _)| map.segment_at(t).is_none_or(|k| map.segments[k].meta.metronome))
+        .filter(|&(t, _)| {
+            map.segment_at(t)
+                .is_none_or(|k| map.segments[k].meta.metronome)
+        })
         .map(|(t, _)| t)
         .collect();
     for seg in map.segments.iter().skip(1) {
@@ -115,7 +123,12 @@ pub(crate) fn section_clicks(map: &TempoMap, dur_ms: f64, wrap: Option<(f64, f64
             }
         }
         clicks.retain(|&t| !(t > first - 3.5 * b && t < first - EPS));
-        clicks.extend([3.0, 2.0, 1.0].iter().map(|n| first - n * b).filter(|&t| t >= 0.0));
+        clicks.extend(
+            [3.0, 2.0, 1.0]
+                .iter()
+                .map(|n| first - n * b)
+                .filter(|&t| t >= 0.0),
+        );
     }
     clicks.sort_by(f64::total_cmp);
     clicks.dedup_by(|a, b| (*a - *b).abs() < EPS);
@@ -142,7 +155,13 @@ mod tests {
     fn lead_in_starts_the_audio_earlier_and_stays_under_a_beat() {
         let p = count_in_plan(120.0, 22050);
         assert_eq!(p.lead_in(0), p);
-        assert_eq!(p.lead_in(5000), CountIn { clicks: [0, 11025, 22050], start: 33075 - 5000 });
+        assert_eq!(
+            p.lead_in(5000),
+            CountIn {
+                clicks: [0, 11025, 22050],
+                start: 33075 - 5000
+            }
+        );
         assert_eq!(p.lead_in(99_999).start, 22051, "after the third click");
     }
 
@@ -198,12 +217,19 @@ mod tests {
             bpm,
             detected_ms: None,
             on_beat,
-            meta: SectionMeta { name: String::new(), metronome, count_in },
+            meta: SectionMeta {
+                name: String::new(),
+                metronome,
+                count_in,
+            },
         }
     }
 
     fn tmap(segs: Vec<Segment>) -> TempoMap {
-        TempoMap { beats_per_bar: 4, segments: segs }
+        TempoMap {
+            beats_per_bar: 4,
+            segments: segs,
+        }
     }
 
     /// 120 BPM from 500, 93 BPM detected at 8500 with a count-in.
@@ -234,16 +260,25 @@ mod tests {
 
     #[test]
     fn clicks_default_meta_equal_beats() {
-        let m = tmap(vec![seg(500.0, 120.0, false, true, false), seg(8500.0, 93.0, true, true, false)]);
+        let m = tmap(vec![
+            seg(500.0, 120.0, false, true, false),
+            seg(8500.0, 93.0, true, true, false),
+        ]);
         assert_eq!(section_clicks(&m, 20000.0, None), plain(&m, 20000.0));
         assert!(section_clicks(&tmap(vec![]), 20000.0, None).is_empty());
     }
 
     #[test]
     fn clicks_section_off() {
-        let m = tmap(vec![seg(500.0, 120.0, false, true, false), seg(4500.0, 120.0, true, false, false)]);
+        let m = tmap(vec![
+            seg(500.0, 120.0, false, true, false),
+            seg(4500.0, 120.0, true, false, false),
+        ]);
         let got = section_clicks(&m, 10000.0, None);
-        let want: Vec<f64> = plain(&m, 10000.0).into_iter().filter(|&t| t < 4500.0 - 1e-6).collect();
+        let want: Vec<f64> = plain(&m, 10000.0)
+            .into_iter()
+            .filter(|&t| t < 4500.0 - 1e-6)
+            .collect();
         assert!(!got.is_empty());
         assert_eq!(got, want);
         // the beats before the first start belong to section 0
@@ -255,16 +290,25 @@ mod tests {
     fn clicks_ts11_count_in() {
         let c = section_clicks(&ts11(true), 12000.0, None);
         assert!(has(&c, 6000.0));
-        near(&in_range(&c, 6241.94, 8500.0 - 1e-6), &[6564.516, 7209.677, 7854.839]);
+        near(
+            &in_range(&c, 6241.94, 8500.0 - 1e-6),
+            &[6564.516, 7209.677, 7854.839],
+        );
         assert!(has(&c, 8500.0) && has(&c, 9145.161));
         // previous section off: the same three clicks, nothing else
         let c = section_clicks(&ts11(false), 12000.0, None);
-        near(&in_range(&c, 0.0, 8500.0 - 1e-6), &[6564.516, 7209.677, 7854.839]);
+        near(
+            &in_range(&c, 0.0, 8500.0 - 1e-6),
+            &[6564.516, 7209.677, 7854.839],
+        );
     }
 
     #[test]
     fn clicks_typed_change_anchors_on_first_beat() {
-        let m = tmap(vec![seg(500.0, 120.0, false, true, false), seg(8530.0, 100.0, false, true, true)]);
+        let m = tmap(vec![
+            seg(500.0, 120.0, false, true, false),
+            seg(8530.0, 100.0, false, true, true),
+        ]);
         let first = m.beats_in(8530.0 - 1e-6, 20000.0)[0].0;
         let c = section_clicks(&m, 20000.0, None);
         assert!(has(&c, first));
@@ -281,7 +325,10 @@ mod tests {
             seg(5000.0, 60.0, true, true, true),
         ]);
         let c = section_clicks(&m, 8000.0, None);
-        near(&in_range(&c, 1400.0, 5000.0 - 1e-6), &[1500.0, 2000.0, 3000.0, 4000.0]);
+        near(
+            &in_range(&c, 1400.0, 5000.0 - 1e-6),
+            &[1500.0, 2000.0, 3000.0, 4000.0],
+        );
         assert!(has(&c, 5000.0));
     }
 
@@ -293,7 +340,10 @@ mod tests {
             seg(5000.0, 60.0, true, true, true),
         ]);
         let c = section_clicks(&m, 8000.0, None);
-        near(&in_range(&c, 1400.0, 5000.0 - 1e-6), &[1500.0, 2000.0, 3000.0, 4000.0]);
+        near(
+            &in_range(&c, 1400.0, 5000.0 - 1e-6),
+            &[1500.0, 2000.0, 3000.0, 4000.0],
+        );
     }
 
     #[test]
@@ -302,13 +352,19 @@ mod tests {
         let c = section_clicks(&m, 12000.0, Some((500.0, 8500.0)));
         assert_eq!(c, plain(&m, 12000.0));
         let c = section_clicks(&m, 12000.0, Some((500.0, 6000.0)));
-        near(&in_range(&c, 6241.94, 8500.0 - 1e-6), &[6564.516, 7209.677, 7854.839]);
+        near(
+            &in_range(&c, 6241.94, 8500.0 - 1e-6),
+            &[6564.516, 7209.677, 7854.839],
+        );
     }
 
     #[test]
     fn clicks_edges_and_order() {
         // count-in clicks before 0 ms are dropped
-        let m = tmap(vec![seg(0.0, 120.0, false, true, false), seg(800.0, 120.0, true, true, true)]);
+        let m = tmap(vec![
+            seg(0.0, 120.0, false, true, false),
+            seg(800.0, 120.0, true, true, true),
+        ]);
         let c = section_clicks(&m, 4000.0, None);
         assert!(c.iter().all(|&t| t >= 0.0));
         near(&c[..2], &[300.0, 800.0]);

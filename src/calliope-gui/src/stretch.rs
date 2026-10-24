@@ -22,7 +22,11 @@ impl Stretcher {
         // The first seek grows an internal scratch vector; do it now.
         inner.seek(vec![0.0f32; pre_roll * CH], 1.0);
         inner.reset();
-        Stretcher { inner, pre_roll, discard: vec![0.0; CHUNK * CH] }
+        Stretcher {
+            inner,
+            pre_roll,
+            discard: vec![0.0; CHUNK * CH],
+        }
     }
 
     pub fn input_latency(&self) -> usize {
@@ -60,7 +64,10 @@ impl Stretcher {
         let feed = target + l_in;
         let pre = self.pre_roll;
         let cap = scratch.len() / CH;
-        assert!(cap >= pre && cap as f64 >= (CHUNK as f64 * speed).ceil() + 1.0, "scratch too small");
+        assert!(
+            cap >= pre && cap as f64 >= (CHUNK as f64 * speed).ceil() + 1.0,
+            "scratch too small"
+        );
 
         self.inner.reset();
         let buf = &mut scratch[..pre * CH];

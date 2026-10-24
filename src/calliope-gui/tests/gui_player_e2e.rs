@@ -37,7 +37,7 @@ const SPEED_PLUS: (i32, i32) = (633, 696);
 const SPEED_RESET: (i32, i32) = (713, 696);
 const TRAIN_OPEN: (i32, i32) = (1194, 503);
 const TRAIN_OPEN_1024: (i32, i32) = (689, 175); // 1024x640, tree shown, the Player pane scrolled to its end
-// Loops group: the label, `+` (line 1), `>` and `<` (line 2), Play, Loop On and Count-In (line 3).
+                                                // Loops group: the label, `+` (line 1), `>` and `<` (line 2), Play, Loop On and Count-In (line 3).
 const LOOP_ADD: (i32, i32) = (1009, 368);
 const MARK_START: (i32, i32) = (881, 436);
 const MARK_END: (i32, i32) = (1219, 436);
@@ -96,8 +96,14 @@ fn pick(app: &mut App, wid: &str, collapsed: &mut bool, query: &str, id: &str) -
     app.typ(wid, query);
     settle();
     app.key(wid, "Down Down Down Return");
-    app.wait_line(|l| l.trim_end().ends_with(&format!("select id={id}")), secs(10));
-    let l = app.wait_line(|l| l.contains("player active") || l.contains("player inactive"), secs(20));
+    app.wait_line(
+        |l| l.trim_end().ends_with(&format!("select id={id}")),
+        secs(10),
+    );
+    let l = app.wait_line(
+        |l| l.contains("player active") || l.contains("player inactive"),
+        secs(20),
+    );
     app.key(wid, "ctrl+l");
     app.wait_contains("player tree collapsed=true");
     *collapsed = true;
@@ -122,7 +128,10 @@ fn wait_json(dirs: &Dirs, id: &str, ok: impl Fn(&Value) -> bool) -> Value {
                 }
             }
         }
-        assert!(Instant::now() < end, "player.json of {id} did not reach the expected state");
+        assert!(
+            Instant::now() < end,
+            "player.json of {id} did not reach the expected state"
+        );
         ms(100);
     }
 }
@@ -135,7 +144,14 @@ fn mark(app: &App, cap: &std::path::Path) -> (usize, usize) {
 
 /// What was captured since `m`.
 fn since(app: &App, cap: &std::path::Path, m: (usize, usize)) -> Vec<f32> {
-    capture_from(cap, if app.count("audio backend=capture") == m.1 { m.0 } else { 0 })
+    capture_from(
+        cap,
+        if app.count("audio backend=capture") == m.1 {
+            m.0
+        } else {
+            0
+        },
+    )
 }
 
 fn position_of(line: &str) -> i64 {
@@ -143,7 +159,10 @@ fn position_of(line: &str) -> i64 {
 }
 
 fn transport(app: &mut App, playing: bool) -> String {
-    app.wait_line(|l| l.contains(&format!("calliope: player transport playing={playing}")), secs(15))
+    app.wait_line(
+        |l| l.contains(&format!("calliope: player transport playing={playing}")),
+        secs(15),
+    )
 }
 
 #[test]
@@ -154,7 +173,10 @@ fn source_and_tree() {
     }
     let dirs = player_dirs("player_source_and_tree");
     let (mut app, wid) = start_player(&dirs);
-    assert!(app.count("player inactive id=none") >= 1, "nothing selected: inactive");
+    assert!(
+        app.count("player inactive id=none") >= 1,
+        "nothing selected: inactive"
+    );
     shot("player-inactive");
 
     // A track with stems only starts on its first stem at position 0.
@@ -207,7 +229,10 @@ fn play_and_change_source() {
     let rate = rate_of(&app);
     ms(2000);
     let heard = since(&app, &cap, start);
-    let (p330, p660) = (tone_power(&heard, rate, 330.0), tone_power(&heard, rate, 660.0));
+    let (p330, p660) = (
+        tone_power(&heard, rate, 330.0),
+        tone_power(&heard, rate, 660.0),
+    );
     assert!(db(p330, p660) > 40.0, "backing: 330={p330} 660={p660}");
     shot("player-playing");
 
@@ -231,7 +256,10 @@ fn play_and_change_source() {
     assert!((position_of(&l) - pos).abs() < 300, "{l} vs {pos}");
     ms(1500);
     let heard = since(&app, &cap, start);
-    let (p330, p660) = (tone_power(&heard, rate, 330.0), tone_power(&heard, rate, 660.0));
+    let (p330, p660) = (
+        tone_power(&heard, rate, 330.0),
+        tone_power(&heard, rate, 660.0),
+    );
     assert!(db(p660, p330) > 40.0, "guitar: 330={p330} 660={p660}");
 
     // Pause: the position is stable.
@@ -241,8 +269,16 @@ fn play_and_change_source() {
     assert!(paused > pos + 1000, "{paused} vs {pos}");
     let n = app.count("player transport");
     ms(1200);
-    assert_eq!(app.count("player transport"), n, "the position moved while paused");
-    assert_eq!(app.count("player seek"), 0, "playing or pausing caused a seek");
+    assert_eq!(
+        app.count("player transport"),
+        n,
+        "the position moved while paused"
+    );
+    assert_eq!(
+        app.count("player seek"),
+        0,
+        "playing or pausing caused a seek"
+    );
 
     // Clicking the position slider seeks (its middle is about 10 s of the 20 s).
     app.click(&wid, 999, 628); // the position slider
@@ -269,9 +305,21 @@ fn tempo_metronome_count_in() {
     enter(&app, &wid, BPM, "120");
     let l = app.wait_contains("calliope-ui: player bpm value=120");
     assert_eq!(position_of(&l), 1000, "{l}");
-    let v = wait_json(&dirs, PL_PRACTICE, |v| v["tempo"]["segments"].as_array().is_some_and(|s| s.len() == 1));
-    assert_eq!(v["tempo"]["segments"][0]["start_ms"].as_f64(), Some(1000.0), "{v}");
-    assert_eq!(v["tempo"]["segments"][0]["bpm"].as_f64(), Some(120.0), "{v}");
+    let v = wait_json(&dirs, PL_PRACTICE, |v| {
+        v["tempo"]["segments"]
+            .as_array()
+            .is_some_and(|s| s.len() == 1)
+    });
+    assert_eq!(
+        v["tempo"]["segments"][0]["start_ms"].as_f64(),
+        Some(1000.0),
+        "{v}"
+    );
+    assert_eq!(
+        v["tempo"]["segments"][0]["bpm"].as_f64(),
+        Some(120.0),
+        "{v}"
+    );
 
     // A new map clicks in every section (Click is on): clicks every 500 ms.
     let start = mark(&app, &cap);
@@ -287,7 +335,10 @@ fn tempo_metronome_count_in() {
     let on = click_onsets_ms(&heard, rate);
     assert!(on.len() >= 5, "click onsets: {on:?}");
     for w in on.windows(2) {
-        assert!((w[1] - w[0] - 500.0).abs() <= 5.0, "clicks are not 500 ms apart: {on:?}");
+        assert!(
+            (w[1] - w[0] - 500.0).abs() <= 5.0,
+            "clicks are not 500 ms apart: {on:?}"
+        );
     }
 
     // Count-in with the guitar: Click off and Count In on in section 1, so the only clicks are
@@ -329,12 +380,18 @@ const SECTIONS_FIXTURE: &str = r#"{"schema_version":5,"tempo":{"beats_per_bar":4
 
 /// The backend's line for a moved change (the frontend logs its own after the answer).
 fn moved(app: &mut App) -> String {
-    app.wait_line(|l| l.contains("calliope: player section move") && l.contains("applied="), secs(10))
+    app.wait_line(
+        |l| l.contains("calliope: player section move") && l.contains("applied="),
+        secs(10),
+    )
 }
 
 /// The segment starts of a `player sections ...` line.
 fn starts_of(line: &str) -> Vec<f64> {
-    field(line, "starts").split(',').map(|s| s.parse().unwrap()).collect()
+    field(line, "starts")
+        .split(',')
+        .map(|s| s.parse().unwrap())
+        .collect()
 }
 
 fn change_start(v: &Value, i: usize) -> f64 {
@@ -357,7 +414,10 @@ fn player_tempo_sections() {
     let cap = dirs.capture();
 
     // 1. The detected map is shown.
-    assert_eq!(app.count("player sections segments=2 bpm=120,93 starts=500,8500"), 1);
+    assert_eq!(
+        app.count("player sections segments=2 bpm=120,93 starts=500,8500"),
+        1
+    );
     shot("player-sections");
 
     // 2. Drag the change bar far right: it stops 4 beats (256 steps) from where it was detected.
@@ -366,7 +426,11 @@ fn player_tempo_sections() {
     assert_eq!(field(&l, "applied"), "256", "{l}");
     let v = wait_json(&dirs, PL_PRACTICE, |v| change_start(v, 1) == 10500.0);
     assert_eq!(v["schema_version"], 6, "{v}");
-    assert_eq!(v["tempo"]["segments"][1]["detected_ms"].as_f64(), Some(8500.0), "{v}");
+    assert_eq!(
+        v["tempo"]["segments"][1]["detected_ms"].as_f64(),
+        Some(8500.0),
+        "{v}"
+    );
 
     // 3. The waveform has the focus: Left moves it one step back.
     app.key(&wid, "Left");
@@ -398,9 +462,16 @@ fn player_tempo_sections() {
     let l = app.wait_contains("player sections segments=2 bpm=110,186");
     let doubled = starts_of(&l);
     ms(1500);
-    let between: Vec<String> =
-        app.all_lines().into_iter().filter(|l| l.contains("player pause") || l.contains("player play")).collect();
-    assert_eq!(between.len(), 1, "playback stopped or restarted: {between:?}");
+    let between: Vec<String> = app
+        .all_lines()
+        .into_iter()
+        .filter(|l| l.contains("player pause") || l.contains("player play"))
+        .collect();
+    assert_eq!(
+        between.len(),
+        1,
+        "playback stopped or restarted: {between:?}"
+    );
     at(&app, &wid, PLAY);
     app.wait_contains("player pause");
     let heard = since(&app, &cap, start);
@@ -408,7 +479,10 @@ fn player_tempo_sections() {
     let gaps: Vec<f64> = on.windows(2).map(|w| w[1] - w[0]).collect();
     assert!(gaps.len() >= 4, "click onsets: {on:?}");
     assert!((gaps[0] - 645.16).abs() <= 5.0, "before: {gaps:?}");
-    assert!((gaps[gaps.len() - 1] - 322.58).abs() <= 5.0, "after: {gaps:?}");
+    assert!(
+        (gaps[gaps.len() - 1] - 322.58).abs() <= 5.0,
+        "after: {gaps:?}"
+    );
 
     // 6. Add at 15.0 s with 140 BPM: the new change is on the 186-BPM fine grid (5.04 ms).
     enter(&app, &wid, TIME, "0:15.0");
@@ -421,7 +495,10 @@ fn player_tempo_sections() {
     let l = app.wait_contains("player sections segments=3 bpm=110,186,140");
     let added = starts_of(&l);
     assert_eq!(&added[..2], &doubled[..], "{l}");
-    assert!((added[2] - 15000.0).abs() <= 60000.0 / 186.0 / 64.0 / 2.0 + 0.01, "{l}");
+    assert!(
+        (added[2] - 15000.0).abs() <= 60000.0 / 186.0 / 64.0 / 2.0 + 0.01,
+        "{l}"
+    );
 
     // 7. Remove the new section (it is selected).
     at(&app, &wid, SEC_REMOVE);
@@ -431,12 +508,18 @@ fn player_tempo_sections() {
     // 8. Restart: the same sections, schema 5.
     app.close_gracefully(&wid);
     app.wait_exit(secs(5));
-    let v = serde_json::from_slice::<Value>(&std::fs::read(dirs.player_json(PL_PRACTICE)).unwrap()).unwrap();
+    let v = serde_json::from_slice::<Value>(&std::fs::read(dirs.player_json(PL_PRACTICE)).unwrap())
+        .unwrap();
     assert_eq!(v["schema_version"], 6, "{v}");
     let (mut app, wid) = start_player(&dirs);
     let mut collapsed = false;
     pick(&mut app, &wid, &mut collapsed, "practice song", PL_PRACTICE);
-    let l = app.all_lines().into_iter().rev().find(|l| l.contains("player sections segments=")).unwrap();
+    let l = app
+        .all_lines()
+        .into_iter()
+        .rev()
+        .find(|l| l.contains("player sections segments="))
+        .unwrap();
     assert!(l.contains("segments=2 bpm=110,186"), "{l}");
     assert_eq!(starts_of(&l), doubled, "{l}");
     finish(&app);
@@ -489,9 +572,15 @@ fn player_section_metronome() {
     assert!(rel.len() >= want.len(), "click onsets: {rel:?}");
     // The onsets are found to a few ms: the gaps within 5 ms, the places within 10 ms of the first.
     for (i, (got, want)) in rel.iter().zip(want).enumerate() {
-        assert!((got - want).abs() <= 10.0, "click onsets: {rel:?}, wanted {want:?}");
+        assert!(
+            (got - want).abs() <= 10.0,
+            "click onsets: {rel:?}, wanted {want:?}"
+        );
         if i > 0 {
-            assert!((got - rel[i - 1] - (want - WANT3[i - 1])).abs() <= 5.0, "click onsets: {rel:?}");
+            assert!(
+                (got - rel[i - 1] - (want - WANT3[i - 1])).abs() <= 5.0,
+                "click onsets: {rel:?}"
+            );
         }
     }
 
@@ -501,11 +590,17 @@ fn player_section_metronome() {
     app.wait_contains("player section flags index=0 metronome=false count_in=false");
     let on = play_from(&mut app, &wid, 4500);
     // No click before the count-in, which starts 1564.5 ms after Play (plus the start-up of the stream).
-    assert!(on[0] >= 1500.0 && on[0] <= 1700.0, "the first click is not the count-in: {on:?}");
+    assert!(
+        on[0] >= 1500.0 && on[0] <= 1700.0,
+        "the first click is not the count-in: {on:?}"
+    );
     let want = [0.0, 645.16, 1290.32, 1935.48];
     assert!(on.len() >= want.len(), "click onsets: {on:?}");
     for (got, want) in on.iter().zip(want) {
-        assert!((got - on[0] - want).abs() <= 5.0, "click onsets: {on:?}, wanted {want:?} after the first");
+        assert!(
+            (got - on[0] - want).abs() <= 5.0,
+            "click onsets: {on:?}, wanted {want:?} after the first"
+        );
     }
 
     // 5. Name section 1.
@@ -530,7 +625,9 @@ fn player_section_metronome() {
 
     // 7. Saved as schema 5.
     ms(600);
-    let v = wait_json(&dirs, PL_PRACTICE, |v| v["tempo"]["segments"][1]["name"] == "Verse");
+    let v = wait_json(&dirs, PL_PRACTICE, |v| {
+        v["tempo"]["segments"][1]["name"] == "Verse"
+    });
     assert_eq!(v["schema_version"], 6, "{v}");
     assert_eq!(v["tempo"]["segments"][1]["count_in"], true, "{v}");
     assert_eq!(v["tempo"]["segments"][0]["metronome"], false, "{v}");
@@ -541,7 +638,12 @@ fn player_section_metronome() {
     let (mut app, wid) = start_player(&dirs);
     let mut collapsed = false;
     pick(&mut app, &wid, &mut collapsed, "practice song", PL_PRACTICE);
-    let l = app.all_lines().into_iter().rev().find(|l| l.contains("player sections segments=")).unwrap();
+    let l = app
+        .all_lines()
+        .into_iter()
+        .rev()
+        .find(|l| l.contains("player sections segments="))
+        .unwrap();
     assert!(l.contains("metronome=0,1 count_in=0,1 named=1"), "{l}");
     at(&app, &wid, WAVE_SECTION1);
     settle();
@@ -605,7 +707,11 @@ fn loops() {
     at(&app, &wid, LOOP_PLAY);
     transport(&mut app, true);
     transport(&mut app, false);
-    assert_eq!(app.count("calliope: player wrap"), 2, "a loop that does not repeat must not wrap");
+    assert_eq!(
+        app.count("calliope: player wrap"),
+        2,
+        "a loop that does not repeat must not wrap"
+    );
 
     // Loop On again, with the loop count-in.
     at(&app, &wid, LOOP_ON);
@@ -630,7 +736,11 @@ fn loops() {
     let plays = app.count("player loop play");
     at(&app, &wid, LOOP_PLAY);
     ms(700);
-    assert_eq!(app.count("player loop play"), plays, "the loop Play must be disabled without an end");
+    assert_eq!(
+        app.count("player loop play"),
+        plays,
+        "the loop Play must be disabled without an end"
+    );
     finish(&app);
 }
 
@@ -663,9 +773,13 @@ fn restart_restores() {
     assert!(paused > 3000, "{l}");
     app.close_gracefully(&wid);
     app.wait_exit(secs(5));
-    let v = serde_json::from_slice::<Value>(&std::fs::read(dirs.player_json(PL_PRACTICE)).unwrap()).unwrap();
+    let v = serde_json::from_slice::<Value>(&std::fs::read(dirs.player_json(PL_PRACTICE)).unwrap())
+        .unwrap();
     assert_eq!(v["source"], "stem:guitar", "{v}");
-    assert!((v["position_ms"].as_i64().unwrap() - paused).abs() <= 2, "{v} vs {paused}");
+    assert!(
+        (v["position_ms"].as_i64().unwrap() - paused).abs() <= 2,
+        "{v} vs {paused}"
+    );
 
     let (mut app, wid) = start_player(&dirs);
     let mut collapsed = false;
@@ -703,7 +817,10 @@ fn other_sources_and_leaving() {
     let rate = rate_of(&app);
     ms(1500);
     let heard = since(&app, &cap, start);
-    let (p330, p660) = (tone_power(&heard, rate, 330.0), tone_power(&heard, rate, 660.0));
+    let (p330, p660) = (
+        tone_power(&heard, rate, 330.0),
+        tone_power(&heard, rate, 660.0),
+    );
     assert!(db(p330, p660) > 40.0, "mp3: 330={p330} 660={p660}");
 
     // Leaving the Player while it plays pauses it.
@@ -716,13 +833,28 @@ fn other_sources_and_leaving() {
     collapsed = false; // the view starts with the tree shown
 
     // The backing file is missing: the first stem is offered instead.
-    let l = pick(&mut app, &wid, &mut collapsed, "missing backing", PL_MISSING_BACKING);
+    let l = pick(
+        &mut app,
+        &wid,
+        &mut collapsed,
+        "missing backing",
+        PL_MISSING_BACKING,
+    );
     assert_eq!(field(&l, "sources"), "1", "{l}");
     assert_eq!(field(&l, "source"), "stem:vocals", "{l}");
 
     // No audio at all: inactive, with the message on screen.
-    let l = pick(&mut app, &wid, &mut collapsed, "missing audio", PL_MISSING_AUDIO);
-    assert!(l.contains("player inactive") && l.contains(PL_MISSING_AUDIO), "{l}");
+    let l = pick(
+        &mut app,
+        &wid,
+        &mut collapsed,
+        "missing audio",
+        PL_MISSING_AUDIO,
+    );
+    assert!(
+        l.contains("player inactive") && l.contains(PL_MISSING_AUDIO),
+        "{l}"
+    );
     shot("player-missing-audio");
     finish(&app);
 }
@@ -753,12 +885,23 @@ fn train_pos(w: u32, h: u32, collapsed: bool) -> Option<(i32, i32)> {
 
 /// The last `player layout overflow=... width=... loops_beside=...` line (logged 300 ms after the pane's size changed).
 fn last_layout(app: &App) -> String {
-    app.all_lines().into_iter().rev().find(|l| l.contains("player layout overflow=")).expect("a player layout line")
+    app.all_lines()
+        .into_iter()
+        .rev()
+        .find(|l| l.contains("player layout overflow="))
+        .expect("a player layout line")
 }
 
 /// "Section selected" (a click in section 1: its bar is drawn 4 px wide) and "overlay open" (its
 /// label clicked) screenshots. Ends with section 0 selected and the overlay closed.
-fn sections_states(app: &App, wid: &str, name: impl Fn(&str) -> String, w: u32, h: u32, collapsed: bool) {
+fn sections_states(
+    app: &App,
+    wid: &str,
+    name: impl Fn(&str) -> String,
+    w: u32,
+    h: u32,
+    collapsed: bool,
+) {
     let (x0, x1, y, label_y) = wave_box(w, h, collapsed);
     let bar = x0 + (x1 - x0) * 10500 / 20000;
     app.click(wid, bar + 60, y);
@@ -788,7 +931,11 @@ fn visual_review() {
     }
     let sweep = std::env::var_os("CALLIOPE_GUI_SHOTS").is_some_and(|v| !v.is_empty() && v != "0");
     let themes: &[&str] = if sweep { &["dark", "light"] } else { &["dark"] };
-    let sizes: &[(u32, u32)] = if sweep { &[(1280, 800), (1024, 640)] } else { &[(1280, 800)] };
+    let sizes: &[(u32, u32)] = if sweep {
+        &[(1280, 800), (1024, 640)]
+    } else {
+        &[(1280, 800)]
+    };
     for &theme in themes {
         let dirs = player_dirs(&format!("player_visual_{theme}"));
         // Section 1 of "with tempo" is named and has its count-in on, so selecting it shows the toggles on;
@@ -806,9 +953,14 @@ fn visual_review() {
         v["tempo"]["segments"][0]["count_in"] = true.into();
         std::fs::write(&file, serde_json::to_vec(&v).unwrap()).unwrap();
         std::fs::create_dir_all(dirs.app_config()).unwrap();
-        std::fs::write(dirs.app_config().join("settings.json"), format!(r#"{{"theme":"{theme}"}}"#)).unwrap();
+        std::fs::write(
+            dirs.app_config().join("settings.json"),
+            format!(r#"{{"theme":"{theme}"}}"#),
+        )
+        .unwrap();
         let (mut app, wid) = start_player(&dirs);
-        let name = |size: &str, tree: &str, what: &str| format!("player-{theme}-{size}-{tree}-{what}");
+        let name =
+            |size: &str, tree: &str, what: &str| format!("player-{theme}-{size}-{tree}-{what}");
         let mut layouts: Vec<String> = Vec::new();
 
         for &(w, h) in sizes {
@@ -835,7 +987,10 @@ fn visual_review() {
                 ms(600);
                 let l = last_layout(&app);
                 println!("LAYOUT {theme} {sz} tree={tree}: {l}");
-                layouts.push(format!("{theme} {sz} tree={tree}: {}", l.split("player layout ").nth(1).unwrap_or(&l)));
+                layouts.push(format!(
+                    "{theme} {sz} tree={tree}: {}",
+                    l.split("player layout ").nth(1).unwrap_or(&l)
+                ));
                 if w == 1280 && tree == "rail" {
                     assert_eq!(field(&l, "loops_beside"), "1", "{l}");
                     assert!(field(&l, "overflow").parse::<i32>().unwrap() <= 14, "{l}");
@@ -867,7 +1022,8 @@ fn visual_review() {
                     if let Some(p) = train_pos(w, h, collapsed) {
                         app.skip_seen();
                         at(&app, &wid, p);
-                        let l = app.wait_line(|l| l.contains("player training-popover open"), secs(5));
+                        let l =
+                            app.wait_line(|l| l.contains("player training-popover open"), secs(5));
                         println!("POPOVER {theme} {sz} tree={tree}: {}", popover_rect(&l));
                         ms(300);
                         shot(&name(&sz, tree, "training-popover"));
@@ -893,7 +1049,11 @@ fn visual_review() {
         }
         // Kept for the review (the test output is only shown on failure).
         let dir = repo().join("target/gui-shots");
-        std::fs::write(dir.join(format!("player-{theme}-layout.txt")), layouts.join("\n") + "\n").unwrap();
+        std::fs::write(
+            dir.join(format!("player-{theme}-layout.txt")),
+            layouts.join("\n") + "\n",
+        )
+        .unwrap();
         finish(&app);
     }
 }
@@ -928,7 +1088,10 @@ fn player_phase3() {
     assert_eq!(field(&l, "loops_beside"), "1", "{l}");
     let overflow: i32 = field(&l, "overflow").parse().unwrap();
     // the plan's phase-1 scroll target: about 14 px at 1280x800 with the tree folded
-    assert!(overflow <= 14, "the Player pane scrolls by {overflow} px: {l}");
+    assert!(
+        overflow <= 14,
+        "the Player pane scrolls by {overflow} px: {l}"
+    );
     shot("player-p3-layout");
 
     // 2. Play inside section 2 (Count In on): three clicks at its tempo, then the tone, started 435.48 ms
@@ -956,7 +1119,11 @@ fn player_phase3() {
     }
     let tone = tone_start_ms(&heard, rate, 330.0).expect("the backing starts");
     let lead = 8500.0 + 3.0 * 645.16 - 10000.0;
-    assert!((tone - clicks[0] - (3.0 * 645.16 - lead)).abs() <= 10.0, "the tone starts at {tone} ms, the first click at {} ms", clicks[0]);
+    assert!(
+        (tone - clicks[0] - (3.0 * 645.16 - lead)).abs() <= 10.0,
+        "the tone starts at {tone} ms, the first click at {} ms",
+        clicks[0]
+    );
 
     // 3. Play inside section 1 (no Count In, no Click): no count-in, the tone at once, no click.
     let count_ins = app.count("player count-in");
@@ -970,14 +1137,24 @@ fn player_phase3() {
     ms(1500);
     app.key(&wid, "space");
     app.wait_contains("player pause");
-    assert_eq!(app.count("player count-in"), count_ins, "a count-in in a section without Count In");
+    assert_eq!(
+        app.count("player count-in"),
+        count_ins,
+        "a count-in in a section without Count In"
+    );
     let heard = since(&app, &cap, start);
     let tone = tone_start_ms(&heard, rate, 330.0).expect("the backing starts");
     // The capture also holds the silence between the mark and the key press; a count-in would add 1500 ms.
     assert!(tone <= 1000.0, "the tone starts after {tone} ms");
     // (the tone's own start shows up as an onset in the click band; nothing else may)
-    let clicks: Vec<f64> = click_onsets_ms(&heard, rate).into_iter().filter(|c| (c - tone).abs() > 20.0).collect();
-    assert!(clicks.is_empty(), "section 1 does not click: {clicks:?} tone={tone}");
+    let clicks: Vec<f64> = click_onsets_ms(&heard, rate)
+        .into_iter()
+        .filter(|c| (c - tone).abs() > 20.0)
+        .collect();
+    assert!(
+        clicks.is_empty(),
+        "section 1 does not click: {clicks:?} tone={tone}"
+    );
 
     // 4. `+` ends the loop at the next section change, or at the track end in the last section.
     enter(&app, &wid, TIME, "0:03.0");
@@ -995,11 +1172,16 @@ fn player_phase3() {
     let l = app.wait_contains("player loop add");
     assert_eq!(field(&l, "complete"), "true", "{l}");
     let end: f64 = field(&l, "end").parse().unwrap();
-    assert!(end <= 20001.0 && end > 20000.0 - 2.0 * 60000.0 / 93.0 / 64.0, "{l}");
+    assert!(
+        end <= 20001.0 && end > 20000.0 - 2.0 * 60000.0 / 93.0 / 64.0,
+        "{l}"
+    );
 
     // 5. Saved as schema 5, without the master metronome; the first loop ends on the tick of 8500 ms.
     ms(600);
-    let v = wait_json(&dirs, PL_PRACTICE, |v| v["loops"].as_array().is_some_and(|a| a.len() == 2));
+    let v = wait_json(&dirs, PL_PRACTICE, |v| {
+        v["loops"].as_array().is_some_and(|a| a.len() == 2)
+    });
     assert_eq!(v["schema_version"], 6, "{v}");
     assert!(v.get("metronome").is_none(), "{v}");
     let tick = v["loops"][0]["end"]["tick"].as_i64().expect("a tick end");
@@ -1009,10 +1191,23 @@ fn player_phase3() {
 
 /// The `rect=l,t,r,b viewport=WxH` of a `player training-popover open` line: inside the viewport.
 fn popover_rect(l: &str) -> String {
-    let r: Vec<i32> = field(l, "rect").split(',').map(|n| n.parse().unwrap()).collect();
-    let (w, h) = field(l, "viewport").split_once('x').map(|(w, h)| (w.parse::<i32>().unwrap(), h.parse::<i32>().unwrap())).unwrap();
-    assert!(r[0] >= 0 && r[1] >= 0 && r[2] <= w && r[3] <= h, "the popover is not inside the window: {l}");
-    format!("rect={} viewport={}", field(l, "rect"), field(l, "viewport"))
+    let r: Vec<i32> = field(l, "rect")
+        .split(',')
+        .map(|n| n.parse().unwrap())
+        .collect();
+    let (w, h) = field(l, "viewport")
+        .split_once('x')
+        .map(|(w, h)| (w.parse::<i32>().unwrap(), h.parse::<i32>().unwrap()))
+        .unwrap();
+    assert!(
+        r[0] >= 0 && r[1] >= 0 && r[2] <= w && r[3] <= h,
+        "the popover is not inside the window: {l}"
+    );
+    format!(
+        "rect={} viewport={}",
+        field(l, "rect"),
+        field(l, "viewport")
+    )
 }
 
 /// Speed and speed training: the Speed group (steps, typing, refusals, keys, Reset), the BPM
@@ -1061,13 +1256,22 @@ fn player_speed() {
     at(&app, &wid, PLAY);
     let l = app.wait_contains("player pause position=");
     let advanced = position_of(&l) - 1000;
-    assert!((advanced - 2550).abs() <= 150, "the position advanced {advanced} ms: {l}");
+    assert!(
+        (advanced - 2550).abs() <= 150,
+        "the position advanced {advanced} ms: {l}"
+    );
     let heard = since(&app, &cap, start);
     let at440 = tone_power(&heard, rate, 440.0);
     for off in [-3.0, 3.0] {
-        assert!(db(at440, tone_power(&heard, rate, 440.0 + off)) > 6.0, "the tone is not at 440 Hz (offset {off})");
+        assert!(
+            db(at440, tone_power(&heard, rate, 440.0 + off)) > 6.0,
+            "the tone is not at 440 Hz (offset {off})"
+        );
     }
-    assert!(db(at440, tone_power(&heard, rate, 440.0 * 0.85)) > 20.0, "the pitch followed the speed");
+    assert!(
+        db(at440, tone_power(&heard, rate, 440.0 * 0.85)) > 20.0,
+        "the pitch followed the speed"
+    );
 
     // 3. 50 %: 60 BPM heard, the clicks 1000 ms apart.
     enter(&app, &wid, SPEED_BOX, "50");
@@ -1086,7 +1290,10 @@ fn player_speed() {
     let on = click_onsets_ms(&heard, rate);
     assert!(on.len() >= 3, "click onsets: {on:?}");
     for w in on.windows(2) {
-        assert!((w[1] - w[0] - 1000.0).abs() <= 5.0, "clicks are not 1000 ms apart: {on:?}");
+        assert!(
+            (w[1] - w[0] - 1000.0).abs() <= 5.0,
+            "clicks are not 1000 ms apart: {on:?}"
+        );
     }
 
     // 4. 20 and 250 are refused; the speed stays 50.
@@ -1156,7 +1363,11 @@ fn player_speed() {
     app.wait_contains("player speed percent=80 via=typed");
     let v = wait_json(&dirs, PL_TEMPO, |v| v["speed"].as_f64() == Some(0.8));
     let t = &v["loops"][0]["training"];
-    assert_eq!((t["on"].as_bool(), t["start"].as_u64(), t["end"].as_u64()), (Some(true), Some(60), Some(70)), "{v}");
+    assert_eq!(
+        (t["on"].as_bool(), t["start"].as_u64(), t["end"].as_u64()),
+        (Some(true), Some(60), Some(70)),
+        "{v}"
+    );
     app.close_gracefully(&wid);
     app.wait_exit(secs(5));
     let (mut app, wid) = start_player(&dirs);
@@ -1227,11 +1438,18 @@ fn qa_p3_layout_never_clips_sideways() {
             settle();
             ms(700);
             let l = last_layout(&app);
-            let num = |k: &str| -> i32 { field(&l, k).parse().unwrap_or_else(|_| panic!("{k} in {l}")) };
+            let num = |k: &str| -> i32 {
+                field(&l, k)
+                    .parse()
+                    .unwrap_or_else(|_| panic!("{k} in {l}"))
+            };
             let (width, sec, lp) = (num("width"), num("sections_w"), num("loops_w"));
             report.push(format!("{w}x{h} tree={tree}: {l}"));
             assert!(sec > 0 && lp > 0, "{l}");
-            assert!(sec <= width && lp <= width, "a pane is wider than the Player pane: {l}");
+            assert!(
+                sec <= width && lp <= width,
+                "a pane is wider than the Player pane: {l}"
+            );
             if field(&l, "loops_beside") == "1" {
                 assert!(sec + lp <= width, "side by side but overlapping: {l}");
             }
@@ -1242,6 +1460,10 @@ fn qa_p3_layout_never_clips_sideways() {
         }
     }
     println!("{}", report.join("\n"));
-    std::fs::write(repo().join("target/gui-shots/qa-p3-layout.txt"), report.join("\n") + "\n").unwrap();
+    std::fs::write(
+        repo().join("target/gui-shots/qa-p3-layout.txt"),
+        report.join("\n") + "\n",
+    )
+    .unwrap();
     finish(&app);
 }

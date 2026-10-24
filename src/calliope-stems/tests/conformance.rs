@@ -58,14 +58,21 @@ fn start_in(outer: tempfile::TempDir, mode: &str, extra: &[&str]) -> Server {
 
 /// With `tracker_mode` the stub beat tracker is enabled in that mode, with a 500 ms timeout
 /// unless `extra` has its own `--beat-timeout-ms`.
-fn start_full(outer: tempfile::TempDir, mode: &str, tracker_mode: Option<&str>, extra: &[&str]) -> Server {
+fn start_full(
+    outer: tempfile::TempDir,
+    mode: &str,
+    tracker_mode: Option<&str>,
+    extra: &[&str],
+) -> Server {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_calliope-stems"));
     cmd.arg("--separator")
         .arg(root().join("tests/support/stub-separator"))
         .args(["--listen", "127.0.0.1:0", "--work-dir"])
         .arg(outer.path().join("work"));
     if let Some(t) = tracker_mode {
-        cmd.arg("--beat-tracker").arg(root().join("tests/support/stub-beat-tracker")).env("STUB_TRACKER_MODE", t);
+        cmd.arg("--beat-tracker")
+            .arg(root().join("tests/support/stub-beat-tracker"))
+            .env("STUB_TRACKER_MODE", t);
         if !extra.contains(&"--beat-timeout-ms") {
             cmd.args(["--beat-timeout-ms", "500"]);
         }
@@ -80,7 +87,10 @@ fn start_full(outer: tempfile::TempDir, mode: &str, tracker_mode: Option<&str>, 
     let mut line = String::new();
     let addr: SocketAddr = loop {
         line.clear();
-        assert!(lines.read_line(&mut line).unwrap() > 0, "server exited before listening");
+        assert!(
+            lines.read_line(&mut line).unwrap() > 0,
+            "server exited before listening"
+        );
         if let Some(rest) = line.split("listening addr=").nth(1) {
             break rest.split_whitespace().next().unwrap().parse().unwrap();
         }
@@ -95,7 +105,12 @@ fn start_full(outer: tempfile::TempDir, mode: &str, tracker_mode: Option<&str>, 
             sink.clear();
         }
     });
-    Server { child, addr, outer, log }
+    Server {
+        child,
+        addr,
+        outer,
+        log,
+    }
 }
 
 fn start(mode: &str, extra: &[&str]) -> Server {
@@ -104,7 +119,12 @@ fn start(mode: &str, extra: &[&str]) -> Server {
 
 /// A server with the stub beat tracker in `tracker_mode` (and the stub separator in "ok").
 fn start_beats(tracker_mode: &str, extra: &[&str]) -> Server {
-    start_full(tempfile::tempdir().unwrap(), "ok", Some(tracker_mode), extra)
+    start_full(
+        tempfile::tempdir().unwrap(),
+        "ok",
+        Some(tracker_mode),
+        extra,
+    )
 }
 
 struct Resp {
@@ -114,11 +134,18 @@ struct Resp {
 
 impl Resp {
     fn json(&self) -> serde_json::Value {
-        serde_json::from_slice(&self.body).unwrap_or_else(|e| panic!("{e}: {:?}", String::from_utf8_lossy(&self.body)))
+        serde_json::from_slice(&self.body)
+            .unwrap_or_else(|e| panic!("{e}: {:?}", String::from_utf8_lossy(&self.body)))
     }
 }
 
-fn http(addr: SocketAddr, method: &str, path: &str, headers: &[(&str, String)], body: &[u8]) -> Resp {
+fn http(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    headers: &[(&str, String)],
+    body: &[u8],
+) -> Resp {
     let mut s = TcpStream::connect(addr).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
     let mut req = format!("{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n");
@@ -130,7 +157,10 @@ fn http(addr: SocketAddr, method: &str, path: &str, headers: &[(&str, String)], 
     let _ = s.write_all(body);
     let mut raw = Vec::new();
     let _ = s.read_to_end(&mut raw);
-    let split = raw.windows(4).position(|w| w == b"\r\n\r\n").expect("response head");
+    let split = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .expect("response head");
     let head = String::from_utf8_lossy(&raw[..split]).to_string();
     let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
     let mut body = raw[split + 4..].to_vec();
@@ -144,7 +174,8 @@ fn http(addr: SocketAddr, method: &str, path: &str, headers: &[(&str, String)], 
 fn dechunk(mut rest: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     while let Some(eol) = rest.windows(2).position(|w| w == b"\r\n") {
-        let size = usize::from_str_radix(String::from_utf8_lossy(&rest[..eol]).trim(), 16).unwrap_or(0);
+        let size =
+            usize::from_str_radix(String::from_utf8_lossy(&rest[..eol]).trim(), 16).unwrap_or(0);
         if size == 0 || rest.len() < eol + 2 + size {
             break;
         }
@@ -160,7 +191,10 @@ fn post_file(addr: SocketAddr, query: &str, file: &str) -> Resp {
         addr,
         "POST",
         &format!("/v1/jobs{query}"),
-        &[("Content-Type", "audio/flac".into()), ("Content-Length", body.len().to_string())],
+        &[
+            ("Content-Type", "audio/flac".into()),
+            ("Content-Length", body.len().to_string()),
+        ],
         &body,
     )
 }
@@ -193,7 +227,9 @@ fn pids_mentioning(needle: &str) -> Vec<u32> {
     let me = std::process::id();
     let mut out = Vec::new();
     for e in std::fs::read_dir("/proc").unwrap().flatten() {
-        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
+            continue;
+        };
         if pid == me {
             continue;
         }
@@ -218,8 +254,10 @@ fn wait_until(what: &str, secs: u64, mut f: impl FnMut() -> bool) {
 /// the documented layout) in the work dir.
 fn assert_confined(s: &Server) {
     let names = |d: &Path| {
-        let mut v: Vec<String> =
-            std::fs::read_dir(d).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+        let mut v: Vec<String> = std::fs::read_dir(d)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
         v.sort();
         v
     };
@@ -245,7 +283,10 @@ fn health_has_the_documented_fields() {
     assert_eq!(v["max_upload_bytes"], 314_572_800u64);
 
     let c = s.client().health().unwrap();
-    assert_eq!((c.service.as_str(), c.api, c.default_model.as_str()), ("calliope-stems", 1, "htdemucs_6s"));
+    assert_eq!(
+        (c.service.as_str(), c.api, c.default_model.as_str()),
+        ("calliope-stems", 1, "htdemucs_6s")
+    );
     assert_eq!(c.max_upload_bytes, 314_572_800);
 }
 
@@ -256,18 +297,27 @@ fn rejected_uploads_and_errors() {
     assert_eq!(http(s.addr, "POST", "/v1/jobs", &flac, b"").status, 411);
     assert_eq!(post_file(s.addr, "", "not-flac.flac").status, 415);
     assert_eq!(post_file(s.addr, "", "long.flac").status, 413);
-    assert_eq!(post_file(s.addr, "?model=nope", "untagged.flac").status, 400);
+    assert_eq!(
+        post_file(s.addr, "?model=nope", "untagged.flac").status,
+        400
+    );
     let r = http(
         s.addr,
         "POST",
         "/v1/jobs",
-        &[("Content-Type", "audio/mpeg".into()), ("Content-Length", "4".into())],
+        &[
+            ("Content-Type", "audio/mpeg".into()),
+            ("Content-Length", "4".into()),
+        ],
         b"abcd",
     );
     assert_eq!(r.status, 415);
     assert!(r.json()["error"].is_string());
     // Over the size limit: refused from the header alone, the body is never sent.
-    let big = [("Content-Type", "audio/flac".to_string()), ("Content-Length", (2 * 1024 * 1024).to_string())];
+    let big = [
+        ("Content-Type", "audio/flac".to_string()),
+        ("Content-Length", (2 * 1024 * 1024).to_string()),
+    ];
     let r = http(s.addr, "POST", "/v1/jobs", &big, b"");
     assert_eq!(r.status, 413);
     assert!(r.json()["error"].is_string());
@@ -288,7 +338,11 @@ fn ok_flow_with_the_client() {
     let c = s.client();
     let cancel = AtomicBool::new(false);
     let mut sent_calls = Vec::new();
-    let job = c.submit(&fixture("untagged.flac"), &cancel, |sent, total| sent_calls.push((sent, total))).unwrap();
+    let job = c
+        .submit(&fixture("untagged.flac"), &cancel, |sent, total| {
+            sent_calls.push((sent, total))
+        })
+        .unwrap();
     let size = std::fs::metadata(fixture("untagged.flac")).unwrap().len();
     assert_eq!(sent_calls.last(), Some(&(size, size)));
     assert!(sent_calls.windows(2).all(|w| w[0].0 < w[1].0));
@@ -296,16 +350,22 @@ fn ok_flow_with_the_client() {
     let mut states = Vec::new();
     let mut progress: Vec<f64> = Vec::new();
     let done = c
-        .wait_final(&job, &cancel, Duration::from_millis(100), Duration::from_secs(60), |st| {
-            if states.last() != Some(&st.state) {
-                states.push(st.state);
-            }
-            if let Some(p) = st.progress {
-                if progress.last() != Some(&p) {
-                    progress.push(p);
+        .wait_final(
+            &job,
+            &cancel,
+            Duration::from_millis(100),
+            Duration::from_secs(60),
+            |st| {
+                if states.last() != Some(&st.state) {
+                    states.push(st.state);
                 }
-            }
-        })
+                if let Some(p) = st.progress {
+                    if progress.last() != Some(&p) {
+                        progress.push(p);
+                    }
+                }
+            },
+        )
         .unwrap();
     use calliope_lib::stems_api::JobState;
     assert_eq!(done.state, JobState::Done, "{done:?}");
@@ -317,24 +377,37 @@ fn ok_flow_with_the_client() {
     }
     assert!(progress.len() >= 2, "progress never moved: {progress:?}");
     assert!(progress.windows(2).all(|w| w[0] < w[1]), "{progress:?}");
-    assert_eq!(done.stems.as_deref().unwrap(), ["vocals", "drums", "bass", "guitar", "piano", "other"]);
+    assert_eq!(
+        done.stems.as_deref().unwrap(),
+        ["vocals", "drums", "bass", "guitar", "piano", "other"]
+    );
 
     let dest_dir = tempfile::tempdir().unwrap();
     let dest = dest_dir.path().to_path_buf();
     for name in done.stems.as_ref().unwrap() {
         let part = dest.join(format!("{name}.flac.part"));
-        let n = c.fetch_stem(&job, name, &part, &AtomicBool::new(false)).unwrap();
+        let n = c
+            .fetch_stem(&job, name, &part, &AtomicBool::new(false))
+            .unwrap();
         let want = std::fs::read(fixture(&format!("stems/{name}.flac"))).unwrap();
         assert_eq!(std::fs::read(&part).unwrap(), want, "{name}");
         assert_eq!(n, want.len() as u64);
     }
     // Unknown stem and invalid names.
     assert!(matches!(
-        c.fetch_stem(&job, "nothing", &dest.join("x.part"), &AtomicBool::new(false)),
+        c.fetch_stem(
+            &job,
+            "nothing",
+            &dest.join("x.part"),
+            &AtomicBool::new(false)
+        ),
         Err(ClientError::Restarted) | Err(ClientError::Rejected { status: 404, .. })
     ));
     assert!(!dest.join("x.part").exists());
-    assert!(matches!(c.fetch_stem(&job, "../x", &dest.join("y.part"), &AtomicBool::new(false)), Err(ClientError::Invalid(_))));
+    assert!(matches!(
+        c.fetch_stem(&job, "../x", &dest.join("y.part"), &AtomicBool::new(false)),
+        Err(ClientError::Invalid(_))
+    ));
 
     let dir = s.jobs().join(&job);
     assert!(dir.exists());
@@ -349,18 +422,41 @@ fn raw_ok_flow_serves_stems_in_order() {
     let s = start("ok", &[]);
     let job = submit_raw(&s);
     let done = wait_state(s.addr, &job, "done");
-    let names: Vec<&str> = done["stems"].as_array().unwrap().iter().map(|n| n.as_str().unwrap()).collect();
-    assert_eq!(names, ["vocals", "drums", "bass", "guitar", "piano", "other"]);
+    let names: Vec<&str> = done["stems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        ["vocals", "drums", "bass", "guitar", "piano", "other"]
+    );
     for n in &names {
-        let r = http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/{n}"), &[], b"");
+        let r = http(
+            s.addr,
+            "GET",
+            &format!("/v1/jobs/{job}/stems/{n}"),
+            &[],
+            b"",
+        );
         assert_eq!(r.status, 200);
-        assert_eq!(r.body, std::fs::read(fixture(&format!("stems/{n}.flac"))).unwrap());
+        assert_eq!(
+            r.body,
+            std::fs::read(fixture(&format!("stems/{n}.flac"))).unwrap()
+        );
     }
     let dir = s.jobs().join(&job);
     assert!(dir.exists());
-    assert_eq!(http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), &[], b"").status, 204);
+    assert_eq!(
+        http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), &[], b"").status,
+        204
+    );
     assert!(!dir.exists());
-    assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}"), &[], b"").status, 404);
+    assert_eq!(
+        http(s.addr, "GET", &format!("/v1/jobs/{job}"), &[], b"").status,
+        404
+    );
     assert_confined(&s);
 }
 
@@ -376,7 +472,17 @@ fn failing_separators_fail_the_job() {
             assert!(msg.contains("invalid output"), "{mode}: {msg}");
         }
         assert!(v["stems"].is_null());
-        assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/vocals"), &[], b"").status, 409);
+        assert_eq!(
+            http(
+                s.addr,
+                "GET",
+                &format!("/v1/jobs/{job}/stems/vocals"),
+                &[],
+                b""
+            )
+            .status,
+            409
+        );
         // The same through the client.
         let st = s.client().status(&job).unwrap();
         assert_eq!(st.error.as_deref(), Some(msg));
@@ -394,7 +500,8 @@ fn queue_limit_gives_503() {
     // The client sees it too.
     let cancel = AtomicBool::new(false);
     assert!(matches!(
-        s.client().submit(&fixture("untagged.flac"), &cancel, |_, _| {}),
+        s.client()
+            .submit(&fixture("untagged.flac"), &cancel, |_, _| {}),
         Err(ClientError::Rejected { status: 503, .. })
     ));
     assert_eq!(std::fs::read_dir(s.jobs()).unwrap().count(), 2);
@@ -405,19 +512,38 @@ fn delete_kills_the_hanging_separator() {
     let s = start("hang", &[]);
     let job = submit_raw(&s);
     wait_state(s.addr, &job, "running");
-    assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/vocals"), &[], b"").status, 409);
+    assert_eq!(
+        http(
+            s.addr,
+            "GET",
+            &format!("/v1/jobs/{job}/stems/vocals"),
+            &[],
+            b""
+        )
+        .status,
+        409
+    );
     wait_until("stub running", 10, || !pids_mentioning(&job).is_empty());
-    assert_eq!(http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), &[], b"").status, 204);
+    assert_eq!(
+        http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), &[], b"").status,
+        204
+    );
     assert_eq!(raw_status(s.addr, &job)["state"], "cancelled");
     wait_until("stub gone", 10, || pids_mentioning(&job).is_empty());
     assert!(!s.jobs().join(&job).exists());
-    assert_eq!(http(s.addr, "GET", "/v1/health", &[], b"").json()["busy"], false);
+    assert_eq!(
+        http(s.addr, "GET", "/v1/health", &[], b"").json()["busy"],
+        false
+    );
     // DELETE of a queued job.
     let first = submit_raw(&s);
     wait_state(s.addr, &first, "running");
     let second = submit_raw(&s);
     assert_eq!(raw_status(s.addr, &second)["state"], "queued");
-    assert_eq!(http(s.addr, "DELETE", &format!("/v1/jobs/{second}"), &[], b"").status, 204);
+    assert_eq!(
+        http(s.addr, "DELETE", &format!("/v1/jobs/{second}"), &[], b"").status,
+        204
+    );
     assert!(!s.jobs().join(&second).exists());
     assert_eq!(raw_status(s.addr, &first)["state"], "running");
 }
@@ -437,15 +563,24 @@ fn restart_forgets_jobs_and_removes_their_folders() {
     let outer = std::mem::replace(&mut s.outer, tempfile::tempdir().unwrap());
     let path = outer.path().to_path_buf();
     let s2 = start_in(outer, "ok", &[]);
-    assert_eq!(http(s2.addr, "GET", &format!("/v1/jobs/{job}"), &[], b"").status, 404);
-    assert!(matches!(s2.client().status(&job), Err(ClientError::Restarted)));
+    assert_eq!(
+        http(s2.addr, "GET", &format!("/v1/jobs/{job}"), &[], b"").status,
+        404
+    );
+    assert!(matches!(
+        s2.client().status(&job),
+        Err(ClientError::Restarted)
+    ));
     assert!(!path.join("work/jobs").join(&job).exists());
     assert!(keep.join("keep.txt").exists() && path.join("work/other.txt").exists());
 }
 
 #[test]
 fn retention_zero_removes_finished_jobs_on_the_next_janitor_run() {
-    let s = start("ok", &["--retention-hours", "0", "--janitor-interval-ms", "100"]);
+    let s = start(
+        "ok",
+        &["--retention-hours", "0", "--janitor-interval-ms", "100"],
+    );
     let job = submit_raw(&s);
     wait_until("job removed", 20, || {
         http(s.addr, "GET", &format!("/v1/jobs/{job}"), &[], b"").status == 404
@@ -455,9 +590,15 @@ fn retention_zero_removes_finished_jobs_on_the_next_janitor_run() {
 
 #[test]
 fn closed_port_is_unreachable_quickly() {
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
     let started = Instant::now();
-    let e = StemsClient::new(&format!("http://127.0.0.1:{port}/")).health().unwrap_err();
+    let e = StemsClient::new(&format!("http://127.0.0.1:{port}/"))
+        .health()
+        .unwrap_err();
     assert!(matches!(e, ClientError::Unreachable(_)), "{e:?}");
     assert!(started.elapsed() < Duration::from_secs(6));
 }
@@ -486,14 +627,22 @@ fn wrong_service_or_api_is_incompatible() {
     let other = fake_server(
         r#"{"service":"other","api":1,"version":"1","models":["m"],"default_model":"m","busy":false,"max_duration_s":900,"max_upload_bytes":1}"#,
     );
-    let e = StemsClient::new(&format!("http://{other}")).health().unwrap_err();
+    let e = StemsClient::new(&format!("http://{other}"))
+        .health()
+        .unwrap_err();
     assert!(matches!(e, ClientError::Incompatible(_)), "{e:?}");
     let v2 = fake_server(
         r#"{"service":"calliope-stems","api":2,"version":"1","models":["m"],"default_model":"m","busy":false,"max_duration_s":900,"max_upload_bytes":1}"#,
     );
-    assert!(matches!(StemsClient::new(&format!("http://{v2}")).health(), Err(ClientError::Incompatible(_))));
+    assert!(matches!(
+        StemsClient::new(&format!("http://{v2}")).health(),
+        Err(ClientError::Incompatible(_))
+    ));
     let junk = fake_server("<html>hello</html>");
-    assert!(matches!(StemsClient::new(&format!("http://{junk}")).health(), Err(ClientError::Incompatible(_))));
+    assert!(matches!(
+        StemsClient::new(&format!("http://{junk}")).health(),
+        Err(ClientError::Incompatible(_))
+    ));
 }
 
 #[test]
@@ -520,7 +669,9 @@ fn cancel_during_the_upload_stops_it_and_leaves_no_job() {
     assert_eq!(e, ClientError::Cancelled);
     assert!(last < 40 * 1024 * 1024 && started.elapsed() < Duration::from_secs(20));
     // The server drops the half-received upload.
-    wait_until("no job folders", 10, || !s.jobs().exists() || std::fs::read_dir(s.jobs()).unwrap().next().is_none());
+    wait_until("no job folders", 10, || {
+        !s.jobs().exists() || std::fs::read_dir(s.jobs()).unwrap().next().is_none()
+    });
     assert!(!s.client().health().unwrap().busy);
 }
 
@@ -539,7 +690,10 @@ fn cancel_after_the_server_accepted_the_job_sends_delete() {
         .unwrap_err();
     assert_eq!(e, ClientError::Cancelled);
     wait_until("job deleted", 10, || {
-        !s.client().health().unwrap().busy && std::fs::read_dir(s.jobs()).map(|mut d| d.next().is_none()).unwrap_or(true)
+        !s.client().health().unwrap().busy
+            && std::fs::read_dir(s.jobs())
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(true)
     });
 }
 
@@ -548,13 +702,21 @@ fn wait_final_cancel_deletes_the_job() {
     let s = start("hang", &[]);
     let c = s.client();
     let cancel = AtomicBool::new(false);
-    let job = c.submit(&fixture("untagged.flac"), &cancel, |_, _| {}).unwrap();
+    let job = c
+        .submit(&fixture("untagged.flac"), &cancel, |_, _| {})
+        .unwrap();
     let e = c
-        .wait_final(&job, &cancel, Duration::from_millis(50), Duration::from_secs(60), |st| {
-            if st.state == calliope_lib::stems_api::JobState::Running {
-                cancel.store(true, Ordering::SeqCst);
-            }
-        })
+        .wait_final(
+            &job,
+            &cancel,
+            Duration::from_millis(50),
+            Duration::from_secs(60),
+            |st| {
+                if st.state == calliope_lib::stems_api::JobState::Running {
+                    cancel.store(true, Ordering::SeqCst);
+                }
+            },
+        )
         .unwrap_err();
     assert_eq!(e, ClientError::Cancelled);
     wait_until("stub gone", 10, || pids_mentioning(&job).is_empty());
@@ -566,9 +728,17 @@ fn stalled_job_is_reported() {
     let s = start("hang", &[]);
     let c = s.client();
     let cancel = AtomicBool::new(false);
-    let job = c.submit(&fixture("untagged.flac"), &cancel, |_, _| {}).unwrap();
+    let job = c
+        .submit(&fixture("untagged.flac"), &cancel, |_, _| {})
+        .unwrap();
     let e = c
-        .wait_final(&job, &cancel, Duration::from_millis(50), Duration::from_millis(500), |_| {})
+        .wait_final(
+            &job,
+            &cancel,
+            Duration::from_millis(50),
+            Duration::from_millis(500),
+            |_| {},
+        )
         .unwrap_err();
     assert_eq!(e, ClientError::Stalled);
     assert_eq!(e.to_string(), "The edge-AI server stopped responding");
@@ -591,8 +761,19 @@ fn boundary_stems_report_their_audible_time() {
     }
     let done = raw_status(s.addr, &job);
     let levels = done["stem_levels"].as_array().unwrap();
-    assert_eq!(levels.iter().map(|p| p["name"].as_str().unwrap()).collect::<Vec<_>>(), SIX);
-    assert!(levels.iter().all(|p| p["level_dbfs"] == -40 && p["window_ms"] == 100), "{done}");
+    assert_eq!(
+        levels
+            .iter()
+            .map(|p| p["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        SIX
+    );
+    assert!(
+        levels
+            .iter()
+            .all(|p| p["level_dbfs"] == -40 && p["window_ms"] == 100),
+        "{done}"
+    );
     let by = |n: &str| levels.iter().find(|p| p["name"] == n).unwrap();
     for n in ["vocals", "drums", "bass"] {
         assert_eq!(by(n)["audible_ms"], 16000, "{n}");
@@ -600,22 +781,49 @@ fn boundary_stems_report_their_audible_time() {
     assert_eq!(by("guitar")["audible_ms"], 15000);
     assert_eq!(by("other")["audible_ms"], 14900);
     assert_eq!(by("piano")["audible_ms"], 9500);
-    assert!(by("piano")["peak_dbfs"].as_f64().unwrap() > -9.0, "{}", by("piano"));
+    assert!(
+        by("piano")["peak_dbfs"].as_f64().unwrap() > -9.0,
+        "{}",
+        by("piano")
+    );
 
     // The shared client sees the same values.
     let st = s.client().status(&job).unwrap();
     let got = st.stem_levels.unwrap();
     assert_eq!(got.len(), 6);
     for p in &got {
-        assert_eq!(p.audible_ms, by(&p.name)["audible_ms"].as_u64().unwrap(), "{}", p.name);
+        assert_eq!(
+            p.audible_ms,
+            by(&p.name)["audible_ms"].as_u64().unwrap(),
+            "{}",
+            p.name
+        );
         assert_eq!((p.level_dbfs, p.window_ms), (-40, 100));
     }
 
     let log = s.log();
-    assert!(log.contains(&format!("job id={job} stem=guitar audible_ms=15000 windows=200 level_dbfs=-40 peak_dbfs=")), "{log}");
-    assert!(log.contains(&format!("job id={job} measured=6/6 ms=")), "{log}");
+    assert!(
+        log.contains(&format!(
+            "job id={job} stem=guitar audible_ms=15000 windows=200 level_dbfs=-40 peak_dbfs="
+        )),
+        "{log}"
+    );
+    assert!(
+        log.contains(&format!("job id={job} measured=6/6 ms=")),
+        "{log}"
+    );
     // The stems are still served.
-    assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/piano"), &[], b"").status, 200);
+    assert_eq!(
+        http(
+            s.addr,
+            "GET",
+            &format!("/v1/jobs/{job}/stems/piano"),
+            &[],
+            b""
+        )
+        .status,
+        200
+    );
 }
 
 #[test]
@@ -625,7 +833,12 @@ fn silent_stems_report_zero_audible_time_and_null_peak() {
     let done = wait_state(s.addr, &job, "done");
     let levels = done["stem_levels"].as_array().unwrap();
     assert_eq!(levels.len(), 6);
-    assert!(levels.iter().all(|p| p["audible_ms"] == 0 && p["peak_dbfs"].is_null()), "{done}");
+    assert!(
+        levels
+            .iter()
+            .all(|p| p["audible_ms"] == 0 && p["peak_dbfs"].is_null()),
+        "{done}"
+    );
 }
 
 #[test]
@@ -638,9 +851,25 @@ fn undecodable_stem_gets_no_entry_but_the_job_succeeds() {
     assert_eq!(names, ["vocals", "drums", "bass", "guitar", "other"]);
     assert_eq!(done["stems"].as_array().unwrap().len(), 6);
     let log = s.log();
-    assert!(log.contains(&format!("job id={job} stem=piano audible=unknown")), "{log}");
-    assert!(log.contains(&format!("job id={job} measured=5/6 ms=")), "{log}");
-    assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/piano"), &[], b"").status, 200);
+    assert!(
+        log.contains(&format!("job id={job} stem=piano audible=unknown")),
+        "{log}"
+    );
+    assert!(
+        log.contains(&format!("job id={job} measured=5/6 ms=")),
+        "{log}"
+    );
+    assert_eq!(
+        http(
+            s.addr,
+            "GET",
+            &format!("/v1/jobs/{job}/stems/piano"),
+            &[],
+            b""
+        )
+        .status,
+        200
+    );
 }
 
 #[test]
@@ -648,15 +877,34 @@ fn no_stem_levels_flag_gives_the_old_json() {
     let s = start("ok", &["--no-stem-levels"]);
     let job = submit_raw(&s);
     let done = wait_state(s.addr, &job, "done");
-    let keys: Vec<&str> = done.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+    let keys: Vec<&str> = done
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|k| k.as_str())
+        .collect();
     let mut sorted = keys.clone();
     sorted.sort();
-    assert_eq!(sorted, ["error", "job", "progress", "state", "stems"], "{done}");
+    assert_eq!(
+        sorted,
+        ["error", "job", "progress", "state", "stems"],
+        "{done}"
+    );
     let st = s.client().status(&job).unwrap();
     assert!(st.stem_levels.is_none());
     assert!(!s.log().contains("measured="));
     for n in SIX {
-        assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/{n}"), &[], b"").status, 200);
+        assert_eq!(
+            http(
+                s.addr,
+                "GET",
+                &format!("/v1/jobs/{job}/stems/{n}"),
+                &[],
+                b""
+            )
+            .status,
+            200
+        );
     }
 }
 
@@ -668,7 +916,10 @@ fn post_beats(addr: SocketAddr, file: &str) -> Resp {
         addr,
         "POST",
         "/v1/beats",
-        &[("Content-Type", "audio/flac".into()), ("Content-Length", body.len().to_string())],
+        &[
+            ("Content-Type", "audio/flac".into()),
+            ("Content-Length", body.len().to_string()),
+        ],
         &body,
     )
 }
@@ -694,11 +945,15 @@ fn health_tasks_follow_the_tracker_flag() {
     // Without a tracker beats are refused, whatever the body.
     let r = post_beats(s.addr, "stems/vocals.flac");
     assert_eq!(r.status, 501);
-    assert_eq!(r.json()["error"], "beat detection is not configured on this server");
+    assert_eq!(
+        r.json()["error"],
+        "beat detection is not configured on this server"
+    );
     assert_eq!(http(s.addr, "POST", "/v1/beats", &[], b"").status, 501);
     let cancel = AtomicBool::new(false);
     assert!(matches!(
-        s.client().submit_beats(&fixture("stems/vocals.flac"), &cancel, |_, _| {}),
+        s.client()
+            .submit_beats(&fixture("stems/vocals.flac"), &cancel, |_, _| {}),
         Err(ClientError::Rejected { status: 501, .. })
     ));
     assert!(!s.jobs().exists() || std::fs::read_dir(s.jobs()).unwrap().next().is_none());
@@ -734,24 +989,58 @@ fn beats_ok_flow_raw_and_with_the_client() {
     let input = s.jobs().join(&job).join("input.flac");
     wait_until("the beats input removed", 5, || !input.exists());
     // Stems of a beats job do not exist.
-    assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job}/stems/vocals"), &[], b"").status, 404);
+    assert_eq!(
+        http(
+            s.addr,
+            "GET",
+            &format!("/v1/jobs/{job}/stems/vocals"),
+            &[],
+            b""
+        )
+        .status,
+        404
+    );
     let log = s.log();
-    assert!(log.contains(&format!("job id={job} kind=beats state=running")), "{log}");
-    assert!(log.contains(&format!("job id={job} beats=27 downbeats=7 tracker=\"stub-beat-tracker\"")), "{log}");
+    assert!(
+        log.contains(&format!("job id={job} kind=beats state=running")),
+        "{log}"
+    );
+    assert!(
+        log.contains(&format!(
+            "job id={job} beats=27 downbeats=7 tracker=\"stub-beat-tracker\""
+        )),
+        "{log}"
+    );
 
     // Through the shared client, 16 s fixture.
     let c = s.client();
     let cancel = AtomicBool::new(false);
-    let job2 = c.submit_beats(&fixture("stems/vocals.flac"), &cancel, |_, _| {}).unwrap();
-    let st = c.wait_final(&job2, &cancel, Duration::from_millis(50), Duration::from_secs(20), |_| {}).unwrap();
+    let job2 = c
+        .submit_beats(&fixture("stems/vocals.flac"), &cancel, |_, _| {})
+        .unwrap();
+    let st = c
+        .wait_final(
+            &job2,
+            &cancel,
+            Duration::from_millis(50),
+            Duration::from_secs(20),
+            |_| {},
+        )
+        .unwrap();
     assert_eq!(st.state, calliope_lib::stems_api::JobState::Done);
     assert_eq!(st.kind.as_deref(), Some("beats"));
     let b = c.fetch_beats(&job2, 16.0).unwrap();
     assert_eq!((b.beats.len(), b.downbeats.len()), (27, 7));
     assert_eq!(b.tracker, "stub-beat-tracker");
     // A shorter audio length than the document's makes it invalid.
-    assert!(matches!(c.fetch_beats(&job2, 5.0), Err(ClientError::Invalid(_))));
-    assert!(matches!(c.fetch_beats("../x", 16.0), Err(ClientError::Invalid(_))));
+    assert!(matches!(
+        c.fetch_beats(&job2, 5.0),
+        Err(ClientError::Invalid(_))
+    ));
+    assert!(matches!(
+        c.fetch_beats("../x", 16.0),
+        Err(ClientError::Invalid(_))
+    ));
 
     // A stem job on the same server: no `kind` key, and no beats.
     let sj = submit_raw(&s);
@@ -762,15 +1051,27 @@ fn beats_ok_flow_raw_and_with_the_client() {
     // DELETE removes a beats job's folder.
     let dir = s.jobs().join(&job);
     assert!(dir.exists());
-    assert_eq!(http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), &[], b"").status, 204);
+    assert_eq!(
+        http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), &[], b"").status,
+        204
+    );
     assert!(!dir.exists());
     assert_eq!(get_beats(&s, &job).status, 404);
-    assert!(matches!(c.fetch_beats(&job, 16.0), Err(ClientError::Restarted)));
+    assert!(matches!(
+        c.fetch_beats(&job, 16.0),
+        Err(ClientError::Restarted)
+    ));
     assert_eq!(get_beats(&s, "abcd").status, 404);
-    assert_eq!(http(s.addr, "GET", &format!("/v1/jobs/{job2}/beats/x"), &[], b"").status, 404);
+    assert_eq!(
+        http(s.addr, "GET", &format!("/v1/jobs/{job2}/beats/x"), &[], b"").status,
+        404
+    );
     assert_eq!(http(s.addr, "GET", "/v1/beats/", &[], b"").status, 404);
     assert_eq!(http(s.addr, "GET", "/v1/beats", &[], b"").status, 405);
-    assert_eq!(http(s.addr, "POST", &format!("/v1/jobs/{job2}/beats"), &[], b"").status, 405);
+    assert_eq!(
+        http(s.addr, "POST", &format!("/v1/jobs/{job2}/beats"), &[], b"").status,
+        405
+    );
     c.delete(&job2);
     c.delete(&sj);
     assert_confined(&s);
@@ -783,9 +1084,21 @@ fn rejected_beat_uploads() {
     assert_eq!(http(s.addr, "POST", "/v1/beats", &flac, b"").status, 411);
     assert_eq!(post_beats(s.addr, "not-flac.flac").status, 415);
     assert_eq!(post_beats(s.addr, "long.flac").status, 413);
-    let r = http(s.addr, "POST", "/v1/beats", &[("Content-Type", "audio/mpeg".into()), ("Content-Length", "4".into())], b"abcd");
+    let r = http(
+        s.addr,
+        "POST",
+        "/v1/beats",
+        &[
+            ("Content-Type", "audio/mpeg".into()),
+            ("Content-Length", "4".into()),
+        ],
+        b"abcd",
+    );
     assert_eq!(r.status, 415);
-    let big = [("Content-Type", "audio/flac".to_string()), ("Content-Length", (2 * 1024 * 1024).to_string())];
+    let big = [
+        ("Content-Type", "audio/flac".to_string()),
+        ("Content-Length", (2 * 1024 * 1024).to_string()),
+    ];
     let r = http(s.addr, "POST", "/v1/beats", &big, b"");
     assert_eq!(r.status, 413);
     assert!(r.json()["error"].is_string());
@@ -798,9 +1111,17 @@ fn beats_are_409_while_running() {
     let job = submit_beats_raw(&s);
     wait_state(s.addr, &job, "running");
     assert_eq!(get_beats(&s, &job).status, 409);
-    assert!(matches!(s.client().fetch_beats(&job, 16.0), Err(ClientError::Invalid(m)) if m == "not done"));
+    assert!(
+        matches!(s.client().fetch_beats(&job, 16.0), Err(ClientError::Invalid(m)) if m == "not done")
+    );
     wait_state(s.addr, &job, "done");
-    assert_eq!(get_beats(&s, &job).json()["beats"].as_array().unwrap().len(), 27);
+    assert_eq!(
+        get_beats(&s, &job).json()["beats"]
+            .as_array()
+            .unwrap()
+            .len(),
+        27
+    );
 }
 
 #[test]
@@ -824,7 +1145,13 @@ fn failing_trackers_fail_the_job() {
     let s = start_beats("few", &[]);
     let job = submit_beats_raw(&s);
     wait_state(s.addr, &job, "done");
-    assert_eq!(get_beats(&s, &job).json()["beats"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        get_beats(&s, &job).json()["beats"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
 }
 
 #[test]
@@ -833,17 +1160,27 @@ fn hanging_tracker_is_killed_on_delete_and_on_timeout() {
     let job = submit_beats_raw(&s);
     wait_state(s.addr, &job, "running");
     wait_until("stub running", 10, || !pids_mentioning(&job).is_empty());
-    assert_eq!(http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), &[], b"").status, 204);
+    assert_eq!(
+        http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), &[], b"").status,
+        204
+    );
     wait_until("stub gone", 10, || pids_mentioning(&job).is_empty());
     assert!(!s.jobs().join(&job).exists());
     assert_eq!(raw_status(s.addr, &job)["state"], "cancelled");
-    assert_eq!(http(s.addr, "GET", "/v1/health", &[], b"").json()["busy"], false);
+    assert_eq!(
+        http(s.addr, "GET", "/v1/health", &[], b"").json()["busy"],
+        false
+    );
 
     let t = start_beats("hang", &[]); // 500 ms timeout
     let started = Instant::now();
     let job = submit_beats_raw(&t);
     let v = wait_state(t.addr, &job, "failed");
-    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
     assert!(v["error"].as_str().unwrap().contains("timed out"), "{v}");
     wait_until("stub gone", 10, || pids_mentioning(&job).is_empty());
 }
@@ -855,7 +1192,11 @@ fn beats_job_waits_behind_a_running_separation() {
     wait_state(t.addr, &stems, "running");
     let beats = submit_beats_raw(&t);
     let v = raw_status(t.addr, &beats);
-    assert_eq!((v["state"].as_str(), v["kind"].as_str()), (Some("queued"), Some("beats")), "{v}");
+    assert_eq!(
+        (v["state"].as_str(), v["kind"].as_str()),
+        (Some("queued"), Some("beats")),
+        "{v}"
+    );
     assert_eq!(get_beats(&t, &beats).status, 409);
     wait_state(t.addr, &stems, "done");
     wait_state(t.addr, &beats, "done");

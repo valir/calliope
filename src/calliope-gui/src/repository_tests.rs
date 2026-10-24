@@ -44,7 +44,13 @@ impl Env {
         let repo = Repository::new(&root);
         repo.ensure_layout().unwrap();
         let before = list(&outside);
-        Env { _tmp: tmp, outside, sources, repo, before }
+        Env {
+            _tmp: tmp,
+            outside,
+            sources,
+            repo,
+            before,
+        }
     }
 
     fn track(&self, id: &str, tabs: &[&str]) -> TrackRecord {
@@ -58,7 +64,12 @@ impl Env {
             .collect();
         self.repo
             .create_track(
-                NewTrack { id: Some(id.into()), edits: edits("Band", "Album", "Title"), audio_name: "backing.mp3".into(), tablatures },
+                NewTrack {
+                    id: Some(id.into()),
+                    edits: edits("Band", "Album", "Title"),
+                    audio_name: "backing.mp3".into(),
+                    tablatures,
+                },
                 &self.outside.join("audio.mp3"),
             )
             .unwrap()
@@ -88,7 +99,10 @@ impl Env {
                     if p.is_dir() {
                         walk(base, &p, m);
                     } else {
-                        m.insert(p.strip_prefix(base).unwrap().to_string_lossy().into_owned(), fs::read(&p).unwrap());
+                        m.insert(
+                            p.strip_prefix(base).unwrap().to_string_lossy().into_owned(),
+                            fs::read(&p).unwrap(),
+                        );
                     }
                 }
             }
@@ -101,7 +115,11 @@ impl Env {
 impl Drop for Env {
     fn drop(&mut self) {
         if !std::thread::panicking() {
-            assert_eq!(list(&self.outside), self.before, "the outside folder changed");
+            assert_eq!(
+                list(&self.outside),
+                self.before,
+                "the outside folder changed"
+            );
         }
     }
 }
@@ -163,7 +181,11 @@ fn ensure_layout_in_foreign_folder_adds_only_marker_and_tracks() {
     fs::write(r.join("b.txt"), "keep").unwrap();
     Repository::new(&r).ensure_layout().unwrap();
     Repository::new(&r).ensure_layout().unwrap();
-    let mut names: Vec<_> = fs::read_dir(&r).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let mut names: Vec<_> = fs::read_dir(&r)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
     names.sort();
     assert_eq!(names, ["b.txt", MARKER, "docs", "tracks"]);
     assert_eq!(fs::read_to_string(r.join("docs/a.txt")).unwrap(), "keep");
@@ -181,7 +203,10 @@ fn create_and_scan() {
     assert_eq!(lib.tracks[0], a);
     assert_eq!(a.revision.len(), 16);
     assert!(a.missing.is_empty());
-    assert_eq!(fs::read(env.dir("aaa").join("one.gp5")).unwrap(), b"content of one.gp5");
+    assert_eq!(
+        fs::read(env.dir("aaa").join("one.gp5")).unwrap(),
+        b"content of one.gp5"
+    );
 }
 
 #[test]
@@ -189,7 +214,12 @@ fn create_refuses_existing_id_and_cleans_up_on_failure() {
     let env = Env::new();
     env.track("aaa", &[]);
     let r = env.repo.create_track(
-        NewTrack { id: Some("aaa".into()), edits: edits("a", "b", "c"), audio_name: "x.mp3".into(), tablatures: vec![] },
+        NewTrack {
+            id: Some("aaa".into()),
+            edits: edits("a", "b", "c"),
+            audio_name: "x.mp3".into(),
+            tablatures: vec![],
+        },
         &env.outside.join("audio.mp3"),
     );
     assert!(r.is_err());
@@ -219,10 +249,18 @@ fn scan_reports_problems_without_failing() {
     // id mismatch
     env.track("orig", &[]);
     fs::create_dir(tracks.join("copy")).unwrap();
-    fs::copy(tracks.join("orig/track.json"), tracks.join("copy/track.json")).unwrap();
+    fs::copy(
+        tracks.join("orig/track.json"),
+        tracks.join("copy/track.json"),
+    )
+    .unwrap();
     // newer schema
     fs::create_dir(tracks.join("newer")).unwrap();
-    fs::write(tracks.join("newer/track.json"), r#"{"schema_version": 3, "id": "newer"}"#).unwrap();
+    fs::write(
+        tracks.join("newer/track.json"),
+        r#"{"schema_version": 3, "id": "newer"}"#,
+    )
+    .unwrap();
     // invalid folder name, missing track.json, dot folder, stray file
     fs::create_dir(tracks.join("bad name")).unwrap();
     fs::create_dir(tracks.join("empty")).unwrap();
@@ -231,7 +269,11 @@ fn scan_reports_problems_without_failing() {
     let lib = env.repo.scan();
     let ok: Vec<_> = lib.tracks.iter().map(|t| t.id.as_str()).collect();
     assert_eq!(ok, ["good", "orig"]);
-    let bad: BTreeMap<_, _> = lib.problems.iter().map(|p| (p.dir.as_str(), p.message.as_str())).collect();
+    let bad: BTreeMap<_, _> = lib
+        .problems
+        .iter()
+        .map(|p| (p.dir.as_str(), p.message.as_str()))
+        .collect();
     assert_eq!(bad.len(), 5, "{bad:?}");
     assert!(bad["badjson"].contains("invalid JSON"));
     assert!(bad["copy"].contains("does not match"));
@@ -262,7 +304,12 @@ fn save_edits_updates_modified_keeps_imported_and_extra() {
     v["imported"] = "2020-01-01T00:00:00+02:00".into();
     v["modified"] = "2020-01-01T00:00:00Z".into();
     fs::write(&p, serde_json::to_vec_pretty(&v).unwrap()).unwrap();
-    let rec = Repository::new(&env.repo.root).scan().tracks.into_iter().find(|t| t.id == rec.id).unwrap();
+    let rec = Repository::new(&env.repo.root)
+        .scan()
+        .tracks
+        .into_iter()
+        .find(|t| t.id == rec.id)
+        .unwrap();
     let mut r = req(&rec, vec![]);
     r.edits.title = "  New title ".into();
     r.edits.year = None;
@@ -285,10 +332,24 @@ fn save_add_copies_file_and_lists_it() {
     let rec = env.track("aaa", &["one.gp5"]);
     let res = env
         .repo
-        .save_track(req(&rec, vec![keep("one.gp5"), TabEntry::Add { token: "new".into() }]), &env.lookup())
+        .save_track(
+            req(
+                &rec,
+                vec![
+                    keep("one.gp5"),
+                    TabEntry::Add {
+                        token: "new".into(),
+                    },
+                ],
+            ),
+            &env.lookup(),
+        )
         .unwrap();
     assert_eq!(res.track.tablatures, ["one.gp5", "tab-new.gp5"]);
-    assert_eq!(fs::read(env.dir("aaa").join("tab-new.gp5")).unwrap(), b"NEW TAB");
+    assert_eq!(
+        fs::read(env.dir("aaa").join("tab-new.gp5")).unwrap(),
+        b"NEW TAB"
+    );
     assert!(res.track.missing.is_empty());
     assert!(!env.repo.root.join("trash").exists());
     assert!(!env.dir("aaa").join(".tab-new.gp5.part").exists());
@@ -298,7 +359,13 @@ fn save_add_copies_file_and_lists_it() {
 fn save_order_follows_the_request() {
     let env = Env::new();
     let rec = env.track("aaa", &["one.gp5", "two.gp5"]);
-    let res = env.repo.save_track(req(&rec, vec![keep("two.gp5"), keep("one.gp5")]), &env.lookup()).unwrap();
+    let res = env
+        .repo
+        .save_track(
+            req(&rec, vec![keep("two.gp5"), keep("one.gp5")]),
+            &env.lookup(),
+        )
+        .unwrap();
     assert_eq!(res.track.tablatures, ["two.gp5", "one.gp5"]);
 }
 
@@ -306,7 +373,10 @@ fn save_order_follows_the_request() {
 fn save_remove_moves_file_to_trash() {
     let env = Env::new();
     let rec = env.track("aaa", &["one.gp5", "two.gp5"]);
-    let res = env.repo.save_track(req(&rec, vec![keep("two.gp5")]), &env.lookup()).unwrap();
+    let res = env
+        .repo
+        .save_track(req(&rec, vec![keep("two.gp5")]), &env.lookup())
+        .unwrap();
     assert_eq!(res.track.tablatures, ["two.gp5"]);
     assert!(!env.dir("aaa").join("one.gp5").exists());
     let trash = env.trash_files();
@@ -322,11 +392,23 @@ fn save_replace_same_name_puts_new_content_and_trashes_old() {
     let rec = env.track("aaa", &["tab-new.gp5"]);
     let res = env
         .repo
-        .save_track(req(&rec, vec![TabEntry::Replace { name: "tab-new.gp5".into(), token: "new".into() }]), &env.lookup())
+        .save_track(
+            req(
+                &rec,
+                vec![TabEntry::Replace {
+                    name: "tab-new.gp5".into(),
+                    token: "new".into(),
+                }],
+            ),
+            &env.lookup(),
+        )
         .unwrap();
     assert!(res.warnings.is_empty());
     assert_eq!(res.track.tablatures, ["tab-new.gp5"]);
-    assert_eq!(fs::read(env.dir("aaa").join("tab-new.gp5")).unwrap(), b"NEW TAB");
+    assert_eq!(
+        fs::read(env.dir("aaa").join("tab-new.gp5")).unwrap(),
+        b"NEW TAB"
+    );
     assert!(!env.dir("aaa").join(".tab-new.gp5.part").exists());
     let trash = env.trash_files();
     assert_eq!(trash.values().next().unwrap(), b"content of tab-new.gp5");
@@ -338,7 +420,16 @@ fn save_replace_different_name() {
     let rec = env.track("aaa", &["one.gp5"]);
     let res = env
         .repo
-        .save_track(req(&rec, vec![TabEntry::Replace { name: "one.gp5".into(), token: "other".into() }]), &env.lookup())
+        .save_track(
+            req(
+                &rec,
+                vec![TabEntry::Replace {
+                    name: "one.gp5".into(),
+                    token: "other".into(),
+                }],
+            ),
+            &env.lookup(),
+        )
         .unwrap();
     assert_eq!(res.track.tablatures, ["other.gp"]);
     assert_eq!(fs::read(env.dir("aaa").join("other.gp")).unwrap(), b"OTHER");
@@ -355,7 +446,18 @@ fn save_conflict_changes_nothing() {
     text = text.replace("\"Title\"", "\"Title, changed outside\"");
     fs::write(&p, &text).unwrap();
     let snapshot = tree(&env);
-    let e = env.repo.save_track(req(&rec, vec![TabEntry::Add { token: "new".into() }]), &env.lookup()).unwrap_err();
+    let e = env
+        .repo
+        .save_track(
+            req(
+                &rec,
+                vec![TabEntry::Add {
+                    token: "new".into(),
+                }],
+            ),
+            &env.lookup(),
+        )
+        .unwrap_err();
     assert!(e.contains("conflict"), "{e}");
     assert_eq!(tree(&env), snapshot);
     assert_eq!(fs::read_to_string(&p).unwrap(), text);
@@ -371,15 +473,46 @@ fn save_rejects_bad_input_with_nothing_written() {
     let snapshot = tree(&env);
     let l = env.lookup();
     let cases: Vec<Vec<TabEntry>> = vec![
-        vec![keep("one.gp5"), TabEntry::Add { token: "nope".into() }],
-        vec![keep("one.gp5"), TabEntry::Add { token: "missing".into() }],
-        vec![keep("one.gp5"), TabEntry::Add { token: "bad".into() }],
+        vec![
+            keep("one.gp5"),
+            TabEntry::Add {
+                token: "nope".into(),
+            },
+        ],
+        vec![
+            keep("one.gp5"),
+            TabEntry::Add {
+                token: "missing".into(),
+            },
+        ],
+        vec![
+            keep("one.gp5"),
+            TabEntry::Add {
+                token: "bad".into(),
+            },
+        ],
         vec![keep("unknown.gp5")],
         vec![keep("../../x")],
         vec![keep("one.gp5"), keep("one.gp5")],
-        vec![keep("one.gp5"), TabEntry::Replace { name: "one.gp5".into(), token: "new".into() }],
-        vec![TabEntry::Replace { name: "ghost.gp5".into(), token: "new".into() }],
-        vec![TabEntry::Add { token: "new".into() }, TabEntry::Add { token: "new".into() }],
+        vec![
+            keep("one.gp5"),
+            TabEntry::Replace {
+                name: "one.gp5".into(),
+                token: "new".into(),
+            },
+        ],
+        vec![TabEntry::Replace {
+            name: "ghost.gp5".into(),
+            token: "new".into(),
+        }],
+        vec![
+            TabEntry::Add {
+                token: "new".into(),
+            },
+            TabEntry::Add {
+                token: "new".into(),
+            },
+        ],
     ];
     for tabs in cases {
         let r = env.repo.save_track(req(&rec, tabs.clone()), &l);
@@ -387,7 +520,15 @@ fn save_rejects_bad_input_with_nothing_written() {
         assert_eq!(tree(&env), snapshot, "{tabs:?}");
     }
     // invalid edits
-    let mut r = req(&rec, vec![keep("one.gp5"), TabEntry::Add { token: "new".into() }]);
+    let mut r = req(
+        &rec,
+        vec![
+            keep("one.gp5"),
+            TabEntry::Add {
+                token: "new".into(),
+            },
+        ],
+    );
     r.edits.title = "   ".into();
     assert!(env.repo.save_track(r, &l).is_err());
     assert_eq!(tree(&env), snapshot);
@@ -404,7 +545,12 @@ fn bad_ids_are_rejected_everywhere() {
         assert!(env.repo.save_track(r, &l).is_err(), "{id}");
         assert!(env.repo.delete_track(id, &rec.revision).is_err(), "{id}");
         assert!(env.repo.export_track(id, &env.outside).is_err(), "{id}");
-        assert!(env.repo.export_tablature(id, "one.gp5", &env.outside.join("o.gp5")).is_err(), "{id}");
+        assert!(
+            env.repo
+                .export_tablature(id, "one.gp5", &env.outside.join("o.gp5"))
+                .is_err(),
+            "{id}"
+        );
     }
     assert!(env.dir("aaa").exists());
 }
@@ -415,9 +561,20 @@ fn untracked_file_is_never_overwritten_by_add() {
     let rec = env.track("aaa", &[]);
     fs::write(env.dir("aaa").join("tab-new.gp5"), b"PRECIOUS").unwrap();
     let snapshot = tree(&env);
-    let e = env.repo.save_track(req(&rec, vec![TabEntry::Add { token: "new".into() }]), &env.lookup());
+    let e = env.repo.save_track(
+        req(
+            &rec,
+            vec![TabEntry::Add {
+                token: "new".into(),
+            }],
+        ),
+        &env.lookup(),
+    );
     assert!(e.is_err());
-    assert_eq!(fs::read(env.dir("aaa").join("tab-new.gp5")).unwrap(), b"PRECIOUS");
+    assert_eq!(
+        fs::read(env.dir("aaa").join("tab-new.gp5")).unwrap(),
+        b"PRECIOUS"
+    );
     assert_eq!(tree(&env), snapshot);
 }
 
@@ -428,12 +585,25 @@ fn failed_add_after_earlier_copy_rolls_back_only_our_copies() {
     fs::write(env.dir("aaa").join("other.gp"), b"PRECIOUS").unwrap();
     let snapshot = tree(&env);
     let e = env.repo.save_track(
-        req(&rec, vec![TabEntry::Add { token: "new".into() }, TabEntry::Add { token: "other".into() }]),
+        req(
+            &rec,
+            vec![
+                TabEntry::Add {
+                    token: "new".into(),
+                },
+                TabEntry::Add {
+                    token: "other".into(),
+                },
+            ],
+        ),
         &env.lookup(),
     );
     assert!(e.is_err());
     assert_eq!(tree(&env), snapshot);
-    assert_eq!(fs::read(env.dir("aaa").join("other.gp")).unwrap(), b"PRECIOUS");
+    assert_eq!(
+        fs::read(env.dir("aaa").join("other.gp")).unwrap(),
+        b"PRECIOUS"
+    );
 }
 
 #[cfg(unix)]
@@ -452,10 +622,22 @@ fn metadata_write_failure_leaves_no_new_files() {
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
         return;
     }
-    let r = env.repo.save_track(req(&rec, vec![TabEntry::Add { token: "new".into() }]), &env.lookup());
+    let r = env.repo.save_track(
+        req(
+            &rec,
+            vec![TabEntry::Add {
+                token: "new".into(),
+            }],
+        ),
+        &env.lookup(),
+    );
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(r.is_err());
-    let mut names: Vec<_> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let mut names: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
     names.sort();
     assert_eq!(names, ["backing.mp3", "one.gp5", "track.json"]);
     assert_eq!(fs::read(dir.join("track.json")).unwrap(), json_before);
@@ -470,7 +652,18 @@ fn metadata_write_failure_after_copy_removes_copies() {
     let rec = env.track("aaa", &["one.gp5"]);
     let dir = env.dir("aaa");
     crate::fsutil::FAIL_WRITE_OF.with(|f| *f.borrow_mut() = Some("track.json".into()));
-    let r = env.repo.save_track(req(&rec, vec![keep("one.gp5"), TabEntry::Add { token: "new".into() }]), &env.lookup());
+    let r = env.repo.save_track(
+        req(
+            &rec,
+            vec![
+                keep("one.gp5"),
+                TabEntry::Add {
+                    token: "new".into(),
+                },
+            ],
+        ),
+        &env.lookup(),
+    );
     crate::fsutil::FAIL_WRITE_OF.with(|f| *f.borrow_mut() = None);
     assert!(r.is_err());
     assert!(!dir.join("tab-new.gp5").exists());
@@ -484,7 +677,9 @@ fn hand_edited_and_newer_tracks_are_never_rewritten() {
     let env = Env::new();
     let rec = env.track("aaa", &[]);
     let p = env.dir("aaa").join("track.json");
-    let newer = fs::read_to_string(&p).unwrap().replace("\"schema_version\": 2", "\"schema_version\": 3");
+    let newer = fs::read_to_string(&p)
+        .unwrap()
+        .replace("\"schema_version\": 2", "\"schema_version\": 3");
     fs::write(&p, &newer).unwrap();
     let l = env.lookup();
     assert!(env.repo.save_track(req(&rec, vec![]), &l).is_err());
@@ -502,7 +697,14 @@ fn delete_moves_whole_folder_to_trash() {
     let trash = env.trash_files();
     assert_eq!(trash.len(), 3);
     assert!(trash.keys().any(|k| k.ends_with("-aaa/one.gp5")));
-    assert_eq!(trash.iter().find(|(k, _)| k.ends_with("backing.mp3")).unwrap().1, b"AUDIO");
+    assert_eq!(
+        trash
+            .iter()
+            .find(|(k, _)| k.ends_with("backing.mp3"))
+            .unwrap()
+            .1,
+        b"AUDIO"
+    );
     assert!(env.repo.scan().tracks.is_empty());
 }
 
@@ -529,26 +731,40 @@ fn positions_survive_a_library_save_and_an_export_and_save_track_sets_them() {
     r.position = Some(Some(4));
     r.album_position = Some(Some(2));
     let res = env.repo.save_track(r, &env.lookup()).unwrap();
-    assert_eq!((res.track.position, res.track.album_position), (Some(4), Some(2)));
+    assert_eq!(
+        (res.track.position, res.track.album_position),
+        (Some(4), Some(2))
+    );
     assert!(res.updated.is_empty() && res.failed.is_empty());
     // a later save without the fields keeps them
     let mut r = req(&res.track, vec![]);
     r.edits.title = "Renamed".into();
     let res = env.repo.save_track(r, &env.lookup()).unwrap();
-    assert_eq!((res.track.position, res.track.album_position), (Some(4), Some(2)));
+    assert_eq!(
+        (res.track.position, res.track.album_position),
+        (Some(4), Some(2))
+    );
     let mut bad = req(&res.track, vec![]);
     bad.position = Some(Some(0));
     assert!(env.repo.save_track(bad, &env.lookup()).is_err());
     let out = env.repo.export_track("aaa", &env.outside).unwrap();
-    let j: serde_json::Value = serde_json::from_slice(&fs::read(out.join("track.json")).unwrap()).unwrap();
-    assert_eq!((j["position"].clone(), j["album_position"].clone()), (4.into(), 2.into()));
+    let j: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("track.json")).unwrap()).unwrap();
+    assert_eq!(
+        (j["position"].clone(), j["album_position"].clone()),
+        (4.into(), 2.into())
+    );
     fs::remove_dir_all(&out).unwrap();
 }
 
 #[test]
 fn update_tracks_writes_only_the_changed_tracks() {
     let env = Env::new();
-    let (a, b, c) = (env.track("aaa", &[]), env.track("bbb", &[]), env.track("ccc", &[]));
+    let (a, b, c) = (
+        env.track("aaa", &[]),
+        env.track("bbb", &[]),
+        env.track("ccc", &[]),
+    );
     for id in ["aaa", "bbb", "ccc"] {
         let p = env.dir(id).join("track.json");
         let s = fs::read_to_string(&p).unwrap();
@@ -567,11 +783,17 @@ fn update_tracks_writes_only_the_changed_tracks() {
     let res = env.repo.update_tracks(&[pa, pb, pc]).unwrap();
     assert!(res.failed.is_empty());
     assert_eq!(res.tracks.len(), 3);
-    assert_eq!((res.tracks[0].position, res.tracks[0].album_position), (Some(2), Some(1)));
+    assert_eq!(
+        (res.tracks[0].position, res.tracks[0].album_position),
+        (Some(2), Some(1))
+    );
     assert_eq!(res.tracks[1].album, "New Album");
     assert_ne!(res.tracks[0].modified, "2020-01-01T00:00:00Z");
     assert_ne!(res.tracks[1].modified, "2020-01-01T00:00:00Z");
-    assert_eq!(res.tracks[2], c, "an unchanged track keeps its record and revision");
+    assert_eq!(
+        res.tracks[2], c,
+        "an unchanged track keeps its record and revision"
+    );
     assert_eq!(bytes_of(&env, "ccc"), c_bytes);
     assert_eq!(res.tracks[0].title, a.title);
     assert!(!env.dir("aaa").join("track.json.tmp").exists());
@@ -587,15 +809,27 @@ fn reorder_succeeds_for_tracks_with_hand_edited_padded_names() {
         v[key] = val.into();
         fs::write(&p, serde_json::to_vec_pretty(&v).unwrap()).unwrap();
     }
-    let (a, b) = (env.repo.load_record(&a.id).unwrap(), env.repo.load_record(&b.id).unwrap());
+    let (a, b) = (
+        env.repo.load_record(&a.id).unwrap(),
+        env.repo.load_record(&b.id).unwrap(),
+    );
     let (mut pa, mut pb) = (patch(&a), patch(&b));
     pa.position = Some(Some(2));
     pb.position = Some(Some(1));
     let res = env.repo.update_tracks(&[pa, pb]).unwrap();
     assert!(res.failed.is_empty(), "{:?}", res.failed);
-    assert_eq!((res.tracks[0].position, res.tracks[1].position), (Some(2), Some(1)));
-    assert_eq!((res.tracks[0].band.as_str(), res.tracks[1].album.as_str()), ("Band ", " Album"));
-    assert_eq!((res.tracks[0].album.as_str(), res.tracks[1].band.as_str()), (a.album.as_str(), b.band.as_str()));
+    assert_eq!(
+        (res.tracks[0].position, res.tracks[1].position),
+        (Some(2), Some(1))
+    );
+    assert_eq!(
+        (res.tracks[0].band.as_str(), res.tracks[1].album.as_str()),
+        ("Band ", " Album")
+    );
+    assert_eq!(
+        (res.tracks[0].album.as_str(), res.tracks[1].band.as_str()),
+        (a.album.as_str(), b.band.as_str())
+    );
 }
 
 #[cfg(unix)]
@@ -603,7 +837,11 @@ fn reorder_succeeds_for_tracks_with_hand_edited_padded_names() {
 fn a_write_failure_in_a_batch_is_reported_and_the_others_are_written() {
     use std::os::unix::fs::PermissionsExt;
     let env = Env::new();
-    let (a, b, c) = (env.track("aaa", &[]), env.track("bbb", &[]), env.track("ccc", &[]));
+    let (a, b, c) = (
+        env.track("aaa", &[]),
+        env.track("bbb", &[]),
+        env.track("ccc", &[]),
+    );
     let (mut pa, mut pb, mut pc) = (patch(&a), patch(&b), patch(&c));
     pa.position = Some(Some(1));
     pb.position = Some(Some(2));
@@ -621,8 +859,16 @@ fn a_write_failure_in_a_batch_is_reported_and_the_others_are_written() {
     let res = res.unwrap();
     assert_eq!(res.failed.len(), 1);
     assert_eq!(res.failed[0].id, "bbb");
-    assert!(res.failed[0].message.starts_with("cannot write track.json"), "{}", res.failed[0].message);
-    let ids: Vec<_> = res.tracks.iter().map(|t| (t.id.as_str(), t.position)).collect();
+    assert!(
+        res.failed[0].message.starts_with("cannot write track.json"),
+        "{}",
+        res.failed[0].message
+    );
+    let ids: Vec<_> = res
+        .tracks
+        .iter()
+        .map(|t| (t.id.as_str(), t.position))
+        .collect();
     assert_eq!(ids, [("aaa", Some(1)), ("ccc", Some(3))]);
     assert_eq!(bytes_of(&env, "bbb"), before);
 }
@@ -637,15 +883,34 @@ fn a_null_position_clears_and_an_absent_one_leaves_it() {
     env.repo.update_tracks(&[p]).unwrap();
     let a = env.repo.load_record("aaa").unwrap();
     let parse = |extra: &str| -> TrackPatch {
-        serde_json::from_str(&format!(r#"{{"id":"aaa","revision":"{}"{extra}}}"#, a.revision)).unwrap()
+        serde_json::from_str(&format!(
+            r#"{{"id":"aaa","revision":"{}"{extra}}}"#,
+            a.revision
+        ))
+        .unwrap()
     };
-    let (absent, null, set) = (parse(""), parse(r#","position":null"#), parse(r#","position":5"#));
-    assert_eq!((absent.position, null.position, set.position), (None, Some(None), Some(Some(5))));
+    let (absent, null, set) = (
+        parse(""),
+        parse(r#","position":null"#),
+        parse(r#","position":5"#),
+    );
+    assert_eq!(
+        (absent.position, null.position, set.position),
+        (None, Some(None), Some(Some(5)))
+    );
     let res = env.repo.update_tracks(&[absent]).unwrap();
-    assert_eq!((res.tracks[0].position, res.tracks[0].album_position), (Some(3), Some(2)));
+    assert_eq!(
+        (res.tracks[0].position, res.tracks[0].album_position),
+        (Some(3), Some(2))
+    );
     let res = env.repo.update_tracks(&[null]).unwrap();
-    assert_eq!((res.tracks[0].position, res.tracks[0].album_position), (None, Some(2)));
-    assert!(serde_json::from_str::<TrackPatch>(r#"{"id":"a","revision":"r","position":"x"}"#).is_err());
+    assert_eq!(
+        (res.tracks[0].position, res.tracks[0].album_position),
+        (None, Some(2))
+    );
+    assert!(
+        serde_json::from_str::<TrackPatch>(r#"{"id":"a","revision":"r","position":"x"}"#).is_err()
+    );
 }
 
 #[test]
@@ -668,15 +933,26 @@ fn a_batch_with_a_problem_changes_nothing() {
     assert!(env.repo.update_tracks(&[good.clone(), unknown]).is_err());
     still(&env);
 
-    assert!(env.repo.update_tracks(&[good.clone(), good.clone()]).unwrap_err().contains("twice"));
+    assert!(env
+        .repo
+        .update_tracks(&[good.clone(), good.clone()])
+        .unwrap_err()
+        .contains("twice"));
     let mut empty_band = patch(&b);
     empty_band.band = Some("  ".into());
-    assert!(env.repo.update_tracks(&[good.clone(), empty_band]).unwrap_err().contains("band name cannot be cleared"));
+    assert!(env
+        .repo
+        .update_tracks(&[good.clone(), empty_band])
+        .unwrap_err()
+        .contains("band name cannot be cleared"));
     let mut zero = patch(&b);
     zero.position = Some(Some(0));
     assert!(env.repo.update_tracks(&[good.clone(), zero]).is_err());
     let many: Vec<TrackPatch> = (0..5001).map(|_| good.clone()).collect();
-    assert_eq!(env.repo.update_tracks(&many).unwrap_err(), "too many tracks in one change");
+    assert_eq!(
+        env.repo.update_tracks(&many).unwrap_err(),
+        "too many tracks in one change"
+    );
     still(&env);
     assert!(env.trash_files().is_empty());
 }
@@ -702,7 +978,10 @@ fn patching_a_v1_track_writes_schema_2_with_the_position_and_keeps_the_rest() {
     for k in ["title", "band", "album", "audio", "tablatures", "imported"] {
         assert_eq!(after[k], j[k], "{k}");
     }
-    assert_eq!(fs::read(v.dir(V1_B).join("track.json")).unwrap(), other_before);
+    assert_eq!(
+        fs::read(v.dir(V1_B).join("track.json")).unwrap(),
+        other_before
+    );
 }
 
 fn four_tracks(env: &Env) -> Vec<TrackRef> {
@@ -710,7 +989,10 @@ fn four_tracks(env: &Env) -> Vec<TrackRef> {
         .iter()
         .map(|id| {
             let r = env.track(id, &["one.gp5"]);
-            TrackRef { id: r.id, revision: r.revision }
+            TrackRef {
+                id: r.id,
+                revision: r.revision,
+            }
         })
         .collect()
 }
@@ -728,7 +1010,10 @@ fn delete_tracks_deletes_the_others_when_one_has_a_stale_revision() {
     assert!(f.message.starts_with("conflict:"), "{}", f.message);
     assert!(env.dir("bbb").is_dir() && !env.dir("aaa").exists());
     assert_eq!(env.repo.scan().tracks.len(), 1);
-    let unknown = env.repo.delete_tracks(&[TrackRef { id: "nope".into(), revision: "x".into() }]);
+    let unknown = env.repo.delete_tracks(&[TrackRef {
+        id: "nope".into(),
+        revision: "x".into(),
+    }]);
     assert!(unknown.deleted.is_empty() && unknown.failed[0].title.is_empty());
 }
 
@@ -736,7 +1021,9 @@ fn delete_tracks_deletes_the_others_when_one_has_a_stale_revision() {
 fn delete_tracks_handles_a_listed_twice_id_once() {
     let env = Env::new();
     let items = four_tracks(&env);
-    let res = env.repo.delete_tracks(&[items[0].clone(), items[0].clone()]);
+    let res = env
+        .repo
+        .delete_tracks(&[items[0].clone(), items[0].clone()]);
     assert_eq!(res.deleted, vec!["aaa"]);
     assert!(res.failed.is_empty(), "{:?}", res.failed);
 }
@@ -760,7 +1047,13 @@ fn delete_tracks_reports_a_folder_that_cannot_move() {
     assert_eq!(res.deleted, vec!["aaa", "bbb", "ddd"]);
     assert_eq!(res.failed.len(), 1);
     assert_eq!(res.failed[0].id, "ccc");
-    assert!(res.failed[0].message.starts_with("cannot move the track to the trash"), "{}", res.failed[0].message);
+    assert!(
+        res.failed[0]
+            .message
+            .starts_with("cannot move the track to the trash"),
+        "{}",
+        res.failed[0].message
+    );
     assert!(env.dir("ccc").is_dir());
 }
 
@@ -777,7 +1070,10 @@ fn export_track_creates_named_folders() {
     for d in [a, b] {
         assert_eq!(fs::read(d.join("one.gp5")).unwrap(), b"content of one.gp5");
         assert_eq!(fs::read(d.join("backing.mp3")).unwrap(), b"AUDIO");
-        assert_eq!(fs::read(d.join("track.json")).unwrap(), fs::read(env.dir("aaa").join("track.json")).unwrap());
+        assert_eq!(
+            fs::read(d.join("track.json")).unwrap(),
+            fs::read(env.dir("aaa").join("track.json")).unwrap()
+        );
     }
     fs::remove_dir_all(&dest).unwrap();
 }
@@ -790,9 +1086,16 @@ fn export_copies_player_json_when_present() {
     fs::create_dir(&dest).unwrap();
     let a = env.repo.export_track("aaa", &dest).unwrap();
     assert!(!a.join("player.json").exists());
-    fs::write(env.dir("aaa").join("player.json"), b"{\"schema_version\": 1}").unwrap();
+    fs::write(
+        env.dir("aaa").join("player.json"),
+        b"{\"schema_version\": 1}",
+    )
+    .unwrap();
     let b = env.repo.export_track("aaa", &dest).unwrap();
-    assert_eq!(fs::read(b.join("player.json")).unwrap(), b"{\"schema_version\": 1}");
+    assert_eq!(
+        fs::read(b.join("player.json")).unwrap(),
+        b"{\"schema_version\": 1}"
+    );
     assert!(b.join("track.json").is_file());
     fs::remove_dir_all(&dest).unwrap();
 }
@@ -819,7 +1122,10 @@ fn export_track_refuses_destination_inside_tracks_and_missing_sources() {
     env.track("bbb", &[]);
     let snapshot = tree(&env);
     assert!(env.repo.export_track("aaa", &env.dir("bbb")).is_err());
-    assert!(env.repo.export_track("aaa", &env.repo.root.join("tracks")).is_err());
+    assert!(env
+        .repo
+        .export_track("aaa", &env.repo.root.join("tracks"))
+        .is_err());
     assert_eq!(tree(&env), snapshot);
     fs::remove_file(env.dir("aaa").join("one.gp5")).unwrap();
     let snapshot = tree(&env);
@@ -842,8 +1148,14 @@ fn export_tablature_copies_and_replaces_at_dest() {
     env.repo.export_tablature("aaa", "one.gp5", &dest).unwrap();
     assert_eq!(fs::read(&dest).unwrap(), b"content of one.gp5");
     assert!(env.repo.export_tablature("aaa", "nope.gp5", &dest).is_err());
-    assert!(env.repo.export_tablature("aaa", "../track.json", &dest).is_err());
-    assert!(env.repo.export_tablature("aaa", "one.gp5", &env.dir("aaa").join("copy.gp5")).is_err());
+    assert!(env
+        .repo
+        .export_tablature("aaa", "../track.json", &dest)
+        .is_err());
+    assert!(env
+        .repo
+        .export_tablature("aaa", "one.gp5", &env.dir("aaa").join("copy.gp5"))
+        .is_err());
     assert!(!env.dir("aaa").join("copy.gp5").exists());
     fs::remove_file(&dest).unwrap();
 }
@@ -853,7 +1165,10 @@ fn export_tablature_of_missing_file_fails() {
     let env = Env::new();
     env.track("aaa", &["one.gp5"]);
     fs::remove_file(env.dir("aaa").join("one.gp5")).unwrap();
-    assert!(env.repo.export_tablature("aaa", "one.gp5", &env.outside.join("x.gp5")).is_err());
+    assert!(env
+        .repo
+        .export_tablature("aaa", "one.gp5", &env.outside.join("x.gp5"))
+        .is_err());
     assert!(!env.outside.join("x.gp5").exists());
 }
 
@@ -862,7 +1177,10 @@ fn save_with_missing_old_file_still_works() {
     let env = Env::new();
     let rec = env.track("aaa", &["one.gp5", "two.gp5"]);
     fs::remove_file(env.dir("aaa").join("one.gp5")).unwrap();
-    let res = env.repo.save_track(req(&rec, vec![keep("two.gp5")]), &env.lookup()).unwrap();
+    let res = env
+        .repo
+        .save_track(req(&rec, vec![keep("two.gp5")]), &env.lookup())
+        .unwrap();
     assert_eq!(res.track.tablatures, ["two.gp5"]);
     assert!(res.warnings.is_empty());
 }
@@ -882,7 +1200,10 @@ fn fixture_library_sample_scans_clean() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("library");
-    copy(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-sample"), &root);
+    copy(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-sample"),
+        &root,
+    );
     let lib = Repository::new(&root).scan();
     assert_eq!(lib.tracks.len(), 6);
     assert!(lib.problems.is_empty(), "{:?}", lib.problems);
@@ -898,8 +1219,14 @@ fn export_refuses_any_destination_inside_the_repository() {
     for d in [root.clone(), root.join("trash"), env.dir("aaa")] {
         assert!(env.repo.export_track("aaa", &d).is_err(), "{}", d.display());
     }
-    assert!(env.repo.export_tablature("aaa", "one.gp5", &root.join("copy.gp5")).is_err());
-    assert!(env.repo.export_tablature("aaa", "one.gp5", &root.join("trash/copy.gp5")).is_err());
+    assert!(env
+        .repo
+        .export_tablature("aaa", "one.gp5", &root.join("copy.gp5"))
+        .is_err());
+    assert!(env
+        .repo
+        .export_tablature("aaa", "one.gp5", &root.join("trash/copy.gp5"))
+        .is_err());
     assert!(!root.join("copy.gp5").exists());
     let _ = rec;
 }
@@ -937,10 +1264,16 @@ fn snapshot(dir: &Path) -> BTreeMap<String, Vec<u8>> {
         for e in fs::read_dir(d).unwrap().flatten() {
             let p = e.path();
             if p.is_dir() {
-                m.insert(format!("{}/", p.strip_prefix(base).unwrap().display()), Vec::new());
+                m.insert(
+                    format!("{}/", p.strip_prefix(base).unwrap().display()),
+                    Vec::new(),
+                );
                 walk(base, &p, m);
             } else {
-                m.insert(p.strip_prefix(base).unwrap().to_string_lossy().into_owned(), fs::read(&p).unwrap());
+                m.insert(
+                    p.strip_prefix(base).unwrap().to_string_lossy().into_owned(),
+                    fs::read(&p).unwrap(),
+                );
             }
         }
     }
@@ -965,22 +1298,39 @@ impl V2 {
         fs::create_dir_all(&outside).unwrap();
         fs::write(outside.join("ORIGINAL.flac"), b"not the original").unwrap();
         fs::write(outside.join("notes.gp5"), b"NOTES").unwrap();
-        copy_tree(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-v2"), &root);
+        copy_tree(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-v2"),
+            &root,
+        );
         let outside_before = snapshot(&outside);
-        V2 { _tmp: tmp, outside, outside_before, repo: Repository::new(root) }
+        V2 {
+            _tmp: tmp,
+            outside,
+            outside_before,
+            repo: Repository::new(root),
+        }
     }
     fn dir(&self, id: &str) -> PathBuf {
         self.repo.root.join("tracks").join(id)
     }
     fn record(&self, id: &str) -> TrackRecord {
-        self.repo.scan().tracks.into_iter().find(|t| t.id == id).unwrap()
+        self.repo
+            .scan()
+            .tracks
+            .into_iter()
+            .find(|t| t.id == id)
+            .unwrap()
     }
 }
 
 impl Drop for V2 {
     fn drop(&mut self) {
         if !std::thread::panicking() {
-            assert_eq!(snapshot(&self.outside), self.outside_before, "the outside folder changed");
+            assert_eq!(
+                snapshot(&self.outside),
+                self.outside_before,
+                "the outside folder changed"
+            );
         }
     }
 }
@@ -991,8 +1341,16 @@ fn fixture_library_v2_scans_clean() {
     let lib = v.repo.scan();
     assert!(lib.problems.is_empty(), "{:?}", lib.problems);
     assert_eq!(lib.tracks.len(), 4);
-    assert!(lib.tracks.iter().all(|t| t.missing.is_empty()), "{:?}", lib.tracks);
-    let types: Vec<_> = lib.tracks.iter().map(|t| (t.id.as_str(), t.track_type)).collect();
+    assert!(
+        lib.tracks.iter().all(|t| t.missing.is_empty()),
+        "{:?}",
+        lib.tracks
+    );
+    let types: Vec<_> = lib
+        .tracks
+        .iter()
+        .map(|t| (t.id.as_str(), t.track_type))
+        .collect();
     assert_eq!(
         types,
         vec![
@@ -1016,8 +1374,14 @@ fn scan_list_export_never_rewrite_any_track_json() {
     for id in [V1_A, V1_B, V2_BACKING, STEM_ID] {
         v.repo.export_track(id, dest.path()).unwrap();
     }
-    v.repo.export_tablature(V1_A, "slow-burn.gp5", &dest.path().join("t.gp5")).unwrap();
-    assert_eq!(snapshot(&v.repo.root), before, "every byte of the repository is unchanged");
+    v.repo
+        .export_tablature(V1_A, "slow-burn.gp5", &dest.path().join("t.gp5"))
+        .unwrap();
+    assert_eq!(
+        snapshot(&v.repo.root),
+        before,
+        "every byte of the repository is unchanged"
+    );
 }
 
 #[test]
@@ -1055,7 +1419,10 @@ fn saving_a_v1_track_writes_schema_2_and_keeps_unknown_fields() {
     assert_eq!(j["title"], "Slow Burn (edit)");
     assert_eq!(j["audio"], "backing.mp3");
     // another v1 track is untouched by that save
-    assert_eq!(fs::read(v.dir(V1_B).join("track.json")).unwrap(), other_before);
+    assert_eq!(
+        fs::read(v.dir(V1_B).join("track.json")).unwrap(),
+        other_before
+    );
 }
 
 #[test]
@@ -1068,7 +1435,10 @@ fn stem_track_lists_six_stems_and_the_original() {
     assert_eq!(rec.stem_model.as_deref(), Some("htdemucs_6s"));
     let names: Vec<&str> = rec.stems.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, STEM_NAMES);
-    assert!(rec.stems.iter().all(|s| s.file == format!("stems/{}.flac", s.name)));
+    assert!(rec
+        .stems
+        .iter()
+        .all(|s| s.file == format!("stems/{}.flac", s.name)));
     assert!(rec.missing.is_empty());
 }
 
@@ -1081,7 +1451,10 @@ fn missing_reports_a_deleted_stem_and_original() {
     assert_eq!(rec.missing, vec!["original.flac", "stems/drums.flac"]);
     let dest = tempfile::tempdir().unwrap();
     let e = v.repo.export_track(STEM_ID, dest.path()).unwrap_err();
-    assert!(e.contains("stems/drums.flac") && e.contains("original.flac"), "{e}");
+    assert!(
+        e.contains("stems/drums.flac") && e.contains("original.flac"),
+        "{e}"
+    );
     assert_eq!(fs::read_dir(dest.path()).unwrap().count(), 0);
 }
 
@@ -1090,11 +1463,19 @@ fn export_copies_stems_and_original() {
     let v = V2::new();
     let dest = tempfile::tempdir().unwrap();
     let out = v.repo.export_track(STEM_ID, dest.path()).unwrap();
-    assert_eq!(out.file_name().unwrap(), "The Example Band - Test Pressings - Glass Harbour");
+    assert_eq!(
+        out.file_name().unwrap(),
+        "The Example Band - Test Pressings - Glass Harbour"
+    );
     let src = snapshot(&v.dir(STEM_ID));
     assert_eq!(snapshot(&out), src);
     assert!(out.join("stems/vocals.flac").is_file() && out.join("original.flac").is_file());
-    assert_eq!(src.keys().filter(|k| k.starts_with("stems/") && k.ends_with(".flac")).count(), 6);
+    assert_eq!(
+        src.keys()
+            .filter(|k| k.starts_with("stems/") && k.ends_with(".flac"))
+            .count(),
+        6
+    );
 }
 
 #[test]
@@ -1113,7 +1494,10 @@ fn deleting_a_stem_track_moves_the_whole_folder_to_the_trash() {
     let rec = v.record(STEM_ID);
     v.repo.delete_track(STEM_ID, &rec.revision).unwrap();
     assert!(!v.dir(STEM_ID).exists());
-    let trash: Vec<_> = fs::read_dir(v.repo.root.join("trash")).unwrap().flatten().collect();
+    let trash: Vec<_> = fs::read_dir(v.repo.root.join("trash"))
+        .unwrap()
+        .flatten()
+        .collect();
     assert_eq!(trash.len(), 1);
     assert_eq!(snapshot(&trash[0].path()), before);
 }
@@ -1126,9 +1510,15 @@ fn saving_a_stem_track_keeps_audio_original_and_stems_verbatim() {
     let mut r = req(&rec, vec![TabEntry::Add { token: "t".into() }]);
     r.edits.title = "Glass Harbour (edit)".into();
     let notes = v.outside.join("notes.gp5");
-    let res = v.repo.save_track(r, &|t| (t == "t").then(|| notes.clone())).unwrap();
+    let res = v
+        .repo
+        .save_track(r, &|t| (t == "t").then(|| notes.clone()))
+        .unwrap();
     let t = res.track;
-    assert_eq!((t.track_type, &t.audio, &t.original), (TrackType::Stem, &None, &rec.original));
+    assert_eq!(
+        (t.track_type, &t.audio, &t.original),
+        (TrackType::Stem, &None, &rec.original)
+    );
     assert_eq!(t.stems, rec.stems);
     assert_eq!(t.stem_model, rec.stem_model);
     assert_eq!(t.tablatures, vec!["notes.gp5"]);
@@ -1174,7 +1564,10 @@ fn unknown_track_type_and_bad_stem_files_are_problems_never_rewritten() {
         assert_eq!(lib.tracks.len(), 3, "{to}");
         assert_eq!(lib.problems.len(), 1, "{to}");
         assert_eq!(fs::read_to_string(&p).unwrap(), bad);
-        let rec = TrackRecord { id: STEM_ID.into(), ..v.record(V2_BACKING) };
+        let rec = TrackRecord {
+            id: STEM_ID.into(),
+            ..v.record(V2_BACKING)
+        };
         assert!(v.repo.save_track(req(&rec, vec![]), &|_| None).is_err());
         assert_eq!(fs::read_to_string(&p).unwrap(), bad);
     }
@@ -1206,7 +1599,10 @@ mod staging {
             original: with_original.then(|| "original.flac".to_string()),
             stems: ["vocals", "drums"]
                 .iter()
-                .map(|n| StemEntry { name: n.to_string(), file: format!("stems/{n}.flac") })
+                .map(|n| StemEntry {
+                    name: n.to_string(),
+                    file: format!("stems/{n}.flac"),
+                })
                 .collect(),
             stem_model: Some("htdemucs_6s".into()),
             tablatures: vec![],
@@ -1235,7 +1631,10 @@ mod staging {
     fn commit_gives_a_scan_visible_stem_track() {
         let env = Env::new();
         let st = env.repo.begin_staged_track(ID).unwrap();
-        assert_eq!(st.dir(), env.repo.root.join("tracks").join(format!(".staging-{ID}")));
+        assert_eq!(
+            st.dir(),
+            env.repo.root.join("tracks").join(format!(".staging-{ID}"))
+        );
         assert!(st.dir().join(STAGING_MARKER).is_file());
         fill(&st);
         // during staging a scan lists nothing and reports no problem
@@ -1248,7 +1647,12 @@ mod staging {
         let dir = env.dir(ID);
         assert!(dir.join("track.json").is_file() && dir.join("stems/vocals.flac").is_file());
         assert!(!dir.join(STAGING_MARKER).exists());
-        assert!(!env.repo.root.join("tracks").join(format!(".staging-{ID}")).exists());
+        assert!(!env
+            .repo
+            .root
+            .join("tracks")
+            .join(format!(".staging-{ID}"))
+            .exists());
         let lib = env.repo.scan();
         assert_eq!((lib.tracks.len(), lib.problems.len()), (1, 0));
         assert_eq!(lib.tracks[0], rec);
@@ -1265,7 +1669,10 @@ mod staging {
         let rec = st.commit(&stem_meta(ID, true)).unwrap();
         assert_eq!(rec.original.as_deref(), Some("original.flac"));
         assert!(rec.missing.is_empty());
-        assert_eq!(fs::read_to_string(env.dir(ID).join("original.flac")).unwrap(), "ORIGINAL AUDIO");
+        assert_eq!(
+            fs::read_to_string(env.dir(ID).join("original.flac")).unwrap(),
+            "ORIGINAL AUDIO"
+        );
         fs::write(&src, "ORIGINAL AUDIO").unwrap(); // let Env::drop see an unchanged sources dir
     }
 
@@ -1274,7 +1681,11 @@ mod staging {
         let env = Env::new();
         env.track(ID, &[]);
         let before = list(&env.repo.root.join("tracks"));
-        assert!(env.repo.begin_staged_track(ID).unwrap_err().contains("already exists"));
+        assert!(env
+            .repo
+            .begin_staged_track(ID)
+            .unwrap_err()
+            .contains("already exists"));
         assert_eq!(list(&env.repo.root.join("tracks")), before);
 
         // the track appears while staging: commit refuses, the staging folder stays
@@ -1283,8 +1694,14 @@ mod staging {
         fill(&st);
         fs::create_dir(env.dir(other)).unwrap();
         fs::write(env.dir(other).join("mine"), "user data").unwrap();
-        assert!(st.commit(&stem_meta(other, false)).unwrap_err().contains("already exists"));
-        assert_eq!(fs::read_to_string(env.dir(other).join("mine")).unwrap(), "user data");
+        assert!(st
+            .commit(&stem_meta(other, false))
+            .unwrap_err()
+            .contains("already exists"));
+        assert_eq!(
+            fs::read_to_string(env.dir(other).join("mine")).unwrap(),
+            "user data"
+        );
         assert!(st.dir().join("stems/vocals.flac").is_file());
         st.abandon().unwrap();
         assert!(env.dir(other).join("mine").exists());
@@ -1295,9 +1712,15 @@ mod staging {
         let env = Env::new();
         let st = env.repo.begin_staged_track(ID).unwrap();
         // listed files missing
-        assert!(st.commit(&stem_meta(ID, false)).unwrap_err().contains("missing"));
+        assert!(st
+            .commit(&stem_meta(ID, false))
+            .unwrap_err()
+            .contains("missing"));
         fill(&st);
-        assert!(st.commit(&stem_meta(ID, true)).unwrap_err().contains("original.flac"));
+        assert!(st
+            .commit(&stem_meta(ID, true))
+            .unwrap_err()
+            .contains("original.flac"));
         // wrong id, bad title
         assert!(st.commit(&stem_meta("other", false)).is_err());
         let mut bad = stem_meta(ID, false);
@@ -1306,7 +1729,12 @@ mod staging {
         assert!(st.dir().join(STAGING_MARKER).is_file());
         assert!(!env.dir(ID).exists());
         st.abandon().unwrap();
-        assert!(!env.repo.root.join("tracks").join(format!(".staging-{ID}")).exists());
+        assert!(!env
+            .repo
+            .root
+            .join("tracks")
+            .join(format!(".staging-{ID}"))
+            .exists());
     }
 
     #[test]
@@ -1320,7 +1748,10 @@ mod staging {
         st.finish_stem("bass").unwrap();
         fs::write(st.stem_part_path("bass").unwrap(), "2").unwrap();
         assert!(st.finish_stem("bass").is_err());
-        assert_eq!(fs::read_to_string(st.dir().join("stems/bass.flac")).unwrap(), "1");
+        assert_eq!(
+            fs::read_to_string(st.dir().join("stems/bass.flac")).unwrap(),
+            "1"
+        );
         st.abandon().unwrap();
     }
 
@@ -1408,7 +1839,10 @@ mod staging {
         fs::write(&src, "NEW FILE IN ITS PLACE").unwrap();
         let dir = st.dir().to_path_buf();
         assert!(st.abandon().is_err());
-        assert_eq!(fs::read_to_string(dir.join("original.flac")).unwrap(), "ORIGINAL AUDIO");
+        assert_eq!(
+            fs::read_to_string(dir.join("original.flac")).unwrap(),
+            "ORIGINAL AUDIO"
+        );
         assert_eq!(fs::read_to_string(&src).unwrap(), "NEW FILE IN ITS PLACE");
     }
 
@@ -1416,7 +1850,9 @@ mod staging {
     fn adopt_original_refuses_non_files_and_symlinks() {
         let env = Env::new();
         let mut st = env.repo.begin_staged_track(ID).unwrap();
-        assert!(st.adopt_original(&env.sources.join("missing.flac")).is_err());
+        assert!(st
+            .adopt_original(&env.sources.join("missing.flac"))
+            .is_err());
         assert!(st.adopt_original(&env.sources).is_err());
         #[cfg(unix)]
         {
@@ -1528,15 +1964,28 @@ mod backing {
             let outside = tmp.path().join("outside");
             fs::create_dir_all(&outside).unwrap();
             fs::write(outside.join("keep.txt"), b"KEEP").unwrap();
-            copy_tree(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-editor"), &root);
+            copy_tree(
+                &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-editor"),
+                &root,
+            );
             let before = snapshot(&outside);
-            Ed { _tmp: tmp, outside, before, repo: Repository::new(root) }
+            Ed {
+                _tmp: tmp,
+                outside,
+                before,
+                repo: Repository::new(root),
+            }
         }
         fn dir(&self, id: &str) -> PathBuf {
             self.repo.root.join("tracks").join(id)
         }
         fn record(&self, id: &str) -> TrackRecord {
-            self.repo.scan().tracks.into_iter().find(|t| t.id == id).unwrap()
+            self.repo
+                .scan()
+                .tracks
+                .into_iter()
+                .find(|t| t.id == id)
+                .unwrap()
         }
         fn json(&self, id: &str) -> serde_json::Value {
             serde_json::from_slice(&fs::read(self.dir(id).join("track.json")).unwrap()).unwrap()
@@ -1546,7 +1995,12 @@ mod backing {
             fs::write(&p, content).unwrap();
             p
         }
-        fn save(&self, id: &str, variant: Option<&str>, content: &[u8]) -> Result<SaveResult, String> {
+        fn save(
+            &self,
+            id: &str,
+            variant: Option<&str>,
+            content: &[u8],
+        ) -> Result<SaveResult, String> {
             let part = self.part(id, content);
             let stems = self.record(id).stems;
             let r = self.repo.save_backing(BackingSave {
@@ -1568,7 +2022,11 @@ mod backing {
     impl Drop for Ed {
         fn drop(&mut self) {
             if !std::thread::panicking() {
-                assert_eq!(snapshot(&self.outside), self.before, "the outside folder changed");
+                assert_eq!(
+                    snapshot(&self.outside),
+                    self.before,
+                    "the outside folder changed"
+                );
             }
         }
     }
@@ -1578,18 +2036,37 @@ mod backing {
         let e = Ed::new();
         let before = e.json(FOUR);
         e.save(FOUR, None, b"FLAC1").unwrap();
-        assert_eq!(fs::read(e.dir(FOUR).join("backings/backing.flac")).unwrap(), b"FLAC1");
+        assert_eq!(
+            fs::read(e.dir(FOUR).join("backings/backing.flac")).unwrap(),
+            b"FLAC1"
+        );
         assert!(!e.dir(FOUR).join(".calliope-backing-test.part").exists());
         let j = e.json(FOUR);
         let b = &j["backings"];
         assert_eq!(b.as_array().unwrap().len(), 1);
-        assert_eq!((b[0]["id"].as_str(), b[0]["name"].as_str()), (Some("backing"), Some("Backing")));
+        assert_eq!(
+            (b[0]["id"].as_str(), b[0]["name"].as_str()),
+            (Some("backing"), Some("Backing"))
+        );
         assert_eq!(b[0]["file"], "backings/backing.flac");
         assert_eq!(b[0]["created"], b[0]["modified"]);
         assert_eq!(b[0]["created"], j["modified"]);
-        assert_eq!((b[0]["sample_rate"].as_u64(), b[0]["bits"].as_u64()), (Some(44100), Some(16)));
+        assert_eq!(
+            (b[0]["sample_rate"].as_u64(), b[0]["bits"].as_u64()),
+            (Some(44100), Some(16))
+        );
         assert_eq!(b[0]["mix"]["stems"][0]["name"], "vocals");
-        for k in ["type", "audio", "stems", "title", "imported", "band", "album", "stem_model", "tablatures"] {
+        for k in [
+            "type",
+            "audio",
+            "stems",
+            "title",
+            "imported",
+            "band",
+            "album",
+            "stem_model",
+            "tablatures",
+        ] {
             assert_eq!(j[k], before[k], "{k}");
         }
         assert!(e.record(FOUR).missing.is_empty());
@@ -1604,19 +2081,30 @@ mod backing {
         let created = e.json(FOUR)["backings"][0]["created"].clone();
         // make the stored timestamps distinguishable
         let tj = e.dir(FOUR).join("track.json");
-        let text = fs::read_to_string(&tj).unwrap().replace(created.as_str().unwrap(), "2020-01-01T00:00:00Z");
+        let text = fs::read_to_string(&tj)
+            .unwrap()
+            .replace(created.as_str().unwrap(), "2020-01-01T00:00:00Z");
         fs::write(&tj, text).unwrap();
         e.save(FOUR, Some("backing"), b"FLAC2").unwrap();
-        assert_eq!(fs::read(e.dir(FOUR).join("backings/backing.flac")).unwrap(), b"FLAC2");
+        assert_eq!(
+            fs::read(e.dir(FOUR).join("backings/backing.flac")).unwrap(),
+            b"FLAC2"
+        );
         let b = &e.json(FOUR)["backings"];
         assert_eq!(b.as_array().unwrap().len(), 1);
         assert_eq!(b[0]["created"], "2020-01-01T00:00:00Z");
         assert_ne!(b[0]["modified"], "2020-01-01T00:00:00Z");
-        let trash: Vec<_> = fs::read_dir(e.repo.root.join("trash")).unwrap().flatten().collect();
+        let trash: Vec<_> = fs::read_dir(e.repo.root.join("trash"))
+            .unwrap()
+            .flatten()
+            .collect();
         assert_eq!(trash.len(), 1);
         let name = trash[0].file_name().to_string_lossy().into_owned();
         assert!(name.ends_with(&format!("-{FOUR}-backing")), "{name}");
-        assert_eq!(fs::read(trash[0].path().join("backing.flac")).unwrap(), b"FLAC1");
+        assert_eq!(
+            fs::read(trash[0].path().join("backing.flac")).unwrap(),
+            b"FLAC1"
+        );
     }
 
     #[test]
@@ -1624,9 +2112,15 @@ mod backing {
         let e = Ed::new();
         let old = fs::read(e.dir(MIXED).join("backings/backing.flac")).unwrap();
         e.save(MIXED, Some("backing"), b"NEW").unwrap();
-        assert_eq!(fs::read(e.dir(MIXED).join("backings/backing.flac")).unwrap(), b"NEW");
+        assert_eq!(
+            fs::read(e.dir(MIXED).join("backings/backing.flac")).unwrap(),
+            b"NEW"
+        );
         assert_eq!(e.json(MIXED)["backings"][0]["sample_rate"], 44100);
-        let trash: Vec<_> = fs::read_dir(e.repo.root.join("trash")).unwrap().flatten().collect();
+        let trash: Vec<_> = fs::read_dir(e.repo.root.join("trash"))
+            .unwrap()
+            .flatten()
+            .collect();
         assert_eq!(fs::read(trash[0].path().join("backing.flac")).unwrap(), old);
     }
 
@@ -1636,8 +2130,14 @@ mod backing {
         fs::create_dir(e.dir(FOUR).join("backings")).unwrap();
         fs::write(e.dir(FOUR).join("backings/backing.flac"), b"USER").unwrap();
         e.save(FOUR, None, b"MINE").unwrap();
-        assert_eq!(fs::read(e.dir(FOUR).join("backings/backing.flac")).unwrap(), b"USER");
-        assert_eq!(fs::read(e.dir(FOUR).join("backings/backing-2.flac")).unwrap(), b"MINE");
+        assert_eq!(
+            fs::read(e.dir(FOUR).join("backings/backing.flac")).unwrap(),
+            b"USER"
+        );
+        assert_eq!(
+            fs::read(e.dir(FOUR).join("backings/backing-2.flac")).unwrap(),
+            b"MINE"
+        );
         let j = e.json(FOUR);
         assert_eq!(j["backings"][0]["id"], "backing-2");
         assert_eq!(j["backings"][0]["file"], "backings/backing-2.flac");
@@ -1649,7 +2149,12 @@ mod backing {
         let e = Ed::new();
         e.save(MIXED, Some("other"), b"X").unwrap(); // not existing: created
         e.save(MIXED, Some("other"), b"Y").unwrap(); // now existing: replaced
-        let ids: Vec<_> = e.json(MIXED)["backings"].as_array().unwrap().iter().map(|b| b["id"].clone()).collect();
+        let ids: Vec<_> = e.json(MIXED)["backings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["id"].clone())
+            .collect();
         assert_eq!(ids, vec!["backing", "other"]);
         // no target while `backing` is already listed: a new variant `backing-2`, never a replace
         e.save(MIXED, None, b"Z").unwrap();
@@ -1694,7 +2199,9 @@ mod backing {
     fn edits_made_meanwhile_are_kept() {
         let e = Ed::new();
         let tj = e.dir(FOUR).join("track.json");
-        let text = fs::read_to_string(&tj).unwrap().replace("Four Lanes", "Edited On Disk");
+        let text = fs::read_to_string(&tj)
+            .unwrap()
+            .replace("Four Lanes", "Edited On Disk");
         fs::write(&tj, text).unwrap();
         e.save(FOUR, None, b"F").unwrap();
         assert_eq!(e.json(FOUR)["title"], "Edited On Disk");
@@ -1718,7 +2225,11 @@ mod backing {
             assert_eq!(after.get("backings").is_some(), has, "{id}");
             assert_eq!(after["backings"], before["backings"], "{id}");
         }
-        assert!(!String::from_utf8(fs::read(e.dir(PLAIN).join("track.json")).unwrap()).unwrap().contains("backings"));
+        assert!(
+            !String::from_utf8(fs::read(e.dir(PLAIN).join("track.json")).unwrap())
+                .unwrap()
+                .contains("backings")
+        );
         let _ = plain_before;
     }
 
@@ -1727,7 +2238,10 @@ mod backing {
         let e = Ed::new();
         fs::remove_file(e.dir(MIXED).join("backings/backing.flac")).unwrap();
         assert_eq!(e.record(MIXED).missing, vec!["backings/backing.flac"]);
-        assert!(e.repo.export_track(MIXED, &e.outside.join("nowhere")).is_err());
+        assert!(e
+            .repo
+            .export_track(MIXED, &e.outside.join("nowhere"))
+            .is_err());
         let e = Ed::new();
         let dest = e.outside.parent().unwrap().join("exports");
         fs::create_dir(&dest).unwrap();
@@ -1751,7 +2265,8 @@ mod backing {
     #[test]
     fn a_failed_metadata_write_leaves_the_old_state() {
         let e = Ed::new();
-        e.save(MIXED, Some("backing"), b"NEW").unwrap_or_else(|x| panic!("{x}"));
+        e.save(MIXED, Some("backing"), b"NEW")
+            .unwrap_or_else(|x| panic!("{x}"));
         let snap = snapshot(&e.dir(MIXED));
         crate::fsutil::FAIL_WRITE_OF.with(|f| *f.borrow_mut() = Some("track.json".into()));
         let r = e.save(MIXED, Some("backing"), b"NEWER");
@@ -1777,19 +2292,57 @@ fn record_export_writes_only_the_exports_of_each_kind() {
     let env = Env::new();
     let rec = env.track("aaa", &[]);
     let before = json_of(&env, "aaa");
-    let a = env.repo.record_export("aaa", &ExportEntry::Rc5 { memory: 7 }, "2026-10-24T18:30:00Z").unwrap();
-    assert_eq!(a.exports.rc5.as_ref().map(|e| (e.memory, e.at.as_str())), Some((7, "2026-10-24T18:30:00Z")));
-    let b = env.repo.record_export("aaa", &ExportEntry::Mp3 { path: "/m/a.mp3".into() }, "t2").unwrap();
-    let c = env.repo.record_export("aaa", &ExportEntry::Ogg { path: "/m/a.ogg".into() }, "t3").unwrap();
+    let a = env
+        .repo
+        .record_export(
+            "aaa",
+            &ExportEntry::Rc5 { memory: 7 },
+            "2026-10-24T18:30:00Z",
+        )
+        .unwrap();
+    assert_eq!(
+        a.exports.rc5.as_ref().map(|e| (e.memory, e.at.as_str())),
+        Some((7, "2026-10-24T18:30:00Z"))
+    );
+    let b = env
+        .repo
+        .record_export(
+            "aaa",
+            &ExportEntry::Mp3 {
+                path: "/m/a.mp3".into(),
+            },
+            "t2",
+        )
+        .unwrap();
+    let c = env
+        .repo
+        .record_export(
+            "aaa",
+            &ExportEntry::Ogg {
+                path: "/m/a.ogg".into(),
+            },
+            "t3",
+        )
+        .unwrap();
     assert!(b.exports.rc5.is_some() && b.exports.mp3.is_some() && b.exports.ogg.is_none());
     assert_eq!(c.exports.ogg.unwrap().path, "/m/a.ogg");
     let after = json_of(&env, "aaa");
-    assert_eq!(without_exports(after.clone()), before, "only exports differs, modified included");
-    assert_eq!(after["exports"]["mp3"], serde_json::json!({"path": "/m/a.mp3", "at": "t2"}));
+    assert_eq!(
+        without_exports(after.clone()),
+        before,
+        "only exports differs, modified included"
+    );
+    assert_eq!(
+        after["exports"]["mp3"],
+        serde_json::json!({"path": "/m/a.mp3", "at": "t2"})
+    );
     assert_eq!(c.modified, rec.modified);
     assert_eq!(c.revision, rec.revision, "the revision ignores exports");
     // re-exporting a kind replaces just that entry
-    let d = env.repo.record_export("aaa", &ExportEntry::Rc5 { memory: 9 }, "t4").unwrap();
+    let d = env
+        .repo
+        .record_export("aaa", &ExportEntry::Rc5 { memory: 9 }, "t4")
+        .unwrap();
     assert_eq!(d.exports.rc5.unwrap().memory, 9);
     assert_eq!(d.exports.mp3.unwrap().at, "t2");
     assert!(!env.dir("aaa").join("track.json.tmp").exists());
@@ -1799,11 +2352,20 @@ fn record_export_writes_only_the_exports_of_each_kind() {
 fn record_export_keeps_a_v1_file_v1_and_refuses_problem_tracks() {
     let v = V2::new();
     let before = fs::read(v.dir(V1_A).join("track.json")).unwrap();
-    v.repo.record_export(V1_A, &ExportEntry::Rc5 { memory: 3 }, "t").unwrap();
-    let after: serde_json::Value = serde_json::from_slice(&fs::read(v.dir(V1_A).join("track.json")).unwrap()).unwrap();
+    v.repo
+        .record_export(V1_A, &ExportEntry::Rc5 { memory: 3 }, "t")
+        .unwrap();
+    let after: serde_json::Value =
+        serde_json::from_slice(&fs::read(v.dir(V1_A).join("track.json")).unwrap()).unwrap();
     assert_eq!(after["schema_version"], 1);
-    assert!(after.get("type").is_none() && after.get("stems").is_none(), "not migrated on disk");
-    assert_eq!(without_exports(after), serde_json::from_slice::<serde_json::Value>(&before).unwrap());
+    assert!(
+        after.get("type").is_none() && after.get("stems").is_none(),
+        "not migrated on disk"
+    );
+    assert_eq!(
+        without_exports(after),
+        serde_json::from_slice::<serde_json::Value>(&before).unwrap()
+    );
     assert_eq!(v.record(V1_A).exports.rc5.unwrap().memory, 3);
 
     let env = Env::new();
@@ -1813,10 +2375,19 @@ fn record_export_keeps_a_v1_file_v1_and_refuses_problem_tracks() {
     j["schema_version"] = 3.into();
     fs::write(&p, serde_json::to_vec_pretty(&j).unwrap()).unwrap();
     let bytes = fs::read(&p).unwrap();
-    let e = env.repo.record_export("aaa", &ExportEntry::Rc5 { memory: 1 }, "t").unwrap_err();
+    let e = env
+        .repo
+        .record_export("aaa", &ExportEntry::Rc5 { memory: 1 }, "t")
+        .unwrap_err();
     assert!(e.contains("newer"), "{e}");
-    assert!(env.repo.record_export("../x", &ExportEntry::Rc5 { memory: 1 }, "t").is_err());
-    assert!(env.repo.record_export("nope", &ExportEntry::Rc5 { memory: 1 }, "t").is_err());
+    assert!(env
+        .repo
+        .record_export("../x", &ExportEntry::Rc5 { memory: 1 }, "t")
+        .is_err());
+    assert!(env
+        .repo
+        .record_export("nope", &ExportEntry::Rc5 { memory: 1 }, "t")
+        .is_err());
     assert_eq!(fs::read(&p).unwrap(), bytes);
 }
 
@@ -1831,7 +2402,15 @@ fn clear_rc5_holders_clears_the_others_and_keeps_their_files_entries() {
         env.repo.record_export(id, &rc5(7), "old").unwrap();
     }
     env.repo.record_export("eee", &rc5(8), "old").unwrap();
-    env.repo.record_export("aaa", &ExportEntry::Mp3 { path: "/m/a.mp3".into() }, "old").unwrap();
+    env.repo
+        .record_export(
+            "aaa",
+            &ExportEntry::Mp3 {
+                path: "/m/a.mp3".into(),
+            },
+            "old",
+        )
+        .unwrap();
     // ddd becomes a problem track: skipped and untouched
     let pd = env.dir("ddd").join("track.json");
     let mut j = json_of(&env, "ddd");
@@ -1845,11 +2424,32 @@ fn clear_rc5_holders_clears_the_others_and_keeps_their_files_entries() {
     let ids: Vec<_> = out.cleared.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(ids, ["aaa", "ccc"]);
     assert!(out.cleared.iter().all(|r| r.exports.rc5.is_none()));
-    assert_eq!(env.repo.load_record("aaa").unwrap().exports.mp3.unwrap().path, "/m/a.mp3");
-    assert_eq!(without_exports(json_of(&env, "ccc")), without_exports(ccc_before));
-    assert!(json_of(&env, "ccc").get("exports").is_none(), "an empty exports is removed");
-    assert!(env.repo.load_record("bbb").unwrap().exports.rc5.is_some(), "except is kept");
-    assert!(env.repo.load_record("eee").unwrap().exports.rc5.is_some(), "other memory is kept");
+    assert_eq!(
+        env.repo
+            .load_record("aaa")
+            .unwrap()
+            .exports
+            .mp3
+            .unwrap()
+            .path,
+        "/m/a.mp3"
+    );
+    assert_eq!(
+        without_exports(json_of(&env, "ccc")),
+        without_exports(ccc_before)
+    );
+    assert!(
+        json_of(&env, "ccc").get("exports").is_none(),
+        "an empty exports is removed"
+    );
+    assert!(
+        env.repo.load_record("bbb").unwrap().exports.rc5.is_some(),
+        "except is kept"
+    );
+    assert!(
+        env.repo.load_record("eee").unwrap().exports.rc5.is_some(),
+        "other memory is kept"
+    );
     assert_eq!(fs::read(&pd).unwrap(), ddd);
 }
 
@@ -1860,7 +2460,9 @@ fn clear_rc5_holders_reports_an_unwritable_holder_and_clears_the_rest() {
     let env = Env::new();
     for id in ["aaa", "bbb", "ccc"] {
         env.track(id, &[]);
-        env.repo.record_export(id, &ExportEntry::Rc5 { memory: 4 }, "old").unwrap();
+        env.repo
+            .record_export(id, &ExportEntry::Rc5 { memory: 4 }, "old")
+            .unwrap();
     }
     let dir = env.dir("bbb");
     let before = bytes_of(&env, "bbb");
@@ -1875,8 +2477,15 @@ fn clear_rc5_holders_reports_an_unwritable_holder_and_clears_the_rest() {
     let ids: Vec<_> = out.cleared.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(ids, ["aaa", "ccc"]);
     assert_eq!(out.failed.len(), 1);
-    assert_eq!((out.failed[0].id.as_str(), out.failed[0].title.as_str()), ("bbb", "Title"));
-    assert!(out.failed[0].message.starts_with("cannot write track.json"), "{}", out.failed[0].message);
+    assert_eq!(
+        (out.failed[0].id.as_str(), out.failed[0].title.as_str()),
+        ("bbb", "Title")
+    );
+    assert!(
+        out.failed[0].message.starts_with("cannot write track.json"),
+        "{}",
+        out.failed[0].message
+    );
     assert_eq!(bytes_of(&env, "bbb"), before);
 }
 
@@ -1884,7 +2493,15 @@ fn clear_rc5_holders_reports_an_unwritable_holder_and_clears_the_rest() {
 fn save_after_an_export_keeps_exports_and_other_changes_still_conflict() {
     let env = Env::new();
     let rec = env.track("aaa", &[]);
-    env.repo.record_export("aaa", &ExportEntry::Mp3 { path: "/m/a.mp3".into() }, "t").unwrap();
+    env.repo
+        .record_export(
+            "aaa",
+            &ExportEntry::Mp3 {
+                path: "/m/a.mp3".into(),
+            },
+            "t",
+        )
+        .unwrap();
     // the draft was loaded before the export: its revision is still good
     let mut r = req(&rec, vec![]);
     r.edits.title = "Edited".into();

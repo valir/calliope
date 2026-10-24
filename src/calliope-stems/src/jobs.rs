@@ -6,9 +6,11 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use calliope_lib::process::{self, CancelHandle};
 use calliope_lib::flac_level::{self, AUDIBLE_LEVEL_DBFS};
-use calliope_lib::stems_api::{check_beats, Beats, JobState, JobStatus, StemLevel, MAX_BEATS_JSON_BYTES};
+use calliope_lib::process::{self, CancelHandle};
+use calliope_lib::stems_api::{
+    check_beats, Beats, JobState, JobStatus, StemLevel, MAX_BEATS_JSON_BYTES,
+};
 
 use crate::config::Config;
 use crate::separator::{parse_progress, truncate, validate_output};
@@ -50,7 +52,11 @@ struct State {
 impl State {
     fn active(&self) -> usize {
         self.reserved
-            + self.jobs.values().filter(|j| matches!(j.state, JobState::Queued | JobState::Running)).count()
+            + self
+                .jobs
+                .values()
+                .filter(|j| matches!(j.state, JobState::Queued | JobState::Running))
+                .count()
     }
 }
 
@@ -97,7 +103,12 @@ const CANCEL_WAIT: Duration = Duration::from_secs(10);
 
 impl Manager {
     pub fn new(cfg: Arc<Config>) -> Arc<Manager> {
-        Arc::new(Manager { cfg, state: Mutex::new(State::default()), work: Condvar::new(), idle: Condvar::new() })
+        Arc::new(Manager {
+            cfg,
+            state: Mutex::new(State::default()),
+            work: Condvar::new(),
+            idle: Condvar::new(),
+        })
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
@@ -111,7 +122,10 @@ impl Manager {
             return None;
         }
         st.reserved += 1;
-        Some(Slot { mgr: self.clone(), armed: true })
+        Some(Slot {
+            mgr: self.clone(),
+            armed: true,
+        })
     }
 
     /// Registers an uploaded job as queued and wakes the worker.
@@ -155,7 +169,11 @@ impl Manager {
         Some(JobStatus {
             job: id.to_string(),
             state: j.state,
-            progress: if j.state == JobState::Done { Some(1.0) } else { j.progress },
+            progress: if j.state == JobState::Done {
+                Some(1.0)
+            } else {
+                j.progress
+            },
             stems: j.stems.clone(),
             error: j.error.clone(),
             stem_levels: j.stem_levels.clone(),
@@ -165,14 +183,19 @@ impl Manager {
 
     pub fn stem_path(&self, id: &str, name: &str) -> StemLookup {
         let st = self.lock();
-        let Some(j) = st.jobs.get(id) else { return StemLookup::UnknownJob };
+        let Some(j) = st.jobs.get(id) else {
+            return StemLookup::UnknownJob;
+        };
         if j.kind == Kind::Beats {
             return StemLookup::NotStems;
         }
         if j.state != JobState::Done {
             return StemLookup::NotDone;
         }
-        if j.stems.as_ref().is_some_and(|s| s.iter().any(|n| n == name)) {
+        if j.stems
+            .as_ref()
+            .is_some_and(|s| s.iter().any(|n| n == name))
+        {
             StemLookup::Found(j.dir.join("out").join(format!("{name}.flac")))
         } else {
             StemLookup::UnknownStem
@@ -195,7 +218,9 @@ impl Manager {
     /// forgets a finished one. Files are deleted either way. False when the job is unknown.
     pub fn delete(&self, id: &str) -> bool {
         let mut st = self.lock();
-        let Some(job) = st.jobs.get_mut(id) else { return false };
+        let Some(job) = st.jobs.get_mut(id) else {
+            return false;
+        };
         match job.state {
             JobState::Queued => {
                 job.state = JobState::Cancelled;
@@ -216,7 +241,11 @@ impl Manager {
                     if left.is_zero() {
                         break;
                     }
-                    st = self.idle.wait_timeout(st, left).unwrap_or_else(|e| e.into_inner()).0;
+                    st = self
+                        .idle
+                        .wait_timeout(st, left)
+                        .unwrap_or_else(|e| e.into_inner())
+                        .0;
                 }
             }
             _ => {
@@ -225,7 +254,9 @@ impl Manager {
         }
         drop(st);
         if let Err(e) = workdir::remove_job_dir(&self.cfg.work_dir, id) {
-            log(format_args!("job id={id} error=\"cannot remove files: {e}\""));
+            log(format_args!(
+                "job id={id} error=\"cannot remove files: {e}\""
+            ));
         }
         log(format_args!("job id={id} deleted"));
         true
@@ -241,7 +272,9 @@ impl Manager {
                 .jobs
                 .iter()
                 .filter(|(_, j)| {
-                    j.state.is_final() && j.finished.is_some_and(|f| now.duration_since(f) >= self.cfg.retention)
+                    j.state.is_final()
+                        && j.finished
+                            .is_some_and(|f| now.duration_since(f) >= self.cfg.retention)
                 })
                 .map(|(id, _)| id.clone())
                 .collect();
@@ -294,7 +327,11 @@ impl Manager {
             if left.is_zero() {
                 return;
             }
-            st = self.idle.wait_timeout(st, left).unwrap_or_else(|e| e.into_inner()).0;
+            st = self
+                .idle
+                .wait_timeout(st, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
         }
     }
 
@@ -308,7 +345,14 @@ impl Manager {
                         return;
                     }
                     match st.queue.pop_front() {
-                        Some(id) if st.jobs.get(&id).is_some_and(|j| j.state == JobState::Queued) => break id,
+                        Some(id)
+                            if st
+                                .jobs
+                                .get(&id)
+                                .is_some_and(|j| j.state == JobState::Queued) =>
+                        {
+                            break id
+                        }
                         Some(_) => continue,
                         None => st = self.work.wait(st).unwrap_or_else(|e| e.into_inner()),
                     }
@@ -325,14 +369,19 @@ impl Manager {
             j.finished = Some(Instant::now());
             j.cancel = None;
         }
-        log(format_args!("job id={id} state=failed error=\"{}\"", truncate(&msg, 300)));
+        log(format_args!(
+            "job id={id} state=failed error=\"{}\"",
+            truncate(&msg, 300)
+        ));
     }
 
     fn process(self: &Arc<Self>, id: &str) {
         let cfg = &self.cfg;
         {
             let mut st = self.lock();
-            let Some(job) = st.jobs.get_mut(id) else { return };
+            let Some(job) = st.jobs.get_mut(id) else {
+                return;
+            };
             if job.state != JobState::Queued {
                 return;
             }
@@ -347,23 +396,28 @@ impl Manager {
                 (Kind::Beats, Some(t)) => (t.clone(), "beat tracker"),
                 (Kind::Beats, None) => (PathBuf::from("/nonexistent"), "beat tracker"),
             };
-            let mut args = vec![dir.join("input.flac").into_os_string(), out.clone().into_os_string()];
+            let mut args = vec![
+                dir.join("input.flac").into_os_string(),
+                out.clone().into_os_string(),
+            ];
             if job.kind == Kind::Stems {
                 args.push(cfg.model.clone().into());
             }
-            let spawned = std::fs::create_dir_all(&out).map_err(|e| e.to_string()).and_then(|()| {
-                let (m1, m2) = (self.clone(), self.clone());
-                let (id1, id2) = (id.to_string(), id.to_string());
-                let (t1, t2) = (tail.clone(), tail.clone());
-                process::spawn(
-                    &program,
-                    &args,
-                    Some(&dir),
-                    move |line| m1.on_line(&id1, &t1, line),
-                    move |line| m2.on_line(&id2, &t2, line),
-                )
+            let spawned = std::fs::create_dir_all(&out)
                 .map_err(|e| e.to_string())
-            });
+                .and_then(|()| {
+                    let (m1, m2) = (self.clone(), self.clone());
+                    let (id1, id2) = (id.to_string(), id.to_string());
+                    let (t1, t2) = (tail.clone(), tail.clone());
+                    process::spawn(
+                        &program,
+                        &args,
+                        Some(&dir),
+                        move |line| m1.on_line(&id1, &t1, line),
+                        move |line| m2.on_line(&id2, &t2, line),
+                    )
+                    .map_err(|e| e.to_string())
+                });
             match spawned {
                 Ok(running) => {
                     let handle = running.cancel_handle();
@@ -386,7 +440,11 @@ impl Manager {
         }
     }
 
-    fn supervise(self: &Arc<Self>, id: &str, running: process::Running, dir: PathBuf,
+    fn supervise(
+        self: &Arc<Self>,
+        id: &str,
+        running: process::Running,
+        dir: PathBuf,
         tail: Arc<Mutex<String>>,
         (kind, duration_s): (Kind, f64),
     ) {
@@ -410,29 +468,34 @@ impl Manager {
         drop(disarm);
         let _ = timer.join();
 
-        let mut outcome: Result<Output, String> = if timed_out.load(std::sync::atomic::Ordering::SeqCst) {
-            Err(format!("the {what} timed out after {} minutes", limit.as_secs() / 60))
-        } else {
-            match status {
-                Err(e) => Err(format!("could not wait for the {what}: {e}")),
-                Ok(s) if s.success() => match kind {
-                    Kind::Stems => validate_output(&dir.join("out")).map(Output::Stems),
-                    Kind::Beats => read_beats(&dir.join("out").join("beats.json"), duration_s).map(Output::Beats),
-                },
-                Ok(s) => {
-                    let last = tail.lock().map(|t| t.clone()).unwrap_or_default();
-                    let how = match s.code() {
-                        Some(c) => format!("exit status {c}"),
-                        None => "killed by a signal".to_string(),
-                    };
-                    Err(if last.is_empty() {
-                        format!("the {what} failed ({how})")
-                    } else {
-                        format!("the {what} failed ({how}): {last}")
-                    })
+        let mut outcome: Result<Output, String> =
+            if timed_out.load(std::sync::atomic::Ordering::SeqCst) {
+                Err(format!(
+                    "the {what} timed out after {} minutes",
+                    limit.as_secs() / 60
+                ))
+            } else {
+                match status {
+                    Err(e) => Err(format!("could not wait for the {what}: {e}")),
+                    Ok(s) if s.success() => match kind {
+                        Kind::Stems => validate_output(&dir.join("out")).map(Output::Stems),
+                        Kind::Beats => read_beats(&dir.join("out").join("beats.json"), duration_s)
+                            .map(Output::Beats),
+                    },
+                    Ok(s) => {
+                        let last = tail.lock().map(|t| t.clone()).unwrap_or_default();
+                        let how = match s.code() {
+                            Some(c) => format!("exit status {c}"),
+                            None => "killed by a signal".to_string(),
+                        };
+                        Err(if last.is_empty() {
+                            format!("the {what} failed ({how})")
+                        } else {
+                            format!("the {what} failed ({how}): {last}")
+                        })
+                    }
                 }
-            }
-        };
+            };
 
         // Measure the stems outside the lock; cancel and shutdown are checked between stems.
         let mut measured = None;
@@ -448,7 +511,10 @@ impl Manager {
         }
 
         let mut st = self.lock();
-        let cancelled = st.jobs.get(id).is_none_or(|j| j.state == JobState::Cancelled);
+        let cancelled = st
+            .jobs
+            .get(id)
+            .is_none_or(|j| j.state == JobState::Cancelled);
         let mut remove_files = false;
         let mut remove_input = false;
         if !cancelled {
@@ -475,8 +541,14 @@ impl Manager {
                     }
                     j.finished = Some(Instant::now());
                     j.cancel = None;
-                    let k = if kind == Kind::Beats { "kind=beats " } else { "" };
-                    log(format_args!("job id={id} {k}state=done duration_s={secs:.1}"));
+                    let k = if kind == Kind::Beats {
+                        "kind=beats "
+                    } else {
+                        ""
+                    };
+                    log(format_args!(
+                        "job id={id} {k}state=done duration_s={secs:.1}"
+                    ));
                     remove_input = kind == Kind::Beats; // only the small result is kept
                 }
                 Err(msg) => {
@@ -500,12 +572,21 @@ impl Manager {
     /// True when the job was cancelled or deleted, or the server is stopping.
     fn interrupted(&self, id: &str) -> bool {
         let st = self.lock();
-        st.stop || st.jobs.get(id).is_none_or(|j| j.state == JobState::Cancelled)
+        st.stop
+            || st
+                .jobs
+                .get(id)
+                .is_none_or(|j| j.state == JobState::Cancelled)
     }
 
     /// Full-scan audible time (and peak) of every stem, in order. A stem that cannot be decoded
     /// gets no entry. `None` when cancelled or stopped part-way.
-    fn measure_stems(&self, id: &str, out: &std::path::Path, stems: &[String]) -> Option<Vec<StemLevel>> {
+    fn measure_stems(
+        &self,
+        id: &str,
+        out: &std::path::Path,
+        stems: &[String],
+    ) -> Option<Vec<StemLevel>> {
         let t0 = Instant::now();
         let mut levels = Vec::new();
         for name in stems {
@@ -514,7 +595,8 @@ impl Manager {
             }
             match flac_level::scan(&out.join(format!("{name}.flac")), AUDIBLE_LEVEL_DBFS, None) {
                 Ok(a) => {
-                    let peak_dbfs = flac_level::to_dbfs(a.peak, a.bits).map(|d| (d * 100.0).round() / 100.0);
+                    let peak_dbfs =
+                        flac_level::to_dbfs(a.peak, a.bits).map(|d| (d * 100.0).round() / 100.0);
                     let shown = peak_dbfs.map_or("-inf".to_string(), |d| format!("{d:.1}"));
                     log(format_args!(
                         "job id={id} stem={name} audible_ms={} windows={} level_dbfs={AUDIBLE_LEVEL_DBFS} peak_dbfs={shown}",
@@ -529,7 +611,10 @@ impl Manager {
                         peak_dbfs,
                     });
                 }
-                Err(e) => log(format_args!("job id={id} stem={name} audible=unknown error=\"{}\"", truncate(&e, 200))),
+                Err(e) => log(format_args!(
+                    "job id={id} stem={name} audible=unknown error=\"{}\"",
+                    truncate(&e, 200)
+                )),
             }
         }
         log(format_args!(
@@ -550,7 +635,10 @@ impl Manager {
             }
             return;
         }
-        log(format_args!("separator id={id} line={}", truncate(&line, 300)));
+        log(format_args!(
+            "separator id={id} line={}",
+            truncate(&line, 300)
+        ));
         if !line.trim().is_empty() {
             if let Ok(mut t) = tail.lock() {
                 *t = truncate(line.trim(), 200);
@@ -568,16 +656,25 @@ enum Output {
 fn read_beats(path: &std::path::Path, duration_s: f64) -> Result<Beats, String> {
     use std::io::Read;
     let bad = |why: &str| Err(format!("the beat tracker produced invalid output ({why})"));
-    let Ok(file) = std::fs::File::open(path) else { return bad("no beats.json") };
+    let Ok(file) = std::fs::File::open(path) else {
+        return bad("no beats.json");
+    };
     let mut bytes = Vec::new();
-    if file.take(MAX_BEATS_JSON_BYTES + 1).read_to_end(&mut bytes).is_err() {
+    if file
+        .take(MAX_BEATS_JSON_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
         return bad("unreadable");
     }
     if bytes.len() as u64 > MAX_BEATS_JSON_BYTES {
         return bad("too large");
     }
-    let Ok(b) = serde_json::from_slice::<Beats>(&bytes) else { return bad("not a beats document") };
-    check_beats(&b, duration_s).map_err(|e| format!("the beat tracker produced invalid output ({e})"))?;
+    let Ok(b) = serde_json::from_slice::<Beats>(&bytes) else {
+        return bad("not a beats document");
+    };
+    check_beats(&b, duration_s)
+        .map_err(|e| format!("the beat tracker produced invalid output ({e})"))?;
     Ok(b)
 }
 
@@ -637,7 +734,9 @@ mod tests {
         assert!(m.status("aa01").is_none() && m.status("aa04").is_none());
         assert!(m.status("aa02").is_some() && m.status("aa03").is_some());
         let jobs = workdir::jobs_root(tmp.path());
-        assert!(!jobs.join("aa01").exists() && jobs.join("aa02").exists() && jobs.join("aa03").exists());
+        assert!(
+            !jobs.join("aa01").exists() && jobs.join("aa02").exists() && jobs.join("aa03").exists()
+        );
     }
 
     #[test]
@@ -656,7 +755,10 @@ mod tests {
         let m = Manager::new(cfg(tmp.path(), 1, Duration::from_secs(60)));
         let a = m.reserve().expect("first");
         let b = m.reserve().expect("second");
-        assert!(m.reserve().is_none(), "queue 1 allows one running + one waiting");
+        assert!(
+            m.reserve().is_none(),
+            "queue 1 allows one running + one waiting"
+        );
         drop(b);
         let c = m.reserve().expect("a released slot is reusable");
         drop((a, c));
@@ -688,9 +790,18 @@ mod tests {
         add(&m, "dd02", JobState::Done, Duration::ZERO);
         m.lock().jobs.get_mut("dd02").unwrap().stems = Some(vec!["vocals".into()]);
         assert!(matches!(m.stem_path("dd01", "vocals"), StemLookup::NotDone));
-        assert!(matches!(m.stem_path("dd02", "vocals"), StemLookup::Found(_)));
-        assert!(matches!(m.stem_path("dd02", "drums"), StemLookup::UnknownStem));
-        assert!(matches!(m.stem_path("zz", "vocals"), StemLookup::UnknownJob));
+        assert!(matches!(
+            m.stem_path("dd02", "vocals"),
+            StemLookup::Found(_)
+        ));
+        assert!(matches!(
+            m.stem_path("dd02", "drums"),
+            StemLookup::UnknownStem
+        ));
+        assert!(matches!(
+            m.stem_path("zz", "vocals"),
+            StemLookup::UnknownJob
+        ));
     }
 
     #[test]
@@ -705,12 +816,21 @@ mod tests {
         }
         assert_eq!(m.status("ee01").unwrap().kind.as_deref(), Some("beats"));
         assert!(matches!(m.beats("ee01"), BeatsLookup::NotDone));
-        assert!(matches!(m.beats("ee02"), BeatsLookup::NotDone), "done but no document");
-        m.lock().jobs.get_mut("ee02").unwrap().beats =
-            Some(Beats { beats: vec![0.5], downbeats: vec![], tracker: "t".into() });
+        assert!(
+            matches!(m.beats("ee02"), BeatsLookup::NotDone),
+            "done but no document"
+        );
+        m.lock().jobs.get_mut("ee02").unwrap().beats = Some(Beats {
+            beats: vec![0.5],
+            downbeats: vec![],
+            tracker: "t".into(),
+        });
         assert!(matches!(m.beats("ee02"), BeatsLookup::Found(_)));
         assert!(matches!(m.beats("zz"), BeatsLookup::UnknownJob));
-        assert!(matches!(m.stem_path("ee02", "vocals"), StemLookup::NotStems));
+        assert!(matches!(
+            m.stem_path("ee02", "vocals"),
+            StemLookup::NotStems
+        ));
         // a stem job is not a beats job
         add(&m, "ee03", JobState::Done, Duration::ZERO);
         assert!(matches!(m.beats("ee03"), BeatsLookup::UnknownJob));
@@ -726,7 +846,9 @@ mod tests {
         write(r#"{"beats":[0.5,1.0],"downbeats":[0.5],"tracker":"t"}"#);
         assert_eq!(read_beats(&p, 10.0).unwrap().beats.len(), 2);
         write("not json");
-        assert!(read_beats(&p, 10.0).unwrap_err().contains("not a beats document"));
+        assert!(read_beats(&p, 10.0)
+            .unwrap_err()
+            .contains("not a beats document"));
         write(r#"{"beats":[50.0],"downbeats":[]}"#);
         assert!(read_beats(&p, 10.0).unwrap_err().contains("out of range"));
         std::fs::write(&p, vec![b' '; (MAX_BEATS_JSON_BYTES + 1) as usize]).unwrap();

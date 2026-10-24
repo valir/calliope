@@ -38,7 +38,10 @@ pub enum ExportEntry {
 }
 
 fn at_of(o: &Map<String, Value>) -> String {
-    o.get("at").and_then(Value::as_str).unwrap_or("").to_string()
+    o.get("at")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
 }
 
 fn file_entry(o: Option<&Value>) -> Option<FileExport> {
@@ -47,7 +50,10 @@ fn file_entry(o: Option<&Value>) -> Option<FileExport> {
     if path.is_empty() || !Path::new(path).is_absolute() {
         return None;
     }
-    Some(FileExport { path: path.to_string(), at: at_of(o) })
+    Some(FileExport {
+        path: path.to_string(),
+        at: at_of(o),
+    })
 }
 
 /// Reads the `exports` value leniently: an entry that is wrong in any way is just absent.
@@ -57,9 +63,16 @@ pub fn read(v: Option<&Value>) -> TrackExports {
     };
     let rc5 = obj.get("rc5").and_then(Value::as_object).and_then(|o| {
         let memory = o.get("memory")?.as_u64().filter(|n| (1..=99).contains(n))? as u8;
-        Some(Rc5Export { memory, at: at_of(o) })
+        Some(Rc5Export {
+            memory,
+            at: at_of(o),
+        })
     });
-    TrackExports { rc5, mp3: file_entry(obj.get("mp3")), ogg: file_entry(obj.get("ogg")) }
+    TrackExports {
+        rc5,
+        mp3: file_entry(obj.get("mp3")),
+        ogg: file_entry(obj.get("ogg")),
+    }
 }
 
 /// The recorded RC-5 memory of a raw `track.json` object.
@@ -71,16 +84,29 @@ pub fn rc5_memory(obj: &Map<String, Value>) -> Option<u8> {
 /// is replaced.
 pub fn set(obj: &mut Map<String, Value>, entry: &ExportEntry, at: &str) {
     let (kind, mut value) = match entry {
-        ExportEntry::Rc5 { memory } => ("rc5", Map::from_iter([("memory".to_string(), Value::from(*memory))])),
-        ExportEntry::Mp3 { path } => ("mp3", Map::from_iter([("path".to_string(), Value::from(path.as_str()))])),
-        ExportEntry::Ogg { path } => ("ogg", Map::from_iter([("path".to_string(), Value::from(path.as_str()))])),
+        ExportEntry::Rc5 { memory } => (
+            "rc5",
+            Map::from_iter([("memory".to_string(), Value::from(*memory))]),
+        ),
+        ExportEntry::Mp3 { path } => (
+            "mp3",
+            Map::from_iter([("path".to_string(), Value::from(path.as_str()))]),
+        ),
+        ExportEntry::Ogg { path } => (
+            "ogg",
+            Map::from_iter([("path".to_string(), Value::from(path.as_str()))]),
+        ),
     };
     value.insert("at".into(), Value::from(at));
-    let slot = obj.entry(EXPORTS_KEY).or_insert_with(|| Value::Object(Map::new()));
+    let slot = obj
+        .entry(EXPORTS_KEY)
+        .or_insert_with(|| Value::Object(Map::new()));
     if !slot.is_object() {
         *slot = Value::Object(Map::new());
     }
-    slot.as_object_mut().expect("just made an object").insert(kind.into(), Value::Object(value));
+    slot.as_object_mut()
+        .expect("just made an object")
+        .insert(kind.into(), Value::Object(value));
 }
 
 /// Removes `exports.rc5` (and `exports` when it ends up empty). True when something changed.
@@ -114,7 +140,13 @@ mod tests {
             "ogg": {"path": "/m/a.ogg", "at": "t"}
         });
         let e = read(Some(&v));
-        assert_eq!(e.rc5, Some(Rc5Export { memory: 7, at: "2026-10-24T18:30:00Z".into() }));
+        assert_eq!(
+            e.rc5,
+            Some(Rc5Export {
+                memory: 7,
+                at: "2026-10-24T18:30:00Z".into()
+            })
+        );
         assert_eq!(e.mp3.unwrap().path, "/m/a.mp3");
         assert_eq!(e.ogg.unwrap().at, "t");
         assert_eq!(rc5_memory(&obj(json!({"exports": v}))), Some(7));
@@ -122,20 +154,44 @@ mod tests {
 
     #[test]
     fn read_is_lenient() {
-        for bad in [json!(0), json!(100), json!("7"), json!(7.5), json!(-1), json!(null)] {
-            assert_eq!(read(Some(&json!({"rc5": {"memory": bad}}))).rc5, None, "{bad}");
+        for bad in [
+            json!(0),
+            json!(100),
+            json!("7"),
+            json!(7.5),
+            json!(-1),
+            json!(null),
+        ] {
+            assert_eq!(
+                read(Some(&json!({"rc5": {"memory": bad}}))).rc5,
+                None,
+                "{bad}"
+            );
         }
-        assert_eq!(read(Some(&json!({"rc5": {"memory": 99}}))).rc5.unwrap().memory, 99);
+        assert_eq!(
+            read(Some(&json!({"rc5": {"memory": 99}})))
+                .rc5
+                .unwrap()
+                .memory,
+            99
+        );
         let e = read(Some(&json!({
             "mp3": {"path": "rel/a.mp3", "at": "t"},
             "ogg": {"path": "", "at": "t"}
         })));
         assert_eq!((e.mp3, e.ogg), (None, None));
         // a missing or non-string `at` is empty
-        let e = read(Some(&json!({"rc5": {"memory": 3}, "mp3": {"path": "/a.mp3", "at": 5}})));
+        let e = read(Some(
+            &json!({"rc5": {"memory": 3}, "mp3": {"path": "/a.mp3", "at": 5}}),
+        ));
         assert_eq!(e.rc5.unwrap().at, "");
         assert_eq!(e.mp3.unwrap().at, "");
-        for v in [json!("x"), json!([1]), json!(null), json!({"rc5": 3, "mp3": "x"})] {
+        for v in [
+            json!("x"),
+            json!([1]),
+            json!(null),
+            json!({"rc5": 3, "mp3": "x"}),
+        ] {
             assert_eq!(read(Some(&v)), TrackExports::default(), "{v}");
         }
         assert_eq!(read(None), TrackExports::default());
@@ -152,12 +208,24 @@ mod tests {
         assert_eq!(o["exports"]["rc5"], json!({"memory": 9, "at": "new"}));
         assert_eq!(o["exports"]["mp3"], json!({"path": "/a.mp3", "at": "old"}));
         assert_eq!(o["exports"]["flac"], json!({"path": "/a.flac"}));
-        set(&mut o, &ExportEntry::Ogg { path: "/b.ogg".into() }, "n2");
+        set(
+            &mut o,
+            &ExportEntry::Ogg {
+                path: "/b.ogg".into(),
+            },
+            "n2",
+        );
         assert_eq!(o["exports"]["ogg"], json!({"path": "/b.ogg", "at": "n2"}));
         assert_eq!(o["title"], "T");
         for bad in [json!("x"), json!(null), json!([1])] {
             let mut o = obj(json!({"exports": bad}));
-            set(&mut o, &ExportEntry::Mp3 { path: "/c.mp3".into() }, "t");
+            set(
+                &mut o,
+                &ExportEntry::Mp3 {
+                    path: "/c.mp3".into(),
+                },
+                "t",
+            );
             assert_eq!(o["exports"], json!({"mp3": {"path": "/c.mp3", "at": "t"}}));
         }
         let mut o = Map::new();
@@ -184,7 +252,13 @@ mod tests {
 
     #[test]
     fn serializes_missing_kinds_as_null() {
-        let e = TrackExports { mp3: Some(FileExport { path: "/a".into(), at: "t".into() }), ..Default::default() };
+        let e = TrackExports {
+            mp3: Some(FileExport {
+                path: "/a".into(),
+                at: "t".into(),
+            }),
+            ..Default::default()
+        };
         assert_eq!(
             serde_json::to_value(&e).unwrap(),
             json!({"rc5": null, "mp3": {"path": "/a", "at": "t"}, "ogg": null})

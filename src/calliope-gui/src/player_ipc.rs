@@ -11,13 +11,13 @@ use tauri::Manager;
 use crate::audio_out::OutputBackend;
 use crate::ipc::{EditorState, RepoState};
 use crate::player::{
-    self, EventSink, LoopAction, OpenSpec, OutputRequest, PlayerEvent, PlayerManager, PlayerSnapshot,
-    PlayerTransport, SectionEdit, SpeedAction,
+    self, EventSink, LoopAction, OpenSpec, OutputRequest, PlayerEvent, PlayerManager,
+    PlayerSnapshot, PlayerTransport, SectionEdit, SpeedAction,
 };
 use crate::player_source;
 use crate::player_state::Mark;
-use crate::speed::Training;
 use crate::repository::Repository;
+use crate::speed::Training;
 use crate::tempo_map::{Boundary, Scale, TempoMap};
 use crate::tempo_store::{FileTempoStore, TempoStore};
 
@@ -42,7 +42,11 @@ impl PlayerHost {
         let mut mgr = PlayerManager::new(backend, sink);
         // Closing a real device can block: handles are dropped after the lock is released.
         mgr.defer_drops();
-        Self { mgr: Mutex::new(mgr), slot, ffmpeg }
+        Self {
+            mgr: Mutex::new(mgr),
+            slot,
+            ffmpeg,
+        }
     }
 
     /// Runs `f` on the manager; retired output handles are dropped after the lock is released.
@@ -132,7 +136,12 @@ impl TempoStore for PlayerTempoStore {
         })
     }
 
-    fn replace(&self, id: &str, dir: &Path, f: &dyn Fn(&TempoMap) -> Result<TempoMap, String>) -> Result<TempoMap, String> {
+    fn replace(
+        &self,
+        id: &str,
+        dir: &Path,
+        f: &dyn Fn(&TempoMap) -> Result<TempoMap, String>,
+    ) -> Result<TempoMap, String> {
         self.host.with(|m| {
             m.release(id)?;
             FileTempoStore.replace(id, dir, f)
@@ -142,7 +151,12 @@ impl TempoStore for PlayerTempoStore {
 
 // ---- command bodies ----
 
-pub(crate) fn do_open_player(host: &PlayerHost, repo: &RepoState, id: &str, sink: EventSink) -> Result<PlayerSnapshot, String> {
+pub(crate) fn do_open_player(
+    host: &PlayerHost,
+    repo: &RepoState,
+    id: &str,
+    sink: EventSink,
+) -> Result<PlayerSnapshot, String> {
     // The open is registered before anything slow, so overlapping opens are ordered by their
     // arrival here and the newest one owns the event sink.
     let (ticket, events) = host.with(|m| {
@@ -196,7 +210,11 @@ fn stop_editor(editor: &EditorState) {
     });
 }
 
-pub(crate) fn do_player_play(host: &PlayerHost, editor: &EditorState, id: &str) -> Result<PlayerTransport, String> {
+pub(crate) fn do_player_play(
+    host: &PlayerHost,
+    editor: &EditorState,
+    id: &str,
+) -> Result<PlayerTransport, String> {
     let req = host.with(|m| m.play_request(id))?;
     stop_editor(editor);
     // The device is opened without the manager lock.
@@ -204,7 +222,11 @@ pub(crate) fn do_player_play(host: &PlayerHost, editor: &EditorState, id: &str) 
     host.with(|m| m.play_with(id, opened, Instant::now()))
 }
 
-pub(crate) fn do_player_select_source(host: &PlayerHost, id: &str, key: &str) -> Result<PlayerSnapshot, String> {
+pub(crate) fn do_player_select_source(
+    host: &PlayerHost,
+    id: &str,
+    key: &str,
+) -> Result<PlayerSnapshot, String> {
     let Some(job) = host.with(|m| m.begin_select(id, key, Instant::now()))? else {
         return host.with(|m| m.snapshot(id));
     };
@@ -237,18 +259,55 @@ impl From<Edge> for Mark {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub(crate) enum TempoAction {
-    SetBpm { bpm: f64 },
-    SpeedStep { steps: i32 },
+    SetBpm {
+        bpm: f64,
+    },
+    SpeedStep {
+        steps: i32,
+    },
     SpeedReset,
-    SpeedSet { percent: i64 },
-    SectionBpm { index: usize, at: f64, bpm: f64 },
-    ScaleSection { index: usize, at: f64, factor: Factor },
-    AddChange { position: f64, bpm: f64 },
-    RemoveChange { index: usize, at: f64 },
-    MoveChange { index: usize, at: f64, steps: i64 },
-    SectionFlags { index: usize, at: f64, metronome: bool, count_in: bool },
-    SectionName { index: usize, at: f64, name: String },
-    JumpSection { index: usize, at: f64, edge: Edge },
+    SpeedSet {
+        percent: i64,
+    },
+    SectionBpm {
+        index: usize,
+        at: f64,
+        bpm: f64,
+    },
+    ScaleSection {
+        index: usize,
+        at: f64,
+        factor: Factor,
+    },
+    AddChange {
+        position: f64,
+        bpm: f64,
+    },
+    RemoveChange {
+        index: usize,
+        at: f64,
+    },
+    MoveChange {
+        index: usize,
+        at: f64,
+        steps: i64,
+    },
+    SectionFlags {
+        index: usize,
+        at: f64,
+        metronome: bool,
+        count_in: bool,
+    },
+    SectionName {
+        index: usize,
+        at: f64,
+        name: String,
+    },
+    JumpSection {
+        index: usize,
+        at: f64,
+        edge: Edge,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
@@ -263,11 +322,27 @@ pub(crate) enum Factor {
 pub(crate) enum LoopCmd {
     Add,
     Remove,
-    Select { delta: i32 },
-    Mark { edge: Edge },
-    Set { edge: Edge, value: Boundary },
-    Flags { repeat: bool, count_in: bool },
-    Training { on: bool, start: u32, end: u32, step: u32, repeats: u32 },
+    Select {
+        delta: i32,
+    },
+    Mark {
+        edge: Edge,
+    },
+    Set {
+        edge: Edge,
+        value: Boundary,
+    },
+    Flags {
+        repeat: bool,
+        count_in: bool,
+    },
+    Training {
+        on: bool,
+        start: u32,
+        end: u32,
+        step: u32,
+        repeats: u32,
+    },
     Play,
     Stop,
 }
@@ -281,9 +356,19 @@ impl From<LoopCmd> for LoopAction {
             LoopCmd::Mark { edge } => LoopAction::Mark(edge.into()),
             LoopCmd::Set { edge, value } => LoopAction::Set(edge.into(), value),
             LoopCmd::Flags { repeat, count_in } => LoopAction::Flags { repeat, count_in },
-            LoopCmd::Training { on, start, end, step, repeats } => {
-                LoopAction::Training(Training { on, start, end, step, repeats })
-            }
+            LoopCmd::Training {
+                on,
+                start,
+                end,
+                step,
+                repeats,
+            } => LoopAction::Training(Training {
+                on,
+                start,
+                end,
+                step,
+                repeats,
+            }),
             LoopCmd::Play => LoopAction::Play,
             LoopCmd::Stop => LoopAction::Stop,
         }
@@ -294,32 +379,75 @@ fn edit(host: &PlayerHost, id: &str, e: SectionEdit) -> Result<PlayerSnapshot, S
     host.with(|m| m.edit_sections(id, e, Instant::now()))
 }
 
-pub(crate) fn do_player_tempo(host: &PlayerHost, id: &str, action: TempoAction) -> Result<PlayerSnapshot, String> {
+pub(crate) fn do_player_tempo(
+    host: &PlayerHost,
+    id: &str,
+    action: TempoAction,
+) -> Result<PlayerSnapshot, String> {
     match action {
         TempoAction::SetBpm { bpm } => host.with(|m| m.set_bpm(id, bpm, Instant::now())),
-        TempoAction::SpeedStep { steps } => host.with(|m| m.speed(id, SpeedAction::Step(steps), Instant::now())),
+        TempoAction::SpeedStep { steps } => {
+            host.with(|m| m.speed(id, SpeedAction::Step(steps), Instant::now()))
+        }
         TempoAction::SpeedReset => host.with(|m| m.speed(id, SpeedAction::Reset, Instant::now())),
-        TempoAction::SpeedSet { percent } => host.with(|m| m.speed(id, SpeedAction::Set(percent), Instant::now())),
-        TempoAction::SectionBpm { index, at, bpm } => edit(host, id, SectionEdit::Bpm { index, at, bpm }),
+        TempoAction::SpeedSet { percent } => {
+            host.with(|m| m.speed(id, SpeedAction::Set(percent), Instant::now()))
+        }
+        TempoAction::SectionBpm { index, at, bpm } => {
+            edit(host, id, SectionEdit::Bpm { index, at, bpm })
+        }
         TempoAction::ScaleSection { index, at, factor } => {
-            let factor = if factor == Factor::Double { Scale::Double } else { Scale::Halve };
+            let factor = if factor == Factor::Double {
+                Scale::Double
+            } else {
+                Scale::Halve
+            };
             edit(host, id, SectionEdit::Scale { index, at, factor })
         }
-        TempoAction::AddChange { position, bpm } => edit(host, id, SectionEdit::Add { position, bpm }),
-        TempoAction::RemoveChange { index, at } => edit(host, id, SectionEdit::Remove { index, at }),
-        TempoAction::MoveChange { index, at, steps } => edit(host, id, SectionEdit::Move { index, at, steps }),
-        TempoAction::SectionFlags { index, at, metronome, count_in } => {
-            edit(host, id, SectionEdit::Flags { index, at, metronome, count_in })
+        TempoAction::AddChange { position, bpm } => {
+            edit(host, id, SectionEdit::Add { position, bpm })
         }
-        TempoAction::SectionName { index, at, name } => edit(host, id, SectionEdit::Name { index, at, name }),
+        TempoAction::RemoveChange { index, at } => {
+            edit(host, id, SectionEdit::Remove { index, at })
+        }
+        TempoAction::MoveChange { index, at, steps } => {
+            edit(host, id, SectionEdit::Move { index, at, steps })
+        }
+        TempoAction::SectionFlags {
+            index,
+            at,
+            metronome,
+            count_in,
+        } => edit(
+            host,
+            id,
+            SectionEdit::Flags {
+                index,
+                at,
+                metronome,
+                count_in,
+            },
+        ),
+        TempoAction::SectionName { index, at, name } => {
+            edit(host, id, SectionEdit::Name { index, at, name })
+        }
         TempoAction::JumpSection { index, at, edge } => {
-            let edge = if edge == Edge::Start { crate::tempo_map::Edge::Start } else { crate::tempo_map::Edge::End };
+            let edge = if edge == Edge::Start {
+                crate::tempo_map::Edge::Start
+            } else {
+                crate::tempo_map::Edge::End
+            };
             host.with(|m| m.jump_section(id, index, at, edge, Instant::now()))
         }
     }
 }
 
-pub(crate) fn do_player_loop(host: &PlayerHost, editor: &EditorState, id: &str, cmd: LoopCmd) -> Result<PlayerSnapshot, String> {
+pub(crate) fn do_player_loop(
+    host: &PlayerHost,
+    editor: &EditorState,
+    id: &str,
+    cmd: LoopCmd,
+) -> Result<PlayerSnapshot, String> {
     if cmd == LoopCmd::Play {
         let req = host.with(|m| m.loop_play_request(id))?;
         stop_editor(editor);
@@ -353,7 +481,15 @@ pub(crate) async fn open_player(
     id: String,
     events: tauri::ipc::Channel<PlayerEvent>,
 ) -> Result<PlayerSnapshot, String> {
-    blocking(move || do_open_player(&app.state::<Arc<PlayerHost>>(), &app.state::<RepoState>(), &id, event_sink(events))).await
+    blocking(move || {
+        do_open_player(
+            &app.state::<Arc<PlayerHost>>(),
+            &app.state::<RepoState>(),
+            &id,
+            event_sink(events),
+        )
+    })
+    .await
 }
 
 #[tauri::command]
@@ -375,52 +511,126 @@ pub(crate) async fn watch_player(
     app: tauri::AppHandle,
     events: tauri::ipc::Channel<PlayerEvent>,
 ) -> Result<Option<PlayerSnapshot>, String> {
-    blocking(move || Ok(do_watch_player(&app.state::<Arc<PlayerHost>>(), event_sink(events)))).await
+    blocking(move || {
+        Ok(do_watch_player(
+            &app.state::<Arc<PlayerHost>>(),
+            event_sink(events),
+        ))
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) async fn player_select_source(app: tauri::AppHandle, id: String, source: String) -> Result<PlayerSnapshot, String> {
+pub(crate) async fn player_select_source(
+    app: tauri::AppHandle,
+    id: String,
+    source: String,
+) -> Result<PlayerSnapshot, String> {
     blocking(move || do_player_select_source(&app.state::<Arc<PlayerHost>>(), &id, &source)).await
 }
 
 #[tauri::command]
-pub(crate) async fn player_play(app: tauri::AppHandle, id: String) -> Result<PlayerTransport, String> {
-    blocking(move || do_player_play(&app.state::<Arc<PlayerHost>>(), &app.state::<EditorState>(), &id)).await
+pub(crate) async fn player_play(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<PlayerTransport, String> {
+    blocking(move || {
+        do_player_play(
+            &app.state::<Arc<PlayerHost>>(),
+            &app.state::<EditorState>(),
+            &id,
+        )
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) async fn player_pause(app: tauri::AppHandle, id: String) -> Result<PlayerTransport, String> {
-    blocking(move || app.state::<Arc<PlayerHost>>().with(|m| m.pause(&id, Instant::now()))).await
+pub(crate) async fn player_pause(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<PlayerTransport, String> {
+    blocking(move || {
+        app.state::<Arc<PlayerHost>>()
+            .with(|m| m.pause(&id, Instant::now()))
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) async fn player_seek(app: tauri::AppHandle, id: String, position: u64) -> Result<PlayerTransport, String> {
-    blocking(move || app.state::<Arc<PlayerHost>>().with(|m| m.seek(&id, position, Instant::now()))).await
+pub(crate) async fn player_seek(
+    app: tauri::AppHandle,
+    id: String,
+    position: u64,
+) -> Result<PlayerTransport, String> {
+    blocking(move || {
+        app.state::<Arc<PlayerHost>>()
+            .with(|m| m.seek(&id, position, Instant::now()))
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) async fn player_nudge(app: tauri::AppHandle, id: String, delta: i64) -> Result<PlayerTransport, String> {
-    blocking(move || app.state::<Arc<PlayerHost>>().with(|m| m.nudge(&id, delta, Instant::now()))).await
+pub(crate) async fn player_nudge(
+    app: tauri::AppHandle,
+    id: String,
+    delta: i64,
+) -> Result<PlayerTransport, String> {
+    blocking(move || {
+        app.state::<Arc<PlayerHost>>()
+            .with(|m| m.nudge(&id, delta, Instant::now()))
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) async fn player_skip(app: tauri::AppHandle, id: String, delta: i64) -> Result<PlayerTransport, String> {
-    blocking(move || app.state::<Arc<PlayerHost>>().with(|m| m.skip(&id, delta, Instant::now()))).await
+pub(crate) async fn player_skip(
+    app: tauri::AppHandle,
+    id: String,
+    delta: i64,
+) -> Result<PlayerTransport, String> {
+    blocking(move || {
+        app.state::<Arc<PlayerHost>>()
+            .with(|m| m.skip(&id, delta, Instant::now()))
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) async fn player_leave(app: tauri::AppHandle, id: String) -> Result<PlayerTransport, String> {
-    blocking(move || app.state::<Arc<PlayerHost>>().with(|m| m.leave(&id, Instant::now()))).await
+pub(crate) async fn player_leave(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<PlayerTransport, String> {
+    blocking(move || {
+        app.state::<Arc<PlayerHost>>()
+            .with(|m| m.leave(&id, Instant::now()))
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) async fn player_tempo(app: tauri::AppHandle, id: String, action: TempoAction) -> Result<PlayerSnapshot, String> {
+pub(crate) async fn player_tempo(
+    app: tauri::AppHandle,
+    id: String,
+    action: TempoAction,
+) -> Result<PlayerSnapshot, String> {
     blocking(move || do_player_tempo(&app.state::<Arc<PlayerHost>>(), &id, action)).await
 }
 
 #[tauri::command]
-pub(crate) async fn player_loop(app: tauri::AppHandle, id: String, action: LoopCmd) -> Result<PlayerSnapshot, String> {
-    blocking(move || do_player_loop(&app.state::<Arc<PlayerHost>>(), &app.state::<EditorState>(), &id, action)).await
+pub(crate) async fn player_loop(
+    app: tauri::AppHandle,
+    id: String,
+    action: LoopCmd,
+) -> Result<PlayerSnapshot, String> {
+    blocking(move || {
+        do_player_loop(
+            &app.state::<Arc<PlayerHost>>(),
+            &app.state::<EditorState>(),
+            &id,
+            action,
+        )
+    })
+    .await
 }
 
 #[cfg(test)]

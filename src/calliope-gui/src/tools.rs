@@ -71,7 +71,9 @@ pub fn find_in_path(name: &str, path_var: &OsStr) -> Option<PathBuf> {
 }
 
 fn is_executable_file(p: &Path) -> bool {
-    let Ok(m) = std::fs::metadata(p) else { return false };
+    let Ok(m) = std::fs::metadata(p) else {
+        return false;
+    };
     if !m.is_file() {
         return false;
     }
@@ -92,7 +94,10 @@ pub fn parse_yt_dlp_version(s: &str) -> Option<(u32, u32, u32)> {
     let mut num = |len: usize| -> Option<u32> {
         let p = it.next()?;
         (p.len() == len || (len == 2 && p.len() == 1)).then_some(())?;
-        p.bytes().all(|b| b.is_ascii_digit()).then(|| p.parse().ok()).flatten()
+        p.bytes()
+            .all(|b| b.is_ascii_digit())
+            .then(|| p.parse().ok())
+            .flatten()
     };
     let (y, m, d) = (num(4)?, num(2)?, num(2)?);
     ((1..=12).contains(&m) && (1..=31).contains(&d) && y >= 2000).then_some((y, m, d))
@@ -108,7 +113,12 @@ pub enum FfVersion {
 
 /// Reads the version from a first line like `ffmpeg version n9.0.2 Copyright ...`.
 pub fn parse_ffmpeg_version(line: &str) -> Option<(String, FfVersion)> {
-    let token = line.trim().split_once(" version ")?.1.split_whitespace().next()?;
+    let token = line
+        .trim()
+        .split_once(" version ")?
+        .1
+        .split_whitespace()
+        .next()?;
     let lower = token.to_ascii_lowercase();
     if lower.starts_with("n-") || lower.starts_with("git-") {
         return Some((token.to_string(), FfVersion::Git));
@@ -200,7 +210,13 @@ impl Tools {
     }
 
     pub fn check_one(&self, tool: ToolName) -> ToolStatus {
-        let mut st = ToolStatus { name: tool, state: ToolState::Missing, path: None, version: None, message: None };
+        let mut st = ToolStatus {
+            name: tool,
+            state: ToolState::Missing,
+            path: None,
+            version: None,
+            message: None,
+        };
         let Some(path) = self.path_of(tool) else {
             st.message = Some(tool.missing_message());
             return st;
@@ -221,8 +237,10 @@ impl Tools {
                     let text = first.trim().to_string();
                     if (y, m) < MIN_YT_DLP {
                         st.state = ToolState::TooOld;
-                        st.message =
-                            Some(format!("yt-dlp {text} is too old (need {}.{:02} or newer).", MIN_YT_DLP.0, MIN_YT_DLP.1));
+                        st.message = Some(format!(
+                            "yt-dlp {text} is too old (need {}.{:02} or newer).",
+                            MIN_YT_DLP.0, MIN_YT_DLP.1
+                        ));
                     } else {
                         st.state = ToolState::Ok;
                     }
@@ -234,8 +252,10 @@ impl Tools {
                 Some((text, FfVersion::Release(major))) => {
                     if major < MIN_FFMPEG_MAJOR {
                         st.state = ToolState::TooOld;
-                        st.message =
-                            Some(format!("{} {text} is too old (need {MIN_FFMPEG_MAJOR} or newer).", tool.exe()));
+                        st.message = Some(format!(
+                            "{} {text} is too old (need {MIN_FFMPEG_MAJOR} or newer).",
+                            tool.exe()
+                        ));
                     } else {
                         st.state = ToolState::Ok;
                     }
@@ -254,8 +274,15 @@ impl Tools {
 
 fn unknown_version(st: &mut ToolStatus, first_line: &str) {
     st.state = ToolState::UnknownVersion;
-    let shown: String = first_line.chars().filter(|c| !c.is_control()).take(80).collect();
-    st.message = Some(format!("The version of {} could not be read (\"{shown}\"); using it anyway.", st.name.exe()));
+    let shown: String = first_line
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(80)
+        .collect();
+    st.message = Some(format!(
+        "The version of {} could not be read (\"{shown}\"); using it anyway.",
+        st.name.exe()
+    ));
 }
 
 /// Runs `<path> <arg>` and returns its stdout lines. Stopped after [`VERSION_TIMEOUT`].
@@ -340,20 +367,34 @@ mod tests {
     fn ffmpeg_version_table() {
         let r = |n: u32| Some(FfVersion::Release(n));
         for (line, want) in [
-            ("ffmpeg version n9.0.2 Copyright (c) 2000-2025 the FFmpeg developers", r(9)),
+            (
+                "ffmpeg version n9.0.2 Copyright (c) 2000-2025 the FFmpeg developers",
+                r(9),
+            ),
             ("ffmpeg version 7.1 Copyright (c) 2000-2024", r(7)),
             ("ffprobe version 6.1.1-3ubuntu5 Copyright", r(6)),
             ("ffmpeg version 5.1.2-0+deb12u1 Copyright", r(5)),
             ("ffmpeg version 4.4.2 Copyright", r(4)),
-            ("ffmpeg version N-117000-gabcdef Copyright", Some(FfVersion::Git)),
-            ("ffmpeg version git-2024-05-01-abc Copyright", Some(FfVersion::Git)),
+            (
+                "ffmpeg version N-117000-gabcdef Copyright",
+                Some(FfVersion::Git),
+            ),
+            (
+                "ffmpeg version git-2024-05-01-abc Copyright",
+                Some(FfVersion::Git),
+            ),
             ("ffmpeg version unknown Copyright", None),
             ("something else", None),
             ("", None),
         ] {
             assert_eq!(parse_ffmpeg_version(line).map(|(_, v)| v), want, "{line:?}");
         }
-        assert_eq!(parse_ffmpeg_version("ffmpeg version n9.0.2 Copyright").unwrap().0, "n9.0.2");
+        assert_eq!(
+            parse_ffmpeg_version("ffmpeg version n9.0.2 Copyright")
+                .unwrap()
+                .0,
+            "n9.0.2"
+        );
     }
 
     #[test]
@@ -386,7 +427,10 @@ mod tests {
         let b = tempfile::tempdir().unwrap();
         let real = script(b.path(), "real-tool", "");
         std::os::unix::fs::symlink(&real, a.path().join("yt-dlp")).unwrap();
-        assert_eq!(find_in_path("yt-dlp", &path_of(&[a.path()])), Some(a.path().join("yt-dlp")));
+        assert_eq!(
+            find_in_path("yt-dlp", &path_of(&[a.path()])),
+            Some(a.path().join("yt-dlp"))
+        );
     }
 
     #[test]
@@ -402,7 +446,11 @@ mod tests {
         script(a.path(), "ffprobe", "echo ffprobe version 7.1");
         let t = Tools::discover(&path_of(&[b.path(), a.path()]));
         assert_eq!(t.ffmpeg, Some(a.path().join("ffmpeg")));
-        assert_eq!(t.ffprobe, Some(a.path().join("ffprobe")), "next to ffmpeg first");
+        assert_eq!(
+            t.ffprobe,
+            Some(a.path().join("ffprobe")),
+            "next to ffmpeg first"
+        );
         assert_eq!(t.yt_dlp, None);
     }
 
@@ -410,22 +458,42 @@ mod tests {
     fn check_reports_versions_hints_and_old_tools() {
         let d = tempfile::tempdir().unwrap();
         script(d.path(), "yt-dlp", "echo 2024.12.13");
-        script(d.path(), "ffmpeg", "echo 'ffmpeg version n9.0.2 Copyright (c) the FFmpeg developers'; echo more");
-        script(d.path(), "ffprobe", "echo 'ffprobe version N-117000-gabc Copyright'");
+        script(
+            d.path(),
+            "ffmpeg",
+            "echo 'ffmpeg version n9.0.2 Copyright (c) the FFmpeg developers'; echo more",
+        );
+        script(
+            d.path(),
+            "ffprobe",
+            "echo 'ffprobe version N-117000-gabc Copyright'",
+        );
         let st = Tools::discover(&path_of(&[d.path()])).check();
-        assert_eq!((st.yt_dlp.state, st.ffmpeg.state, st.ffprobe.state), (ToolState::Ok, ToolState::Ok, ToolState::Ok));
+        assert_eq!(
+            (st.yt_dlp.state, st.ffmpeg.state, st.ffprobe.state),
+            (ToolState::Ok, ToolState::Ok, ToolState::Ok)
+        );
         assert_eq!(st.yt_dlp.version.as_deref(), Some("2024.12.13"));
         assert_eq!(st.ffmpeg.version.as_deref(), Some("n9.0.2"));
         assert!(st.yt_dlp.usable() && st.yt_dlp.message.is_none());
-        assert_eq!(st.ffmpeg.path.as_deref(), Some(d.path().join("ffmpeg").to_str().unwrap()));
+        assert_eq!(
+            st.ffmpeg.path.as_deref(),
+            Some(d.path().join("ffmpeg").to_str().unwrap())
+        );
 
         script(d.path(), "yt-dlp", "echo 2022.01.01");
         script(d.path(), "ffmpeg", "echo 'ffmpeg version 4.4.2 Copyright'");
         let st = Tools::discover(&path_of(&[d.path()])).check();
         assert_eq!(st.yt_dlp.state, ToolState::TooOld);
-        assert_eq!(st.yt_dlp.message.as_deref(), Some("yt-dlp 2022.01.01 is too old (need 2023.01 or newer)."));
+        assert_eq!(
+            st.yt_dlp.message.as_deref(),
+            Some("yt-dlp 2022.01.01 is too old (need 2023.01 or newer).")
+        );
         assert!(!st.yt_dlp.usable());
-        assert_eq!(st.ffmpeg.message.as_deref(), Some("ffmpeg 4.4.2 is too old (need 5 or newer)."));
+        assert_eq!(
+            st.ffmpeg.message.as_deref(),
+            Some("ffmpeg 4.4.2 is too old (need 5 or newer).")
+        );
     }
 
     #[test]
@@ -438,7 +506,11 @@ mod tests {
             Some("yt-dlp was not found. Install it (Arch: sudo pacman -S yt-dlp) and try again.")
         );
         assert!(st.ffmpeg.message.unwrap().contains("sudo pacman -S ffmpeg"));
-        assert!(st.ffprobe.message.unwrap().contains("ffprobe was not found"));
+        assert!(st
+            .ffprobe
+            .message
+            .unwrap()
+            .contains("ffprobe was not found"));
         assert!(st.yt_dlp.path.is_none() && !st.yt_dlp.usable());
     }
 

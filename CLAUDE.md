@@ -11,6 +11,8 @@ Spec-driven project built by the agent team (see `/build-spec`).
 - Cargo workspace, one folder per crate: `src/calliope-gui/` (desktop app, also the npm
   project), `src/calliope-lib/` (shared library), `src/calliope-stems/` (edge-AI server).
   `Cargo.lock`, `target/`, `docs/` and `specs/` are at the repository root.
+- Rust code is always formatted with `cargo fmt --all` (default rustfmt settings) before it is
+  committed; `npm test` fails on unformatted code (`cargo fmt --all --check`).
 - **npm commands run in `src/calliope-gui/`**: `npm test` (whole headless suite, all crates),
   `npm run test:gui` (GUI tests, parallel, each test binary on its own private X display; no
   `DISPLAY` needed), `DISPLAY=:1 npm run test:gui:serial` (same tests, one after the other on an

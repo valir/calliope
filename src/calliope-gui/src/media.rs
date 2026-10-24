@@ -148,11 +148,17 @@ fn run(program: &Path, args: &[String], cancel: &Cancel) -> Result<Output, Media
     }
     let stdout = out.lock().map(|s| s.clone()).unwrap_or_default();
     let stderr_last = err.lock().map(|s| s.clone()).unwrap_or_default();
-    Ok(Output { success: status.success(), stdout, stderr_last })
+    Ok(Output {
+        success: status.success(),
+        stdout,
+        stderr_last,
+    })
 }
 
 fn bare_name(file: &Path) -> String {
-    file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| file.to_string_lossy().into_owned())
+    file.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| file.to_string_lossy().into_owned())
 }
 
 fn file_arg(file: &Path) -> String {
@@ -163,7 +169,10 @@ fn require_absolute(file: &Path) -> Result<(), MediaError> {
     if file.is_absolute() {
         Ok(())
     } else {
-        failed(format!("internal error: {} is not an absolute path", file.display()))
+        failed(format!(
+            "internal error: {} is not an absolute path",
+            file.display()
+        ))
     }
 }
 
@@ -174,7 +183,11 @@ fn require_absolute(file: &Path) -> Result<(), MediaError> {
 pub fn probe(ffprobe: &Path, file: &Path, cancel: &Cancel) -> Result<Probe, MediaError> {
     require_absolute(file)?;
     let name = bare_name(file);
-    let unreadable = || MediaError::Failed(format!("Selected file {name} could not be read as audio or video"));
+    let unreadable = || {
+        MediaError::Failed(format!(
+            "Selected file {name} could not be read as audio or video"
+        ))
+    };
     match std::fs::metadata(file) {
         Ok(m) if m.is_file() => {
             if m.len() > MAX_FILE_BYTES {
@@ -183,12 +196,21 @@ pub fn probe(ffprobe: &Path, file: &Path, cancel: &Cancel) -> Result<Probe, Medi
         }
         _ => return Err(unreadable()),
     }
-    let args: Vec<String> =
-        ["-v", "error", "-protocol_whitelist", PROTOCOL_WHITELIST, "-print_format", "json", "-show_format", "-show_streams", "-i"]
-            .iter()
-            .map(|s| s.to_string())
-            .chain([file_arg(file)])
-            .collect();
+    let args: Vec<String> = [
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        PROTOCOL_WHITELIST,
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
+        "-i",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .chain([file_arg(file)])
+    .collect();
     let out = run(ffprobe, &args, cancel)?;
     if !out.success {
         return Err(unreadable());
@@ -204,12 +226,18 @@ pub fn probe(ffprobe: &Path, file: &Path, cancel: &Cancel) -> Result<Probe, Medi
 pub fn parse_probe(json: &str) -> Option<Probe> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     let streams = v.get("streams")?.as_array()?;
-    let kind = |s: &serde_json::Value| s.get("codec_type").and_then(|c| c.as_str()).map(str::to_string);
+    let kind = |s: &serde_json::Value| {
+        s.get("codec_type")
+            .and_then(|c| c.as_str())
+            .map(str::to_string)
+    };
     let has_audio = streams.iter().any(|s| kind(s).as_deref() == Some("audio"));
     // a cover picture is a "video" stream but not a video
     let has_video = streams.iter().any(|s| {
         kind(s).as_deref() == Some("video")
-            && s.pointer("/disposition/attached_pic").and_then(|d| d.as_i64()) != Some(1)
+            && s.pointer("/disposition/attached_pic")
+                .and_then(|d| d.as_i64())
+                != Some(1)
     });
     let number = |x: Option<&serde_json::Value>| -> Option<f64> {
         let n = match x? {
@@ -219,23 +247,36 @@ pub fn parse_probe(json: &str) -> Option<Probe> {
         };
         (n.is_finite() && n >= 0.0).then_some(n)
     };
-    let duration_s = number(v.pointer("/format/duration"))
-        .or_else(|| streams.iter().filter(|s| kind(s).as_deref() == Some("audio")).find_map(|s| number(s.get("duration"))));
+    let duration_s = number(v.pointer("/format/duration")).or_else(|| {
+        streams
+            .iter()
+            .filter(|s| kind(s).as_deref() == Some("audio"))
+            .find_map(|s| number(s.get("duration")))
+    });
     let mut tags = BTreeMap::new();
     let mut add = |obj: Option<&serde_json::Value>| {
         if let Some(m) = obj.and_then(|t| t.as_object()) {
             for (k, val) in m {
                 if let Some(s) = val.as_str() {
-                    tags.entry(k.to_lowercase()).or_insert_with(|| s.to_string());
+                    tags.entry(k.to_lowercase())
+                        .or_insert_with(|| s.to_string());
                 }
             }
         }
     };
     add(v.pointer("/format/tags"));
-    for s in streams.iter().filter(|s| kind(s).as_deref() == Some("audio")) {
+    for s in streams
+        .iter()
+        .filter(|s| kind(s).as_deref() == Some("audio"))
+    {
         add(s.get("tags"));
     }
-    Some(Probe { duration_s, has_audio, has_video, tags })
+    Some(Probe {
+        duration_s,
+        has_audio,
+        has_video,
+        tags,
+    })
 }
 
 /// Refuses sources longer than [`MAX_DURATION_S`] (and ones whose length is unknown).
@@ -243,7 +284,9 @@ pub fn check_duration(p: &Probe, file_name: &str) -> Result<(), MediaError> {
     match p.duration_s {
         Some(d) if d > MAX_DURATION_S => failed(TOO_LONG_MESSAGE),
         Some(_) => Ok(()),
-        None => failed(format!("Selected file {file_name} could not be read as audio or video")),
+        None => failed(format!(
+            "Selected file {file_name} could not be read as audio or video"
+        )),
     }
 }
 
@@ -252,24 +295,40 @@ pub fn check_duration(p: &Probe, file_name: &str) -> Result<(), MediaError> {
 /// Trims, drops control characters (a tab or newline becomes a space first) and cuts to `max`
 /// characters.
 pub fn clean_text(s: &str, max: usize) -> String {
-    let t: String = s.chars().map(|c| if c.is_whitespace() { ' ' } else { c }).filter(|c| !c.is_control()).collect();
-    t.trim().chars().take(max).collect::<String>().trim().to_string()
+    let t: String = s
+        .chars()
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .filter(|c| !c.is_control())
+        .collect();
+    t.trim()
+        .chars()
+        .take(max)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 fn tag(p: &Probe, key: &str, max: usize) -> Option<String> {
-    p.tags.get(key).map(|v| clean_text(v, max)).filter(|v| !v.is_empty())
+    p.tags
+        .get(key)
+        .map(|v| clean_text(v, max))
+        .filter(|v| !v.is_empty())
 }
 
 /// First four consecutive digits in `s` as a year in 1..=9999.
 pub fn year_from(s: &str) -> Option<i64> {
     let b = s.as_bytes();
-    let start = (0..b.len().saturating_sub(3)).find(|&i| b[i..i + 4].iter().all(u8::is_ascii_digit))?;
+    let start =
+        (0..b.len().saturating_sub(3)).find(|&i| b[i..i + 4].iter().all(u8::is_ascii_digit))?;
     let y: i64 = s[start..start + 4].parse().ok()?;
     (1..=9999).contains(&y).then_some(y)
 }
 
 fn file_stem(file_name: &str) -> String {
-    let stem = Path::new(file_name).file_stem().and_then(|s| s.to_str()).unwrap_or(file_name);
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(file_name);
     clean_text(stem, MAX_NAME)
 }
 
@@ -308,11 +367,17 @@ pub fn edits_from_tags(p: &Probe, file_name: &str) -> TrackEdits {
         })
         .unwrap_or_default();
     TrackEdits {
-        band: tag(p, "artist", MAX_NAME).or_else(|| tag(p, "album_artist", MAX_NAME)).unwrap_or_default(),
+        band: tag(p, "artist", MAX_NAME)
+            .or_else(|| tag(p, "album_artist", MAX_NAME))
+            .unwrap_or_default(),
         album: tag(p, "album", MAX_NAME).unwrap_or_default(),
         title,
         composers,
-        year: p.tags.get("date").and_then(|d| year_from(d)).or_else(|| p.tags.get("year").and_then(|d| year_from(d))),
+        year: p
+            .tags
+            .get("date")
+            .and_then(|d| year_from(d))
+            .or_else(|| p.tags.get("year").and_then(|d| year_from(d))),
         source_url: None,
         copyright: tag(p, "copyright", MAX_COPYRIGHT),
     }
@@ -327,25 +392,73 @@ const PART_NAME: &str = ".audio.flac.part";
 /// Converts the first audio stream of `src` to FLAC, 44.1 kHz stereo, as `<job_dir>/audio.flac`
 /// (written to `.audio.flac.part` first, then renamed; the part file is removed on error or
 /// cancel). Refuses sources longer than 15 minutes before starting. `src` is only read.
-pub fn to_flac(ffmpeg: &Path, src: &Path, probe: &Probe, job_dir: &Path, cancel: &Cancel) -> Result<PathBuf, MediaError> {
+pub fn to_flac(
+    ffmpeg: &Path,
+    src: &Path,
+    probe: &Probe,
+    job_dir: &Path,
+    cancel: &Cancel,
+) -> Result<PathBuf, MediaError> {
     require_absolute(src)?;
     check_duration(probe, &bare_name(src))?;
     let part = job_dir.join(PART_NAME);
     let dest = job_dir.join(AUDIO_FLAC);
     // a part file here is a leftover of ours (the folder is the job's own)
     if part.symlink_metadata().is_ok() {
-        std::fs::remove_file(&part).map_err(|e| MediaError::Failed(format!("cannot clear {PART_NAME}: {e}")))?;
+        std::fs::remove_file(&part)
+            .map_err(|e| MediaError::Failed(format!("cannot clear {PART_NAME}: {e}")))?;
     }
-    let mut args: Vec<String> = ["-nostdin", "-hide_banner", "-loglevel", "error", "-n", "-protocol_whitelist", PROTOCOL_WHITELIST, "-i"].iter().map(|s| s.to_string()).collect();
+    let mut args: Vec<String> = [
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-n",
+        "-protocol_whitelist",
+        PROTOCOL_WHITELIST,
+        "-i",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
     args.push(file_arg(src));
     // -t: a header that understates the length cannot produce a huge FLAC
-    args.extend(["-t", MAX_OUTPUT_SECONDS, "-map", "0:a:0", "-vn", "-sn", "-dn", "-c:a", "flac", "-ar", "44100", "-ac", "2", "-f", "flac"].iter().map(|s| s.to_string()));
+    args.extend(
+        [
+            "-t",
+            MAX_OUTPUT_SECONDS,
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-sn",
+            "-dn",
+            "-c:a",
+            "flac",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            "-f",
+            "flac",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
     args.push(part.to_string_lossy().into_owned());
     let result = (|| {
         let out = run(ffmpeg, &args, cancel)?;
         if !out.success {
-            let msg: String = out.stderr_last.chars().filter(|c| !c.is_control()).take(MAX_ERROR_CHARS).collect();
-            return failed(if msg.is_empty() { "Conversion failed".to_string() } else { format!("Conversion failed: {msg}") });
+            let msg: String = out
+                .stderr_last
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(MAX_ERROR_CHARS)
+                .collect();
+            return failed(if msg.is_empty() {
+                "Conversion failed".to_string()
+            } else {
+                format!("Conversion failed: {msg}")
+            });
         }
         let mut magic = [0u8; 4];
         let ok = std::fs::File::open(&part)
@@ -355,7 +468,8 @@ pub fn to_flac(ffmpeg: &Path, src: &Path, probe: &Probe, job_dir: &Path, cancel:
         if !ok {
             return failed("Conversion failed: ffmpeg wrote no FLAC audio");
         }
-        std::fs::rename(&part, &dest).map_err(|e| MediaError::Failed(format!("cannot finish {AUDIO_FLAC}: {e}")))?;
+        std::fs::rename(&part, &dest)
+            .map_err(|e| MediaError::Failed(format!("cannot finish {AUDIO_FLAC}: {e}")))?;
         Ok(dest.clone())
     })();
     if result.is_err() && part.symlink_metadata().is_ok() {
@@ -370,7 +484,9 @@ mod tests {
     use std::fs;
 
     fn fixture(name: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/import").join(name)
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/import")
+            .join(name)
     }
 
     fn tool(name: &str) -> PathBuf {
@@ -391,7 +507,10 @@ mod tests {
             duration_s: Some(10.0),
             has_audio: true,
             has_video: false,
-            tags: pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            tags: pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
         }
     }
 
@@ -428,8 +547,15 @@ mod tests {
             assert_eq!(position_from_tags(&tags(&[("track", v)])), want, "{v:?}");
         }
         assert_eq!(position_from_tags(&tags(&[("tracknumber", "5")])), Some(5));
-        assert_eq!(position_from_tags(&tags(&[("track", "x"), ("tracknumber", "5")])), None, "track wins");
-        assert_eq!(position_from_tags(&tags(&[("track", "2"), ("tracknumber", "5")])), Some(2));
+        assert_eq!(
+            position_from_tags(&tags(&[("track", "x"), ("tracknumber", "5")])),
+            None,
+            "track wins"
+        );
+        assert_eq!(
+            position_from_tags(&tags(&[("track", "2"), ("tracknumber", "5")])),
+            Some(2)
+        );
         assert_eq!(position_from_tags(&tags(&[])), None);
     }
 
@@ -445,18 +571,28 @@ mod tests {
                 .arg(format!("file:{}", dest.display()))
                 .output()
                 .unwrap();
-            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
             let p = probe(&tool("ffprobe"), &dest, &Cancel::new()).unwrap();
             assert_eq!(position_from_tags(&p), Some(2), "{name}");
         }
         // the untouched fixtures carry no track number
-        assert_eq!(position_from_tags(&probe_fixture("untagged.flac").unwrap()), None);
+        assert_eq!(
+            position_from_tags(&probe_fixture("untagged.flac").unwrap()),
+            None
+        );
     }
 
     #[test]
     fn ogg_stream_tags_map_to_fields() {
         let e = edits_from_tags(&probe_fixture("tagged.ogg").unwrap(), "tagged.ogg");
-        assert_eq!((e.band.as_str(), e.title.as_str(), e.year), ("The Example Band", "Glass Harbour", Some(2021)));
+        assert_eq!(
+            (e.band.as_str(), e.title.as_str(), e.year),
+            ("The Example Band", "Glass Harbour", Some(2021))
+        );
         assert_eq!(e.composers, ["Ann Example", "Bo Sample"]);
     }
 
@@ -478,7 +614,10 @@ mod tests {
 
     #[test]
     fn probe_errors_have_the_specified_texts() {
-        assert_eq!(msg(probe_fixture("no-audio.mp4")), "Selected file no-audio.mp4 has no audio track");
+        assert_eq!(
+            msg(probe_fixture("no-audio.mp4")),
+            "Selected file no-audio.mp4 has no audio track"
+        );
         assert_eq!(
             msg(probe_fixture("not-audio.mp3")),
             "Selected file not-audio.mp3 could not be read as audio or video"
@@ -489,8 +628,15 @@ mod tests {
         );
         // a folder is not a file
         let dir = tempfile::tempdir().unwrap();
-        assert!(msg(probe(&tool("ffprobe"), dir.path(), &Cancel::new())).contains("could not be read"));
-        assert!(msg(probe(&tool("ffprobe"), Path::new("relative.mp3"), &Cancel::new())).contains("absolute"));
+        assert!(
+            msg(probe(&tool("ffprobe"), dir.path(), &Cancel::new())).contains("could not be read")
+        );
+        assert!(msg(probe(
+            &tool("ffprobe"),
+            Path::new("relative.mp3"),
+            &Cancel::new()
+        ))
+        .contains("absolute"));
     }
 
     #[test]
@@ -502,7 +648,10 @@ mod tests {
         let bin = tempfile::tempdir().unwrap();
         let fake = write_script(bin.path(), "ffmpeg", "touch ran-anyway");
         let e = to_flac(&fake, &fixture("long.flac"), &p, job.path(), &Cancel::new()).unwrap_err();
-        assert_eq!(e.to_string(), "Tracks longer than 15 minutes are not supported");
+        assert_eq!(
+            e.to_string(),
+            "Tracks longer than 15 minutes are not supported"
+        );
         assert_eq!(fs::read_dir(job.path()).unwrap().count(), 0);
         // exactly at the limit is fine, unknown length is not
         let mut q = tags(&[]);
@@ -525,12 +674,23 @@ mod tests {
         let out = to_flac(&tool("ffmpeg"), &src, &p, job.path(), &Cancel::new()).unwrap();
         assert_eq!(out, job.path().join("audio.flac"));
         assert_eq!(&fs::read(&out).unwrap()[..4], b"fLaC");
-        let names: Vec<_> = fs::read_dir(job.path()).unwrap().flatten().map(|e| e.file_name()).collect();
+        let names: Vec<_> = fs::read_dir(job.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
         assert_eq!(names.len(), 1, "no part file left: {names:?}");
         let json: serde_json::Value = serde_json::from_str(
             &run(
                 &tool("ffprobe"),
-                &["-v".into(), "error".into(), "-print_format".into(), "json".into(), "-show_streams".into(), file_arg(&out)],
+                &[
+                    "-v".into(),
+                    "error".into(),
+                    "-print_format".into(),
+                    "json".into(),
+                    "-show_streams".into(),
+                    file_arg(&out),
+                ],
                 &Cancel::new(),
             )
             .unwrap()
@@ -551,7 +711,15 @@ mod tests {
         let out = to_flac(&tool("ffmpeg"), &src, &p, job.path(), &Cancel::new()).unwrap();
         let o = run(
             &tool("ffprobe"),
-            &["-v".into(), "error".into(), "-show_entries".into(), "stream=sample_rate,channels".into(), "-of".into(), "csv=p=0".into(), file_arg(&out)],
+            &[
+                "-v".into(),
+                "error".into(),
+                "-show_entries".into(),
+                "stream=sample_rate,channels".into(),
+                "-of".into(),
+                "csv=p=0".into(),
+                file_arg(&out),
+            ],
             &Cancel::new(),
         )
         .unwrap();
@@ -586,12 +754,30 @@ mod tests {
             "ffmpeg",
             "for a; do last=$a; done; echo partial > \"$last\"; echo 'first line' >&2; echo 'Error: disk full' >&2; exit 1",
         );
-        let e = to_flac(&fake, &fixture("tagged.mp3"), &tags(&[]), job.path(), &Cancel::new()).unwrap_err();
+        let e = to_flac(
+            &fake,
+            &fixture("tagged.mp3"),
+            &tags(&[]),
+            job.path(),
+            &Cancel::new(),
+        )
+        .unwrap_err();
         assert_eq!(e.to_string(), "Conversion failed: Error: disk full");
         assert_eq!(fs::read_dir(job.path()).unwrap().count(), 0);
         // success exit but not FLAC
-        let fake = write_script(bin.path(), "ffmpeg2", "for a; do last=$a; done; echo notflac > \"$last\"");
-        let e = to_flac(&fake, &fixture("tagged.mp3"), &tags(&[]), job.path(), &Cancel::new()).unwrap_err();
+        let fake = write_script(
+            bin.path(),
+            "ffmpeg2",
+            "for a; do last=$a; done; echo notflac > \"$last\"",
+        );
+        let e = to_flac(
+            &fake,
+            &fixture("tagged.mp3"),
+            &tags(&[]),
+            job.path(),
+            &Cancel::new(),
+        )
+        .unwrap_err();
         assert!(e.to_string().starts_with("Conversion failed"), "{e}");
         assert_eq!(fs::read_dir(job.path()).unwrap().count(), 0);
     }
@@ -604,12 +790,23 @@ mod tests {
         let fake = write_script(
             bin.path(),
             "ffmpeg",
-            &format!("for a; do printf '%s\\n' \"$a\" >> '{}'; last=$a; done; printf fLaC > \"$last\"", log.display()),
+            &format!(
+                "for a; do printf '%s\\n' \"$a\" >> '{}'; last=$a; done; printf fLaC > \"$last\"",
+                log.display()
+            ),
         );
         let src = fixture("tagged.mp3");
         to_flac(&fake, &src, &tags(&[]), job.path(), &Cancel::new()).unwrap();
-        let argv: Vec<String> = fs::read_to_string(log).unwrap().lines().map(String::from).collect();
-        let part = job.path().join(".audio.flac.part").to_string_lossy().into_owned();
+        let argv: Vec<String> = fs::read_to_string(log)
+            .unwrap()
+            .lines()
+            .map(String::from)
+            .collect();
+        let part = job
+            .path()
+            .join(".audio.flac.part")
+            .to_string_lossy()
+            .into_owned();
         let want: Vec<String> = format!(
             "-nostdin -hide_banner -loglevel error -n -protocol_whitelist file,pipe -i file:{} -t 905 -map 0:a:0 -vn -sn -dn -c:a flac -ar 44100 -ac 2 -f flac {part}",
             src.display()
@@ -637,7 +834,11 @@ mod tests {
     fn cancel_stops_the_conversion_and_removes_the_part() {
         let bin = tempfile::tempdir().unwrap();
         let job = tempfile::tempdir().unwrap();
-        let fake = write_script(bin.path(), "ffmpeg", "for a; do last=$a; done; echo x > \"$last\"; sleep 60");
+        let fake = write_script(
+            bin.path(),
+            "ffmpeg",
+            "for a; do last=$a; done; echo x > \"$last\"; sleep 60",
+        );
         let cancel = Cancel::new();
         let c2 = cancel.clone();
         let t = std::thread::spawn(move || {
@@ -645,13 +846,27 @@ mod tests {
             c2.cancel();
         });
         let started = std::time::Instant::now();
-        let e = to_flac(&fake, &fixture("tagged.mp3"), &tags(&[]), job.path(), &cancel).unwrap_err();
+        let e = to_flac(
+            &fake,
+            &fixture("tagged.mp3"),
+            &tags(&[]),
+            job.path(),
+            &cancel,
+        )
+        .unwrap_err();
         t.join().unwrap();
         assert_eq!(e, MediaError::Cancelled);
         assert!(started.elapsed() < std::time::Duration::from_secs(10));
         assert_eq!(fs::read_dir(job.path()).unwrap().count(), 0);
         // already cancelled: the next tool is stopped at once
-        let e = to_flac(&fake, &fixture("tagged.mp3"), &tags(&[]), job.path(), &cancel).unwrap_err();
+        let e = to_flac(
+            &fake,
+            &fixture("tagged.mp3"),
+            &tags(&[]),
+            job.path(),
+            &cancel,
+        )
+        .unwrap_err();
         assert_eq!(e, MediaError::Cancelled);
     }
 
@@ -660,10 +875,16 @@ mod tests {
         // sparse file just over 1 GiB (no disk use), probed without running ffprobe
         let d = tempfile::tempdir().unwrap();
         let f = d.path().join("huge.flac");
-        fs::File::create(&f).unwrap().set_len(MAX_FILE_BYTES + 1).unwrap();
+        fs::File::create(&f)
+            .unwrap()
+            .set_len(MAX_FILE_BYTES + 1)
+            .unwrap();
         let bin = tempfile::tempdir().unwrap();
         let fake = write_script(bin.path(), "ffprobe", "touch ran-anyway");
-        assert_eq!(msg(probe(&fake, &f, &Cancel::new())), "Selected file huge.flac is larger than 1 GiB");
+        assert_eq!(
+            msg(probe(&fake, &f, &Cancel::new())),
+            "Selected file huge.flac is larger than 1 GiB"
+        );
         assert!(!bin.path().join("ran-anyway").exists());
     }
 
@@ -671,10 +892,19 @@ mod tests {
 
     #[test]
     fn mapping_prefers_artist_then_album_artist_and_cleans_values() {
-        let e = edits_from_tags(&tags(&[("album_artist", "  Various\tArtists "), ("title", "T\u{7}itle\n2")]), "x.mp3");
+        let e = edits_from_tags(
+            &tags(&[
+                ("album_artist", "  Various\tArtists "),
+                ("title", "T\u{7}itle\n2"),
+            ]),
+            "x.mp3",
+        );
         assert_eq!(e.band, "Various Artists");
         assert_eq!(e.title, "Title 2");
-        let e = edits_from_tags(&tags(&[("artist", "Solo"), ("album_artist", "Group")]), "x.mp3");
+        let e = edits_from_tags(
+            &tags(&[("artist", "Solo"), ("album_artist", "Group")]),
+            "x.mp3",
+        );
         assert_eq!(e.band, "Solo");
     }
 
@@ -682,8 +912,16 @@ mod tests {
     fn mapping_splits_composers_on_semicolon_and_slash() {
         let e = edits_from_tags(&tags(&[("composer", " A B ; C/D ;; /  ")]), "x.mp3");
         assert_eq!(e.composers, ["A B", "C", "D"]);
-        let many = (0..30).map(|i| format!("c{i}")).collect::<Vec<_>>().join(";");
-        assert_eq!(edits_from_tags(&tags(&[("composer", &many)]), "x.mp3").composers.len(), 20);
+        let many = (0..30)
+            .map(|i| format!("c{i}"))
+            .collect::<Vec<_>>()
+            .join(";");
+        assert_eq!(
+            edits_from_tags(&tags(&[("composer", &many)]), "x.mp3")
+                .composers
+                .len(),
+            20
+        );
     }
 
     #[test]
@@ -701,23 +939,52 @@ mod tests {
             let e = edits_from_tags(&tags(&[("date", v)]), "x.mp3");
             assert_eq!(e.year, want, "{v:?}");
         }
-        assert_eq!(edits_from_tags(&tags(&[("year", "1987")]), "x.mp3").year, Some(1987));
-        assert_eq!(edits_from_tags(&tags(&[("date", "garbage"), ("year", "1987")]), "x.mp3").year, Some(1987));
+        assert_eq!(
+            edits_from_tags(&tags(&[("year", "1987")]), "x.mp3").year,
+            Some(1987)
+        );
+        assert_eq!(
+            edits_from_tags(&tags(&[("date", "garbage"), ("year", "1987")]), "x.mp3").year,
+            Some(1987)
+        );
     }
 
     #[test]
     fn mapping_title_fallbacks_and_limits() {
-        assert_eq!(edits_from_tags(&tags(&[("title", "   ")]), "My Song.final.mp3").title, "My Song.final");
+        assert_eq!(
+            edits_from_tags(&tags(&[("title", "   ")]), "My Song.final.mp3").title,
+            "My Song.final"
+        );
         assert_eq!(edits_from_tags(&tags(&[]), ".mp3").title, ".mp3");
         assert_eq!(edits_from_tags(&tags(&[]), "").title, "Untitled");
         let long = "x".repeat(500);
-        let e = edits_from_tags(&tags(&[("title", &long), ("album", &long), ("artist", &long), ("copyright", &long)]), "a.mp3");
-        assert_eq!((e.title.len(), e.album.len(), e.band.len()), (200, 200, 200));
+        let e = edits_from_tags(
+            &tags(&[
+                ("title", &long),
+                ("album", &long),
+                ("artist", &long),
+                ("copyright", &long),
+            ]),
+            "a.mp3",
+        );
+        assert_eq!(
+            (e.title.len(), e.album.len(), e.band.len()),
+            (200, 200, 200)
+        );
         assert_eq!(e.copyright.unwrap().len(), 500);
         let multibyte = "é".repeat(300);
-        assert_eq!(edits_from_tags(&tags(&[("title", &multibyte)]), "a.mp3").title.chars().count(), 200);
+        assert_eq!(
+            edits_from_tags(&tags(&[("title", &multibyte)]), "a.mp3")
+                .title
+                .chars()
+                .count(),
+            200
+        );
         // every mapped value passes the strict write rules
-        let weird = edits_from_tags(&tags(&[("title", "\u{0}\u{1}  x "), ("composer", "\u{2}")]), "a.mp3");
+        let weird = edits_from_tags(
+            &tags(&[("title", "\u{0}\u{1}  x "), ("composer", "\u{2}")]),
+            "a.mp3",
+        );
         assert_eq!(weird.title, "x");
         assert!(weird.composers.is_empty());
     }
@@ -728,7 +995,10 @@ mod tests {
                        "format":{"duration":"5.0","tags":{"title":"Container"}}}"#;
         let p = parse_probe(json).unwrap();
         let e = edits_from_tags(&p, "f.ogg");
-        assert_eq!((e.title.as_str(), e.band.as_str()), ("Container", "S Artist"));
+        assert_eq!(
+            (e.title.as_str(), e.band.as_str()),
+            ("Container", "S Artist")
+        );
     }
 
     #[test]
@@ -736,11 +1006,18 @@ mod tests {
         assert!(parse_probe("").is_none());
         assert!(parse_probe("[]").is_none());
         assert!(parse_probe("{}").is_none());
-        let p = parse_probe(r#"{"streams":[{"codec_type":"video","disposition":{"attached_pic":1}}],"format":{}}"#).unwrap();
+        let p = parse_probe(
+            r#"{"streams":[{"codec_type":"video","disposition":{"attached_pic":1}}],"format":{}}"#,
+        )
+        .unwrap();
         assert!(!p.has_audio && !p.has_video && p.duration_s.is_none());
-        let p = parse_probe(r#"{"streams":[{"codec_type":"audio","duration":"-3"}],"format":{"duration":"nan"}}"#).unwrap();
+        let p = parse_probe(
+            r#"{"streams":[{"codec_type":"audio","duration":"-3"}],"format":{"duration":"nan"}}"#,
+        )
+        .unwrap();
         assert_eq!(p.duration_s, None);
-        let p = parse_probe(r#"{"streams":[{"codec_type":"audio","duration":"7.5"}],"format":{}}"#).unwrap();
+        let p = parse_probe(r#"{"streams":[{"codec_type":"audio","duration":"7.5"}],"format":{}}"#)
+            .unwrap();
         assert_eq!(p.duration_s, Some(7.5));
     }
 }

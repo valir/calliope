@@ -48,7 +48,10 @@ fn start_with(separator: &Path, mode: &str, extra: &[&str]) -> Server {
     let mut line = String::new();
     let addr: SocketAddr = loop {
         line.clear();
-        assert!(lines.read_line(&mut line).unwrap() > 0, "server exited before listening");
+        assert!(
+            lines.read_line(&mut line).unwrap() > 0,
+            "server exited before listening"
+        );
         if let Some(rest) = line.split("listening addr=").nth(1) {
             break rest.split_whitespace().next().unwrap().parse().unwrap();
         }
@@ -63,7 +66,12 @@ fn start_with(separator: &Path, mode: &str, extra: &[&str]) -> Server {
             s.clear();
         }
     });
-    Server { child, addr, _outer: outer, log }
+    Server {
+        child,
+        addr,
+        _outer: outer,
+        log,
+    }
 }
 
 fn start(mode: &str, extra: &[&str]) -> Server {
@@ -73,14 +81,30 @@ fn start(mode: &str, extra: &[&str]) -> Server {
 fn http(addr: SocketAddr, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8>) {
     let mut s = TcpStream::connect(addr).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
-    let ct = if method == "POST" { format!("Content-Type: audio/flac\r\nContent-Length: {}\r\n", body.len()) } else { String::new() };
-    s.write_all(format!("{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n{ct}\r\n").as_bytes()).unwrap();
+    let ct = if method == "POST" {
+        format!(
+            "Content-Type: audio/flac\r\nContent-Length: {}\r\n",
+            body.len()
+        )
+    } else {
+        String::new()
+    };
+    s.write_all(
+        format!("{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n{ct}\r\n").as_bytes(),
+    )
+    .unwrap();
     let _ = s.write_all(body);
     let mut raw = Vec::new();
     let _ = s.read_to_end(&mut raw);
-    let split = raw.windows(4).position(|w| w == b"\r\n\r\n").expect("response head");
+    let split = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .expect("response head");
     let head = String::from_utf8_lossy(&raw[..split]).to_string();
-    (head.split_whitespace().nth(1).unwrap().parse().unwrap(), raw[split + 4..].to_vec())
+    (
+        head.split_whitespace().nth(1).unwrap().parse().unwrap(),
+        raw[split + 4..].to_vec(),
+    )
 }
 fn status_raw(addr: SocketAddr, job: &str) -> (String, serde_json::Value) {
     let (_, b) = http(addr, "GET", &format!("/v1/jobs/{job}"), b"");
@@ -92,7 +116,10 @@ fn submit(s: &Server) -> String {
     let body = std::fs::read(gui().join("tests/fixtures/import/untagged.flac")).unwrap();
     let (st, b) = http(s.addr, "POST", "/v1/jobs", &body);
     assert_eq!(st, 202);
-    serde_json::from_slice::<serde_json::Value>(&b).unwrap()["job"].as_str().unwrap().to_string()
+    serde_json::from_slice::<serde_json::Value>(&b).unwrap()["job"]
+        .as_str()
+        .unwrap()
+        .to_string()
 }
 fn wait_done(s: &Server, job: &str) -> (String, serde_json::Value) {
     let end = Instant::now() + Duration::from_secs(60);
@@ -151,9 +178,18 @@ fn make_flac(dir: &Path, name: &str, rate: u32, channels: u16, samples: &[i16]) 
 /// window = rate/10 frames, level of a window = loudest channel's mean square, audible when
 /// mean square > (32768^2) * 10^-4, evaluated in exact integers: S * 10000 > n * 2^30.
 fn oracle(flac: &Path, rate: u32, channels: usize) -> (u64, u64) {
-    let out = Command::new("ffmpeg").args(["-v", "error", "-i"]).arg(flac).args(["-f", "s16le", "-acodec", "pcm_s16le", "-"]).output().unwrap();
+    let out = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(flac)
+        .args(["-f", "s16le", "-acodec", "pcm_s16le", "-"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
-    let pcm: Vec<i16> = out.stdout.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+    let pcm: Vec<i16> = out
+        .stdout
+        .chunks_exact(2)
+        .map(|c| i16::from_le_bytes([c[0], c[1]]))
+        .collect();
     let frames = pcm.len() / channels;
     let n = (rate / 10) as usize;
     let windows = frames / n;
@@ -177,7 +213,15 @@ fn oracle(flac: &Path, rate: u32, channels: usize) -> (u64, u64) {
 
 fn tone(rate: u32, secs: f64, amp: f64, gate: impl Fn(usize) -> bool) -> Vec<i16> {
     let n = (rate as f64 * secs) as usize;
-    (0..n).map(|i| if gate(i / (rate as usize / 10)) { (amp * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / rate as f64).sin()) as i16 } else { 0 }).collect()
+    (0..n)
+        .map(|i| {
+            if gate(i / (rate as usize / 10)) {
+                (amp * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / rate as f64).sin()) as i16
+            } else {
+                0
+            }
+        })
+        .collect()
 }
 
 /// The server answers stem downloads chunked (or not); decode when the body starts with a hex size line.
@@ -205,10 +249,20 @@ fn calliope() -> Command {
 /// Runs --measure; returns (stdout lines, exit code).
 fn measure(files: &[&Path]) -> (Vec<String>, i32) {
     let o = calliope().arg("--measure").args(files).output().unwrap();
-    (String::from_utf8(o.stdout).unwrap().lines().map(String::from).collect(), o.status.code().unwrap())
+    (
+        String::from_utf8(o.stdout)
+            .unwrap()
+            .lines()
+            .map(String::from)
+            .collect(),
+        o.status.code().unwrap(),
+    )
 }
 fn kv(line: &str, key: &str) -> String {
-    line.split_whitespace().find_map(|w| w.strip_prefix(&format!("{key}="))).unwrap_or_else(|| panic!("no {key} in {line}")).to_string()
+    line.split_whitespace()
+        .find_map(|w| w.strip_prefix(&format!("{key}=")))
+        .unwrap_or_else(|| panic!("no {key} in {line}"))
+        .to_string()
 }
 fn fx(rel: &str) -> PathBuf {
     gui().join("tests/fixtures/import").join(rel)
@@ -218,12 +272,16 @@ fn fx(rel: &str) -> PathBuf {
 
 #[test]
 fn measure_prints_the_documented_line_for_the_activity_fixtures_and_exits_0() {
-    let files = ["bursts", "phrases", "audible-14900ms", "audible-15000ms"].map(|n| fx(&format!("stems-activity/{n}.flac")));
+    let files = ["bursts", "phrases", "audible-14900ms", "audible-15000ms"]
+        .map(|n| fx(&format!("stems-activity/{n}.flac")));
     let refs: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
     let (lines, code) = measure(&refs);
     assert_eq!(code, 0);
     assert_eq!(lines.len(), 4);
-    for (l, (f, ms)) in lines.iter().zip(files.iter().zip([9500, 16000, 14900, 15000])) {
+    for (l, (f, ms)) in lines
+        .iter()
+        .zip(files.iter().zip([9500, 16000, 14900, 15000]))
+    {
         assert!(l.starts_with(&f.display().to_string()), "{l}");
         assert_eq!(kv(l, "audible_ms"), ms.to_string(), "{l}");
         assert_eq!(kv(l, "level_dbfs"), "-40");
@@ -259,7 +317,11 @@ fn measure_quiet_stems_minus45_and_minus60_are_not_audible() {
 fn measure_reports_errors_per_file_and_exits_1_but_keeps_going() {
     let d = scratch();
     let missing = d.path().join("missing.flac");
-    let (lines, code) = measure(&[&fx("not-flac.flac"), &missing, &fx("stems-activity/audible-15000ms.flac")]);
+    let (lines, code) = measure(&[
+        &fx("not-flac.flac"),
+        &missing,
+        &fx("stems-activity/audible-15000ms.flac"),
+    ]);
     assert_eq!(code, 1);
     assert_eq!(lines.len(), 3);
     assert!(lines[0].contains(" error="), "{}", lines[0]);
@@ -271,7 +333,11 @@ fn measure_reports_errors_per_file_and_exits_1_but_keeps_going() {
 fn measure_needs_a_file_and_no_separator_and_never_listens() {
     let o = calliope().arg("--measure").output().unwrap();
     assert_ne!(o.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&o.stderr).contains("--measure needs at least one file"), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("--measure needs at least one file"),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
     // with a file but without --separator or any env: works and returns promptly
     let t = Instant::now();
     let (_, code) = measure(&[&fx("stems/vocals.flac")]);
@@ -286,8 +352,15 @@ fn help_mentions_measure_and_no_stem_levels_not_the_removed_flag() {
     assert!(t.contains("--measure"));
     assert!(t.contains("--no-stem-levels"));
     assert!(!t.contains("--no-stem-peaks"));
-    let o = calliope().args(["--separator", "/bin/true", "--no-stem-peaks"]).output().unwrap();
-    assert_ne!(o.status.code(), Some(0), "the removed flag must be rejected");
+    let o = calliope()
+        .args(["--separator", "/bin/true", "--no-stem-peaks"])
+        .output()
+        .unwrap();
+    assert_ne!(
+        o.status.code(),
+        Some(0),
+        "the removed flag must be rejected"
+    );
 }
 
 // ------------------------------------------------------------------ the measure against an independent oracle
@@ -297,7 +370,12 @@ fn measure_agrees_with_an_independent_oracle_on_boundaries_and_odd_layouts() {
     let d = scratch();
     let mut cases: Vec<(String, u32, u16, Vec<i16>)> = Vec::new();
     // exact level boundary, mono 8 kHz: |s| 328 audible (-39.99), 327 not (-40.02)
-    for (amp, name) in [(328i16, "c328"), (327, "c327"), (-328, "cm328"), (-327, "cm327")] {
+    for (amp, name) in [
+        (328i16, "c328"),
+        (327, "c327"),
+        (-328, "cm328"),
+        (-327, "cm327"),
+    ] {
         cases.push((name.into(), 8000, 1, vec![amp; 8000 * 15]));
     }
     // 149 vs 150 windows
@@ -330,19 +408,37 @@ fn measure_agrees_with_an_independent_oracle_on_boundaries_and_odd_layouts() {
     }
     cases.push(("stereo_both_327".into(), 44100, 2, st));
     // a transient-free but busy signal with a gate over odd windows (48 kHz)
-    cases.push(("gated48".into(), 48000, 1, tone(48000, 40.0, 4000.0, |w| w % 7 < 3)));
-    cases.push(("noise_floor".into(), 44100, 1, tone(44100, 30.0, 250.0, |_| true)));
+    cases.push((
+        "gated48".into(),
+        48000,
+        1,
+        tone(48000, 40.0, 4000.0, |w| w % 7 < 3),
+    ));
+    cases.push((
+        "noise_floor".into(),
+        44100,
+        1,
+        tone(44100, 30.0, 250.0, |_| true),
+    ));
     for (name, rate, ch, samples) in &cases {
         let f = make_flac(d.path(), name, *rate, *ch, samples);
         let (want_ms, want_windows) = oracle(&f, *rate, *ch as usize);
         let (lines, code) = measure(&[&f]);
         assert_eq!(code, 0);
-        assert_eq!(kv(&lines[0], "audible_ms"), want_ms.to_string(), "{name}: {}", lines[0]);
+        assert_eq!(
+            kv(&lines[0], "audible_ms"),
+            want_ms.to_string(),
+            "{name}: {}",
+            lines[0]
+        );
         assert_eq!(kv(&lines[0], "windows"), want_windows.to_string(), "{name}");
     }
     // spot-check the oracle itself with known answers, so a wrong oracle cannot hide a wrong product
     let ms = |n: &str| oracle(&d.path().join(format!("{n}.flac")), 8000, 1).0;
-    assert_eq!((ms("c328"), ms("c327"), ms("w149"), ms("w150")), (15_000, 0, 14_900, 15_000));
+    assert_eq!(
+        (ms("c328"), ms("c327"), ms("w149"), ms("w150")),
+        (15_000, 0, 14_900, 15_000)
+    );
     assert_eq!(ms("partial150"), 15_000);
     assert_eq!(oracle(&d.path().join("partial_only.flac"), 8000, 1), (0, 0));
 }
@@ -354,7 +450,15 @@ fn levels_of(v: &serde_json::Value) -> Vec<(String, u64, i64, u64, serde_json::V
         .as_array()
         .expect("stem_levels array")
         .iter()
-        .map(|e| (e["name"].as_str().unwrap().to_string(), e["audible_ms"].as_u64().unwrap(), e["level_dbfs"].as_i64().unwrap(), e["window_ms"].as_u64().unwrap(), e["peak_dbfs"].clone()))
+        .map(|e| {
+            (
+                e["name"].as_str().unwrap().to_string(),
+                e["audible_ms"].as_u64().unwrap(),
+                e["level_dbfs"].as_i64().unwrap(),
+                e["window_ms"].as_u64().unwrap(),
+                e["peak_dbfs"].clone(),
+            )
+        })
         .collect()
 }
 
@@ -386,7 +490,12 @@ fn server_report_equals_the_standalone_measure_of_the_same_stems_bit_for_bit() {
         let p = served.path().join(format!("{name}.flac"));
         std::fs::write(&p, dechunk(&body)).unwrap();
         let (lines, code) = measure(&[&p]);
-        assert_eq!(code, 0, "{lines:?} body len {}", std::fs::metadata(&p).unwrap().len());
+        assert_eq!(
+            code,
+            0,
+            "{lines:?} body len {}",
+            std::fs::metadata(&p).unwrap().len()
+        );
         assert_eq!(kv(&lines[0], "audible_ms"), ms.to_string(), "{name}");
     }
     let _ = &mut served;
@@ -407,8 +516,15 @@ fn no_stem_levels_flag_omits_the_key_in_every_state() {
     let s = start("boundary", &["--no-stem-levels"]);
     let job = submit(&s);
     let (text, _) = wait_done(&s, &job);
-    assert!(!text.contains("stem_levels") && !text.contains("stem_peaks"), "{text}");
-    assert!(!s.log().contains("audible_ms="), "nothing should be measured: {}", s.log());
+    assert!(
+        !text.contains("stem_levels") && !text.contains("stem_peaks"),
+        "{text}"
+    );
+    assert!(
+        !s.log().contains("audible_ms="),
+        "nothing should be measured: {}",
+        s.log()
+    );
 }
 
 #[test]
@@ -427,7 +543,11 @@ fn undecodable_stem_has_no_entry_and_the_job_still_succeeds() {
     let (_, v) = wait_done(&s, &job);
     let l = levels_of(&v);
     assert!(l.iter().all(|e| e.0 != "piano"));
-    assert!(s.log().contains("stem=piano audible=unknown"), "{}", s.log());
+    assert!(
+        s.log().contains("stem=piano audible=unknown"),
+        "{}",
+        s.log()
+    );
 }
 
 // ------------------------------------------------------------------ flake evidence (queue slots)
@@ -453,11 +573,17 @@ fn aborted_uploads_release_their_slot_a_retried_submit_always_gets_in() {
     let id = loop {
         let (st, b) = http(s.addr, "POST", "/v1/jobs", &flac);
         if st == 202 {
-            break serde_json::from_slice::<serde_json::Value>(&b).unwrap()["job"].as_str().unwrap().to_string();
+            break serde_json::from_slice::<serde_json::Value>(&b).unwrap()["job"]
+                .as_str()
+                .unwrap()
+                .to_string();
         }
         assert_eq!(st, 503, "{}", String::from_utf8_lossy(&b));
         refused += 1;
-        assert!(Instant::now() < end, "the queue slot was never released ({refused} refusals): a real leak");
+        assert!(
+            Instant::now() < end,
+            "the queue slot was never released ({refused} refusals): a real leak"
+        );
         std::thread::sleep(Duration::from_millis(20));
     };
     eprintln!("503s before the slot freed up: {refused}");

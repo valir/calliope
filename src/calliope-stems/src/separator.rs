@@ -17,7 +17,12 @@ pub fn parse_progress(line: &str) -> Option<f64> {
 }
 
 pub fn sort_stems(stems: &mut [String]) {
-    let rank = |s: &str| STANDARD_ORDER.iter().position(|n| *n == s).unwrap_or(STANDARD_ORDER.len());
+    let rank = |s: &str| {
+        STANDARD_ORDER
+            .iter()
+            .position(|n| *n == s)
+            .unwrap_or(STANDARD_ORDER.len())
+    };
     stems.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.cmp(b)));
 }
 
@@ -31,10 +36,16 @@ pub fn validate_output(out_dir: &Path) -> Result<Vec<String>, String> {
     };
     let mut stems = Vec::new();
     for entry in entries {
-        let Ok(entry) = entry else { return bad("unreadable folder") };
+        let Ok(entry) = entry else {
+            return bad("unreadable folder");
+        };
         let name = entry.file_name();
-        let Some(name) = name.to_str() else { return bad("odd file name") };
-        let Some(stem) = name.strip_suffix(".flac") else { return bad("unexpected file") };
+        let Some(name) = name.to_str() else {
+            return bad("odd file name");
+        };
+        let Some(stem) = name.strip_suffix(".flac") else {
+            return bad("unexpected file");
+        };
         if !is_valid_stem_name(stem) {
             return bad("bad stem name");
         }
@@ -44,7 +55,9 @@ pub fn validate_output(out_dir: &Path) -> Result<Vec<String>, String> {
             _ => return bad("not a regular file"),
         }
         let mut magic = [0u8; 4];
-        let ok = std::fs::File::open(&path).and_then(|mut f| f.read_exact(&mut magic)).is_ok();
+        let ok = std::fs::File::open(&path)
+            .and_then(|mut f| f.read_exact(&mut magic))
+            .is_ok();
         if !ok || &magic != b"fLaC" {
             return bad("stem is not FLAC");
         }
@@ -94,9 +107,14 @@ mod tests {
     #[test]
     fn documented_order() {
         let d = stems_dir(&[
-            ("other.flac", b"fLaC1"), ("zeta.flac", b"fLaC1"), ("vocals.flac", b"fLaC1"),
-            ("piano.flac", b"fLaC1"), ("alpha.flac", b"fLaC1"), ("guitar.flac", b"fLaC1"),
-            ("bass.flac", b"fLaC1"), ("drums.flac", b"fLaC1"),
+            ("other.flac", b"fLaC1"),
+            ("zeta.flac", b"fLaC1"),
+            ("vocals.flac", b"fLaC1"),
+            ("piano.flac", b"fLaC1"),
+            ("alpha.flac", b"fLaC1"),
+            ("guitar.flac", b"fLaC1"),
+            ("bass.flac", b"fLaC1"),
+            ("drums.flac", b"fLaC1"),
         ]);
         assert_eq!(
             validate_output(d.path()).unwrap(),
@@ -122,7 +140,10 @@ mod tests {
         for files in cases {
             let d = stems_dir(&files);
             let r = validate_output(d.path());
-            assert!(r.as_ref().is_err_and(|e| e.starts_with(INVALID_OUTPUT)), "{files:?} -> {r:?}");
+            assert!(
+                r.as_ref().is_err_and(|e| e.starts_with(INVALID_OUTPUT)),
+                "{files:?} -> {r:?}"
+            );
         }
         assert!(validate_output(Path::new("/nonexistent/out")).is_err());
     }
@@ -137,7 +158,9 @@ mod tests {
         std::os::unix::fs::symlink("/etc/passwd", d.path().join("vocals.flac")).unwrap();
         assert!(validate_output(d.path()).is_err());
 
-        let files: Vec<(String, &[u8])> = (0..17).map(|i| (format!("s{i:02}.flac"), &b"fLaC"[..])).collect();
+        let files: Vec<(String, &[u8])> = (0..17)
+            .map(|i| (format!("s{i:02}.flac"), &b"fLaC"[..]))
+            .collect();
         let d = tempfile::tempdir().unwrap();
         for (n, c) in &files {
             std::fs::write(d.path().join(n), c).unwrap();

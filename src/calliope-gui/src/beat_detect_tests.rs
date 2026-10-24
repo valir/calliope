@@ -27,7 +27,17 @@ impl Rig {
         for s in &spec.stems {
             let out = spec.dir.join(&s.file);
             let status = std::process::Command::new("ffmpeg")
-                .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=330:sample_rate=22050:duration=16"])
+                .args([
+                    "-nostdin",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=330:sample_rate=22050:duration=16",
+                ])
                 .args(["-ac", "1", "-sample_fmt", "s16", "-c:a", "flac"])
                 .arg(&out)
                 .status()
@@ -40,11 +50,22 @@ impl Rig {
         for name in ["vocals", "drums"] {
             m.set_stem(SIX, name, Some(0.0), true, now).unwrap();
         }
-        Rig { _tmp: tmp, spec, m, events, server }
+        Rig {
+            _tmp: tmp,
+            spec,
+            m,
+            events,
+            server,
+        }
     }
 
     fn params(url: &str) -> DetectParams {
-        DetectParams { url: url.into(), store: Arc::new(FileTempoStore), poll: Duration::from_millis(50), stall: Duration::from_secs(10) }
+        DetectParams {
+            url: url.into(),
+            store: Arc::new(FileTempoStore),
+            poll: Duration::from_millis(50),
+            stall: Duration::from_secs(10),
+        }
     }
 
     fn start(&mut self) -> Result<crate::editor::EditorSnapshot, String> {
@@ -57,7 +78,14 @@ impl Rig {
             .lock()
             .unwrap()
             .iter()
-            .find(|e| matches!(e, EditorEvent::Detected { .. } | EditorEvent::DetectFailed { .. } | EditorEvent::DetectCancelled { .. }))
+            .find(|e| {
+                matches!(
+                    e,
+                    EditorEvent::Detected { .. }
+                        | EditorEvent::DetectFailed { .. }
+                        | EditorEvent::DetectCancelled { .. }
+                )
+            })
             .cloned()
     }
 
@@ -69,7 +97,11 @@ impl Rig {
             if let Some(e) = self.final_event() {
                 return e;
             }
-            assert!(Instant::now() < end, "no final event; got {:?}", self.events.lock().unwrap().last());
+            assert!(
+                Instant::now() < end,
+                "no final event; got {:?}",
+                self.events.lock().unwrap().last()
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
     }
@@ -99,13 +131,19 @@ impl Rig {
         let end = Instant::now() + Duration::from_secs(20);
         while !self.phases().contains(&phase) {
             self.m.tick(Instant::now());
-            assert!(Instant::now() < end, "never reached {phase}: {:?}", self.phases());
+            assert!(
+                Instant::now() < end,
+                "never reached {phase}: {:?}",
+                self.phases()
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
     }
 
     fn player_json(&self) -> Option<serde_json::Value> {
-        std::fs::read(self.spec.dir.join("player.json")).ok().map(|b| serde_json::from_slice(&b).unwrap())
+        std::fs::read(self.spec.dir.join("player.json"))
+            .ok()
+            .map(|b| serde_json::from_slice(&b).unwrap())
     }
 
     fn leftovers(&self) -> Vec<String> {
@@ -122,7 +160,13 @@ impl Rig {
             .as_array()
             .unwrap()
             .iter()
-            .map(|s| (s["start_ms"].as_f64().unwrap(), s["bpm"].as_f64().unwrap(), s["detected_ms"].as_f64()))
+            .map(|s| {
+                (
+                    s["start_ms"].as_f64().unwrap(),
+                    s["bpm"].as_f64().unwrap(),
+                    s["detected_ms"].as_f64(),
+                )
+            })
             .collect()
     }
 }
@@ -137,28 +181,64 @@ fn failed(e: EditorEvent) -> String {
 #[test]
 fn ok_detects_two_sections_and_stores_them() {
     let mut r = Rig::new(TestServer::start_beats("ok", &[]));
-    let EditorEvent::Detected { id, tempo, beats, replaced } = r.run() else { panic!("not detected") };
+    let EditorEvent::Detected {
+        id,
+        tempo,
+        beats,
+        replaced,
+    } = r.run()
+    else {
+        panic!("not detected")
+    };
     assert_eq!((id.as_str(), beats, replaced), (SIX, 27, false));
     assert_eq!(tempo.segments.len(), 2);
     assert!(tempo.multi);
     let want = vec![(500.0, 120.0, None), (6500.0, 90.0, Some(6500.0))];
     assert_eq!(r.segments(), want);
     assert_eq!(r.player_json().unwrap()["schema_version"], 6);
-    assert_eq!(r.m.snapshot(SIX).unwrap().tempo.segments.len(), 2, "the session has the new map");
+    assert_eq!(
+        r.m.snapshot(SIX).unwrap().tempo.segments.len(),
+        2,
+        "the session has the new map"
+    );
     assert_eq!(r.m.snapshot(SIX).unwrap().detect, None);
     assert!(r.leftovers().is_empty());
-    let order = ["checking", "mixing", "uploading", "waiting", "detecting", "applying"];
+    let order = [
+        "checking",
+        "mixing",
+        "uploading",
+        "waiting",
+        "detecting",
+        "applying",
+    ];
     let got = r.phases();
     let mut it = order.iter();
-    assert!(got.iter().all(|p| it.any(|o| o == p)), "phases out of order: {got:?}");
+    assert!(
+        got.iter().all(|p| it.any(|o| o == p)),
+        "phases out of order: {got:?}"
+    );
     for p in ["checking", "mixing", "uploading", "waiting", "applying"] {
         assert!(got.contains(&p), "missing {p}: {got:?}");
     }
-    assert_eq!(r.events.lock().unwrap().iter().filter(|e| matches!(e, EditorEvent::Detected { .. })).count(), 1);
+    assert_eq!(
+        r.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e, EditorEvent::Detected { .. }))
+            .count(),
+        1
+    );
     // a second run replaces the map
-    let EditorEvent::Detected { replaced, .. } = r.run() else { panic!("not detected") };
+    let EditorEvent::Detected { replaced, .. } = r.run() else {
+        panic!("not detected")
+    };
     assert!(replaced);
-    assert!(r.server.saw("kind=beats"), "{:?}", r.server.log.lock().unwrap());
+    assert!(
+        r.server.saw("kind=beats"),
+        "{:?}",
+        r.server.log.lock().unwrap()
+    );
 }
 
 #[test]
@@ -196,7 +276,9 @@ fn a_re_detection_carries_the_play_settings_of_the_old_map() {
     let old = r#"{"schema_version":4,"metronome":{"on":false,"count_in":true},"tempo":{"beats_per_bar":4,"segments":[{"start_ms":100.0,"bpm":100.0}]}}"#;
     let mut r = Rig::new(TestServer::start_beats("ok", &[]));
     std::fs::write(r.spec.dir.join("player.json"), old).unwrap();
-    let EditorEvent::Detected { replaced, .. } = r.run() else { panic!("not detected") };
+    let EditorEvent::Detected { replaced, .. } = r.run() else {
+        panic!("not detected")
+    };
     assert!(replaced);
     let v = r.player_json().unwrap();
     assert_eq!(v["schema_version"], 6);
@@ -215,17 +297,30 @@ fn a_server_without_a_tracker_and_one_that_is_not_there() {
     assert!(r.leftovers().is_empty());
     assert!(r.player_json().is_none());
 
-    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
     let url = format!("http://127.0.0.1:{port}");
     r.events.lock().unwrap().clear();
     r.m.start_detect(SIX, Rig::params(&url)).unwrap();
-    assert_eq!(failed(r.finish()), format!("Cannot reach the edge-AI server at {url}"));
+    assert_eq!(
+        failed(r.finish()),
+        format!("Cannot reach the edge-AI server at {url}")
+    );
 }
 
 #[test]
 fn refusals() {
-    let mut r = Rig::new(TestServer::start_beats("hang", &["--beat-timeout-ms", "20000"]));
-    assert_eq!(r.m.start_detect(SIX, Rig::params("  ")).unwrap_err(), "Set the edge-AI server in Settings first");
+    let mut r = Rig::new(TestServer::start_beats(
+        "hang",
+        &["--beat-timeout-ms", "20000"],
+    ));
+    assert_eq!(
+        r.m.start_detect(SIX, Rig::params("  ")).unwrap_err(),
+        "Set the edge-AI server in Settings first"
+    );
     let now = Instant::now();
     // Detection does not depend on the checked stems: it starts with every stem unchecked or off.
     r.m.set_stem(SIX, "vocals", Some(0.0), false, now).unwrap();
@@ -239,11 +334,21 @@ fn refusals() {
 
 #[test]
 fn cancelling_a_hanging_tracker_removes_the_server_job_and_the_process() {
-    let mut r = Rig::new(TestServer::start_beats("hang", &["--beat-timeout-ms", "20000"]));
+    let mut r = Rig::new(TestServer::start_beats(
+        "hang",
+        &["--beat-timeout-ms", "20000"],
+    ));
     r.start().unwrap();
     r.wait_phase("detecting");
     let jobs = r.server.outer.path().join("work/jobs");
-    let id = std::fs::read_dir(&jobs).unwrap().flatten().next().expect("a job folder").file_name().to_string_lossy().into_owned();
+    let id = std::fs::read_dir(&jobs)
+        .unwrap()
+        .flatten()
+        .next()
+        .expect("a job folder")
+        .file_name()
+        .to_string_lossy()
+        .into_owned();
     let pattern = format!("{}/", jobs.display());
     let end = Instant::now() + Duration::from_secs(10);
     while !pgrep(&pattern) {
@@ -255,7 +360,10 @@ fn cancelling_a_hanging_tracker_removes_the_server_job_and_the_process() {
     let client = StemsClient::new(&r.server.url);
     let end = Instant::now() + Duration::from_secs(10);
     while pgrep(&pattern) || !matches!(client.status(&id), Err(ClientError::Restarted)) {
-        assert!(Instant::now() < end, "the job or the tracker is still there");
+        assert!(
+            Instant::now() < end,
+            "the job or the tracker is still there"
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(r.leftovers().is_empty());
@@ -264,7 +372,10 @@ fn cancelling_a_hanging_tracker_removes_the_server_job_and_the_process() {
 
 #[test]
 fn closing_the_session_cancels_the_detection() {
-    let mut r = Rig::new(TestServer::start_beats("slow", &["--beat-timeout-ms", "20000"]));
+    let mut r = Rig::new(TestServer::start_beats(
+        "slow",
+        &["--beat-timeout-ms", "20000"],
+    ));
     r.start().unwrap();
     r.wait_phase("uploading");
     r.m.close();

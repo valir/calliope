@@ -8,9 +8,9 @@ use std::io::BufReader;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use claxon::FlacReader;
 use calliope_lib::flac_level;
 use calliope_lib::stems_api::StemLevel;
+use claxon::FlacReader;
 
 /// Cap on decoded audio per track: sum(frames x channels x 2 bytes).
 pub const MAX_DECODED_BYTES: u64 = 3 * 512 * 1024 * 1024; // 1.5 GiB
@@ -107,7 +107,11 @@ pub fn check_compatible(stems: &[(String, StemInfo)]) -> Result<Common, String> 
         }
     }
     let sample_rate = rate.ok_or_else(|| "The track has no stems".to_string())?;
-    Ok(Common { sample_rate, bits_out, frames })
+    Ok(Common {
+        sample_rate,
+        bits_out,
+        frames,
+    })
 }
 
 /// Converts a sample of `bits` bits to 16 bits, rounding half up when reducing.
@@ -161,7 +165,11 @@ pub fn decode_i16(
         buf = block.into_buffer();
         progress(done, total);
     }
-    Ok(StemPcm { channels, frames: done, samples })
+    Ok(StemPcm {
+        channels,
+        frames: done,
+        samples,
+    })
 }
 
 /// A stem audible (100 ms windows above `flac_level::AUDIBLE_LEVEL_DBFS`) for less than this is
@@ -175,7 +183,10 @@ pub enum StemCheck {
     Audible { audible_ms: u64 },
     /// audible_ms < the minimum (exact). `peak_dbfs` is for logs only (None = digital silence;
     /// always None for a server report).
-    Empty { audible_ms: u64, peak_dbfs: Option<f64> },
+    Empty {
+        audible_ms: u64,
+        peak_dbfs: Option<f64>,
+    },
 }
 
 /// True when `audible_ms` is below the minimum.
@@ -186,10 +197,17 @@ pub fn is_empty(audible_ms: u64) -> bool {
 /// Measures a stem with the scan shared with the server, stopping as soon as it has proven the
 /// stem audible for the minimum.
 pub fn check_stem(path: &Path) -> Result<StemCheck, String> {
-    let a = flac_level::scan(path, flac_level::AUDIBLE_LEVEL_DBFS, Some(EMPTY_STEM_MIN_AUDIBLE_MS))?;
+    let a = flac_level::scan(
+        path,
+        flac_level::AUDIBLE_LEVEL_DBFS,
+        Some(EMPTY_STEM_MIN_AUDIBLE_MS),
+    )?;
     let audible_ms = a.audible_ms();
     if is_empty(audible_ms) {
-        Ok(StemCheck::Empty { audible_ms, peak_dbfs: flac_level::to_dbfs(a.peak, a.bits) })
+        Ok(StemCheck::Empty {
+            audible_ms,
+            peak_dbfs: flac_level::to_dbfs(a.peak, a.bits),
+        })
     } else {
         Ok(StemCheck::Audible { audible_ms })
     }
@@ -198,13 +216,20 @@ pub fn check_stem(path: &Path) -> Result<StemCheck, String> {
 /// The decision for a server report; `None` when it was measured at another level or window
 /// (unusable).
 pub fn check_reported(level: &StemLevel) -> Option<StemCheck> {
-    if level.level_dbfs != flac_level::AUDIBLE_LEVEL_DBFS || level.window_ms != flac_level::WINDOW_MS {
+    if level.level_dbfs != flac_level::AUDIBLE_LEVEL_DBFS
+        || level.window_ms != flac_level::WINDOW_MS
+    {
         return None;
     }
     Some(if is_empty(level.audible_ms) {
-        StemCheck::Empty { audible_ms: level.audible_ms, peak_dbfs: None }
+        StemCheck::Empty {
+            audible_ms: level.audible_ms,
+            peak_dbfs: None,
+        }
     } else {
-        StemCheck::Audible { audible_ms: level.audible_ms }
+        StemCheck::Audible {
+            audible_ms: level.audible_ms,
+        }
     })
 }
 
@@ -229,7 +254,10 @@ impl StemReader {
         let reader = open(path)?;
         let si = reader.streaminfo();
         if !(1..=2).contains(&si.channels) || !(8..=24).contains(&si.bits_per_sample) {
-            return Err(format!("Stem {} has an unsupported format", file_label(path)));
+            return Err(format!(
+                "Stem {} has an unsupported format",
+                file_label(path)
+            ));
         }
         Ok(Self {
             label: file_label(path),
@@ -276,7 +304,11 @@ impl StemReader {
             for i in 0..n {
                 let base = (self.pos + i) * ch;
                 let l = self.block[base] as f32 * self.scale;
-                let r = if ch == 2 { self.block[base + 1] as f32 * self.scale } else { l };
+                let r = if ch == 2 {
+                    self.block[base + 1] as f32 * self.scale
+                } else {
+                    l
+                };
                 out[(written + i) * 2] = l;
                 out[(written + i) * 2 + 1] = r;
             }
@@ -316,7 +348,8 @@ mod tests {
     fn write_flac(path: &Path, samples: &[i32], channels: usize, bits: usize, rate: usize) {
         let config = flacenc::config::Encoder::default().into_verified().unwrap();
         let src = flacenc::source::MemSource::from_samples(samples, channels, bits, rate);
-        let stream = flacenc::encode_with_fixed_block_size(&config, src, config.block_size).unwrap();
+        let stream =
+            flacenc::encode_with_fixed_block_size(&config, src, config.block_size).unwrap();
         let mut sink = flacenc::bitsink::ByteSink::new();
         stream.write(&mut sink).unwrap();
         std::fs::write(path, sink.as_slice()).unwrap();
@@ -327,7 +360,12 @@ mod tests {
     }
 
     fn info(rate: u32, channels: u32, bits: u32, frames: u64) -> StemInfo {
-        StemInfo { sample_rate: rate, channels, bits, frames }
+        StemInfo {
+            sample_rate: rate,
+            channels,
+            bits,
+            frames,
+        }
     }
 
     fn named(v: Vec<(&str, StemInfo)>) -> Vec<(String, StemInfo)> {
@@ -336,7 +374,9 @@ mod tests {
 
     /// 10000 frames, longer than one block, so multi-block paths run.
     fn ramp(n: usize, scale: i32) -> Vec<i32> {
-        (0..n as i32).map(|i| ((i * 7) % 2000 - 1000) * scale).collect()
+        (0..n as i32)
+            .map(|i| ((i * 7) % 2000 - 1000) * scale)
+            .collect()
     }
 
     #[test]
@@ -401,7 +441,14 @@ mod tests {
             ("b", info(22050, 2, 16, 250)),
         ]))
         .unwrap();
-        assert_eq!(c, Common { sample_rate: 22050, bits_out: 16, frames: 250 });
+        assert_eq!(
+            c,
+            Common {
+                sample_rate: 22050,
+                bits_out: 16,
+                frames: 250
+            }
+        );
         let c = check_compatible(&named(vec![
             ("a", info(48000, 1, 16, 100)),
             ("b", info(48000, 2, 24, 50)),
@@ -418,7 +465,10 @@ mod tests {
             ("drums", info(44100, 1, 16, 10)),
         ]))
         .unwrap_err();
-        assert!(e.contains("different sample rates") && e.contains("drums"), "{e}");
+        assert!(
+            e.contains("different sample rates") && e.contains("drums"),
+            "{e}"
+        );
         let e = check_compatible(&named(vec![("bass", info(22050, 3, 16, 10))])).unwrap_err();
         assert!(e.contains("bass") && e.contains("3 channels"), "{e}");
         let e = check_compatible(&named(vec![("piano", info(22050, 1, 4, 10))])).unwrap_err();
@@ -488,9 +538,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("gone.flac");
         assert!(probe(&missing).unwrap_err().contains("gone.flac"));
-        assert!(decode_i16(&missing, &AtomicBool::new(false), &mut no_progress())
-            .unwrap_err()
-            .contains("gone.flac"));
+        assert!(
+            decode_i16(&missing, &AtomicBool::new(false), &mut no_progress())
+                .unwrap_err()
+                .contains("gone.flac")
+        );
         let bad = dir.path().join("bad.flac");
         std::fs::write(&bad, b"this is not a flac file at all").unwrap();
         assert!(probe(&bad).unwrap_err().contains("bad.flac"));
@@ -498,17 +550,28 @@ mod tests {
     }
 
     fn fixture(name: &str) -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/import").join(name)
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/import")
+            .join(name)
     }
 
     fn lvl(audible_ms: u64, level_dbfs: i32, window_ms: u32) -> StemLevel {
-        StemLevel { name: "x".into(), audible_ms, level_dbfs, window_ms, peak_dbfs: None }
+        StemLevel {
+            name: "x".into(),
+            audible_ms,
+            level_dbfs,
+            window_ms,
+            peak_dbfs: None,
+        }
     }
 
     #[test]
     fn check_stem_activity_fixtures() {
         match check_stem(&fixture("stems-activity/bursts.flac")).unwrap() {
-            StemCheck::Empty { audible_ms: 9500, peak_dbfs: Some(p) } => assert!(p > -9.0, "{p}"),
+            StemCheck::Empty {
+                audible_ms: 9500,
+                peak_dbfs: Some(p),
+            } => assert!(p > -9.0, "{p}"),
             other => panic!("{other:?}"),
         }
         assert!(matches!(
@@ -517,7 +580,10 @@ mod tests {
         ));
         assert!(matches!(
             check_stem(&fixture("stems-activity/audible-14900ms.flac")).unwrap(),
-            StemCheck::Empty { audible_ms: 14_900, .. }
+            StemCheck::Empty {
+                audible_ms: 14_900,
+                ..
+            }
         ));
         assert!(matches!(
             check_stem(&fixture("stems-activity/audible-15000ms.flac")).unwrap(),
@@ -525,7 +591,10 @@ mod tests {
         ));
         assert_eq!(
             check_stem(&fixture("stems-quiet/silent.flac")).unwrap(),
-            StemCheck::Empty { audible_ms: 0, peak_dbfs: None }
+            StemCheck::Empty {
+                audible_ms: 0,
+                peak_dbfs: None
+            }
         );
     }
 
@@ -537,7 +606,10 @@ mod tests {
         }
         for name in ["silent", "minus60", "minus45"] {
             let c = check_stem(&fixture(&format!("stems-quiet/{name}.flac"))).unwrap();
-            assert!(matches!(c, StemCheck::Empty { audible_ms: 0, .. }), "{name}: {c:?}");
+            assert!(
+                matches!(c, StemCheck::Empty { audible_ms: 0, .. }),
+                "{name}: {c:?}"
+            );
         }
     }
 
@@ -545,9 +617,15 @@ mod tests {
     fn check_reported_decides_and_ignores_other_measures() {
         assert_eq!(
             check_reported(&lvl(14_900, -40, 100)),
-            Some(StemCheck::Empty { audible_ms: 14_900, peak_dbfs: None })
+            Some(StemCheck::Empty {
+                audible_ms: 14_900,
+                peak_dbfs: None
+            })
         );
-        assert_eq!(check_reported(&lvl(15_000, -40, 100)), Some(StemCheck::Audible { audible_ms: 15_000 }));
+        assert_eq!(
+            check_reported(&lvl(15_000, -40, 100)),
+            Some(StemCheck::Audible { audible_ms: 15_000 })
+        );
         assert_eq!(check_reported(&lvl(0, -50, 100)), None);
         assert_eq!(check_reported(&lvl(0, -40, 50)), None);
     }

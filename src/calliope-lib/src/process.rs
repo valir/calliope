@@ -54,8 +54,15 @@ pub fn spawn<S: AsRef<OsStr>>(
     on_stdout_line: impl FnMut(String) + Send + 'static,
     on_stderr_line: impl FnMut(String) + Send + 'static,
 ) -> io::Result<Running> {
-    spawn_with(program, args, cwd, Stdio::null(), move |out| read_lines(out, on_stdout_line), on_stderr_line)
-        .map(|(running, _)| running)
+    spawn_with(
+        program,
+        args,
+        cwd,
+        Stdio::null(),
+        move |out| read_lines(out, on_stdout_line),
+        on_stderr_line,
+    )
+    .map(|(running, _)| running)
 }
 
 /// Like [`spawn`], but stdin is a pipe returned to the caller (for feeding audio to an encoder).
@@ -68,8 +75,14 @@ pub fn spawn_with_stdin<S: AsRef<OsStr>>(
     on_stdout_line: impl FnMut(String) + Send + 'static,
     on_stderr_line: impl FnMut(String) + Send + 'static,
 ) -> io::Result<(Running, ChildStdin)> {
-    let (running, stdin) =
-        spawn_with(program, args, cwd, Stdio::piped(), move |out| read_lines(out, on_stdout_line), on_stderr_line)?;
+    let (running, stdin) = spawn_with(
+        program,
+        args,
+        cwd,
+        Stdio::piped(),
+        move |out| read_lines(out, on_stdout_line),
+        on_stderr_line,
+    )?;
     Ok((running, stdin.expect("piped stdin")))
 }
 
@@ -113,7 +126,10 @@ fn spawn_with<S: AsRef<OsStr>>(
 ) -> io::Result<(Running, Option<ChildStdin>)> {
     let program = program.as_ref();
     let mut cmd = Command::new(program);
-    cmd.args(args).stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.args(args)
+        .stdin(stdin)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
     }
@@ -125,7 +141,13 @@ fn spawn_with<S: AsRef<OsStr>>(
         // SAFETY: only an async-signal-safe call (prctl) runs between fork and exec.
         unsafe {
             cmd.pre_exec(|| {
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong, 0, 0, 0);
+                libc::prctl(
+                    libc::PR_SET_PDEATHSIG,
+                    libc::SIGKILL as libc::c_ulong,
+                    0,
+                    0,
+                    0,
+                );
                 Ok(())
             });
         }
@@ -146,7 +168,14 @@ fn spawn_with<S: AsRef<OsStr>>(
         #[cfg(not(unix))]
         child: child.clone(),
     };
-    Ok((Running { child, handle, readers }, stdin))
+    Ok((
+        Running {
+            child,
+            handle,
+            readers,
+        },
+        stdin,
+    ))
 }
 
 fn read_lines(source: impl Read, mut on_line: impl FnMut(String)) {
@@ -286,8 +315,11 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Instant;
 
-    fn sh(script: &str, out: impl FnMut(String) + Send + 'static, err: impl FnMut(String) + Send + 'static)
-        -> io::Result<Running> {
+    fn sh(
+        script: &str,
+        out: impl FnMut(String) + Send + 'static,
+        err: impl FnMut(String) + Send + 'static,
+    ) -> io::Result<Running> {
         spawn("bash", &["-c", script], None, out, err)
     }
 
@@ -305,14 +337,23 @@ mod tests {
         assert_eq!(st.code(), Some(3));
         let mut got = lines.lock().unwrap().clone();
         got.sort();
-        assert_eq!(got, ["err:two", "out:one", "out:tail-no-newline", "out:three"]);
+        assert_eq!(
+            got,
+            ["err:two", "out:one", "out:tail-no-newline", "out:three"]
+        );
     }
 
     #[test]
     fn args_are_not_interpreted_by_a_shell() {
         let (tx, rx) = mpsc::channel();
-        let r = spawn("printf", &["%s\\n", "a b; echo hacked", "$HOME"], None, move |l| tx.send(l).unwrap(), |_| {})
-            .unwrap();
+        let r = spawn(
+            "printf",
+            &["%s\\n", "a b; echo hacked", "$HOME"],
+            None,
+            move |l| tx.send(l).unwrap(),
+            |_| {},
+        )
+        .unwrap();
         assert!(r.wait().unwrap().success());
         assert_eq!(rx.iter().collect::<Vec<_>>(), ["a b; echo hacked", "$HOME"]);
     }
@@ -321,28 +362,52 @@ mod tests {
     fn runs_in_the_given_directory_with_closed_stdin() {
         let dir = tempfile::tempdir().unwrap();
         let (tx, rx) = mpsc::channel();
-        let r = spawn("bash", &["-c", "pwd; cat; echo eof"], Some(dir.path()), move |l| tx.send(l).unwrap(), |_| {})
-            .unwrap();
+        let r = spawn(
+            "bash",
+            &["-c", "pwd; cat; echo eof"],
+            Some(dir.path()),
+            move |l| tx.send(l).unwrap(),
+            |_| {},
+        )
+        .unwrap();
         assert!(r.wait().unwrap().success());
         let got: Vec<String> = rx.iter().collect();
         assert_eq!(got.len(), 2);
-        assert_eq!(std::fs::canonicalize(&got[0]).unwrap(), std::fs::canonicalize(dir.path()).unwrap());
+        assert_eq!(
+            std::fs::canonicalize(&got[0]).unwrap(),
+            std::fs::canonicalize(dir.path()).unwrap()
+        );
         assert_eq!(got[1], "eof");
     }
 
     #[test]
     fn missing_program_is_a_clear_error() {
-        let e = spawn("/nonexistent/calliope-no-such-tool", &["x"], None, |_| {}, |_| {}).err().unwrap();
+        let e = spawn(
+            "/nonexistent/calliope-no-such-tool",
+            &["x"],
+            None,
+            |_| {},
+            |_| {},
+        )
+        .err()
+        .unwrap();
         assert_eq!(e.kind(), io::ErrorKind::NotFound);
         let text = e.to_string();
-        assert!(text.contains("calliope-no-such-tool") && text.contains("not found"), "{text}");
+        assert!(
+            text.contains("calliope-no-such-tool") && text.contains("not found"),
+            "{text}"
+        );
     }
 
     #[test]
     fn overlong_lines_are_capped() {
         let (tx, rx) = mpsc::channel();
-        let r = sh("head -c 200000 /dev/zero | tr '\\0' x; echo; echo next", move |l| tx.send(l.len()).unwrap(), |_| {})
-            .unwrap();
+        let r = sh(
+            "head -c 200000 /dev/zero | tr '\\0' x; echo; echo next",
+            move |l| tx.send(l.len()).unwrap(),
+            |_| {},
+        )
+        .unwrap();
         r.wait().unwrap();
         assert_eq!(rx.iter().collect::<Vec<_>>(), [MAX_LINE_BYTES, 4]);
     }
@@ -351,12 +416,21 @@ mod tests {
     fn stdin_is_piped_and_closing_it_ends_the_child() {
         use std::io::Write;
         let (tx, rx) = mpsc::channel();
-        let (r, mut stdin) = spawn_with_stdin("/bin/sh", &["-c", "wc -c"], None, move |l| tx.send(l).unwrap(), |_| {})
-            .unwrap();
+        let (r, mut stdin) = spawn_with_stdin(
+            "/bin/sh",
+            &["-c", "wc -c"],
+            None,
+            move |l| tx.send(l).unwrap(),
+            |_| {},
+        )
+        .unwrap();
         stdin.write_all(&vec![7u8; 100_000]).unwrap();
         drop(stdin);
         assert!(r.wait().unwrap().success());
-        assert_eq!(rx.iter().map(|l| l.trim().to_string()).collect::<Vec<_>>(), ["100000"]);
+        assert_eq!(
+            rx.iter().map(|l| l.trim().to_string()).collect::<Vec<_>>(),
+            ["100000"]
+        );
     }
 
     #[cfg(unix)]
@@ -368,7 +442,10 @@ mod tests {
         r.cancel();
         r.wait().unwrap();
         assert!(started.elapsed() < Duration::from_secs(3));
-        let e = stdin.write_all(b"x").and_then(|()| stdin.flush()).unwrap_err();
+        let e = stdin
+            .write_all(b"x")
+            .and_then(|()| stdin.flush())
+            .unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::BrokenPipe);
     }
 
@@ -379,7 +456,12 @@ mod tests {
             return false;
         }
         match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-            Ok(s) => !s.rsplit(')').next().unwrap_or("").trim_start().starts_with('Z'),
+            Ok(s) => !s
+                .rsplit(')')
+                .next()
+                .unwrap_or("")
+                .trim_start()
+                .starts_with('Z'),
             Err(_) => false,
         }
     }
@@ -400,8 +482,18 @@ mod tests {
     fn cancel_kills_the_script_and_its_grandchild() {
         let (tx, rx) = mpsc::channel();
         // The grandchild's pid is announced on stdout; stdout stays open through it.
-        let r = sh("sleep 60 & echo $!; wait", move |l| tx.send(l).unwrap(), |_| {}).unwrap();
-        let grandchild: i32 = rx.recv_timeout(Duration::from_secs(5)).unwrap().trim().parse().unwrap();
+        let r = sh(
+            "sleep 60 & echo $!; wait",
+            move |l| tx.send(l).unwrap(),
+            |_| {},
+        )
+        .unwrap();
+        let grandchild: i32 = rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         assert!(alive(grandchild));
         let leader = r.id() as i32;
         let started = Instant::now();
@@ -417,14 +509,26 @@ mod tests {
     #[test]
     fn cancel_escalates_to_sigkill_for_a_process_that_ignores_sigterm() {
         let (tx, rx) = mpsc::channel();
-        let r = sh("trap '' TERM; (trap '' TERM; sleep 60) & echo $!; wait", move |l| tx.send(l).unwrap(), |_| {})
+        let r = sh(
+            "trap '' TERM; (trap '' TERM; sleep 60) & echo $!; wait",
+            move |l| tx.send(l).unwrap(),
+            |_| {},
+        )
+        .unwrap();
+        let grandchild: i32 = rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .trim()
+            .parse()
             .unwrap();
-        let grandchild: i32 = rx.recv_timeout(Duration::from_secs(5)).unwrap().trim().parse().unwrap();
         let started = Instant::now();
         r.cancel();
         let _ = r.wait().unwrap();
         let took = started.elapsed();
-        assert!(took >= Duration::from_millis(1500) && took < Duration::from_secs(8), "{took:?}");
+        assert!(
+            took >= Duration::from_millis(1500) && took < Duration::from_secs(8),
+            "{took:?}"
+        );
         assert!(wait_gone(grandchild));
     }
 

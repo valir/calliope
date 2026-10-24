@@ -68,7 +68,10 @@ fn serve(h: impl Fn(&Request, &mut TcpStream) + Send + Sync + 'static) -> Fake {
                 let mut lines = text.split("\r\n");
                 let line = lines.next().unwrap_or("").to_string();
                 let headers = lines
-                    .filter_map(|l| l.split_once(':').map(|(k, v)| (k.trim().to_lowercase(), v.trim().to_string())))
+                    .filter_map(|l| {
+                        l.split_once(':')
+                            .map(|(k, v)| (k.trim().to_lowercase(), v.trim().to_string()))
+                    })
                     .collect();
                 hits.lock().unwrap().push(line.clone());
                 h(&Request { line, headers }, &mut s);
@@ -114,21 +117,113 @@ fn no_cancel() -> AtomicBool {
 fn health_rejects_every_kind_of_wrong_answer() {
     type Case = (&'static str, Box<dyn Fn(&mut TcpStream) + Send + Sync>);
     let cases: Vec<Case> = vec![
-        ("wrong service", Box::new(|s| { let mut h = health_json(); h["service"] = "evil".into(); json(s, "200 OK", h) })),
-        ("api 2", Box::new(|s| { let mut h = health_json(); h["api"] = 2.into(); json(s, "200 OK", h) })),
-        ("api 0", Box::new(|s| { let mut h = health_json(); h["api"] = 0.into(); json(s, "200 OK", h) })),
-        ("model traversal", Box::new(|s| { let mut h = health_json(); h["default_model"] = "../../x".into(); json(s, "200 OK", h) })),
-        ("model with ampersand", Box::new(|s| { let mut h = health_json(); h["default_model"] = "a&model=b".into(); json(s, "200 OK", h) })),
-        ("model with space/newline", Box::new(|s| { let mut h = health_json(); h["default_model"] = "a b\r\nX: y".into(); json(s, "200 OK", h) })),
-        ("model dot-start", Box::new(|s| { let mut h = health_json(); h["default_model"] = ".hidden".into(); json(s, "200 OK", h) })),
-        ("model 65 chars", Box::new(|s| { let mut h = health_json(); h["default_model"] = "a".repeat(65).into(); json(s, "200 OK", h) })),
-        ("html", Box::new(|s| reply(s, "200 OK", "text/html", b"<html>router login</html>"))),
-        ("empty", Box::new(|s| reply(s, "200 OK", "application/json", b""))),
-        ("json null", Box::new(|s| reply(s, "200 OK", "application/json", b"null"))),
-        ("huge json", Box::new(|s| { let pad = "x".repeat(200_000); let mut h = health_json(); h["version"] = pad.into(); json(s, "200 OK", h) })),
-        ("500", Box::new(|s| json(s, "500 Internal Server Error", serde_json::json!({"error":"boom"})))),
-        ("redirect", Box::new(|s| { let _ = s.write_all(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/v1/health\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"); })),
-        ("garbage", Box::new(|s| { let _ = s.write_all(b"\x00\x01garbage\r\n\r\n"); })),
+        (
+            "wrong service",
+            Box::new(|s| {
+                let mut h = health_json();
+                h["service"] = "evil".into();
+                json(s, "200 OK", h)
+            }),
+        ),
+        (
+            "api 2",
+            Box::new(|s| {
+                let mut h = health_json();
+                h["api"] = 2.into();
+                json(s, "200 OK", h)
+            }),
+        ),
+        (
+            "api 0",
+            Box::new(|s| {
+                let mut h = health_json();
+                h["api"] = 0.into();
+                json(s, "200 OK", h)
+            }),
+        ),
+        (
+            "model traversal",
+            Box::new(|s| {
+                let mut h = health_json();
+                h["default_model"] = "../../x".into();
+                json(s, "200 OK", h)
+            }),
+        ),
+        (
+            "model with ampersand",
+            Box::new(|s| {
+                let mut h = health_json();
+                h["default_model"] = "a&model=b".into();
+                json(s, "200 OK", h)
+            }),
+        ),
+        (
+            "model with space/newline",
+            Box::new(|s| {
+                let mut h = health_json();
+                h["default_model"] = "a b\r\nX: y".into();
+                json(s, "200 OK", h)
+            }),
+        ),
+        (
+            "model dot-start",
+            Box::new(|s| {
+                let mut h = health_json();
+                h["default_model"] = ".hidden".into();
+                json(s, "200 OK", h)
+            }),
+        ),
+        (
+            "model 65 chars",
+            Box::new(|s| {
+                let mut h = health_json();
+                h["default_model"] = "a".repeat(65).into();
+                json(s, "200 OK", h)
+            }),
+        ),
+        (
+            "html",
+            Box::new(|s| reply(s, "200 OK", "text/html", b"<html>router login</html>")),
+        ),
+        (
+            "empty",
+            Box::new(|s| reply(s, "200 OK", "application/json", b"")),
+        ),
+        (
+            "json null",
+            Box::new(|s| reply(s, "200 OK", "application/json", b"null")),
+        ),
+        (
+            "huge json",
+            Box::new(|s| {
+                let pad = "x".repeat(200_000);
+                let mut h = health_json();
+                h["version"] = pad.into();
+                json(s, "200 OK", h)
+            }),
+        ),
+        (
+            "500",
+            Box::new(|s| {
+                json(
+                    s,
+                    "500 Internal Server Error",
+                    serde_json::json!({"error":"boom"}),
+                )
+            }),
+        ),
+        (
+            "redirect",
+            Box::new(|s| {
+                let _ = s.write_all(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/v1/health\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            }),
+        ),
+        (
+            "garbage",
+            Box::new(|s| {
+                let _ = s.write_all(b"\x00\x01garbage\r\n\r\n");
+            }),
+        ),
         ("closed", Box::new(|_s| {})),
     ];
     for (name, f) in cases {
@@ -136,14 +231,28 @@ fn health_rejects_every_kind_of_wrong_answer() {
         let r = fake.client().health();
         assert!(r.is_err(), "{name}: accepted: {r:?}");
         if name == "redirect" {
-            assert_eq!(fake.hits.lock().unwrap().len(), 1, "a redirect must not be followed");
+            assert_eq!(
+                fake.hits.lock().unwrap().len(),
+                1,
+                "a redirect must not be followed"
+            );
         }
     }
 }
 
 #[test]
 fn submit_validates_what_the_server_returns() {
-    let bad_ids = ["../../etc", "..", "", &"a".repeat(65), "-rf", "A-B", "a/b", "a b", "%2e%2e"];
+    let bad_ids = [
+        "../../etc",
+        "..",
+        "",
+        &"a".repeat(65),
+        "-rf",
+        "A-B",
+        "a/b",
+        "a b",
+        "%2e%2e",
+    ];
     for id in bad_ids {
         let id = id.to_string();
         let fake = serve(move |req, s| {
@@ -151,12 +260,19 @@ fn submit_validates_what_the_server_returns() {
                 json(s, "200 OK", health_json());
             } else {
                 // drain the body so the client sees our reply
-                json(s, "202 Accepted", serde_json::json!({"job": id, "state":"queued"}));
+                json(
+                    s,
+                    "202 Accepted",
+                    serde_json::json!({"job": id, "state":"queued"}),
+                );
             }
         });
         let (_d, f) = tmpfile(&flac_bytes(2000));
         let r = fake.client().submit(&f, &no_cancel(), |_, _| {});
-        assert!(matches!(r, Err(ClientError::Invalid(_))), "bad job id accepted or wrong error: {r:?}");
+        assert!(
+            matches!(r, Err(ClientError::Invalid(_))),
+            "bad job id accepted or wrong error: {r:?}"
+        );
     }
 }
 
@@ -179,12 +295,19 @@ fn submit_surfaces_a_413_and_413_json_message() {
         if req.line.starts_with("GET /v1/health") {
             json(s, "200 OK", health_json());
         } else {
-            json(s, "413 Payload Too Large", serde_json::json!({"error":"the audio is longer than the limit of 15 minutes"}));
+            json(
+                s,
+                "413 Payload Too Large",
+                serde_json::json!({"error":"the audio is longer than the limit of 15 minutes"}),
+            );
         }
     });
     let (_d, f) = tmpfile(&flac_bytes(2000));
     match fake.client().submit(&f, &no_cancel(), |_, _| {}) {
-        Err(ClientError::Rejected { status: 413, message }) => assert!(message.contains("15 minutes")),
+        Err(ClientError::Rejected {
+            status: 413,
+            message,
+        }) => assert!(message.contains("15 minutes")),
         other => panic!("{other:?}"),
     }
 }
@@ -192,7 +315,11 @@ fn submit_surfaces_a_413_and_413_json_message() {
 #[test]
 fn submit_missing_or_unreadable_file_is_an_io_error() {
     let fake = serve(|_, s| json(s, "200 OK", health_json()));
-    let r = fake.client().submit(std::path::Path::new("/nonexistent-qa/x.flac"), &no_cancel(), |_, _| {});
+    let r = fake.client().submit(
+        std::path::Path::new("/nonexistent-qa/x.flac"),
+        &no_cancel(),
+        |_, _| {},
+    );
     assert!(matches!(r, Err(ClientError::Io(_))), "{r:?}");
 }
 
@@ -201,18 +328,66 @@ fn status_validates_stems_and_job_binding() {
     let job = "0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b";
     let long: Vec<String> = (0..17).map(|i| format!("s{i}")).collect();
     let cases: Vec<(&str, serde_json::Value, bool)> = vec![
-        ("ok", serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["vocals","drums"],"error":null}), true),
-        ("traversal", serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["../../x"],"error":null}), false),
-        ("dotdot", serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":[".."],"error":null}), false),
-        ("slash", serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["a/b"],"error":null}), false),
-        ("uppercase", serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["Vocals"],"error":null}), false),
-        ("with .flac", serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["vocals.flac"],"error":null}), false),
-        ("empty name", serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":[""],"error":null}), false),
-        ("long name", serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["a".repeat(33)],"error":null}), false),
-        ("17 stems", serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":long,"error":null}), false),
-        ("other job", serde_json::json!({"job":"0190b1c2-3d4e-4f50-8a6b-ffffffffffff","state":"done","progress":1.0,"stems":["vocals"],"error":null}), false),
-        ("unknown state", serde_json::json!({"job":job,"state":"exploded","progress":1.0,"stems":null,"error":null}), false),
-        ("progress string", serde_json::json!({"job":job,"state":"running","progress":"half","stems":null,"error":null}), false),
+        (
+            "ok",
+            serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["vocals","drums"],"error":null}),
+            true,
+        ),
+        (
+            "traversal",
+            serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["../../x"],"error":null}),
+            false,
+        ),
+        (
+            "dotdot",
+            serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":[".."],"error":null}),
+            false,
+        ),
+        (
+            "slash",
+            serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["a/b"],"error":null}),
+            false,
+        ),
+        (
+            "uppercase",
+            serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["Vocals"],"error":null}),
+            false,
+        ),
+        (
+            "with .flac",
+            serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["vocals.flac"],"error":null}),
+            false,
+        ),
+        (
+            "empty name",
+            serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":[""],"error":null}),
+            false,
+        ),
+        (
+            "long name",
+            serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["a".repeat(33)],"error":null}),
+            false,
+        ),
+        (
+            "17 stems",
+            serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":long,"error":null}),
+            false,
+        ),
+        (
+            "other job",
+            serde_json::json!({"job":"0190b1c2-3d4e-4f50-8a6b-ffffffffffff","state":"done","progress":1.0,"stems":["vocals"],"error":null}),
+            false,
+        ),
+        (
+            "unknown state",
+            serde_json::json!({"job":job,"state":"exploded","progress":1.0,"stems":null,"error":null}),
+            false,
+        ),
+        (
+            "progress string",
+            serde_json::json!({"job":job,"state":"running","progress":"half","stems":null,"error":null}),
+            false,
+        ),
     ];
     for (name, body, ok) in cases {
         let fake = serve(move |_, s| json(s, "200 OK", body.clone()));
@@ -221,36 +396,110 @@ fn status_validates_stems_and_job_binding() {
     }
     // A job id the caller made up is refused without a request.
     let fake = serve(|_, s| json(s, "200 OK", serde_json::json!({})));
-    assert!(matches!(fake.client().status("../x"), Err(ClientError::Invalid(_))));
+    assert!(matches!(
+        fake.client().status("../x"),
+        Err(ClientError::Invalid(_))
+    ));
     assert!(fake.hits.lock().unwrap().is_empty());
     // 404 -> restarted
-    let fake = serve(|_, s| json(s, "404 Not Found", serde_json::json!({"error":"unknown job"})));
-    assert!(matches!(fake.client().status(job), Err(ClientError::Restarted)));
+    let fake = serve(|_, s| {
+        json(
+            s,
+            "404 Not Found",
+            serde_json::json!({"error":"unknown job"}),
+        )
+    });
+    assert!(matches!(
+        fake.client().status(job),
+        Err(ClientError::Restarted)
+    ));
 }
 
 #[test]
 fn status_validates_stem_level_list() {
     let job = "0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b";
     let lv = |n: &str, ms: u64, db: i32, w: u32| serde_json::json!({"name":n,"audible_ms":ms,"level_dbfs":db,"window_ms":w});
-    let with = |levels: serde_json::Value| {
-        serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["vocals","piano"],"error":null,"stem_levels":levels})
-    };
+    let with = |levels: serde_json::Value| serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":["vocals","piano"],"error":null,"stem_levels":levels});
     let cases: Vec<(&str, serde_json::Value, bool)> = vec![
-        ("ok", with(serde_json::json!([lv("vocals", 200600, -40, 100), lv("piano", 0, -40, 100)])), true),
+        (
+            "ok",
+            with(serde_json::json!([
+                lv("vocals", 200600, -40, 100),
+                lv("piano", 0, -40, 100)
+            ])),
+            true,
+        ),
         ("empty", with(serde_json::json!([])), true),
-        ("unknown name", with(serde_json::json!([lv("drums", 0, -40, 100)])), false),
-        ("duplicate", with(serde_json::json!([lv("piano", 0, -40, 100), lv("piano", 0, -40, 100)])), false),
-        ("window 0", with(serde_json::json!([lv("piano", 0, -40, 0)])), false),
-        ("window 1001", with(serde_json::json!([lv("piano", 0, -40, 1001)])), false),
-        ("level above 0", with(serde_json::json!([lv("piano", 0, 1, 100)])), false),
-        ("level below -150", with(serde_json::json!([lv("piano", 0, -151, 100)])), false),
-        ("not a window multiple", with(serde_json::json!([lv("piano", 150, -40, 100)])), false),
-        ("longer than a day", with(serde_json::json!([lv("piano", 86_400_100, -40, 100)])), false),
-        ("negative audible_ms", with(serde_json::json!([{"name":"piano","audible_ms":-1,"level_dbfs":-40,"window_ms":100}])), false),
-        ("audible_ms string", with(serde_json::json!([{"name":"piano","audible_ms":"0","level_dbfs":-40,"window_ms":100}])), false),
+        (
+            "unknown name",
+            with(serde_json::json!([lv("drums", 0, -40, 100)])),
+            false,
+        ),
+        (
+            "duplicate",
+            with(serde_json::json!([
+                lv("piano", 0, -40, 100),
+                lv("piano", 0, -40, 100)
+            ])),
+            false,
+        ),
+        (
+            "window 0",
+            with(serde_json::json!([lv("piano", 0, -40, 0)])),
+            false,
+        ),
+        (
+            "window 1001",
+            with(serde_json::json!([lv("piano", 0, -40, 1001)])),
+            false,
+        ),
+        (
+            "level above 0",
+            with(serde_json::json!([lv("piano", 0, 1, 100)])),
+            false,
+        ),
+        (
+            "level below -150",
+            with(serde_json::json!([lv("piano", 0, -151, 100)])),
+            false,
+        ),
+        (
+            "not a window multiple",
+            with(serde_json::json!([lv("piano", 150, -40, 100)])),
+            false,
+        ),
+        (
+            "longer than a day",
+            with(serde_json::json!([lv("piano", 86_400_100, -40, 100)])),
+            false,
+        ),
+        (
+            "negative audible_ms",
+            with(
+                serde_json::json!([{"name":"piano","audible_ms":-1,"level_dbfs":-40,"window_ms":100}]),
+            ),
+            false,
+        ),
+        (
+            "audible_ms string",
+            with(
+                serde_json::json!([{"name":"piano","audible_ms":"0","level_dbfs":-40,"window_ms":100}]),
+            ),
+            false,
+        ),
         ("not a list", with(serde_json::json!("lots")), false),
-        ("17 entries", with(serde_json::json!((0..17).map(|_| lv("piano", 0, -40, 100)).collect::<Vec<_>>())), false),
-        ("levels without stems", serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":null,"error":null,"stem_levels":[lv("piano", 0, -40, 100)]}), false),
+        (
+            "17 entries",
+            with(serde_json::json!((0..17)
+                .map(|_| lv("piano", 0, -40, 100))
+                .collect::<Vec<_>>())),
+            false,
+        ),
+        (
+            "levels without stems",
+            serde_json::json!({"job":job,"state":"done","progress":1.0,"stems":null,"error":null,"stem_levels":[lv("piano", 0, -40, 100)]}),
+            false,
+        ),
     ];
     for (name, body, ok) in cases {
         let fake = serve(move |_, s| json(s, "200 OK", body.clone()));
@@ -260,7 +509,9 @@ fn status_validates_stem_level_list() {
         let wrong_type = ["negative audible_ms", "audible_ms string", "not a list"].contains(&name);
         match r {
             Err(ClientError::Incompatible(_)) => assert!(wrong_type, "{name}"),
-            Err(ClientError::Invalid(m)) => assert!(!wrong_type && m == "bad stem level list", "{name}: {m}"),
+            Err(ClientError::Invalid(m)) => {
+                assert!(!wrong_type && m == "bad stem level list", "{name}: {m}")
+            }
             _ => {}
         }
     }
@@ -292,20 +543,37 @@ fn status_validates_stem_level_list_only_when_done() {
 fn fetch_stem_refuses_non_flac_and_cleans_up() {
     let job = "0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b";
     let cases: Vec<(&str, Box<dyn Fn(&mut TcpStream) + Send + Sync>)> = vec![
-        ("html", Box::new(|s| reply(s, "200 OK", "audio/flac", b"<html>hello</html>"))),
+        (
+            "html",
+            Box::new(|s| reply(s, "200 OK", "audio/flac", b"<html>hello</html>")),
+        ),
         ("empty", Box::new(|s| reply(s, "200 OK", "audio/flac", b""))),
-        ("3 bytes", Box::new(|s| reply(s, "200 OK", "audio/flac", b"fLa"))),
-        ("lying length", Box::new(|s| {
-            let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: audio/flac\r\nContent-Length: 9999999999\r\nConnection: close\r\n\r\nfLaCabcdef");
-        })),
-        ("409", Box::new(|s| json(s, "409 Conflict", serde_json::json!({"error":"not done"})))),
-        ("500", Box::new(|s| reply(s, "500 Internal Server Error", "text/plain", b"x"))),
+        (
+            "3 bytes",
+            Box::new(|s| reply(s, "200 OK", "audio/flac", b"fLa")),
+        ),
+        (
+            "lying length",
+            Box::new(|s| {
+                let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: audio/flac\r\nContent-Length: 9999999999\r\nConnection: close\r\n\r\nfLaCabcdef");
+            }),
+        ),
+        (
+            "409",
+            Box::new(|s| json(s, "409 Conflict", serde_json::json!({"error":"not done"}))),
+        ),
+        (
+            "500",
+            Box::new(|s| reply(s, "500 Internal Server Error", "text/plain", b"x")),
+        ),
     ];
     for (name, f) in cases {
         let fake = serve(move |_, s| f(s));
         let d = tempfile::tempdir().unwrap();
         let dest = d.path().join("vocals.flac.part");
-        let r = fake.client().fetch_stem(job, "vocals", &dest, &AtomicBool::new(false));
+        let r = fake
+            .client()
+            .fetch_stem(job, "vocals", &dest, &AtomicBool::new(false));
         assert!(r.is_err(), "{name}: accepted {r:?}");
         assert!(!dest.exists(), "{name}: partial file left behind");
         assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 0, "{name}");
@@ -313,10 +581,21 @@ fn fetch_stem_refuses_non_flac_and_cleans_up() {
     // 404 is "restarted"
     let fake = serve(|_, s| json(s, "404 Not Found", serde_json::json!({"error":"x"})));
     let d = tempfile::tempdir().unwrap();
-    assert!(matches!(fake.client().fetch_stem(job, "vocals", &d.path().join("p"), &AtomicBool::new(false)), Err(ClientError::Restarted)));
+    assert!(matches!(
+        fake.client()
+            .fetch_stem(job, "vocals", &d.path().join("p"), &AtomicBool::new(false)),
+        Err(ClientError::Restarted)
+    ));
     // names are validated before any request
     for (j, n) in [("../x", "vocals"), (job, "../x"), (job, "A"), (job, "")] {
-        assert!(matches!(fake.client().fetch_stem(j, n, &d.path().join("p"), &AtomicBool::new(false)), Err(ClientError::Invalid(_))), "{j} {n}");
+        assert!(
+            matches!(
+                fake.client()
+                    .fetch_stem(j, n, &d.path().join("p"), &AtomicBool::new(false)),
+                Err(ClientError::Invalid(_))
+            ),
+            "{j} {n}"
+        );
     }
     assert!(!d.path().join("p").exists());
 }
@@ -327,12 +606,20 @@ fn fetch_stem_good_flac_is_stored_verbatim() {
     let body = flac_bytes(300_000);
     let b2 = body.clone();
     let fake = serve(move |req, s| {
-        assert!(req.line.starts_with(&format!("GET /v1/jobs/{job}/stems/drums ")), "{}", req.line);
+        assert!(
+            req.line
+                .starts_with(&format!("GET /v1/jobs/{job}/stems/drums ")),
+            "{}",
+            req.line
+        );
         reply(s, "200 OK", "audio/flac", &b2)
     });
     let d = tempfile::tempdir().unwrap();
     let dest = d.path().join("drums.flac.part");
-    let n = fake.client().fetch_stem(job, "drums", &dest, &AtomicBool::new(false)).unwrap();
+    let n = fake
+        .client()
+        .fetch_stem(job, "drums", &dest, &AtomicBool::new(false))
+        .unwrap();
     assert_eq!(n as usize, body.len());
     assert_eq!(std::fs::read(&dest).unwrap(), body);
 }
@@ -344,7 +631,9 @@ fn fetch_stem_honours_the_cancel_flag_and_removes_the_part() {
     let fake = serve(move |_, s| reply(s, "200 OK", "audio/flac", &body));
     let d = tempfile::tempdir().unwrap();
     let dest = d.path().join("drums.flac.part");
-    let r = fake.client().fetch_stem(job, "drums", &dest, &AtomicBool::new(true));
+    let r = fake
+        .client()
+        .fetch_stem(job, "drums", &dest, &AtomicBool::new(true));
     assert_eq!(r, Err(ClientError::Cancelled));
     assert!(!dest.exists());
 }
@@ -365,7 +654,11 @@ fn wait_final_tolerates_a_few_unreachable_polls_but_not_forever() {
         |_| {},
     );
     assert!(matches!(r, Err(ClientError::Unreachable(_))), "{r:?}");
-    assert!(t.elapsed() >= Duration::from_millis(300), "gave up after {:?}", t.elapsed());
+    assert!(
+        t.elapsed() >= Duration::from_millis(300),
+        "gave up after {:?}",
+        t.elapsed()
+    );
 }
 
 #[test]
@@ -376,7 +669,11 @@ fn a_server_that_never_answers_times_out_instead_of_hanging_forever() {
     let t = std::time::Instant::now();
     let r = fake.client().health();
     assert!(r.is_err());
-    assert!(t.elapsed() < Duration::from_secs(45), "took {:?}", t.elapsed());
+    assert!(
+        t.elapsed() < Duration::from_secs(45),
+        "took {:?}",
+        t.elapsed()
+    );
 }
 
 #[test]
@@ -415,7 +712,10 @@ fn trailing_slash_and_spaces_in_the_base_url_are_tolerated() {
         assert!(req.line.starts_with("GET /v1/health "), "{}", req.line);
         json(s, "200 OK", health_json())
     });
-    for base in [format!("http://{}/", fake.addr), format!("  http://{}  ", fake.addr)] {
+    for base in [
+        format!("http://{}/", fake.addr),
+        format!("  http://{}  ", fake.addr),
+    ] {
         assert!(StemsClient::new(&base).health().is_ok(), "{base:?}");
     }
 }
@@ -456,7 +756,11 @@ fn cancel_during_upload_stops_promptly_and_deletes_an_accepted_job() {
     cancel.store(true, Ordering::SeqCst);
     let r = h.join().unwrap();
     assert!(matches!(r, Err(ClientError::Cancelled)), "{r:?}");
-    assert!(t.elapsed() < Duration::from_secs(5), "cancel took {:?}", t.elapsed());
+    assert!(
+        t.elapsed() < Duration::from_secs(5),
+        "cancel took {:?}",
+        t.elapsed()
+    );
     assert!(uploaded.load(Ordering::SeqCst) < 8_000_000);
 }
 
@@ -507,7 +811,13 @@ fn wait_final_survives_a_brief_outage_but_not_a_long_one() {
         status_server_on(a2, stop2).join().ok();
     });
     let c = StemsClient::new(&format!("http://{addr}"));
-    let r = c.wait_final(job, &AtomicBool::new(false), Duration::from_millis(300), Duration::from_secs(60), |_| {});
+    let r = c.wait_final(
+        job,
+        &AtomicBool::new(false),
+        Duration::from_millis(300),
+        Duration::from_secs(60),
+        |_| {},
+    );
     assert!(r.is_ok(), "brief outage must be survived: {r:?}");
     stop.store(true, Ordering::SeqCst);
     starter.join().unwrap();
@@ -523,9 +833,19 @@ fn wait_final_survives_a_brief_outage_but_not_a_long_one() {
         status_server_on(a2, stop2).join().ok();
     });
     let t = std::time::Instant::now();
-    let r = StemsClient::new(&format!("http://{addr}")).wait_final(job, &AtomicBool::new(false), Duration::from_millis(300), Duration::from_secs(60), |_| {});
+    let r = StemsClient::new(&format!("http://{addr}")).wait_final(
+        job,
+        &AtomicBool::new(false),
+        Duration::from_millis(300),
+        Duration::from_secs(60),
+        |_| {},
+    );
     assert!(matches!(r, Err(ClientError::Unreachable(_))), "{r:?}");
-    assert!(t.elapsed() < Duration::from_secs(4), "took {:?}", t.elapsed());
+    assert!(
+        t.elapsed() < Duration::from_secs(4),
+        "took {:?}",
+        t.elapsed()
+    );
     stop.store(true, Ordering::SeqCst);
     starter.join().unwrap();
 }
@@ -555,6 +875,10 @@ fn cancel_during_a_slow_stem_stops_quickly_and_removes_the_part() {
     let t = std::time::Instant::now();
     let r = fake.client().fetch_stem(job, "drums", &dest, &cancel);
     assert_eq!(r, Err(ClientError::Cancelled));
-    assert!(t.elapsed() < Duration::from_secs(3), "took {:?}", t.elapsed());
+    assert!(
+        t.elapsed() < Duration::from_secs(3),
+        "took {:?}",
+        t.elapsed()
+    );
     assert!(!dest.exists(), "part left behind");
 }

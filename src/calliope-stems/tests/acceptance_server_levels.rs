@@ -48,7 +48,10 @@ fn start_with(separator: &Path, mode: &str, extra: &[&str]) -> Server {
     let mut line = String::new();
     let addr: SocketAddr = loop {
         line.clear();
-        assert!(lines.read_line(&mut line).unwrap() > 0, "server exited before listening");
+        assert!(
+            lines.read_line(&mut line).unwrap() > 0,
+            "server exited before listening"
+        );
         if let Some(rest) = line.split("listening addr=").nth(1) {
             break rest.split_whitespace().next().unwrap().parse().unwrap();
         }
@@ -63,7 +66,12 @@ fn start_with(separator: &Path, mode: &str, extra: &[&str]) -> Server {
             s.clear();
         }
     });
-    Server { child, addr, _outer: outer, log }
+    Server {
+        child,
+        addr,
+        _outer: outer,
+        log,
+    }
 }
 
 fn start(mode: &str, extra: &[&str]) -> Server {
@@ -73,14 +81,30 @@ fn start(mode: &str, extra: &[&str]) -> Server {
 fn http(addr: SocketAddr, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8>) {
     let mut s = TcpStream::connect(addr).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
-    let ct = if method == "POST" { format!("Content-Type: audio/flac\r\nContent-Length: {}\r\n", body.len()) } else { String::new() };
-    s.write_all(format!("{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n{ct}\r\n").as_bytes()).unwrap();
+    let ct = if method == "POST" {
+        format!(
+            "Content-Type: audio/flac\r\nContent-Length: {}\r\n",
+            body.len()
+        )
+    } else {
+        String::new()
+    };
+    s.write_all(
+        format!("{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n{ct}\r\n").as_bytes(),
+    )
+    .unwrap();
     let _ = s.write_all(body);
     let mut raw = Vec::new();
     let _ = s.read_to_end(&mut raw);
-    let split = raw.windows(4).position(|w| w == b"\r\n\r\n").expect("response head");
+    let split = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .expect("response head");
     let head = String::from_utf8_lossy(&raw[..split]).to_string();
-    (head.split_whitespace().nth(1).unwrap().parse().unwrap(), raw[split + 4..].to_vec())
+    (
+        head.split_whitespace().nth(1).unwrap().parse().unwrap(),
+        raw[split + 4..].to_vec(),
+    )
 }
 fn status_raw(addr: SocketAddr, job: &str) -> (String, serde_json::Value) {
     let (_, b) = http(addr, "GET", &format!("/v1/jobs/{job}"), b"");
@@ -92,7 +116,10 @@ fn submit(s: &Server) -> String {
     let body = std::fs::read(gui().join("tests/fixtures/import/untagged.flac")).unwrap();
     let (st, b) = http(s.addr, "POST", "/v1/jobs", &body);
     assert_eq!(st, 202);
-    serde_json::from_slice::<serde_json::Value>(&b).unwrap()["job"].as_str().unwrap().to_string()
+    serde_json::from_slice::<serde_json::Value>(&b).unwrap()["job"]
+        .as_str()
+        .unwrap()
+        .to_string()
 }
 fn wait_done(s: &Server, job: &str) -> (String, serde_json::Value) {
     let end = Instant::now() + Duration::from_secs(60);
@@ -122,7 +149,10 @@ fn key_is_absent_while_queued_and_running_never_null() {
             break;
         }
         seen_running |= v["state"] == "running";
-        assert!(!text.contains("stem_levels"), "key present before done: {text}");
+        assert!(
+            !text.contains("stem_levels"),
+            "key present before done: {text}"
+        );
         std::thread::sleep(Duration::from_millis(100));
     }
     assert!(seen_running, "never observed a running state");
@@ -145,7 +175,10 @@ fn key_is_absent_for_failed_and_cancelled_jobs() {
     let s = start("hang", &[]);
     let job = submit(&s);
     std::thread::sleep(Duration::from_millis(500));
-    assert_eq!(http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), b"").0, 204);
+    assert_eq!(
+        http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), b"").0,
+        204
+    );
     let (st, b) = http(s.addr, "GET", &format!("/v1/jobs/{job}"), b"");
     if st == 200 {
         assert!(!String::from_utf8_lossy(&b).contains("stem_levels"));
@@ -180,9 +213,16 @@ fn entries_have_exact_shape_and_boundary_stems_measure_as_designed() {
         let o = e.as_object().unwrap();
         let mut keys: Vec<&str> = o.keys().map(|k| k.as_str()).collect();
         keys.sort();
-        assert_eq!(keys, ["audible_ms", "level_dbfs", "name", "peak_dbfs", "window_ms"], "{e}");
+        assert_eq!(
+            keys,
+            ["audible_ms", "level_dbfs", "name", "peak_dbfs", "window_ms"],
+            "{e}"
+        );
         assert_eq!(e["name"], name);
-        assert!(e["audible_ms"].is_u64() && e["level_dbfs"] == -40 && e["window_ms"] == 100, "{e}");
+        assert!(
+            e["audible_ms"].is_u64() && e["level_dbfs"] == -40 && e["window_ms"] == 100,
+            "{e}"
+        );
         assert_eq!(e["audible_ms"].as_u64().unwrap() % 100, 0, "{e}");
     }
     // boundary: guitar 15.0 s audible, other 14.9 s, piano short loud bursts (9.5 s)
@@ -198,7 +238,11 @@ fn all_silent_job_reports_six_zero_entries_and_is_still_done() {
     let (_, v) = wait_done(&s, &job);
     let arr = v["stem_levels"].as_array().unwrap();
     assert_eq!(arr.len(), 6);
-    assert!(arr.iter().all(|e| e["audible_ms"] == 0 && e["peak_dbfs"].is_null()), "{v}");
+    assert!(
+        arr.iter()
+            .all(|e| e["audible_ms"] == 0 && e["peak_dbfs"].is_null()),
+        "{v}"
+    );
 }
 
 #[test]
@@ -206,7 +250,12 @@ fn unmeasurable_stem_has_no_entry_and_empty_list_is_an_array_not_missing() {
     let s = start("undecodable", &[]);
     let job = submit(&s);
     let (_, v) = wait_done(&s, &job);
-    let names: Vec<&str> = v["stem_levels"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = v["stem_levels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
     assert!(!names.contains(&"piano"));
     assert_eq!(names.len(), 5);
     assert!(s.log().contains("audible=unknown"));
@@ -239,7 +288,21 @@ fn long_separator(secs: u32, bits32: bool) -> (PathBuf, tempfile::TempDir) {
     let stem = d.path().join("long.flac");
     let fmt = if bits32 { "s32" } else { "s16" };
     let st = Command::new("ffmpeg")
-        .args(["-nostdin", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", &secs.to_string(), "-sample_fmt", fmt, "-c:a", "flac"])
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=44100:cl=stereo",
+            "-t",
+            &secs.to_string(),
+            "-sample_fmt",
+            fmt,
+            "-c:a",
+            "flac",
+        ])
         .arg(&stem)
         .status()
         .unwrap();
@@ -295,7 +358,10 @@ fn state_stays_running_while_measuring_and_cancel_during_measuring_gives_cancell
     }
     let (st, _) = http(s.addr, "DELETE", &format!("/v1/jobs/{job}"), b"");
     assert_eq!(st, 204);
-    eprintln!("QA: DELETE during measuring answered {:?} after measuring started", t_measuring.elapsed());
+    eprintln!(
+        "QA: DELETE during measuring answered {:?} after measuring started",
+        t_measuring.elapsed()
+    );
     assert!(t_measuring.elapsed() < Duration::from_secs(10));
     // the job never turns done afterwards; folder is removed
     std::thread::sleep(Duration::from_millis(1500));
@@ -329,16 +395,24 @@ fn sigterm_during_measuring_exits_promptly() {
         std::thread::sleep(Duration::from_millis(5));
     }
     let t = Instant::now();
-    let _ = Command::new("kill").args(["-TERM", &s.child.id().to_string()]).status();
+    let _ = Command::new("kill")
+        .args(["-TERM", &s.child.id().to_string()])
+        .status();
     let end = Instant::now() + Duration::from_secs(20);
     loop {
         if s.child.try_wait().unwrap().is_some() {
             break;
         }
-        assert!(Instant::now() < end, "server did not exit within 20 s of SIGTERM during measuring");
+        assert!(
+            Instant::now() < end,
+            "server did not exit within 20 s of SIGTERM during measuring"
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
-    eprintln!("QA: SIGTERM during measuring -> exit after {:?}", t.elapsed());
+    eprintln!(
+        "QA: SIGTERM during measuring -> exit after {:?}",
+        t.elapsed()
+    );
 }
 
 #[test]
@@ -351,7 +425,18 @@ fn measuring_time_is_logged_and_bounded_for_a_long_song() {
     let (_, v) = wait_done(&s, &job);
     assert_eq!(v["stem_levels"].as_array().unwrap().len(), 6);
     let log = s.log();
-    let ms: u64 = log.split("measured=6/6 ms=").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
-    eprintln!("QA: measuring 6 x 10 min silence took {ms} ms (total {:?})", t.elapsed());
+    let ms: u64 = log
+        .split("measured=6/6 ms=")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    eprintln!(
+        "QA: measuring 6 x 10 min silence took {ms} ms (total {:?})",
+        t.elapsed()
+    );
     assert!(ms < 60_000);
 }

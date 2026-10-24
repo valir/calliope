@@ -45,13 +45,22 @@ pub fn normalize_edge_ai_url(input: &str) -> Result<Option<String>, String> {
         return Ok(None);
     }
     if input.len() > MAX_EDGE_AI_URL_LEN {
-        return Err(format!("The server address is longer than {MAX_EDGE_AI_URL_LEN} characters"));
+        return Err(format!(
+            "The server address is longer than {MAX_EDGE_AI_URL_LEN} characters"
+        ));
     }
     // The URL parser is lenient (`http:///x` becomes `http://x/`, `\` becomes `/`): be strict.
-    if input.chars().any(|c| c.is_whitespace() || c == '\\' || c.is_control()) {
+    if input
+        .chars()
+        .any(|c| c.is_whitespace() || c == '\\' || c.is_control())
+    {
         return Err("The server address must not contain spaces or backslashes".into());
     }
-    if input.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("http://")) && input[7..].starts_with('/') {
+    if input
+        .get(..7)
+        .is_some_and(|p| p.eq_ignore_ascii_case("http://"))
+        && input[7..].starts_with('/')
+    {
         return Err("The server address needs a host name".into());
     }
     let url = url::Url::parse(input).map_err(|e| format!("Not a valid server address: {e}"))?;
@@ -71,7 +80,9 @@ pub fn normalize_edge_ai_url(input: &str) -> Result<Option<String>, String> {
     }
     let text = url.as_str().trim_end_matches('/');
     if text.len() > MAX_EDGE_AI_URL_LEN {
-        return Err(format!("The server address is longer than {MAX_EDGE_AI_URL_LEN} characters"));
+        return Err(format!(
+            "The server address is longer than {MAX_EDGE_AI_URL_LEN} characters"
+        ));
     }
     Ok(Some(text.to_string()))
 }
@@ -89,7 +100,10 @@ pub fn load(path: &Path) -> Settings {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Settings::default(),
         Err(e) => {
-            eprintln!("calliope: cannot read settings file {}: {e}", path.display());
+            eprintln!(
+                "calliope: cannot read settings file {}: {e}",
+                path.display()
+            );
             return Settings::default();
         }
     };
@@ -142,14 +156,23 @@ pub fn load(path: &Path) -> Settings {
         None | Some(serde_json::Value::Null) => {}
         Some(serde_json::Value::String(u)) => match normalize_edge_ai_url(u) {
             Ok(url) => s.edge_ai_url = url,
-            Err(e) => eprintln!("calliope: invalid edge_ai_url in {} ({e}); using default", path.display()),
+            Err(e) => eprintln!(
+                "calliope: invalid edge_ai_url in {} ({e}); using default",
+                path.display()
+            ),
         },
-        Some(v) => eprintln!("calliope: invalid edge_ai_url {v} in {} (not a string); using default", path.display()),
+        Some(v) => eprintln!(
+            "calliope: invalid edge_ai_url {v} in {} (not a string); using default",
+            path.display()
+        ),
     }
     match obj.get("keep_original") {
         None => {}
         Some(serde_json::Value::Bool(b)) => s.keep_original = *b,
-        Some(v) => eprintln!("calliope: invalid keep_original {v} in {} (not a boolean); using default", path.display()),
+        Some(v) => eprintln!(
+            "calliope: invalid keep_original {v} in {} (not a boolean); using default",
+            path.display()
+        ),
     }
     match obj.get("last_import_dir") {
         None | Some(serde_json::Value::Null) => {}
@@ -161,7 +184,10 @@ pub fn load(path: &Path) -> Settings {
             path.display()
         ),
     }
-    for (key, slot) in [("rc5_dir", &mut s.rc5_dir), ("export_dir", &mut s.export_dir)] {
+    for (key, slot) in [
+        ("rc5_dir", &mut s.rc5_dir),
+        ("export_dir", &mut s.export_dir),
+    ] {
         match obj.get(key) {
             None | Some(serde_json::Value::Null) => {}
             Some(serde_json::Value::String(d)) if Path::new(d).is_absolute() => {
@@ -178,7 +204,10 @@ pub fn load(path: &Path) -> Settings {
         Some(serde_json::Value::Number(n)) if n.as_u64().is_some_and(|m| (1..=99).contains(&m)) => {
             s.rc5_memory = n.as_u64().map(|m| m as u8);
         }
-        Some(v) => eprintln!("calliope: invalid rc5_memory {v} in {} (not 1..99); using none", path.display()),
+        Some(v) => eprintln!(
+            "calliope: invalid rc5_memory {v} in {} (not 1..99); using none",
+            path.display()
+        ),
     }
     s
 }
@@ -201,7 +230,10 @@ impl SettingsStore {
     }
 
     pub fn get(&self) -> Settings {
-        self.current.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.current
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn set_theme(&self, theme: Theme) -> std::io::Result<Settings> {
@@ -284,7 +316,10 @@ mod tests {
     use super::*;
 
     fn light() -> Settings {
-        Settings { theme: Theme::Light, ..Settings::default() }
+        Settings {
+            theme: Theme::Light,
+            ..Settings::default()
+        }
     }
 
     #[test]
@@ -294,7 +329,10 @@ mod tests {
 
     #[test]
     fn json_shape() {
-        assert_eq!(serde_json::to_string(&light()).unwrap(), r#"{"theme":"light","repository_root":null,"edge_ai_url":null,"keep_original":false,"last_import_dir":null,"rc5_dir":null,"export_dir":null,"rc5_memory":null}"#);
+        assert_eq!(
+            serde_json::to_string(&light()).unwrap(),
+            r#"{"theme":"light","repository_root":null,"edge_ai_url":null,"keep_original":false,"last_import_dir":null,"rc5_dir":null,"export_dir":null,"rc5_memory":null}"#
+        );
         let s: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
         assert_eq!(s, light());
     }
@@ -335,7 +373,10 @@ mod tests {
         let p = d.path().join("s.json");
         std::fs::write(&p, "[1,2]").unwrap();
         assert_eq!(load(&p), Settings::default());
-        assert_eq!(std::fs::read(d.path().join("s.json.bak")).unwrap(), b"[1,2]");
+        assert_eq!(
+            std::fs::read(d.path().join("s.json.bak")).unwrap(),
+            b"[1,2]"
+        );
     }
 
     #[test]
@@ -382,7 +423,11 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("s.json");
         for bad in [r#""rel/path""#, "5", "[]"] {
-            std::fs::write(&p, format!(r#"{{"theme":"light","repository_root":{bad}}}"#)).unwrap();
+            std::fs::write(
+                &p,
+                format!(r#"{{"theme":"light","repository_root":{bad}}}"#),
+            )
+            .unwrap();
             assert_eq!(load(&p), light());
             assert!(p.exists());
         }
@@ -396,36 +441,70 @@ mod tests {
     fn root_roundtrip_and_set_reset_persist() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("cfg/s.json");
-        let s = Settings { repository_root: Some(PathBuf::from("/abs/x")), ..Settings::default() };
+        let s = Settings {
+            repository_root: Some(PathBuf::from("/abs/x")),
+            ..Settings::default()
+        };
         save(&p, &s).unwrap();
         assert_eq!(load(&p), s);
         let store = SettingsStore::open(p.clone());
         let r = store.set_repository_root(None).unwrap();
         assert_eq!(r.repository_root, None);
         assert_eq!(SettingsStore::open(p.clone()).get().repository_root, None);
-        store.set_repository_root(Some(PathBuf::from("/abs/y"))).unwrap();
-        assert_eq!(SettingsStore::open(p).get().repository_root, Some(PathBuf::from("/abs/y")));
+        store
+            .set_repository_root(Some(PathBuf::from("/abs/y")))
+            .unwrap();
+        assert_eq!(
+            SettingsStore::open(p).get().repository_root,
+            Some(PathBuf::from("/abs/y"))
+        );
     }
 
     #[test]
     fn default_root_is_data_dir_calliope() {
-        assert_eq!(default_repository_root(Path::new("/d")), PathBuf::from("/d/calliope"));
+        assert_eq!(
+            default_repository_root(Path::new("/d")),
+            PathBuf::from("/d/calliope")
+        );
     }
 
     #[test]
     fn edge_ai_url_rules() {
         let ok = |i: &str| normalize_edge_ai_url(i).unwrap();
-        assert_eq!(ok("http://archserver:8765"), Some("http://archserver:8765".into()));
-        assert_eq!(ok("http://192.168.2.20:8765/"), Some("http://192.168.2.20:8765".into()));
-        assert_eq!(ok("http://h:8765/prefix"), Some("http://h:8765/prefix".into()));
-        assert_eq!(ok("  http://h:8765/prefix/  "), Some("http://h:8765/prefix".into()));
+        assert_eq!(
+            ok("http://archserver:8765"),
+            Some("http://archserver:8765".into())
+        );
+        assert_eq!(
+            ok("http://192.168.2.20:8765/"),
+            Some("http://192.168.2.20:8765".into())
+        );
+        assert_eq!(
+            ok("http://h:8765/prefix"),
+            Some("http://h:8765/prefix".into())
+        );
+        assert_eq!(
+            ok("  http://h:8765/prefix/  "),
+            Some("http://h:8765/prefix".into())
+        );
         assert_eq!(ok("http://[::1]:8765"), Some("http://[::1]:8765".into()));
         assert_eq!(ok(""), None);
         assert_eq!(ok("   "), None);
-        assert!(normalize_edge_ai_url("https://h:8765").unwrap_err().contains("Only http://"));
+        assert!(normalize_edge_ai_url("https://h:8765")
+            .unwrap_err()
+            .contains("Only http://"));
         for bad in [
-            "ftp://h", "http://u:p@h", "http://u@h", "http://h/?q", "http://h/#f", "http://", "http:///x", "h:8765",
-            "archserver", "file:///etc/passwd", "http://h:99999",
+            "ftp://h",
+            "http://u:p@h",
+            "http://u@h",
+            "http://h/?q",
+            "http://h/#f",
+            "http://",
+            "http:///x",
+            "h:8765",
+            "archserver",
+            "file:///etc/passwd",
+            "http://h:99999",
         ] {
             assert!(normalize_edge_ai_url(bad).is_err(), "{bad}");
         }
@@ -459,7 +538,10 @@ mod tests {
         store.set_export_dir(Some(PathBuf::from("/b"))).unwrap();
         store.set_rc5_memory(Some(99)).unwrap();
         let g = SettingsStore::open(q.clone()).get();
-        assert_eq!((g.rc5_dir, g.export_dir, g.rc5_memory), (Some("/a".into()), Some("/b".into()), Some(99)));
+        assert_eq!(
+            (g.rc5_dir, g.export_dir, g.rc5_memory),
+            (Some("/a".into()), Some("/b".into()), Some(99))
+        );
         store.set_rc5_dir(None).unwrap();
         store.set_export_dir(None).unwrap();
         store.set_rc5_memory(None).unwrap();
@@ -472,7 +554,11 @@ mod tests {
         let p = d.path().join("s.json");
         assert_eq!(Settings::default().edge_ai_url, None);
         assert!(!Settings::default().keep_original);
-        let s = Settings { edge_ai_url: Some("http://h:1".into()), keep_original: true, ..Settings::default() };
+        let s = Settings {
+            edge_ai_url: Some("http://h:1".into()),
+            keep_original: true,
+            ..Settings::default()
+        };
         save(&p, &s).unwrap();
         assert_eq!(load(&p), s);
     }
@@ -482,9 +568,21 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("s.json");
         for bad in ["\"https://h\"", "\"http://u:p@h\"", "5", "[]"] {
-            std::fs::write(&p, format!(r#"{{"theme":"light","keep_original":true,"edge_ai_url":{bad}}}"#)).unwrap();
+            std::fs::write(
+                &p,
+                format!(r#"{{"theme":"light","keep_original":true,"edge_ai_url":{bad}}}"#),
+            )
+            .unwrap();
             let s = load(&p);
-            assert_eq!(s, Settings { theme: Theme::Light, keep_original: true, ..Settings::default() }, "{bad}");
+            assert_eq!(
+                s,
+                Settings {
+                    theme: Theme::Light,
+                    keep_original: true,
+                    ..Settings::default()
+                },
+                "{bad}"
+            );
             assert!(p.exists() && !d.path().join("s.json.bak").exists());
         }
         std::fs::write(&p, r#"{"keep_original":"yes","edge_ai_url":"http://h:2/"}"#).unwrap();
@@ -498,7 +596,14 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("cfg/s.json");
         let store = SettingsStore::open(p.clone());
-        assert_eq!(store.set_edge_ai_url("http://a:1/").unwrap().edge_ai_url.as_deref(), Some("http://a:1"));
+        assert_eq!(
+            store
+                .set_edge_ai_url("http://a:1/")
+                .unwrap()
+                .edge_ai_url
+                .as_deref(),
+            Some("http://a:1")
+        );
         assert!(store.set_edge_ai_url("https://a").is_err());
         assert_eq!(store.get().edge_ai_url.as_deref(), Some("http://a:1"));
         assert!(store.set_keep_original(true).unwrap().keep_original);
@@ -533,8 +638,13 @@ mod tests {
 
         // 4. SettingsStore::set_last_import_dir(Some(..)) persists across SettingsStore::open
         let store = SettingsStore::open(p.clone());
-        store.set_last_import_dir(Some(PathBuf::from("/abs/dir"))).unwrap();
-        assert_eq!(SettingsStore::open(p.clone()).get().last_import_dir, Some(PathBuf::from("/abs/dir")));
+        store
+            .set_last_import_dir(Some(PathBuf::from("/abs/dir")))
+            .unwrap();
+        assert_eq!(
+            SettingsStore::open(p.clone()).get().last_import_dir,
+            Some(PathBuf::from("/abs/dir"))
+        );
 
         // 5. set_last_import_dir(None) clears it
         store.set_last_import_dir(None).unwrap();

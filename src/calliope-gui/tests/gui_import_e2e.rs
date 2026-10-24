@@ -23,7 +23,12 @@ const URL_OK: &str = "https://media.example/watch?v=ok";
 const LONG: Duration = Duration::from_secs(40);
 
 fn ready() -> bool {
-    have_display() && have("xdotool") && have("i3-msg") && have("ip") && have("unshare") && have("ffmpeg")
+    have_display()
+        && have("xdotool")
+        && have("i3-msg")
+        && have("ip")
+        && have("unshare")
+        && have("ffmpeg")
 }
 
 /// What the test must not change: the real user's app folders.
@@ -31,8 +36,14 @@ fn outside_fingerprint() -> BTreeMap<String, (u64, u64)> {
     let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
     let mut m = BTreeMap::new();
     fn walk(p: &Path, m: &mut BTreeMap<String, (u64, u64)>) {
-        let Ok(md) = std::fs::symlink_metadata(p) else { return };
-        let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as u64);
+        let Ok(md) = std::fs::symlink_metadata(p) else {
+            return;
+        };
+        let mtime = md
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos() as u64);
         m.insert(p.display().to_string(), (md.len(), mtime));
         if md.is_dir() {
             if let Ok(rd) = std::fs::read_dir(p) {
@@ -42,7 +53,12 @@ fn outside_fingerprint() -> BTreeMap<String, (u64, u64)> {
             }
         }
     }
-    for d in [".config/app.calliope.gui", ".local/share/app.calliope.gui", ".local/share/calliope", ".cache/app.calliope.gui"] {
+    for d in [
+        ".config/app.calliope.gui",
+        ".local/share/app.calliope.gui",
+        ".local/share/calliope",
+        ".cache/app.calliope.gui",
+    ] {
         walk(&home.join(d), &mut m);
     }
     m
@@ -65,22 +81,48 @@ impl Rig {
 
     /// `extra`: settings.json fields written before the start (`{media}` in a string is replaced
     /// by the media folder).
-    fn new_with_settings(test: &str, stub: &str, answers: &[String], extra: serde_json::Value) -> Rig {
+    fn new_with_settings(
+        test: &str,
+        stub: &str,
+        answers: &[String],
+        extra: serde_json::Value,
+    ) -> Rig {
         Rig::build(test, stub, false, answers, extra)
     }
 
-    fn build(test: &str, stub: &str, keep_original: bool, answers: &[String], extra: serde_json::Value) -> Rig {
+    fn build(
+        test: &str,
+        stub: &str,
+        keep_original: bool,
+        answers: &[String],
+        extra: serde_json::Value,
+    ) -> Rig {
         let outside_before = outside_fingerprint();
         let dirs = import_dirs(test);
         let media_dir = dirs.base().join("media").display().to_string();
-        let extra: serde_json::Value = serde_json::from_str(&extra.to_string().replace("{media}", &media_dir)).unwrap();
+        let extra: serde_json::Value =
+            serde_json::from_str(&extra.to_string().replace("{media}", &media_dir)).unwrap();
         std::fs::create_dir_all(dirs.app_config()).unwrap();
-        std::fs::write(dirs.app_config().join("settings.json"), serde_json::to_vec(&extra).unwrap()).unwrap();
+        std::fs::write(
+            dirs.app_config().join("settings.json"),
+            serde_json::to_vec(&extra).unwrap(),
+        )
+        .unwrap();
         let repo_before = snapshot(&dirs.repo());
         let media_before = snapshot(&dirs.base().join("media"));
-        let answers: Vec<String> = answers.iter().map(|a| a.replace("{media}", &dirs.base().join("media").display().to_string())).collect();
+        let answers: Vec<String> = answers
+            .iter()
+            .map(|a| a.replace("{media}", &dirs.base().join("media").display().to_string()))
+            .collect();
         let (app, wid) = start_import_app(&dirs, stub, keep_original, &answers);
-        Rig { dirs, app, wid, repo_before, media_before, outside_before }
+        Rig {
+            dirs,
+            app,
+            wid,
+            repo_before,
+            media_before,
+            outside_before,
+        }
     }
 
     fn wait(&mut self, what: &str) -> String {
@@ -94,7 +136,18 @@ impl Rig {
 
     /// Click on the page heading: the next Tab goes to the first control of the page.
     fn top(&self) {
-        let s = Command::new("xdotool").args(["mousemove", "--window", &self.wid, "700", "55", "click", "1"]).status().unwrap();
+        let s = Command::new("xdotool")
+            .args([
+                "mousemove",
+                "--window",
+                &self.wid,
+                "700",
+                "55",
+                "click",
+                "1",
+            ])
+            .status()
+            .unwrap();
         assert!(s.success());
         sleep_ms(150);
     }
@@ -115,7 +168,14 @@ impl Rig {
             0 => self.key("space"),
             n => self.key(&format!("{}space", "Down ".repeat(n))), // arrows only move the focus
         }
-        self.wait_ui(["source=url", "source=audio", "source=video", "source=directory"][radio]);
+        self.wait_ui(
+            [
+                "source=url",
+                "source=audio",
+                "source=video",
+                "source=directory",
+            ][radio],
+        );
     }
 
     /// From the source page with the URL radio chosen: type the URL and press Enter.
@@ -208,30 +268,58 @@ impl Rig {
     fn check_disk_tracks(&self, new_tracks: &[String], leftover: &[&str]) {
         let repo = self.dirs.repo();
         let now = snapshot(&repo);
-        let new_prefixes: Vec<String> = new_tracks.iter().map(|id| format!("tracks/{id}/")).collect();
+        let new_prefixes: Vec<String> = new_tracks
+            .iter()
+            .map(|id| format!("tracks/{id}/"))
+            .collect();
         for (k, v) in &self.repo_before {
-            assert_eq!(now.get(k), Some(v), "existing file changed or vanished: {k}");
+            assert_eq!(
+                now.get(k),
+                Some(v),
+                "existing file changed or vanished: {k}"
+            );
         }
         for k in now.keys() {
             if self.repo_before.contains_key(k) {
                 continue;
             }
             let ok = new_prefixes.iter().any(|p| k.starts_with(p.as_str()))
-                || leftover.iter().any(|p| k.starts_with(&format!("import-tmp/{p}")));
+                || leftover
+                    .iter()
+                    .any(|p| k.starts_with(&format!("import-tmp/{p}")));
             assert!(ok, "unexpected new file in the repository: {k}");
         }
-        assert_eq!(snapshot(&self.dirs.base().join("media")), self.media_before, "a source file changed");
+        assert_eq!(
+            snapshot(&self.dirs.base().join("media")),
+            self.media_before,
+            "a source file changed"
+        );
         let tracks = repo.join("tracks");
         for e in std::fs::read_dir(&tracks).unwrap() {
             let n = e.unwrap().file_name().to_string_lossy().to_string();
             assert!(!n.starts_with(".staging"), "staging folder left: {n}");
         }
         let left: Vec<_> = std::fs::read_dir(self.dirs.import_tmp())
-            .map(|r| r.map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect())
+            .map(|r| {
+                r.map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+                    .collect()
+            })
             .unwrap_or_default();
-        assert!(left.iter().all(|n| leftover.iter().any(|p| n.starts_with(p))), "import-tmp not clean: {left:?}");
-        assert!(self.dirs.trash().is_empty(), "something was trashed: {:?}", self.dirs.trash());
-        assert_eq!(outside_fingerprint(), self.outside_before, "the real user's folders changed");
+        assert!(
+            left.iter()
+                .all(|n| leftover.iter().any(|p| n.starts_with(p))),
+            "import-tmp not clean: {left:?}"
+        );
+        assert!(
+            self.dirs.trash().is_empty(),
+            "something was trashed: {:?}",
+            self.dirs.trash()
+        );
+        assert_eq!(
+            outside_fingerprint(),
+            self.outside_before,
+            "the real user's folders changed"
+        );
         self.app.no_csp_violation();
     }
 
@@ -248,20 +336,32 @@ impl Rig {
         let dir = self.dirs.track_dir(id);
         for s in stems {
             let f = dir.join(s["file"].as_str().unwrap());
-            assert!(std::fs::read(&f).unwrap().starts_with(b"fLaC"), "{} is not FLAC", f.display());
+            assert!(
+                std::fs::read(&f).unwrap().starts_with(b"fLaC"),
+                "{} is not FLAC",
+                f.display()
+            );
         }
-        let mut in_stems: Vec<String> = std::fs::read_dir(dir.join("stems")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+        let mut in_stems: Vec<String> = std::fs::read_dir(dir.join("stems"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
         in_stems.sort();
         assert_eq!(in_stems.len(), 6, "{in_stems:?}");
         assert!(json["stem_model"].is_string(), "{json}");
         if original {
             assert_eq!(json["original"], "original.flac");
-            assert!(std::fs::read(dir.join("original.flac")).unwrap().starts_with(b"fLaC"));
+            assert!(std::fs::read(dir.join("original.flac"))
+                .unwrap()
+                .starts_with(b"fLaC"));
         } else {
             assert!(json["original"].is_null(), "{json}");
             assert!(!dir.join("original.flac").exists());
         }
-        let mut top: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+        let mut top: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
         top.sort();
         let mut want = vec!["stems".to_string(), "track.json".to_string()];
         if original {
@@ -340,7 +440,10 @@ fn import_url_happy_path() {
     r.top();
     r.key("Tab Return"); // Show in Library
     r.app.wait_view("library");
-    r.app.wait_line(|l| l.contains("library root=") && field(l, "tracks") == "7", LONG);
+    r.app.wait_line(
+        |l| l.contains("library root=") && field(l, "tracks") == "7",
+        LONG,
+    );
     settle();
     shot("import-library-badge");
     let fake = r.dirs.ytdlp_log();
@@ -362,8 +465,17 @@ fn import_url_invalid() {
     assert!(l.contains("message=Entered URL is invalid"), "{l}");
     settle();
     shot("import-url-invalid");
-    assert!(r.dirs.ytdlp_log().is_empty(), "yt-dlp ran for an invalid URL");
-    assert!(!r.app.all_lines().iter().any(|l| l.contains("import phase=")), "a job started");
+    assert!(
+        r.dirs.ytdlp_log().is_empty(),
+        "yt-dlp ran for an invalid URL"
+    );
+    assert!(
+        !r.app
+            .all_lines()
+            .iter()
+            .any(|l| l.contains("import phase=")),
+        "a job started"
+    );
     r.check_disk(None);
 }
 
@@ -377,7 +489,10 @@ fn import_url_http_403() {
     r.open_source(0);
     r.enter_url("https://media.example/http403");
     let l = r.wait_ui("error stage=download");
-    assert!(l.contains("message=Error 403 when attempting download"), "{l}");
+    assert!(
+        l.contains("message=Error 403 when attempting download"),
+        "{l}"
+    );
     settle();
     shot("import-url-403");
     r.check_disk_with(None, &["url-"]);
@@ -396,7 +511,13 @@ fn resume_flow(test: &str, resume: bool) {
             .into_iter()
             .flatten()
             .flatten()
-            .any(|d| std::fs::read_dir(d.path()).into_iter().flatten().flatten().any(|f| f.file_name().to_string_lossy().ends_with(".part")))
+            .any(|d| {
+                std::fs::read_dir(d.path())
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .any(|f| f.file_name().to_string_lossy().ends_with(".part"))
+            })
     };
     until(20, "a partial download", part);
     shot("import-downloading");
@@ -410,21 +531,62 @@ fn resume_flow(test: &str, resume: bool) {
     settle();
     shot("import-resume-prompt");
     r.top();
-    r.key(if resume { "Tab Tab Return" } else { "Tab Tab Tab Return" }); // Back, Resume [, Start Over]
-    r.wait_ui(if resume { "prompt-answer=resume" } else { "prompt-answer=start-over" });
-    r.wait_ui("phase=ready");
-    let fake: Vec<serde_json::Value> = r.dirs.ytdlp_log().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
-    assert_eq!(fake.len(), 2, "{fake:?}");
-    let argv = |v: &serde_json::Value| v["argv"].as_array().unwrap().iter().map(|a| a.as_str().unwrap().to_string()).collect::<Vec<_>>();
-    if resume {
-        assert!(argv(&fake[1]).iter().any(|a| a == "--continue"), "{:?}", fake[1]);
-        assert!(fake[1]["resume_from"].as_u64().unwrap() > 0, "{:?}", fake[1]);
+    r.key(if resume {
+        "Tab Tab Return"
     } else {
-        assert!(!argv(&fake[1]).iter().any(|a| a == "--continue"), "{:?}", fake[1]);
-        assert_eq!(fake[1]["resume_from"].as_u64().unwrap_or(0), 0, "{:?}", fake[1]);
+        "Tab Tab Tab Return"
+    }); // Back, Resume [, Start Over]
+    r.wait_ui(if resume {
+        "prompt-answer=resume"
+    } else {
+        "prompt-answer=start-over"
+    });
+    r.wait_ui("phase=ready");
+    let fake: Vec<serde_json::Value> = r
+        .dirs
+        .ytdlp_log()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(fake.len(), 2, "{fake:?}");
+    let argv = |v: &serde_json::Value| {
+        v["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a.as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    if resume {
+        assert!(
+            argv(&fake[1]).iter().any(|a| a == "--continue"),
+            "{:?}",
+            fake[1]
+        );
+        assert!(
+            fake[1]["resume_from"].as_u64().unwrap() > 0,
+            "{:?}",
+            fake[1]
+        );
+    } else {
+        assert!(
+            !argv(&fake[1]).iter().any(|a| a == "--continue"),
+            "{:?}",
+            fake[1]
+        );
+        assert_eq!(
+            fake[1]["resume_from"].as_u64().unwrap_or(0),
+            0,
+            "{:?}",
+            fake[1]
+        );
     }
     settle();
-    shot(if resume { "import-resumed" } else { "import-started-over" });
+    shot(if resume {
+        "import-resumed"
+    } else {
+        "import-started-over"
+    });
     // Finish the import: the temp folder is cleaned.
     r.extract();
     let (id, json) = r.saved();
@@ -457,7 +619,12 @@ fn import_local_audio() {
     if !ready() {
         return;
     }
-    let mut r = Rig::new("import_local_audio", "ok", false, &["import-audio {media}/tagged.ogg".into()]);
+    let mut r = Rig::new(
+        "import_local_audio",
+        "ok",
+        false,
+        &["import-audio {media}/tagged.ogg".into()],
+    );
     r.open_source(1);
     shot("import-source-audio");
     r.browse();
@@ -467,7 +634,10 @@ fn import_local_audio() {
     r.extract();
     let (id, json) = r.saved();
     r.check_stem_track(&id, &json, false);
-    assert_eq!(json["title"], "Glass Harbour", "fields are prefilled from the tags");
+    assert_eq!(
+        json["title"], "Glass Harbour",
+        "fields are prefilled from the tags"
+    );
     assert_eq!(json["band"], "The Example Band");
     r.check_disk(Some(&id));
     r.assert_no_children();
@@ -479,7 +649,12 @@ fn import_drops_empty_stems() {
     if !ready() {
         return;
     }
-    let mut r = Rig::new("import_drops_empty_stems", "sparse", false, &["import-audio {media}/tagged.ogg".into()]);
+    let mut r = Rig::new(
+        "import_drops_empty_stems",
+        "sparse",
+        false,
+        &["import-audio {media}/tagged.ogg".into()],
+    );
     r.open_source(1);
     r.browse();
     r.wait_ui("phase=ready");
@@ -489,17 +664,32 @@ fn import_drops_empty_stems() {
     settle();
     shot("import-done-dropped");
     let want = "stem=other dropped audible_s=9.5 min_audible_s=15.0 level_dbfs=-40 source=server";
-    assert!(r.app.all_lines().iter().any(|l| l.contains(want)), "no `{want}` in the app's stderr");
+    assert!(
+        r.app.all_lines().iter().any(|l| l.contains(want)),
+        "no `{want}` in the app's stderr"
+    );
     assert_eq!(json["type"], "stem");
-    let mut names: Vec<&str> = json["stems"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
+    let mut names: Vec<&str> = json["stems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
     names.sort();
     assert_eq!(names, ["bass", "drums", "guitar", "vocals"]);
     let dir = r.dirs.track_dir(&id);
     for s in json["stems"].as_array().unwrap() {
         let f = dir.join(s["file"].as_str().unwrap());
-        assert!(std::fs::read(&f).unwrap().starts_with(b"fLaC"), "{} is not FLAC", f.display());
+        assert!(
+            std::fs::read(&f).unwrap().starts_with(b"fLaC"),
+            "{} is not FLAC",
+            f.display()
+        );
     }
-    let mut on_disk: Vec<String> = std::fs::read_dir(dir.join("stems")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    let mut on_disk: Vec<String> = std::fs::read_dir(dir.join("stems"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
     on_disk.sort();
     assert_eq!(on_disk.len(), 4, "{on_disk:?}");
     for n in ["piano", "other"] {
@@ -509,7 +699,13 @@ fn import_drops_empty_stems() {
     let log = r.dirs.stems_log();
     let fetches = |name: &str| {
         log.lines()
-            .filter(|l| l.contains("request method=GET") && l.split_whitespace().any(|w| w.strip_prefix("path=").is_some_and(|p| p.ends_with(&format!("/stems/{name}")))))
+            .filter(|l| {
+                l.contains("request method=GET")
+                    && l.split_whitespace().any(|w| {
+                        w.strip_prefix("path=")
+                            .is_some_and(|p| p.ends_with(&format!("/stems/{name}")))
+                    })
+            })
             .count()
     };
     for n in ["piano", "other"] {
@@ -528,7 +724,12 @@ fn import_boundary_stems() {
     if !ready() {
         return;
     }
-    let mut r = Rig::new("import_boundary_stems", "boundary", false, &["import-audio {media}/tagged.ogg".into()]);
+    let mut r = Rig::new(
+        "import_boundary_stems",
+        "boundary",
+        false,
+        &["import-audio {media}/tagged.ogg".into()],
+    );
     r.open_source(1);
     r.browse();
     r.wait_ui("phase=ready");
@@ -537,12 +738,23 @@ fn import_boundary_stems() {
     assert!(line.contains("dropped=piano,other"), "{line}");
     settle();
     shot("import-done-boundary");
-    let mut names: Vec<&str> = json["stems"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
+    let mut names: Vec<&str> = json["stems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
     names.sort();
     assert_eq!(names, ["bass", "drums", "guitar", "vocals"]);
     let log = r.dirs.stems_log();
     for n in ["other", "piano"] {
-        let fetched = log.lines().any(|l| l.contains("request method=GET") && l.split_whitespace().any(|w| w.strip_prefix("path=").is_some_and(|p| p.ends_with(&format!("/stems/{n}")))));
+        let fetched = log.lines().any(|l| {
+            l.contains("request method=GET")
+                && l.split_whitespace().any(|w| {
+                    w.strip_prefix("path=")
+                        .is_some_and(|p| p.ends_with(&format!("/stems/{n}")))
+                })
+        });
         assert!(!fetched, "{n} was fetched:\n{log}");
     }
     r.check_disk(Some(&id));
@@ -555,7 +767,12 @@ fn import_local_video() {
     if !ready() {
         return;
     }
-    let mut r = Rig::new("import_local_video", "ok", false, &["import-video {media}/with-audio.mp4".into()]);
+    let mut r = Rig::new(
+        "import_local_video",
+        "ok",
+        false,
+        &["import-video {media}/with-audio.mp4".into()],
+    );
     r.open_source(2);
     shot("import-source-video");
     r.browse();
@@ -587,7 +804,13 @@ fn import_typed_audio_path() {
     r.wait_ui("phase=ready");
     settle();
     shot("import-path-audio-edit");
-    assert!(!r.app.all_lines().iter().any(|l| l.contains("dialog kind=import")), "no dialog may open");
+    assert!(
+        !r.app
+            .all_lines()
+            .iter()
+            .any(|l| l.contains("dialog kind=import")),
+        "no dialog may open"
+    );
     r.extract();
     let (id, json) = r.saved();
     r.check_stem_track(&id, &json, false);
@@ -629,20 +852,37 @@ fn import_typed_path_errors() {
     r.open_source(1);
     r.type_path(&format!("{media}/nothing-here.mp3"));
     let l = r.wait_ui("error stage=ui");
-    assert!(l.ends_with(&format!("message=No file found at {media}/nothing-here.mp3")), "{l}");
+    assert!(
+        l.ends_with(&format!(
+            "message=No file found at {media}/nothing-here.mp3"
+        )),
+        "{l}"
+    );
     r.retype_path(&media);
     let l = r.wait_ui("error stage=ui");
-    assert!(l.ends_with(&format!("message={media} is a folder, not a file")), "{l}");
+    assert!(
+        l.ends_with(&format!("message={media} is a folder, not a file")),
+        "{l}"
+    );
     // switch to Local Video File (the radio group is before the box) and type an audio file
     r.key("shift+Tab Down space");
     r.wait_ui("source=video");
     r.type_path(&format!("{media}/tagged.mp3"));
     let l = r.wait_ui("error stage=ui");
-    assert!(l.ends_with("message=\"tagged.mp3\" is not a video file"), "{l}");
+    assert!(
+        l.ends_with("message=\"tagged.mp3\" is not a video file"),
+        "{l}"
+    );
     settle();
     shot("import-path-error");
-    assert!(!r.app.all_lines().iter().any(|l| l.contains("import job=")), "a job was started");
-    assert!(!r.app.all_lines().iter().any(|l| l.contains("phase=ready")), "a job became ready");
+    assert!(
+        !r.app.all_lines().iter().any(|l| l.contains("import job=")),
+        "a job was started"
+    );
+    assert!(
+        !r.app.all_lines().iter().any(|l| l.contains("phase=ready")),
+        "a job became ready"
+    );
     r.check_disk(None);
     r.assert_no_children();
 }
@@ -653,14 +893,25 @@ fn import_browse_fills_path() {
     if !ready() {
         return;
     }
-    let mut r = Rig::new("import_browse_fills_path", "ok", false, &["import-audio {media}/tagged.ogg".into()]);
+    let mut r = Rig::new(
+        "import_browse_fills_path",
+        "ok",
+        false,
+        &["import-audio {media}/tagged.ogg".into()],
+    );
     r.open_source(1);
     r.key("Tab Tab Return");
     r.wait("dialog kind=import-audio result=picked");
     r.wait_ui("path-picked");
     settle();
     shot("import-path-browsed");
-    assert!(!r.app.all_lines().iter().any(|l| l.contains("phase=preparing")), "Browse must not start the import");
+    assert!(
+        !r.app
+            .all_lines()
+            .iter()
+            .any(|l| l.contains("phase=preparing")),
+        "Browse must not start the import"
+    );
     r.key("Return");
     r.wait_ui("phase=ready");
     r.extract();
@@ -676,14 +927,25 @@ fn import_video_without_audio() {
     if !ready() {
         return;
     }
-    let mut r = Rig::new("import_video_without_audio", "ok", false, &["import-video {media}/no-audio.mp4".into()]);
+    let mut r = Rig::new(
+        "import_video_without_audio",
+        "ok",
+        false,
+        &["import-video {media}/no-audio.mp4".into()],
+    );
     r.open_source(2);
     r.browse();
     let l = r.wait_ui("error stage=");
-    assert!(l.ends_with("message=Selected file no-audio.mp4 has no audio track"), "{l}");
+    assert!(
+        l.ends_with("message=Selected file no-audio.mp4 has no audio track"),
+        "{l}"
+    );
     settle();
     shot("import-video-no-audio");
-    assert!(!r.app.all_lines().iter().any(|l| l.contains("phase=Ready")), "a job became ready");
+    assert!(
+        !r.app.all_lines().iter().any(|l| l.contains("phase=Ready")),
+        "a job became ready"
+    );
     r.check_disk(None);
     r.assert_no_children();
 }
@@ -694,17 +956,32 @@ fn import_sixteen_minute_file_refused() {
     if !ready() {
         return;
     }
-    let mut r = Rig::new("import_sixteen_minute_file_refused", "ok", false, &["import-audio {media}/long.flac".into()]);
+    let mut r = Rig::new(
+        "import_sixteen_minute_file_refused",
+        "ok",
+        false,
+        &["import-audio {media}/long.flac".into()],
+    );
     r.open_source(1);
     r.browse();
     let l = r.wait_ui("error stage=");
-    assert!(l.ends_with("message=Tracks longer than 15 minutes are not supported"), "{l}");
+    assert!(
+        l.ends_with("message=Tracks longer than 15 minutes are not supported"),
+        "{l}"
+    );
     settle();
     shot("import-too-long");
     // Nothing was sent: the server saw only the start-up health check.
     let log = r.dirs.stems_log();
-    assert!(!log.contains("method=POST") && !log.contains("method=PUT") && !log.contains("job id="), "{log}");
-    assert!(!r.app.all_lines().iter().any(|l| l.contains("phase=uploading")));
+    assert!(
+        !log.contains("method=POST") && !log.contains("method=PUT") && !log.contains("job id="),
+        "{log}"
+    );
+    assert!(!r
+        .app
+        .all_lines()
+        .iter()
+        .any(|l| l.contains("phase=uploading")));
     r.check_disk(None);
     r.assert_no_children();
 }
@@ -715,7 +992,12 @@ fn import_cancel_while_working() {
     if !ready() {
         return;
     }
-    let mut r = Rig::new("import_cancel_while_working", "slow", false, &["import-audio {media}/untagged.flac".into()]);
+    let mut r = Rig::new(
+        "import_cancel_while_working",
+        "slow",
+        false,
+        &["import-audio {media}/untagged.flac".into()],
+    );
     r.open_source(1);
     r.browse();
     r.wait_ui("phase=ready");
@@ -726,7 +1008,9 @@ fn import_cancel_while_working() {
     r.cancel();
     let l = r.wait_ui("phase=cancelled");
     assert!(l.contains("phase=cancelled"));
-    until(10, "the server job deleted", || r.dirs.stems_log().contains(" deleted") || r.dirs.stems_log().contains("method=DELETE"));
+    until(10, "the server job deleted", || {
+        r.dirs.stems_log().contains(" deleted") || r.dirs.stems_log().contains("method=DELETE")
+    });
     settle();
     shot("import-cancelled-back-to-edit");
     // Back on the edit pane: nothing was saved; Extract works again and finishes.
@@ -744,7 +1028,12 @@ fn import_keep_original() {
     if !ready() {
         return;
     }
-    let mut r = Rig::new("import_keep_original", "ok", false, &["import-audio {media}/tagged.mp3".into()]);
+    let mut r = Rig::new(
+        "import_keep_original",
+        "ok",
+        false,
+        &["import-audio {media}/tagged.mp3".into()],
+    );
     r.open_source(1);
     r.browse();
     r.wait_ui("phase=ready");
@@ -758,7 +1047,9 @@ fn import_keep_original() {
     settle();
     r.key("Tab Tab Tab space");
     r.wait("calliope-ui: settings keep_original=true");
-    let s: serde_json::Value = serde_json::from_slice(&std::fs::read(r.dirs.app_config().join("settings.json")).unwrap()).unwrap();
+    let s: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(r.dirs.app_config().join("settings.json")).unwrap())
+            .unwrap();
     assert_eq!(s["keep_original"], true);
     shot("import-settings-keep-original");
     r.key("alt+2");
@@ -779,19 +1070,34 @@ fn import_close_window_during_extraction() {
     if !ready() {
         return;
     }
-    let mut r = Rig::new("import_close_window_during_extraction", "hang", false, &["import-audio {media}/untagged.flac".into()]);
+    let mut r = Rig::new(
+        "import_close_window_during_extraction",
+        "hang",
+        false,
+        &["import-audio {media}/untagged.flac".into()],
+    );
     r.open_source(1);
     r.browse();
     r.wait_ui("phase=ready");
     r.extract();
     r.wait_ui("phase=working");
-    until(10, "the stub separator running", || r.app.leftovers().iter().any(|(_, c)| c.contains("stub-separator")));
+    until(10, "the stub separator running", || {
+        r.app
+            .leftovers()
+            .iter()
+            .any(|(_, c)| c.contains("stub-separator"))
+    });
     let wid = r.wid.clone();
     r.app.close_gracefully(&wid);
     until(10, "no child process left", || {
-        !r.app.leftovers().iter().any(|(_, c)| is_tool_child(c) || runs_program(c, "calliope-gui"))
+        !r.app
+            .leftovers()
+            .iter()
+            .any(|(_, c)| is_tool_child(c) || runs_program(c, "calliope-gui"))
     });
-    until(10, "the DELETE reaching the server", || r.dirs.stems_log().contains("method=DELETE"));
+    until(10, "the DELETE reaching the server", || {
+        r.dirs.stems_log().contains("method=DELETE")
+    });
     r.assert_no_children();
     assert!(r.dirs.track_ids().len() == 6);
     // The interrupted job's prepared audio stays in import-tmp (removed at the next import start).
@@ -808,7 +1114,10 @@ fn import_network_is_loopback_only() {
     assert_loopback_only(&r.app);
     // From the test's own namespace the app's server is not reachable, and from a fresh
     // namespace nothing outside loopback exists.
-    let o = Command::new("unshare").args(["-rn", "sh", "-c", "ip -o link | cut -d: -f2 | tr -d ' '"]).output().unwrap();
+    let o = Command::new("unshare")
+        .args(["-rn", "sh", "-c", "ip -o link | cut -d: -f2 | tr -d ' '"])
+        .output()
+        .unwrap();
     assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "lo");
 }
 
@@ -839,8 +1148,17 @@ fn import_browse_start_folders() {
     if !ready() {
         return;
     }
-    let answers: Vec<String> = ["import-audio CANCEL"; 4].iter().map(|s| s.to_string()).chain(["import-directory {media}/album".to_string()]).collect();
-    let mut r = Rig::new_with_settings("import_browse_start_folders", "ok", &answers, serde_json::json!({"last_import_dir": "{media}"}));
+    let answers: Vec<String> = ["import-audio CANCEL"; 4]
+        .iter()
+        .map(|s| s.to_string())
+        .chain(["import-directory {media}/album".to_string()])
+        .collect();
+    let mut r = Rig::new_with_settings(
+        "import_browse_start_folders",
+        "ok",
+        &answers,
+        serde_json::json!({"last_import_dir": "{media}"}),
+    );
     let media = r.media();
     r.open_source(1);
     // empty box: the remembered folder
@@ -858,7 +1176,10 @@ fn import_browse_start_folders() {
     r.type_in_box_then_browse_focus(&format!("{media}/nope.mp3"));
     r.key("Return");
     r.wait_dialog_start("import-audio", "last", &media);
-    assert!(!r.app.all_lines().iter().any(|l| l.contains("import job=")), "a job started");
+    assert!(
+        !r.app.all_lines().iter().any(|l| l.contains("import job=")),
+        "a job started"
+    );
 
     // Local Directory: the folder dialog; the choice fills the box
     r.key("shift+Tab shift+Tab Down Down space");
@@ -872,21 +1193,45 @@ fn import_browse_start_folders() {
     r.key("shift+Tab shift+Tab");
     r.retype_path(&format!("{media}/no-songs"));
     let l = r.wait_ui("error stage=ui");
-    assert!(l.ends_with(&format!("message=Directory {media}/no-songs has no audio files")), "{l}");
+    assert!(
+        l.ends_with(&format!(
+            "message=Directory {media}/no-songs has no audio files"
+        )),
+        "{l}"
+    );
     settle();
     shot("import-directory-no-audio");
     r.retype_path(&format!("{media}/tagged.mp3"));
     let l = r.wait_ui("error stage=ui");
-    assert!(l.ends_with(&format!("message={media}/tagged.mp3 is not a folder")), "{l}");
-    assert!(!r.app.all_lines().iter().any(|l| l.contains("import job=") || l.contains("import batch")), "a job started");
+    assert!(
+        l.ends_with(&format!("message={media}/tagged.mp3 is not a folder")),
+        "{l}"
+    );
+    assert!(
+        !r.app
+            .all_lines()
+            .iter()
+            .any(|l| l.contains("import job=") || l.contains("import batch")),
+        "a job started"
+    );
     r.check_disk(None);
     r.assert_no_children();
 }
 
 /// The `calliope: track` ids that are not in the starting library.
 fn new_tracks(r: &Rig) -> Vec<(String, serde_json::Value)> {
-    let before: Vec<String> = r.repo_before.keys().filter_map(|k| k.strip_prefix("tracks/").and_then(|k| k.split('/').next())).map(String::from).collect();
-    r.dirs.track_ids().into_iter().filter(|id| !before.contains(id)).map(|id| (id.clone(), r.dirs.json(&id))).collect()
+    let before: Vec<String> = r
+        .repo_before
+        .keys()
+        .filter_map(|k| k.strip_prefix("tracks/").and_then(|k| k.split('/').next()))
+        .map(String::from)
+        .collect();
+    r.dirs
+        .track_ids()
+        .into_iter()
+        .filter(|id| !before.contains(id))
+        .map(|id| (id.clone(), r.dirs.json(&id)))
+        .collect()
 }
 
 #[test]
@@ -895,7 +1240,15 @@ fn import_directory_batch() {
     if !ready() {
         return;
     }
-    let mut r = Rig::new("import_directory_batch", "seq:slow,ok", false, &["import-directory {media}/album".into(), "import-audio CANCEL".into()]);
+    let mut r = Rig::new(
+        "import_directory_batch",
+        "seq:slow,ok",
+        false,
+        &[
+            "import-directory {media}/album".into(),
+            "import-audio CANCEL".into(),
+        ],
+    );
     let media = r.media();
     let home = r.dirs.base().join("home").display().to_string();
     r.open_source(3);
@@ -915,18 +1268,39 @@ fn import_directory_batch() {
     shot("import-batch-summary");
     let tracks = new_tracks(&r);
     assert_eq!(tracks.len(), 2);
-    let mut titles: Vec<String> = tracks.iter().map(|(_, j)| j["title"].as_str().unwrap().to_string()).collect();
+    let mut titles: Vec<String> = tracks
+        .iter()
+        .map(|(_, j)| j["title"].as_str().unwrap().to_string())
+        .collect();
     titles.sort();
     assert_eq!(titles, ["Glass Harbour", "a"]);
     for (id, j) in &tracks {
         r.check_stem_track(id, j, false);
     }
-    let s: serde_json::Value = serde_json::from_slice(&std::fs::read(r.dirs.app_config().join("settings.json")).unwrap()).unwrap();
-    assert_eq!(s["last_import_dir"], format!("{media}/album"), "the directory itself is remembered");
+    let s: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(r.dirs.app_config().join("settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        s["last_import_dir"],
+        format!("{media}/album"),
+        "the directory itself is remembered"
+    );
     for l in ["batch file=1/2 name=a.flac", "batch file=2/2 name=b.mp3"] {
-        assert!(r.app.all_lines().iter().any(|x| x.contains(&format!("calliope: import {l}")) || x.contains(&format!("calliope-ui: import {l}"))), "{l}");
+        assert!(
+            r.app
+                .all_lines()
+                .iter()
+                .any(|x| x.contains(&format!("calliope: import {l}"))
+                    || x.contains(&format!("calliope-ui: import {l}"))),
+            "{l}"
+        );
     }
-    assert!(r.app.all_lines().iter().any(|l| l.contains("calliope: import batch job=") && l.contains("finished saved=2 failed=0")));
+    assert!(r
+        .app
+        .all_lines()
+        .iter()
+        .any(|l| l.contains("calliope: import batch job=")
+            && l.contains("finished saved=2 failed=0")));
     // Import another track, Local Audio File, Browse with an empty box: the folder of the batch.
     r.top();
     r.key("Tab Tab Return"); // Show in Library, Import another track
@@ -947,7 +1321,12 @@ fn import_directory_one_fails() {
     if !ready() {
         return;
     }
-    let mut r = Rig::new_with_settings("import_directory_one_fails", "seq:ok,fail,ok", &[], serde_json::json!({"theme": "light"}));
+    let mut r = Rig::new_with_settings(
+        "import_directory_one_fails",
+        "seq:ok,fail,ok",
+        &[],
+        serde_json::json!({"theme": "light"}),
+    );
     r.open_source(3);
     let three = format!("{}/three", r.media());
     r.type_path(&three);
@@ -993,7 +1372,9 @@ fn import_directory_cancel() {
     r.wait_ui("batch cancelled saved=1 of=3");
     settle();
     shot("import-batch-cancelled");
-    until(10, "the server job deleted", || r.dirs.stems_log().contains("method=DELETE"));
+    until(10, "the server job deleted", || {
+        r.dirs.stems_log().contains("method=DELETE")
+    });
     let tracks = new_tracks(&r);
     assert_eq!(tracks.len(), 1);
     r.check_stem_track(&tracks[0].0, &tracks[0].1, false);

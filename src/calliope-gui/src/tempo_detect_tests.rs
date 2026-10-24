@@ -5,7 +5,10 @@ struct Lcg(u64);
 impl Lcg {
     /// Uniform in -1..1.
     fn next(&mut self) -> f64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((self.0 >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
     }
 }
@@ -37,14 +40,20 @@ fn bpms(d: &Detected) -> Vec<f64> {
 /// Same number of sections, each BPM within `tol` of the expected one.
 fn assert_bpms(d: &Detected, want: &[f64], tol: f64, what: &str) {
     let got = bpms(d);
-    assert!(got.len() == want.len() && got.iter().zip(want).all(|(g, w)| (g - w).abs() <= tol), "{what}: {got:?} vs {want:?}");
+    assert!(
+        got.len() == want.len() && got.iter().zip(want).all(|(g, w)| (g - w).abs() <= tol),
+        "{what}: {got:?} vs {want:?}"
+    );
 }
 
 fn on_fine_grid(d: &Detected) {
     for k in 1..d.map.segments.len() {
         let (l, s) = (&d.map.segments[k - 1], &d.map.segments[k]);
         let steps = (s.start_ms - l.start_ms) / fine_ms(l.bpm);
-        assert!((steps - steps.round()).abs() * fine_ms(l.bpm) < 1e-6, "change {k} off the grid: {steps}");
+        assert!(
+            (steps - steps.round()).abs() * fine_ms(l.bpm) < 1e-6,
+            "change {k} off the grid: {steps}"
+        );
         assert_eq!(s.detected_ms, Some(s.start_ms));
     }
     assert_eq!(d.map.segments[0].detected_ms, None);
@@ -60,7 +69,11 @@ fn steady_120_with_and_without_jitter() {
     for (jitter, seed) in [(0.0, 1), (10.0, 2), (10.0, 3)] {
         let d = run(&[(40, 120.0)], jitter, seed);
         assert_eq!(bpms(&d), vec![120.0]);
-        assert!((d.map.segments[0].start_ms - 500.0).abs() < 5.0, "{}", d.map.segments[0].start_ms);
+        assert!(
+            (d.map.segments[0].start_ms - 500.0).abs() < 5.0,
+            "{}",
+            d.map.segments[0].start_ms
+        );
         assert_eq!(d.bar_beats, 4);
     }
 }
@@ -74,8 +87,20 @@ fn stub_ok_pattern_is_exact() {
     assert_eq!(
         d.map.segments,
         vec![
-            Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false, meta: SectionMeta::default() },
-            Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6500.0), on_beat: false, meta: SectionMeta::default() },
+            Segment {
+                start_ms: 500.0,
+                bpm: 120.0,
+                detected_ms: None,
+                on_beat: false,
+                meta: SectionMeta::default()
+            },
+            Segment {
+                start_ms: 6500.0,
+                bpm: 90.0,
+                detected_ms: Some(6500.0),
+                on_beat: false,
+                meta: SectionMeta::default()
+            },
         ]
     );
 }
@@ -95,7 +120,10 @@ fn stub_steady_and_bar_end_patterns() {
     assert_eq!(d.map.segments[1].start_ms, 14500.0);
 
     // The stub's bar-end on 16 s: the last bar (4 beats, 3 intervals) has no beat after it.
-    let stub: Vec<f64> = (0..24).map(|i| 0.5 + i as f64 * 0.5).chain((0..4).map(|i| 12.5 + i as f64)).collect();
+    let stub: Vec<f64> = (0..24)
+        .map(|i| 0.5 + i as f64 * 0.5)
+        .chain((0..4).map(|i| 12.5 + i as f64))
+        .collect();
     let down: Vec<f64> = stub.iter().step_by(4).copied().collect();
     let d = detect(&stub, &down, 4).unwrap();
     assert_eq!(bpms(&d), vec![120.0]);
@@ -106,7 +134,10 @@ fn stub_steady_and_bar_end_patterns() {
         assert_bpms(&d, &[120.0], 2.0, "jittered bar-end");
     }
     // A final bar only 3 % slower is not a section.
-    let near: Vec<f64> = (0..24).map(|i| 0.5 + i as f64 * 0.5).chain((0..4).map(|i| 12.5 + i as f64 * 0.515)).collect();
+    let near: Vec<f64> = (0..24)
+        .map(|i| 0.5 + i as f64 * 0.5)
+        .chain((0..4).map(|i| 12.5 + i as f64 * 0.515))
+        .collect();
     assert_eq!(detect(&near, &down, 4).unwrap().map.segments.len(), 1);
 }
 
@@ -117,7 +148,10 @@ fn three_tempos_each_change_on_the_fine_grid() {
         assert_eq!(bpms(&d), vec![120.0, 90.0, 140.0], "jitter {jitter}");
         on_fine_grid(&d);
         // The changes are within a few ms of the true ones.
-        let truth = [500.0 + 12.0 * 2000.0, 500.0 + 24000.0 + 10.0 * 4.0 * 60000.0 / 90.0];
+        let truth = [
+            500.0 + 12.0 * 2000.0,
+            500.0 + 24000.0 + 10.0 * 4.0 * 60000.0 / 90.0,
+        ];
         for (s, t) in d.map.segments[1..].iter().zip(truth) {
             assert!((s.start_ms - t).abs() < 15.0, "{} vs {t}", s.start_ms);
         }
@@ -128,10 +162,20 @@ fn three_tempos_each_change_on_the_fine_grid() {
 fn one_bar_sections() {
     for (jitter, seed) in [(0.0, 1), (10.0, 4), (10.0, 5)] {
         let d = run(&[(20, 120.0), (1, 100.0), (20, 120.0)], jitter, seed);
-        assert_bpms(&d, &[120.0, 100.0, 120.0], if jitter == 0.0 { 0.05 } else { 1.0 }, "mid");
+        assert_bpms(
+            &d,
+            &[120.0, 100.0, 120.0],
+            if jitter == 0.0 { 0.05 } else { 1.0 },
+            "mid",
+        );
         on_fine_grid(&d);
         let d = run(&[(30, 120.0), (1, 90.0)], jitter, seed);
-        assert_bpms(&d, &[120.0, 90.0], if jitter == 0.0 { 0.05 } else { 1.0 }, "end");
+        assert_bpms(
+            &d,
+            &[120.0, 90.0],
+            if jitter == 0.0 { 0.05 } else { 1.0 },
+            "end",
+        );
         on_fine_grid(&d);
         assert!((d.sections[1].start_ms - (500.0 + 30.0 * 2000.0)).abs() < 15.0);
     }
@@ -220,7 +264,11 @@ fn long_drift_from_the_bpm_rounding_stays_small() {
 
 #[test]
 fn long_input_is_fast() {
-    let (b, d) = make(&[(300, 120.0), (300, 100.0), (300, 140.0), (225, 90.0)], 4.0, 21);
+    let (b, d) = make(
+        &[(300, 120.0), (300, 100.0), (300, 140.0), (225, 90.0)],
+        4.0,
+        21,
+    );
     assert!(b.len() >= 4500);
     let t = std::time::Instant::now();
     let r = detect(&b, &d, 4).unwrap();
@@ -240,7 +288,9 @@ fn one_bar_five_percent_off_with_ten_ms_jitter_is_found() {
 /// 186 BPM beats from 0.5 s for `bars` bars, 4 beats a bar, plus the closing beat.
 fn steady_186(bars: usize, jitter_ms: f64, seed: u64) -> Vec<f64> {
     let mut rng = Lcg(seed);
-    (0..=bars * 4).map(|i| 0.5 + i as f64 * 60.0 / 186.0 + rng.next() * jitter_ms / 1000.0).collect()
+    (0..=bars * 4)
+        .map(|i| 0.5 + i as f64 * 60.0 / 186.0 + rng.next() * jitter_ms / 1000.0)
+        .collect()
 }
 
 #[test]
@@ -251,13 +301,24 @@ fn bursts_and_octave_errors_do_not_make_sections() {
         let steady = steady_186(40, jitter, seed);
         let mut burst = steady.clone();
         let at = 80;
-        let extra: Vec<f64> = (at..at + 3).map(|i| (steady[i] + steady[i + 1]) / 2.0).collect();
+        let extra: Vec<f64> = (at..at + 3)
+            .map(|i| (steady[i] + steady[i + 1]) / 2.0)
+            .collect();
         burst.extend(extra);
         assert_bpms(&detect(&burst, &down, 4).unwrap(), &[186.0], 1.5, "burst");
         // The same burst as a quarter-beat run (four extra beats a beat).
         let mut dense = steady.clone();
-        dense.extend((at..at + 3).flat_map(|i| (1..4).map(move |q| (i, q))).map(|(i, q)| steady[i] + (steady[i + 1] - steady[i]) * q as f64 / 4.0));
-        assert_bpms(&detect(&dense, &down, 4).unwrap(), &[186.0], 1.5, "dense burst");
+        dense.extend(
+            (at..at + 3)
+                .flat_map(|i| (1..4).map(move |q| (i, q)))
+                .map(|(i, q)| steady[i] + (steady[i + 1] - steady[i]) * q as f64 / 4.0),
+        );
+        assert_bpms(
+            &detect(&dense, &down, 4).unwrap(),
+            &[186.0],
+            1.5,
+            "dense burst",
+        );
         // 186, then 93 for 8 bars, then 186.
         let d = run(&[(20, 186.0), (8, 93.0), (20, 186.0)], jitter, seed);
         assert_bpms(&d, &[186.0], 1.5, "half-time middle");
@@ -275,14 +336,25 @@ fn octave_error_at_the_start_folds_into_the_right_neighbour() {
 
 fn fixture(name: &str) -> Detected {
     let path = format!("{}/src/testdata/{name}", env!("CARGO_MANIFEST_DIR"));
-    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-    let get = |k: &str| -> Vec<f64> { v[k].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect() };
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let get = |k: &str| -> Vec<f64> {
+        v[k].as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_f64().unwrap())
+            .collect()
+    };
     detect(&get("beats"), &get("downbeats"), 4).unwrap()
 }
 
 /// Sections that overlap [from_s, ∞) and lie outside 175..=200 BPM.
 fn outside_band(d: &Detected, from_s: f64) -> Vec<SectionInfo> {
-    d.sections.iter().filter(|s| s.end_ms > from_s * 1000.0 && !(175.0..=200.0).contains(&s.bpm)).cloned().collect()
+    d.sections
+        .iter()
+        .filter(|s| s.end_ms > from_s * 1000.0 && !(175.0..=200.0).contains(&s.bpm))
+        .cloned()
+        .collect()
 }
 
 /// Iron Maiden "Deja-Vu" through Beat This! with drums + bass + guitar (owner change 1): clean from
@@ -290,9 +362,17 @@ fn outside_band(d: &Detected, from_s: f64) -> Vec<SectionInfo> {
 #[test]
 fn dejavu_drums_bass_guitar_has_few_sections() {
     let d = fixture("dejavu-drums-bass-guitar.beats.json");
-    let change = d.sections.iter().find(|s| (s.start_ms / 1000.0 - 32.5).abs() <= 0.6).expect("a change near 32.5 s");
+    let change = d
+        .sections
+        .iter()
+        .find(|s| (s.start_ms / 1000.0 - 32.5).abs() <= 0.6)
+        .expect("a change near 32.5 s");
     assert!((183.0..=190.0).contains(&change.bpm), "{change:?}");
-    assert!(outside_band(&d, 33.0).is_empty(), "{:?}", outside_band(&d, 33.0));
+    assert!(
+        outside_band(&d, 33.0).is_empty(),
+        "{:?}",
+        outside_band(&d, 33.0)
+    );
     // The rest are the song's intro (the tracker is lost before 32 s: five sections) and two
     // real drifts to 196.6 and back to 188.6 BPM.
     assert!(d.sections.len() <= 8, "{:?}", d.sections);
@@ -302,7 +382,11 @@ fn dejavu_drums_bass_guitar_has_few_sections() {
 #[test]
 fn dejavu_guitar_muted_loses_the_blips() {
     let d = fixture("dejavu-guitar-muted.beats.json");
-    assert!(outside_band(&d, 52.0).is_empty(), "{:?}", outside_band(&d, 52.0));
+    assert!(
+        outside_band(&d, 52.0).is_empty(),
+        "{:?}",
+        outside_band(&d, 52.0)
+    );
     // Still the lost intro and the burst at 37 s, plus the drifts at 149 and 166 s.
     assert!(d.sections.len() <= 12, "{:?}", d.sections);
 }

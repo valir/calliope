@@ -8,7 +8,11 @@ use std::path::{Path, PathBuf};
 pub(crate) fn sync_dir(dir: &Path) {
     #[cfg(unix)]
     {
-        let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir };
+        let dir = if dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            dir
+        };
         if let Ok(d) = fs::File::open(dir) {
             let _ = d.sync_all();
         }
@@ -49,7 +53,10 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     }
     let tmp = unique_tmp_path(path);
     let r = (|| {
-        let mut f = fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
         drop(f);
@@ -67,9 +74,9 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 pub(crate) fn part_path(dest: &Path) -> io::Result<PathBuf> {
-    let name = dest
-        .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "destination has no file name"))?;
+    let name = dest.file_name().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "destination has no file name")
+    })?;
     let mut part = std::ffi::OsString::from(".");
     part.push(name);
     part.push(".part");
@@ -80,8 +87,13 @@ pub(crate) fn part_path(dest: &Path) -> io::Result<PathBuf> {
 /// when this call created it: a pre-existing part file is never touched.
 pub(crate) fn copy_to_part(src: &Path, part: &Path) -> io::Result<()> {
     let mut from = fs::File::open(src)?;
-    let mut to = fs::OpenOptions::new().write(true).create_new(true).open(part)?;
-    let r = io::copy(&mut from, &mut to).map(|_| ()).and_then(|()| to.sync_all());
+    let mut to = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(part)?;
+    let r = io::copy(&mut from, &mut to)
+        .map(|_| ())
+        .and_then(|()| to.sync_all());
     if r.is_err() {
         let _ = fs::remove_file(part);
     }
@@ -164,10 +176,9 @@ pub fn validate_file_name(name: &str) -> Result<(), String> {
     if name == "player.json" {
         return Err("\"player.json\" is reserved".into());
     }
-    if let Some(c) = name
-        .chars()
-        .find(|c| c.is_control() || matches!(c, '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*'))
-    {
+    if let Some(c) = name.chars().find(|c| {
+        c.is_control() || matches!(c, '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*')
+    }) {
         return Err(format!("file name \"{name}\" contains the character {c:?}"));
     }
     Ok(())
@@ -188,7 +199,11 @@ pub fn fnv1a64_hex(bytes: &[u8]) -> String {
 pub fn create_unique_dir(parent: &Path, base: &str) -> io::Result<PathBuf> {
     fs::create_dir_all(parent)?;
     for n in 1u32.. {
-        let name = if n == 1 { base.to_string() } else { format!("{base} ({n})") };
+        let name = if n == 1 {
+            base.to_string()
+        } else {
+            format!("{base} ({n})")
+        };
         let p = parent.join(name);
         match fs::create_dir(&p) {
             Ok(()) => return Ok(p),
@@ -212,11 +227,17 @@ fn trash_guard(root: &Path, src: &Path) -> io::Result<(PathBuf, PathBuf, PathBuf
     let name = src
         .file_name()
         .ok_or_else(|| bad_input(format!("{} is not inside the repository", src.display())))?;
-    let parent = src.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let parent = src
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     let src_c = parent.canonicalize()?.join(name);
     fs::symlink_metadata(&src_c)?;
     if src_c == root_c || !src_c.starts_with(&root_c) {
-        return Err(bad_input(format!("{} is not inside the repository", src.display())));
+        return Err(bad_input(format!(
+            "{} is not inside the repository",
+            src.display()
+        )));
     }
     let trash = root_c.join("trash");
     if src_c.starts_with(&trash) {
@@ -224,7 +245,10 @@ fn trash_guard(root: &Path, src: &Path) -> io::Result<(PathBuf, PathBuf, PathBuf
     }
     match fs::symlink_metadata(&trash) {
         Ok(m) if !m.is_dir() => {
-            return Err(bad_input("the trash folder is not a real folder (a symlink or file); nothing was moved".into()));
+            return Err(bad_input(
+                "the trash folder is not a real folder (a symlink or file); nothing was moved"
+                    .into(),
+            ));
         }
         _ => {}
     }
@@ -240,7 +264,11 @@ pub fn move_track_to_trash(root: &Path, src: &Path, stamp: &str, id: &str) -> io
     fs::create_dir_all(&trash)?;
     let base = format!("{stamp}-{id}");
     for n in 1u32.. {
-        let dest = trash.join(if n == 1 { base.clone() } else { format!("{base}-{n}") });
+        let dest = trash.join(if n == 1 {
+            base.clone()
+        } else {
+            format!("{base}-{n}")
+        });
         if dest.symlink_metadata().is_ok() {
             continue;
         }
@@ -314,7 +342,11 @@ impl FileTrash {
             _ => (name.as_str(), ""),
         };
         for n in 1u32.. {
-            let file = if n == 1 { name.clone() } else { format!("{stem} ({n}){ext}") };
+            let file = if n == 1 {
+                name.clone()
+            } else {
+                format!("{stem} ({n}){ext}")
+            };
             let dest = dir.join(file);
             if dest.symlink_metadata().is_ok() {
                 continue;
@@ -349,8 +381,15 @@ mod tests {
         write_atomic(&p, b"x").unwrap();
         assert_eq!(fs::read(d.path().join("track.json.tmp")).unwrap(), b"mine");
         assert_ne!(unique_tmp_path(&p), unique_tmp_path(&p));
-        let name = unique_tmp_path(&p).file_name().unwrap().to_string_lossy().into_owned();
-        assert!(name.starts_with(".track.json.") && name.ends_with(".tmp"), "{name}");
+        let name = unique_tmp_path(&p)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            name.starts_with(".track.json.") && name.ends_with(".tmp"),
+            "{name}"
+        );
     }
 
     #[test]
@@ -371,7 +410,11 @@ mod tests {
         let root = d.path().join("repo");
         fs::create_dir_all(root.join("tracks/a")).unwrap();
         fs::write(root.join("tracks/a/real.gp5"), b"real").unwrap();
-        std::os::unix::fs::symlink(root.join("tracks/a/real.gp5"), root.join("tracks/a/link.gp5")).unwrap();
+        std::os::unix::fs::symlink(
+            root.join("tracks/a/real.gp5"),
+            root.join("tracks/a/link.gp5"),
+        )
+        .unwrap();
         let mut tt = FileTrash::new(&root, "S", "a", "tablatures");
         tt.move_in(&root.join("tracks/a/link.gp5")).unwrap();
         assert!(root.join("tracks/a/real.gp5").exists());
@@ -432,8 +475,23 @@ mod tests {
 
     #[test]
     fn file_names() {
-        for bad in ["..", ".", "a/b", ".x", "track.json", "player.json", "a\\b", "x?", "", "a\nb", "a:b"] {
-            assert!(validate_file_name(bad).is_err(), "{bad:?} should be rejected");
+        for bad in [
+            "..",
+            ".",
+            "a/b",
+            ".x",
+            "track.json",
+            "player.json",
+            "a\\b",
+            "x?",
+            "",
+            "a\nb",
+            "a:b",
+        ] {
+            assert!(
+                validate_file_name(bad).is_err(),
+                "{bad:?} should be rejected"
+            );
         }
         assert!(validate_file_name(&"a".repeat(256)).is_err());
         assert!(validate_file_name(&"a".repeat(255)).is_ok());
@@ -469,10 +527,19 @@ mod tests {
             fs::write(t.join("track.json"), format!("{i}")).unwrap();
             let moved = move_track_to_trash(root, &t, "S", "abc").unwrap();
             assert!(!t.exists());
-            assert_eq!(fs::read_to_string(moved.join("track.json")).unwrap(), format!("{i}"));
+            assert_eq!(
+                fs::read_to_string(moved.join("track.json")).unwrap(),
+                format!("{i}")
+            );
         }
-        assert_eq!(fs::read_to_string(root.join("trash/S-abc/track.json")).unwrap(), "0");
-        assert_eq!(fs::read_to_string(root.join("trash/S-abc-2/track.json")).unwrap(), "1");
+        assert_eq!(
+            fs::read_to_string(root.join("trash/S-abc/track.json")).unwrap(),
+            "0"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("trash/S-abc-2/track.json")).unwrap(),
+            "1"
+        );
     }
 
     #[test]
@@ -516,7 +583,9 @@ mod tests {
         assert!(move_track_to_trash(&root, &outside, "S", "abc").is_err());
         assert!(outside.exists());
         assert!(move_track_to_trash(&root, &root, "S", "abc").is_err());
-        assert!(FileTrash::new(&root, "S", "abc", "tablatures").move_in(&outside).is_err());
+        assert!(FileTrash::new(&root, "S", "abc", "tablatures")
+            .move_in(&outside)
+            .is_err());
         assert!(!root.join("trash").exists());
         fs::create_dir_all(root.join("trash/old")).unwrap();
         assert!(move_track_to_trash(&root, &root.join("trash/old"), "S", "abc").is_err());

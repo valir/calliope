@@ -19,7 +19,11 @@ fn out(args: &[&str]) -> String {
 }
 
 fn ver() -> String {
-    out(&["--version"]).trim_end().strip_prefix("calliope-gui ").unwrap().to_string()
+    out(&["--version"])
+        .trim_end()
+        .strip_prefix("calliope-gui ")
+        .unwrap()
+        .to_string()
 }
 
 #[test]
@@ -30,7 +34,12 @@ fn ac1_binary_exists_and_is_named_calliope_gui() {
 
 #[test]
 fn req2_source_lives_in_src() {
-    for f in ["src/main.rs", "src/cli.rs", "src/gui.rs", "src/ui/index.html"] {
+    for f in [
+        "src/main.rs",
+        "src/cli.rs",
+        "src/gui.rs",
+        "src/ui/index.html",
+    ] {
         assert!(Path::new(ROOT).join(f).is_file(), "{f}");
     }
 }
@@ -76,7 +85,11 @@ fn ac4_version_exact_output_and_format() {
     assert_eq!(o.status.code(), Some(0));
     assert!(o.stderr.is_empty());
     let s = String::from_utf8(o.stdout).unwrap();
-    let v = s.strip_suffix('\n').unwrap().strip_prefix("calliope-gui ").unwrap();
+    let v = s
+        .strip_suffix('\n')
+        .unwrap()
+        .strip_prefix("calliope-gui ")
+        .unwrap();
     let p: Vec<&str> = v.split('.').collect();
     assert_eq!(p.len(), 3);
     assert_eq!(p.iter().map(|x| x.len()).collect::<Vec<_>>(), vec![2, 2, 4]);
@@ -86,7 +99,10 @@ fn ac4_version_exact_output_and_format() {
 #[test]
 fn req7_version_date_is_current_utc_and_build_is_commit_count() {
     let v = ver();
-    let date = Command::new("date").args(["-u", "+%y.%m"]).output().unwrap();
+    let date = Command::new("date")
+        .args(["-u", "+%y.%m"])
+        .output()
+        .unwrap();
     let now = String::from_utf8(date.stdout).unwrap();
     if std::env::var("SOURCE_DATE_EPOCH").is_err() {
         assert_eq!(&v[..5], now.trim(), "YY.MM should be UTC build date");
@@ -108,7 +124,13 @@ fn req7_version_date_is_current_utc_and_build_is_commit_count() {
 
 #[test]
 fn req4_6_unknown_and_extra_args_rejected_without_gui() {
-    for args in [vec!["--bogus"], vec!["file.mp3"], vec!["--help", "--version"], vec!["-h"], vec![""]] {
+    for args in [
+        vec!["--bogus"],
+        vec!["file.mp3"],
+        vec!["--help", "--version"],
+        vec!["-h"],
+        vec![""],
+    ] {
         let o = run(&args);
         assert_eq!(o.status.code(), Some(2), "{args:?}");
         assert!(o.stdout.is_empty(), "{args:?}");

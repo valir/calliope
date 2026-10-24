@@ -50,7 +50,11 @@ impl Server {
     }
     fn job_dirs(&self) -> Vec<String> {
         let mut v: Vec<String> = std::fs::read_dir(self.jobs())
-            .map(|r| r.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect())
+            .map(|r| {
+                r.flatten()
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect()
+            })
             .unwrap_or_default();
         v.sort();
         v
@@ -73,11 +77,15 @@ fn tagged(tag: &str) -> Vec<(u32, String)> {
     let me = std::process::id();
     let mut v = Vec::new();
     for e in std::fs::read_dir("/proc").unwrap().flatten() {
-        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
+            continue;
+        };
         if pid == me {
             continue;
         }
-        let Ok(env) = std::fs::read(e.path().join("environ")) else { continue };
+        let Ok(env) = std::fs::read(e.path().join("environ")) else {
+            continue;
+        };
         if env.split(|b| *b == 0).any(|kv| kv == want.as_bytes()) {
             // skip zombies
             if let Ok(st) = std::fs::read_to_string(e.path().join("stat")) {
@@ -105,7 +113,11 @@ fn kill_tagged(tag: &str) {
 }
 
 fn spawn_server(outer: tempfile::TempDir, separator: &Path, mode: &str, extra: &[&str]) -> Server {
-    let tag = format!("qa{}-{}", std::process::id(), COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+    let tag = format!(
+        "qa{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    );
     let mut child = Command::new(env!("CARGO_BIN_EXE_calliope-stems"))
         .arg("--separator")
         .arg(separator)
@@ -121,7 +133,10 @@ fn spawn_server(outer: tempfile::TempDir, separator: &Path, mode: &str, extra: &
     let mut line = String::new();
     let addr: SocketAddr = loop {
         line.clear();
-        assert!(lines.read_line(&mut line).unwrap() > 0, "server exited before listening");
+        assert!(
+            lines.read_line(&mut line).unwrap() > 0,
+            "server exited before listening"
+        );
         if let Some(rest) = line.split("listening addr=").nth(1) {
             break rest.split_whitespace().next().unwrap().parse().unwrap();
         }
@@ -136,7 +151,13 @@ fn spawn_server(outer: tempfile::TempDir, separator: &Path, mode: &str, extra: &
             s.clear();
         }
     });
-    Server { child, addr, outer, tag, log }
+    Server {
+        child,
+        addr,
+        outer,
+        tag,
+        log,
+    }
 }
 
 fn start(mode: &str, extra: &[&str]) -> Server {
@@ -159,7 +180,8 @@ struct Resp {
 }
 impl Resp {
     fn json(&self) -> serde_json::Value {
-        serde_json::from_slice(&self.body).unwrap_or_else(|e| panic!("{e}: {:?}", String::from_utf8_lossy(&self.body)))
+        serde_json::from_slice(&self.body)
+            .unwrap_or_else(|e| panic!("{e}: {:?}", String::from_utf8_lossy(&self.body)))
     }
 }
 
@@ -180,7 +202,8 @@ fn read_resp(s: &mut TcpStream) -> Option<Resp> {
 fn dechunk(mut rest: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     while let Some(eol) = rest.windows(2).position(|w| w == b"\r\n") {
-        let size = usize::from_str_radix(String::from_utf8_lossy(&rest[..eol]).trim(), 16).unwrap_or(0);
+        let size =
+            usize::from_str_radix(String::from_utf8_lossy(&rest[..eol]).trim(), 16).unwrap_or(0);
         if size == 0 || rest.len() < eol + 2 + size {
             break;
         }
@@ -190,7 +213,13 @@ fn dechunk(mut rest: &[u8]) -> Vec<u8> {
     out
 }
 
-fn http(addr: SocketAddr, method: &str, path: &str, headers: &[(&str, String)], body: &[u8]) -> Resp {
+fn http(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    headers: &[(&str, String)],
+    body: &[u8],
+) -> Resp {
     let mut s = TcpStream::connect(addr).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
     let mut req = format!("{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n");
@@ -208,7 +237,10 @@ fn post(addr: SocketAddr, query: &str, body: &[u8]) -> Resp {
         addr,
         "POST",
         &format!("/v1/jobs{query}"),
-        &[("Content-Type", "audio/flac".into()), ("Content-Length", body.len().to_string())],
+        &[
+            ("Content-Type", "audio/flac".into()),
+            ("Content-Length", body.len().to_string()),
+        ],
         body,
     )
 }
@@ -252,7 +284,11 @@ fn wait_state(addr: SocketAddr, job: &str, want: &str) -> serde_json::Value {
                 return v;
             }
         }
-        assert!(Instant::now() < end, "timed out waiting for {want}: {:?}", String::from_utf8_lossy(&r.body));
+        assert!(
+            Instant::now() < end,
+            "timed out waiting for {want}: {:?}",
+            String::from_utf8_lossy(&r.body)
+        );
         std::thread::sleep(Duration::from_millis(40));
     }
 }
@@ -277,12 +313,23 @@ fn bad_uploads_are_refused_without_leaking_state() {
     // empty body
     assert_eq!(post(a, "", b"").status, 415);
     // text
-    assert_eq!(post(a, "", b"hello world, definitely not audio, at all, no way").status, 415);
+    assert_eq!(
+        post(a, "", b"hello world, definitely not audio, at all, no way").status,
+        415
+    );
     // magic only / truncated STREAMINFO
     assert_eq!(post(a, "", b"fLaC").status, 415);
     assert_eq!(post(a, "", &flac[..20]).status, 415);
     // MP3 / ogg magic
-    assert_eq!(post(a, "", &[b"ID3\x04\0\0\0\0\0\0".as_slice(), &[0u8; 100]].concat()).status, 415);
+    assert_eq!(
+        post(
+            a,
+            "",
+            &[b"ID3\x04\0\0\0\0\0\0".as_slice(), &[0u8; 100]].concat()
+        )
+        .status,
+        415
+    );
     // STREAMINFO with unknown length (0 samples) and 0 sample rate
     assert_eq!(post(a, "", &flac_header(44100, 0, 100)).status, 415);
     assert_eq!(post(a, "", &flac_header(0, 100, 100)).status, 415);
@@ -291,28 +338,68 @@ fn bad_uploads_are_refused_without_leaking_state() {
     assert_eq!(r.status, 413, "{:?}", String::from_utf8_lossy(&r.body));
     // exactly at the limit is accepted (and fails later in the separator: junk body is fine here)
     let ok = post(a, "", &flac_header(44100, 44100 * 900, 100));
-    assert_eq!(ok.status, 202, "exactly 15 min must be accepted: {:?}", String::from_utf8_lossy(&ok.body));
+    assert_eq!(
+        ok.status,
+        202,
+        "exactly 15 min must be accepted: {:?}",
+        String::from_utf8_lossy(&ok.body)
+    );
     let id = ok.json()["job"].as_str().unwrap().to_string();
     let _ = http(a, "DELETE", &format!("/v1/jobs/{id}"), &[], b"");
     // wrong Content-Type
-    let r = http(a, "POST", "/v1/jobs", &[("Content-Type", "audio/mpeg".into()), ("Content-Length", flac.len().to_string())], &flac);
+    let r = http(
+        a,
+        "POST",
+        "/v1/jobs",
+        &[
+            ("Content-Type", "audio/mpeg".into()),
+            ("Content-Length", flac.len().to_string()),
+        ],
+        &flac,
+    );
     assert_eq!(r.status, 415);
     // no Content-Type
-    let r = http(a, "POST", "/v1/jobs", &[("Content-Length", flac.len().to_string())], &flac);
+    let r = http(
+        a,
+        "POST",
+        "/v1/jobs",
+        &[("Content-Length", flac.len().to_string())],
+        &flac,
+    );
     assert_eq!(r.status, 415);
     // no length (chunked)
     let mut chunked = format!("{:x}\r\n", flac.len()).into_bytes();
     chunked.extend(&flac);
     chunked.extend(b"\r\n0\r\n\r\n");
-    let r = http(a, "POST", "/v1/jobs", &[ct.clone(), ("Transfer-Encoding", "chunked".into())], &chunked);
+    let r = http(
+        a,
+        "POST",
+        "/v1/jobs",
+        &[ct.clone(), ("Transfer-Encoding", "chunked".into())],
+        &chunked,
+    );
     assert_eq!(r.status, 411, "chunked upload without Content-Length");
     // bad models
-    for m in ["other", "../../etc", "htdemucs_6s%00x", "", "htdemucs_6s&model=evil", "-x"] {
+    for m in [
+        "other",
+        "../../etc",
+        "htdemucs_6s%00x",
+        "",
+        "htdemucs_6s&model=evil",
+        "-x",
+    ] {
         let r = post(a, &format!("?model={m}"), &flac);
-        assert!(r.status == 400 || r.status == 202, "model {m:?} -> {}", r.status);
+        assert!(
+            r.status == 400 || r.status == 202,
+            "model {m:?} -> {}",
+            r.status
+        );
         if r.status == 202 {
             // allowed only for the exact default model (the `&model=evil` case has two params)
-            assert!(m == "" || m.starts_with("htdemucs_6s&"), "accepted model {m:?}");
+            assert!(
+                m == "" || m.starts_with("htdemucs_6s&"),
+                "accepted model {m:?}"
+            );
             let id = r.json()["job"].as_str().unwrap().to_string();
             let _ = http(a, "DELETE", &format!("/v1/jobs/{id}"), &[], b"");
         }
@@ -373,7 +460,10 @@ fn aborted_uploads_release_their_queue_slot_and_folder() {
             break r.json()["job"].as_str().unwrap().to_string();
         }
         assert_eq!(r.status, 503, "{:?}", String::from_utf8_lossy(&r.body));
-        assert!(Instant::now() < end, "the queue slot was never released: a real leak");
+        assert!(
+            Instant::now() < end,
+            "the queue slot was never released: a real leak"
+        );
         std::thread::sleep(Duration::from_millis(20));
     };
     // ... and the folders of the aborted uploads are gone by the time the real job is done.
@@ -414,7 +504,11 @@ fn finding_stalled_uploads_lock_the_queue() {
     std::thread::sleep(Duration::from_secs(2));
     // Expected: the server drops idle uploads and accepts this one. Actual: 503.
     let r = post(s.addr, "", &good_flac());
-    assert_eq!(r.status, 202, "a real upload is refused with {} while nothing runs", r.status);
+    assert_eq!(
+        r.status, 202,
+        "a real upload is refused with {} while nothing runs",
+        r.status
+    );
     drop(stalled);
 }
 
@@ -454,25 +548,42 @@ fn path_traversal_and_hostile_requests_are_harmless() {
     for p in &bad_paths {
         let r = http(a, "GET", p, &[], b"");
         assert!(
-            matches!(r.status, 404 | 400 | 405 | 414 | 431) || (p.starts_with("/v1/health") && r.status == 200),
+            matches!(r.status, 404 | 400 | 405 | 414 | 431)
+                || (p.starts_with("/v1/health") && r.status == 200),
             "GET {} -> {}",
             &p[..p.len().min(80)],
             r.status
         );
-        assert!(!String::from_utf8_lossy(&r.body).contains("secret"), "leaked: {p}");
+        assert!(
+            !String::from_utf8_lossy(&r.body).contains("secret"),
+            "leaked: {p}"
+        );
     }
     // DELETE with traversal ids must not remove anything outside.
     for p in ["/v1/jobs/..", "/v1/jobs/..%2f..", "/v1/jobs/%2e%2e%2fjobs"] {
         let r = http(a, "DELETE", p, &[], b"");
-        assert!(matches!(r.status, 404 | 400 | 405), "DELETE {p} -> {}", r.status);
+        assert!(
+            matches!(r.status, 404 | 400 | 405),
+            "DELETE {p} -> {}",
+            r.status
+        );
     }
     assert!(s.outer.path().join("secret.flac").exists());
     assert!(s.work().join("secret.flac").exists());
     assert!(s.jobs().join(&id).exists());
     // wrong methods
-    for (m, p) in [("PUT", "/v1/jobs"), ("PATCH", "/v1/health"), ("OPTIONS", "/v1/jobs"), ("TRACE", "/v1/health")] {
+    for (m, p) in [
+        ("PUT", "/v1/jobs"),
+        ("PATCH", "/v1/health"),
+        ("OPTIONS", "/v1/jobs"),
+        ("TRACE", "/v1/health"),
+    ] {
         let r = http(a, m, p, &[], b"");
-        assert!(matches!(r.status, 405 | 404 | 400 | 501), "{m} {p} -> {}", r.status);
+        assert!(
+            matches!(r.status, 405 | 404 | 400 | 501),
+            "{m} {p} -> {}",
+            r.status
+        );
     }
     // the good stem still works
     let r = http(a, "GET", &format!("/v1/jobs/{id}/stems/vocals"), &[], b"");
@@ -492,12 +603,18 @@ fn garbage_on_the_socket_does_not_kill_the_server() {
         b"POST /v1/jobs HTTP/1.1\r\nContent-Length: -5\r\n\r\n".to_vec(),
         b"POST /v1/jobs HTTP/1.1\r\nContent-Length: 99999999999999999999999\r\n\r\n".to_vec(),
         b"POST /v1/jobs HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nabcde".to_vec(),
-        [b"GET /v1/health HTTP/1.1\r\nX: ".as_slice(), &vec![b'a'; 200_000], b"\r\n\r\n"].concat(),
+        [
+            b"GET /v1/health HTTP/1.1\r\nX: ".as_slice(),
+            &vec![b'a'; 200_000],
+            b"\r\n\r\n",
+        ]
+        .concat(),
         b"GET /v1/health HTTP/1.1\r\nHost: x\r\n".to_vec(), // never finished
     ];
     for j in junk {
         if let Ok(mut c) = TcpStream::connect(s.addr) {
-            c.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+            c.set_read_timeout(Some(Duration::from_millis(500)))
+                .unwrap();
             let _ = c.write_all(&j);
             let mut sink = [0u8; 512];
             let _ = c.read(&mut sink);
@@ -530,28 +647,52 @@ fn concurrent_uploads_respect_the_queue_limit() {
     let res = results.lock().unwrap().clone();
     let ok: Vec<_> = res.iter().filter(|(c, _)| *c == 202).collect();
     let full = res.iter().filter(|(c, _)| *c == 503).count();
-    assert_eq!(ok.len(), 3, "1 running + 2 waiting; got {:?}", res.iter().map(|r| r.0).collect::<Vec<_>>());
+    assert_eq!(
+        ok.len(),
+        3,
+        "1 running + 2 waiting; got {:?}",
+        res.iter().map(|r| r.0).collect::<Vec<_>>()
+    );
     assert_eq!(full, 5);
     // ids unique
-    let mut ids: Vec<String> = ok.iter().map(|(_, b)| serde_json::from_slice::<serde_json::Value>(b).unwrap()["job"].as_str().unwrap().to_string()).collect();
+    let mut ids: Vec<String> = ok
+        .iter()
+        .map(|(_, b)| {
+            serde_json::from_slice::<serde_json::Value>(b).unwrap()["job"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
     ids.sort();
     ids.dedup();
     assert_eq!(ids.len(), 3);
     // only ONE separator runs at a time
-    until("a separator running", 10, || tagged(&s.tag).iter().any(|(_, c)| c.contains("input.flac")));
+    until("a separator running", 10, || {
+        tagged(&s.tag).iter().any(|(_, c)| c.contains("input.flac"))
+    });
     std::thread::sleep(Duration::from_millis(500));
-    let seps = tagged(&s.tag).iter().filter(|(_, c)| c.contains("input.flac")).count();
+    let seps = tagged(&s.tag)
+        .iter()
+        .filter(|(_, c)| c.contains("input.flac"))
+        .count();
     assert_eq!(seps, 1, "max concurrent separators is 1");
     // delete all (concurrently)
     let hs: Vec<_> = ids
         .iter()
         .cloned()
-        .map(|id| std::thread::spawn(move || http(a, "DELETE", &format!("/v1/jobs/{id}"), &[], b"").status))
+        .map(|id| {
+            std::thread::spawn(move || {
+                http(a, "DELETE", &format!("/v1/jobs/{id}"), &[], b"").status
+            })
+        })
         .collect();
     for h in hs {
         assert_eq!(h.join().unwrap(), 204);
     }
-    until("no separator left", 15, || !tagged(&s.tag).iter().any(|(_, c)| c.contains("input.flac")));
+    until("no separator left", 15, || {
+        !tagged(&s.tag).iter().any(|(_, c)| c.contains("input.flac"))
+    });
     until("job folders gone", 10, || s.job_dirs().is_empty());
     // capacity is back
     let r = post(a, "", &flac);
@@ -566,12 +707,17 @@ fn jobs_run_in_order_and_all_stems_are_served_concurrently() {
     let ids: Vec<String> = (0..3).map(|_| submit(a)).collect();
     for id in &ids {
         let v = wait_state(a, id, "done");
-        assert_eq!(v["stems"], serde_json::json!(["vocals", "drums", "bass", "guitar", "piano", "other"]));
+        assert_eq!(
+            v["stems"],
+            serde_json::json!(["vocals", "drums", "bass", "guitar", "piano", "other"])
+        );
         assert_eq!(v["progress"], 1.0);
     }
     let hs: Vec<_> = ids
         .iter()
-        .flat_map(|id| ["vocals", "drums", "bass", "guitar", "piano", "other"].map(|n| (id.clone(), n)))
+        .flat_map(|id| {
+            ["vocals", "drums", "bass", "guitar", "piano", "other"].map(|n| (id.clone(), n))
+        })
         .map(|(id, n)| {
             std::thread::spawn(move || {
                 let r = http(a, "GET", &format!("/v1/jobs/{id}/stems/{n}"), &[], b"");
@@ -585,7 +731,17 @@ fn jobs_run_in_order_and_all_stems_are_served_concurrently() {
         assert!(len > 1000);
     }
     // stem of a job that is not done -> 409; unknown stem -> 404
-    assert_eq!(http(a, "GET", &format!("/v1/jobs/{}/stems/karaoke", ids[0]), &[], b"").status, 404);
+    assert_eq!(
+        http(
+            a,
+            "GET",
+            &format!("/v1/jobs/{}/stems/karaoke", ids[0]),
+            &[],
+            b""
+        )
+        .status,
+        404
+    );
 }
 
 #[test]
@@ -598,12 +754,19 @@ fn delete_races_never_corrupt_or_resurrect_jobs() {
         let a2 = a;
         let id2 = id.clone();
         // two concurrent deletes and a poller
-        let d1 = std::thread::spawn(move || http(a2, "DELETE", &format!("/v1/jobs/{id2}"), &[], b"").status);
+        let d1 = std::thread::spawn(move || {
+            http(a2, "DELETE", &format!("/v1/jobs/{id2}"), &[], b"").status
+        });
         let id3 = id.clone();
-        let d2 = std::thread::spawn(move || http(a2, "DELETE", &format!("/v1/jobs/{id3}"), &[], b"").status);
+        let d2 = std::thread::spawn(move || {
+            http(a2, "DELETE", &format!("/v1/jobs/{id3}"), &[], b"").status
+        });
         let p = status(a, &id);
         let (c1, c2) = (d1.join().unwrap(), d2.join().unwrap());
-        assert!(matches!(c1, 204 | 404) && matches!(c2, 204 | 404) && (c1 == 204 || c2 == 204), "{c1} {c2}");
+        assert!(
+            matches!(c1, 204 | 404) && matches!(c2, 204 | 404) && (c1 == 204 || c2 == 204),
+            "{c1} {c2}"
+        );
         if p.status == 200 {
             assert_ne!(p.json()["state"], "done", "a deleted job must not finish");
         }
@@ -617,7 +780,9 @@ fn delete_races_never_corrupt_or_resurrect_jobs() {
         let r = http(a, "GET", &format!("/v1/jobs/{id}/stems/vocals"), &[], b"");
         assert!(matches!(r.status, 404 | 409), "{}", r.status);
     }
-    until("no separator left", 20, || !tagged(&s.tag).iter().any(|(_, c)| c.contains("input.flac")));
+    until("no separator left", 20, || {
+        !tagged(&s.tag).iter().any(|(_, c)| c.contains("input.flac"))
+    });
     until("job folders gone", 10, || s.job_dirs().is_empty());
     assert!(s.alive() && s.healthy());
 }
@@ -631,12 +796,19 @@ fn delete_of_a_done_job_while_a_stem_is_being_read() {
     // open the stem, read only the head, keep the connection
     let mut c = TcpStream::connect(a).unwrap();
     c.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
-    c.write_all(format!("GET /v1/jobs/{id}/stems/vocals HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes()).unwrap();
+    c.write_all(format!("GET /v1/jobs/{id}/stems/vocals HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes())
+        .unwrap();
     let mut first = [0u8; 100];
     c.read_exact(&mut first).unwrap();
-    assert_eq!(http(a, "DELETE", &format!("/v1/jobs/{id}"), &[], b"").status, 204);
+    assert_eq!(
+        http(a, "DELETE", &format!("/v1/jobs/{id}"), &[], b"").status,
+        204
+    );
     assert_eq!(status(a, &id).status, 404);
-    assert_eq!(http(a, "DELETE", &format!("/v1/jobs/{id}"), &[], b"").status, 404);
+    assert_eq!(
+        http(a, "DELETE", &format!("/v1/jobs/{id}"), &[], b"").status,
+        404
+    );
     assert!(!s.jobs().join(&id).exists());
     // the reader can finish or be cut, but the server stays up
     let mut rest = Vec::new();
@@ -666,10 +838,15 @@ fn sigkill_mid_job_leaves_no_separator_and_restart_cleans_only_its_own_folders()
     std::fs::write(work.join("jobs/dead-beef/.calliope-stems-job"), b"").unwrap();
 
     let mut s = spawn_server(outer, &stub(), "hang", &[]);
-    assert!(!s.jobs().join("dead-beef").exists(), "stale marked folder removed at start");
+    assert!(
+        !s.jobs().join("dead-beef").exists(),
+        "stale marked folder removed at start"
+    );
     let id = submit(s.addr);
     wait_state(s.addr, &id, "running");
-    until("separator up", 10, || tagged(&s.tag).iter().any(|(_, c)| c.contains("input.flac")));
+    until("separator up", 10, || {
+        tagged(&s.tag).iter().any(|(_, c)| c.contains("input.flac"))
+    });
     let tag = s.tag.clone();
     // SIGKILL the server
     unsafe { libc_kill(s.child.id() as i32, 9) };
@@ -677,7 +854,10 @@ fn sigkill_mid_job_leaves_no_separator_and_restart_cleans_only_its_own_folders()
     until("separator killed with its parent (PDEATHSIG)", 10, || {
         !tagged(&tag).iter().any(|(_, c)| c.contains("input.flac"))
     });
-    assert!(s.jobs().join(&id).exists(), "kill -9 leaves the job folder (cleaned at next start)");
+    assert!(
+        s.jobs().join(&id).exists(),
+        "kill -9 leaves the job folder (cleaned at next start)"
+    );
     // restart on the same work dir
     let work = s.work();
     let outer2 = tempfile::tempdir().unwrap(); // only to keep the type
@@ -700,13 +880,27 @@ fn sigkill_mid_job_leaves_no_separator_and_restart_cleans_only_its_own_folders()
             break rest.split_whitespace().next().unwrap().parse().unwrap();
         }
     };
-    assert_eq!(status(addr, &id).status, 404, "state is not persisted: old ids are unknown");
-    assert!(!work.join("jobs").join(&id).exists(), "the old job folder was cleaned at start");
+    assert_eq!(
+        status(addr, &id).status,
+        404,
+        "state is not persisted: old ids are unknown"
+    );
+    assert!(
+        !work.join("jobs").join(&id).exists(),
+        "the old job folder was cleaned at start"
+    );
     // Foreign data intact.
-    assert_eq!(std::fs::read(work.join("jobs/precious/keep.txt")).unwrap(), b"mine");
+    assert_eq!(
+        std::fs::read(work.join("jobs/precious/keep.txt")).unwrap(),
+        b"mine"
+    );
     assert_eq!(std::fs::read(work.join("jobs/loose.txt")).unwrap(), b"mine");
     assert_eq!(std::fs::read(work.join("notes.txt")).unwrap(), b"mine");
-    assert_eq!(std::fs::read(outside.join("data.txt")).unwrap(), b"mine", "symlinked folder must not be followed");
+    assert_eq!(
+        std::fs::read(outside.join("data.txt")).unwrap(),
+        b"mine",
+        "symlinked folder must not be followed"
+    );
     let _ = child.kill();
     let _ = child.wait();
     kill_tagged(&tag);
@@ -725,12 +919,16 @@ fn sigterm_stops_the_server_and_its_separator() {
     let mut s = start("hang", &[]);
     let id = submit(s.addr);
     wait_state(s.addr, &id, "running");
-    until("separator up", 10, || tagged(&s.tag).iter().any(|(_, c)| c.contains("input.flac")));
+    until("separator up", 10, || {
+        tagged(&s.tag).iter().any(|(_, c)| c.contains("input.flac"))
+    });
     unsafe { libc_kill(s.child.id() as i32, 15) };
     let t = Instant::now();
     until("server exit", 15, || s.child.try_wait().unwrap().is_some());
     assert!(t.elapsed() < Duration::from_secs(12));
-    until("separator gone", 10, || !tagged(&s.tag).iter().any(|(_, c)| c.contains("input.flac")));
+    until("separator gone", 10, || {
+        !tagged(&s.tag).iter().any(|(_, c)| c.contains("input.flac"))
+    });
 }
 
 // ---------------------------------------------------------------- separator behaviour
@@ -758,7 +956,10 @@ fn separator_contract_argv_cwd_stdin() {
     let r = std::fs::read_to_string(s.outer.path().join("rec.txt")).unwrap();
     let job = s.jobs().join(&id);
     assert!(r.contains("argc=3"), "{r}");
-    assert!(r.contains(&format!("arg={}/input.flac", job.display())), "{r}");
+    assert!(
+        r.contains(&format!("arg={}/input.flac", job.display())),
+        "{r}"
+    );
     assert!(r.contains(&format!("arg={}/out\n", job.display())), "{r}");
     assert!(r.contains("arg=my-model.v2\n"), "{r}");
     assert!(r.contains(&format!("cwd={}", job.display())), "{r}");
@@ -787,11 +988,27 @@ fn hostile_separator_outputs_fail_the_job_and_are_never_served() {
         let mut s = start_script(&body, &[]);
         let id = submit(s.addr);
         let v = wait_state(s.addr, &id, "failed");
-        assert!(v["error"].as_str().is_some_and(|e| !e.is_empty()), "{name}: {v}");
+        assert!(
+            v["error"].as_str().is_some_and(|e| !e.is_empty()),
+            "{name}: {v}"
+        );
         assert!(v["stems"].is_null(), "{name}: {v}");
-        let r = http(s.addr, "GET", &format!("/v1/jobs/{id}/stems/vocals"), &[], b"");
-        assert!(matches!(r.status, 404 | 409), "{name}: stem served with {}", r.status);
-        assert!(!String::from_utf8_lossy(&r.body).contains("root:"), "{name}: leaked /etc/passwd");
+        let r = http(
+            s.addr,
+            "GET",
+            &format!("/v1/jobs/{id}/stems/vocals"),
+            &[],
+            b"",
+        );
+        assert!(
+            matches!(r.status, 404 | 409),
+            "{name}: stem served with {}",
+            r.status
+        );
+        assert!(
+            !String::from_utf8_lossy(&r.body).contains("root:"),
+            "{name}: leaked /etc/passwd"
+        );
         assert!(s.alive(), "{name}");
     }
 }
@@ -805,7 +1022,11 @@ fn chatty_and_hostile_separator_output_does_not_hurt_the_server() {
     let id = submit(s.addr);
     let v = wait_state(s.addr, &id, "failed");
     let err = v["error"].as_str().unwrap();
-    assert!(err.len() < 600, "error text must be bounded, was {} bytes", err.len());
+    assert!(
+        err.len() < 600,
+        "error text must be bounded, was {} bytes",
+        err.len()
+    );
     assert!(s.alive() && s.healthy());
 }
 
@@ -826,7 +1047,9 @@ fn separator_timeout_kills_a_hung_separator() {
         }
     };
     assert!(v["error"].as_str().unwrap().contains("timed out"), "{v}");
-    until("separator gone", 10, || !tagged(&s.tag).iter().any(|(_, c)| c.contains("input.flac")));
+    until("separator gone", 10, || {
+        !tagged(&s.tag).iter().any(|(_, c)| c.contains("input.flac"))
+    });
     assert!(s.job_dirs().is_empty());
 }
 
@@ -853,7 +1076,11 @@ fn run_cli(args: &[&str]) -> (Option<i32>, String, String) {
         .env_remove("XDG_STATE_HOME")
         .output()
         .unwrap();
-    (o.status.code(), String::from_utf8_lossy(&o.stdout).into(), String::from_utf8_lossy(&o.stderr).into())
+    (
+        o.status.code(),
+        String::from_utf8_lossy(&o.stdout).into(),
+        String::from_utf8_lossy(&o.stderr).into(),
+    )
 }
 
 #[test]
@@ -861,12 +1088,22 @@ fn cli_refuses_to_start_without_a_valid_separator() {
     let (c, _, e) = run_cli(&["--work-dir", "/nonexistent-qa/x", "--listen", "127.0.0.1:0"]);
     assert_eq!(c, Some(2), "{e}");
     assert!(e.contains("--separator"), "{e}");
-    let (c, _, e) = run_cli(&["--separator", "/nonexistent-qa/sep", "--listen", "127.0.0.1:0"]);
+    let (c, _, e) = run_cli(&[
+        "--separator",
+        "/nonexistent-qa/sep",
+        "--listen",
+        "127.0.0.1:0",
+    ]);
     assert_eq!(c, Some(2), "{e}");
     let tmp = tempfile::tempdir().unwrap();
     let nonexec = tmp.path().join("plain.txt");
     std::fs::write(&nonexec, "x").unwrap();
-    let (c, _, e) = run_cli(&["--separator", nonexec.to_str().unwrap(), "--listen", "127.0.0.1:0"]);
+    let (c, _, e) = run_cli(&[
+        "--separator",
+        nonexec.to_str().unwrap(),
+        "--listen",
+        "127.0.0.1:0",
+    ]);
     assert_eq!(c, Some(2), "{e}");
     let (c, _, e) = run_cli(&["--separator", tmp.path().to_str().unwrap()]);
     assert_eq!(c, Some(2), "a directory is not a separator: {e}");
@@ -900,7 +1137,17 @@ fn cli_rejects_bad_values_and_unknown_flags() {
     }
     let (c, out, _) = run_cli(&["--help"]);
     assert_eq!(c, Some(0));
-    for f in ["--separator", "--listen", "--work-dir", "--model", "--max-upload-mb", "--max-duration-s", "--queue", "--separator-timeout-min", "--retention-hours"] {
+    for f in [
+        "--separator",
+        "--listen",
+        "--work-dir",
+        "--model",
+        "--max-upload-mb",
+        "--max-duration-s",
+        "--queue",
+        "--separator-timeout-min",
+        "--retention-hours",
+    ] {
         assert!(out.contains(f), "--help lacks {f}");
     }
     assert!(out.contains("8765") && out.contains("required"));
@@ -915,7 +1162,14 @@ fn cli_rejects_bad_values_and_unknown_flags() {
 #[test]
 fn port_in_use_is_a_clean_error() {
     let s = start("ok", &[]);
-    let (c, _, e) = run_cli(&["--separator", stub().to_str().unwrap(), "--listen", &s.addr.to_string(), "--work-dir", s.outer.path().join("w2").to_str().unwrap()]);
+    let (c, _, e) = run_cli(&[
+        "--separator",
+        stub().to_str().unwrap(),
+        "--listen",
+        &s.addr.to_string(),
+        "--work-dir",
+        s.outer.path().join("w2").to_str().unwrap(),
+    ]);
     assert_eq!(c, Some(1), "{e}");
     assert!(e.contains("cannot listen"), "{e}");
 }
@@ -926,10 +1180,16 @@ fn server_writes_only_inside_its_work_dir() {
     let id = submit(s.addr);
     wait_state(s.addr, &id, "done");
     let _ = http(s.addr, "DELETE", &format!("/v1/jobs/{id}"), &[], b"");
-    let mut names: Vec<String> = std::fs::read_dir(s.outer.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    let mut names: Vec<String> = std::fs::read_dir(s.outer.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
     names.sort();
     assert_eq!(names, ["work"]);
-    let mut inner: Vec<String> = std::fs::read_dir(s.work()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    let mut inner: Vec<String> = std::fs::read_dir(s.work())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
     inner.sort();
     assert_eq!(inner, ["jobs"]);
 }

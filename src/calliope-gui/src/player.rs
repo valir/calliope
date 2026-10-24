@@ -64,9 +64,13 @@ pub struct LoopSpec {
 pub enum Cmd {
     /// Start sound at the engine position (restarts from 0 at the end of the track), after
     /// the count-in when given.
-    Play { count_in: Option<CountIn> },
+    Play {
+        count_in: Option<CountIn>,
+    },
     /// Jump to the loop start and play it; with Loop On it repeats, otherwise it stops at the end.
-    PlayLoop { count_in: Option<CountIn> },
+    PlayLoop {
+        count_in: Option<CountIn>,
+    },
     Pause,
     /// Move; while playing the sound stays off until `Resume` (the scrub rule).
     Seek(u64),
@@ -144,7 +148,13 @@ enum EventKind {
     /// `pass`/`pct`: the pass that starts and its speed (pass 0: no training run).
     Wrap { len: u64, pass: u32, pct: u32 },
     /// Loop end with count-in (`pass`/`pct` as for `Wrap`).
-    CountIn { start: u64, bpm_milli: u32, lead: u64, pass: u32, pct: u32 },
+    CountIn {
+        start: u64,
+        bpm_milli: u32,
+        lead: u64,
+        pass: u32,
+        pct: u32,
+    },
     /// A loop played once ended.
     Once { start: u64 },
     /// The track ended.
@@ -178,7 +188,11 @@ fn frame_lr(pcm: &Pcm, f: u64) -> (f32, f32) {
     let ch = pcm.channels.max(1) as usize;
     let base = f as usize * ch;
     let l = f32::from(pcm.samples[base]) / 32768.0;
-    let r = if ch >= 2 { f32::from(pcm.samples[base + 1]) / 32768.0 } else { l };
+    let r = if ch >= 2 {
+        f32::from(pcm.samples[base + 1]) / 32768.0
+    } else {
+        l
+    };
     (l, r)
 }
 
@@ -332,7 +346,9 @@ impl Engine {
         }
         let pcm = &*self.pcm;
         // a repeating loop the target is inside: the audio stops at its end (with the fade-out)
-        let wrapping = self.wrapping().filter(|l| target < l.end && l.end <= pcm.frames);
+        let wrapping = self
+            .wrapping()
+            .filter(|l| target < l.end && l.end <= pcm.frames);
         let fade = u64::from(self.fade_len);
         let fed = self.stretch.align(
             |f, b| {
@@ -341,7 +357,11 @@ impl Engine {
                     for (k, fr) in b.chunks_exact_mut(2).enumerate() {
                         let song = f + k as u64;
                         if song + fade >= l.end {
-                            let g = if song >= l.end { 0.0 } else { (l.end - song) as f32 / fade as f32 };
+                            let g = if song >= l.end {
+                                0.0
+                            } else {
+                                (l.end - song) as f32 / fade as f32
+                            };
                             fr[0] *= g;
                             fr[1] *= g;
                         }
@@ -363,14 +383,21 @@ impl Engine {
         self.stage_at = 0;
         self.events.clear();
         self.timeline.clear();
-        self.timeline.push_back(Entry { out: self.out_count, u: target as f64, speed: self.speed });
+        self.timeline.push_back(Entry {
+            out: self.out_count,
+            u: target as f64,
+            speed: self.speed,
+        });
         self.beat_dirty = true;
         self.voice = None;
         if let Some(l) = wrapping.filter(|l| fed >= l.end) {
             // the alignment already fed past the loop end: the end is met now
             self.loop_end(Some(l), l.end as f64, fed - l.end);
         } else if fed >= self.pcm.frames {
-            self.push_event(FeedEvent { u: self.pcm.frames as f64, kind: EventKind::Track });
+            self.push_event(FeedEvent {
+                u: self.pcm.frames as f64,
+                kind: EventKind::Track,
+            });
             self.feed_zero = true;
         }
     }
@@ -381,7 +408,14 @@ impl Engine {
         match l {
             Some(l) if l.repeat && l.count_in_bpm_milli.is_none() => {
                 let (pass, pct) = self.coming_pass(&l);
-                self.push_event(FeedEvent { u: at, kind: EventKind::Wrap { len: l.end - l.start, pass, pct } });
+                self.push_event(FeedEvent {
+                    u: at,
+                    kind: EventKind::Wrap {
+                        len: l.end - l.start,
+                        pass,
+                        pct,
+                    },
+                });
                 if let Some(r) = self.run.as_mut().filter(|_| pass > 0) {
                     r.pass += 1;
                     self.speed = f64::from(pct) / 100.0; // the new speed applies from the loop start
@@ -394,15 +428,30 @@ impl Engine {
                 let bpm_milli = l.count_in_bpm_milli.unwrap_or(0);
                 let (pass, pct) = self.coming_pass(&l);
                 let lead = l.count_in_lead;
-                self.push_event(FeedEvent { u: at, kind: EventKind::CountIn { start: l.start, bpm_milli, lead, pass, pct } });
+                self.push_event(FeedEvent {
+                    u: at,
+                    kind: EventKind::CountIn {
+                        start: l.start,
+                        bpm_milli,
+                        lead,
+                        pass,
+                        pct,
+                    },
+                });
                 self.feed_zero = true;
             }
             Some(l) => {
-                self.push_event(FeedEvent { u: at, kind: EventKind::Once { start: l.start } });
+                self.push_event(FeedEvent {
+                    u: at,
+                    kind: EventKind::Once { start: l.start },
+                });
                 self.feed_zero = true;
             }
             None => {
-                self.push_event(FeedEvent { u: at, kind: EventKind::Track });
+                self.push_event(FeedEvent {
+                    u: at,
+                    kind: EventKind::Track,
+                });
                 self.feed_zero = true;
             }
         }
@@ -458,7 +507,13 @@ impl Engine {
                     self.loop_play = true;
                     if let Some(t) = l.training.filter(|_| l.repeat) {
                         let pct = t.pass_speed(0);
-                        self.run = Some(Run { pass: 0, heard: 0, pct, start: l.start, end: l.end });
+                        self.run = Some(Run {
+                            pass: 0,
+                            heard: 0,
+                            pct,
+                            start: l.start,
+                            end: l.end,
+                        });
                         self.speed = f64::from(pct) / 100.0;
                     }
                 } else if self.pos >= self.pcm.frames {
@@ -506,7 +561,9 @@ impl Engine {
                 // the run goes on only for the same loop that still repeats with training; changed settings
                 // are read at the next wrap
                 if let Some(r) = self.run {
-                    if !l.is_some_and(|l| l.repeat && l.training.is_some() && l.start == r.start && l.end == r.end) {
+                    if !l.is_some_and(|l| {
+                        l.repeat && l.training.is_some() && l.start == r.start && l.end == r.end
+                    }) {
                         self.end_run();
                     }
                 }
@@ -542,8 +599,7 @@ impl Engine {
                     self.xpos = at;
                     self.xfade_left = self.fade_len;
                     self.fade_left = 0;
-                }
-                else if self.playing
+                } else if self.playing
                     && self.audible
                     && self.mode == Mode::Stretch
                     && pct == 100
@@ -583,7 +639,10 @@ impl Engine {
     /// The count-in of a loop wrap, spaced for the coming pass; `lead` song frames before the next beat.
     fn wrap_count(&self, bpm_milli: u32, lead: u64, speed: f64) -> CountState {
         let plan = count_in_plan(f64::from(bpm_milli) / 1000.0 * speed, self.pcm.rate);
-        CountState { plan: plan.lead_in((lead as f64 / speed).round() as u64), at: 0 }
+        CountState {
+            plan: plan.lead_in((lead as f64 / speed).round() as u64),
+            at: 0,
+        }
     }
 
     /// The loop the feed wraps at, when it is in play.
@@ -607,11 +666,18 @@ impl Engine {
         };
         let u0 = (self.fpos + self.woff) as f64 + self.acc - self.l_in as f64;
         let changed = self.timeline.back().is_none_or(|e| e.speed != s);
-        debug_assert!(!changed || self.timeline.len() < TIMELINE, "speed timeline overflow");
+        debug_assert!(
+            !changed || self.timeline.len() < TIMELINE,
+            "speed timeline overflow"
+        );
         if changed && self.timeline.len() < TIMELINE {
             // `out` ignores the (at most SUB_BLOCK - 1, ~6 ms) stage frames not yet heard, so a new speed is
             // shown that much early at worst; the position it moves is below the display's resolution.
-            self.timeline.push_back(Entry { out: self.out_count + self.l_out, u: u0, speed: s });
+            self.timeline.push_back(Entry {
+                out: self.out_count + self.l_out,
+                u: u0,
+                speed: s,
+            });
         }
         let exact = self.acc + SUB_BLOCK as f64 * s;
         let mut m = exact as usize;
@@ -652,7 +718,8 @@ impl Engine {
             }
             self.feed_fade_left = ffl;
         }
-        self.stretch.process(&self.scratch[..2 * m], &mut self.stage[..2 * n]);
+        self.stretch
+            .process(&self.scratch[..2 * m], &mut self.stage[..2 * n]);
         self.stage_len = n;
         self.stage_at = 0;
         self.fpos += m as u64;
@@ -683,12 +750,22 @@ impl Engine {
                 self.shared.wraps.fetch_add(1, Ordering::AcqRel);
                 false
             }
-            EventKind::CountIn { start, bpm_milli, lead, pass, pct } => {
+            EventKind::CountIn {
+                start,
+                bpm_milli,
+                lead,
+                pass,
+                pct,
+            } => {
                 self.heard_pass(pass, pct);
                 self.shared.wraps.fetch_add(1, Ordering::AcqRel);
                 self.pos = start;
                 self.beat_dirty = true;
-                let speed = if pass > 0 { f64::from(pct) / 100.0 } else { self.speed };
+                let speed = if pass > 0 {
+                    f64::from(pct) / 100.0
+                } else {
+                    self.speed
+                };
                 self.count = Some(self.wrap_count(bpm_milli, lead, speed));
                 self.enter(start);
                 true
@@ -748,7 +825,10 @@ impl Engine {
                 self.beat_idx += 1;
             }
         }
-        let (mut l, mut r) = (self.stage[2 * self.stage_at], self.stage[2 * self.stage_at + 1]);
+        let (mut l, mut r) = (
+            self.stage[2 * self.stage_at],
+            self.stage[2 * self.stage_at + 1],
+        );
         self.stage_at += 1;
         self.out_count += 1;
         if self.xfade_left > 0 {
@@ -785,7 +865,9 @@ impl Engine {
                 self.events.clear();
                 self.timeline.clear();
                 // a loop end crossed during the return fade is handled here (the bypass check is exact)
-                let crossed = self.wrapping().filter(|l| self.pos >= l.end && l.end <= self.pcm.frames);
+                let crossed = self
+                    .wrapping()
+                    .filter(|l| self.pos >= l.end && l.end <= self.pcm.frames);
                 if let Some(l) = crossed {
                     self.bypass_loop_end(l);
                 } else if self.pos >= self.pcm.frames {
@@ -805,7 +887,9 @@ impl Engine {
             self.pos = l.start;
             self.beat_dirty = true;
             self.shared.wraps.fetch_add(1, Ordering::AcqRel);
-            self.count = l.count_in_bpm_milli.map(|b| self.wrap_count(b, l.count_in_lead, self.speed));
+            self.count = l
+                .count_in_bpm_milli
+                .map(|b| self.wrap_count(b, l.count_in_lead, self.speed));
             if self.count.is_none() {
                 self.start_fade();
             }
@@ -870,7 +954,11 @@ impl Engine {
             }
             let base = self.pos as usize * ch;
             let l = f32::from(self.pcm.samples[base]) / 32768.0;
-            let r = if ch >= 2 { f32::from(self.pcm.samples[base + 1]) / 32768.0 } else { l };
+            let r = if ch >= 2 {
+                f32::from(self.pcm.samples[base + 1]) / 32768.0
+            } else {
+                l
+            };
             let mut g = if self.fade_left > 0 {
                 let g = (self.fade_len - self.fade_left) as f32 / self.fade_len as f32;
                 self.fade_left -= 1;
@@ -880,7 +968,10 @@ impl Engine {
             };
             let wraps = self.wrapping();
             if let Some(l) = wraps {
-                if self.pos < l.end && self.pos >= l.start && l.end - self.pos <= u64::from(self.fade_len) {
+                if self.pos < l.end
+                    && self.pos >= l.start
+                    && l.end - self.pos <= u64::from(self.fade_len)
+                {
                     g *= (l.end - self.pos) as f32 / self.fade_len as f32;
                 }
             }
@@ -907,14 +998,23 @@ impl Engine {
         }
         let heard = match self.timeline.front() {
             _ if self.playing && self.run.is_some() => self.run.map_or(0, |r| u64::from(r.pct)),
-            Some(e) if self.mode == Mode::Stretch && self.playing && self.audible => (e.speed * 100.0).round() as u64,
+            Some(e) if self.mode == Mode::Stretch && self.playing && self.audible => {
+                (e.speed * 100.0).round() as u64
+            }
             _ => u64::from(self.base_pct),
         };
         self.shared.speed_pct.store(heard, Ordering::Release);
-        let pass = self.run.filter(|_| self.playing).map_or(0, |r| u64::from(r.heard) + 1);
+        let pass = self
+            .run
+            .filter(|_| self.playing)
+            .map_or(0, |r| u64::from(r.heard) + 1);
         self.shared.pass.store(pass, Ordering::Release);
-        self.shared.counting_in.store(self.count.is_some(), Ordering::Release);
-        self.shared.loop_playing.store(self.playing && self.loop_play, Ordering::Release);
+        self.shared
+            .counting_in
+            .store(self.count.is_some(), Ordering::Release);
+        self.shared
+            .loop_playing
+            .store(self.playing && self.loop_play, Ordering::Release);
         self.shared.position.store(self.pos, Ordering::Release);
     }
 }
@@ -1083,33 +1183,58 @@ fn progress_sink(id: &str, sink: &EventSink) -> impl FnMut(u64, u64) {
         let p = (done as f64 / total as f64).clamp(0.0, 1.0);
         if p - last >= 0.01 || p >= 1.0 {
             last = p;
-            sink(PlayerEvent::Loading { id: id.clone(), progress: p });
+            sink(PlayerEvent::Loading {
+                id: id.clone(),
+                progress: p,
+            });
         }
     }
 }
 
 /// Revision of `<dir>/player.json`: the FNV-1a hash of its bytes; none when it can't be read.
 fn revision_of(dir: &std::path::Path) -> Option<String> {
-    std::fs::read(dir.join(player_state::PLAYER_FILE)).ok().map(|b| crate::fsutil::fnv1a64_hex(&b))
+    std::fs::read(dir.join(player_state::PLAYER_FILE))
+        .ok()
+        .map(|b| crate::fsutil::fnv1a64_hex(&b))
 }
 
 /// Reads `player.json`, picks the source and decodes it (long; call without the manager lock).
-pub(crate) fn load(spec: &OpenSpec, ticket: &OpenTicket, sink: &EventSink) -> Result<Loaded, String> {
+pub(crate) fn load(
+    spec: &OpenSpec,
+    ticket: &OpenTicket,
+    sink: &EventSink,
+) -> Result<Loaded, String> {
     // The bytes are read first, so the state is at least as new as the revision.
     let revision = revision_of(&spec.dir);
     let (mut state, note, _writable) = player_state::load(&spec.dir);
     let keys: Vec<&str> = spec.sources.iter().map(|s| s.key.as_str()).collect();
     let source = player_state::choose_source(state.source.as_deref(), &keys)
         .ok_or_else(|| format!("{} has no audio to play.", spec.title))?;
-    let entry = spec.sources.iter().find(|s| s.key == source).expect("chosen from the list");
+    let entry = spec
+        .sources
+        .iter()
+        .find(|s| s.key == source)
+        .expect("chosen from the list");
     let mut progress = progress_sink(&spec.id, sink);
-    let pcm = player_source::decode(&spec.dir.join(&entry.file), spec.ffmpeg.as_deref(), &ticket.cancel, &mut progress)?;
+    let pcm = player_source::decode(
+        &spec.dir.join(&entry.file),
+        spec.ffmpeg.as_deref(),
+        &ticket.cancel,
+        &mut progress,
+    )?;
     if ticket.cancel.load(Ordering::Relaxed) {
         return Err(SUPERSEDED.into());
     }
     let peaks = player_source::peaks(&pcm, PEAK_BUCKETS);
     state.source = Some(source.clone());
-    Ok(Loaded { state, note, source, pcm, peaks, revision })
+    Ok(Loaded {
+        state,
+        note,
+        source,
+        pcm,
+        peaks,
+        revision,
+    })
 }
 
 // ---------------------------------------------------------------------- manager
@@ -1138,7 +1263,8 @@ impl OutputRequest {
     pub fn open(self) -> Result<OpenedOutput, String> {
         let (tx, rx): (SyncSender<Cmd>, Receiver<Cmd>) = sync_channel(COMMANDS);
         let (trash_tx, trash) = sync_channel(TRASH);
-        let mut engine = Engine::new(self.pcm.clone(), self.start, self.shared.clone()).with_trash(trash_tx);
+        let mut engine =
+            Engine::new(self.pcm.clone(), self.start, self.shared.clone()).with_trash(trash_tx);
         let handle = self.backend.open(
             self.pcm.rate,
             Box::new(move |out| {
@@ -1148,7 +1274,10 @@ impl OutputRequest {
                 engine.render(out);
             }),
         )?;
-        Ok(OpenedOutput { shared: self.shared, output: Output { handle, tx, trash } })
+        Ok(OpenedOutput {
+            shared: self.shared,
+            output: Output { handle, tx, trash },
+        })
     }
 }
 
@@ -1203,7 +1332,9 @@ impl Session {
     }
 
     fn set_pos(&self, frames: u64) {
-        self.shared.position.store(frames.min(self.pcm.frames), Ordering::Release);
+        self.shared
+            .position
+            .store(frames.min(self.pcm.frames), Ordering::Release);
     }
 
     fn ms_of(&self, frames: u64) -> u64 {
@@ -1233,7 +1364,10 @@ impl Session {
 
     /// The first frame at or after `ms` (a tolerance absorbs float noise on whole-frame times).
     fn frame_at_or_after_ms(&self, ms: f64) -> u64 {
-        (((ms * f64::from(self.pcm.rate) / 1000.0) - 1e-6).ceil().max(0.0) as u64).min(self.pcm.frames)
+        (((ms * f64::from(self.pcm.rate) / 1000.0) - 1e-6)
+            .ceil()
+            .max(0.0) as u64)
+            .min(self.pcm.frames)
     }
 
     fn boundary_ms(&self, b: Boundary) -> f64 {
@@ -1247,7 +1381,8 @@ impl Session {
     fn plan_at(&self, ms: f64, pct: u32) -> Option<CountIn> {
         let bpm = self.state.tempo.bpm_at(ms) * f64::from(pct) / 100.0;
         let lead = (self.beat_lead(ms) as f64 * 100.0 / f64::from(pct.max(1))).round() as u64;
-        (!self.state.tempo.is_empty() && bpm > 0.0).then(|| count_in_plan(bpm, self.pcm.rate).lead_in(lead))
+        (!self.state.tempo.is_empty() && bpm > 0.0)
+            .then(|| count_in_plan(bpm, self.pcm.rate).lead_in(lead))
     }
 
     /// Song frames from a start at `ms` to the next beat of the grid (0 on a beat or without a tempo).
@@ -1258,7 +1393,12 @@ impl Session {
         }
         let half_frame = 500.0 / f64::from(self.pcm.rate.max(1));
         let beat = 60000.0 / bpm;
-        match self.state.tempo.beats_in(ms - half_frame, ms + 2.0 * beat).first() {
+        match self
+            .state
+            .tempo
+            .beats_in(ms - half_frame, ms + 2.0 * beat)
+            .first()
+        {
             Some(&(g, _)) => self.frame_of_ms_f(g).saturating_sub(self.frame_of_ms_f(ms)),
             None => 0,
         }
@@ -1268,7 +1408,10 @@ impl Session {
     fn log_count_in(&self, plan: &Option<CountIn>, section: Option<usize>) {
         if let Some(p) = plan {
             let section = section.map_or_else(String::new, |i| format!(" section={i}"));
-            eprintln!("calliope: player count-in clicks=3 beat_ms={}{section}", self.ms_of(p.clicks[1]));
+            eprintln!(
+                "calliope: player count-in clicks=3 beat_ms={}{section}",
+                self.ms_of(p.clicks[1])
+            );
         }
     }
 
@@ -1276,7 +1419,10 @@ impl Session {
         let rate = f64::from(self.pcm.rate);
         let dur_ms = self.pcm.frames as f64 * 1000.0 / rate;
         let clicks = section_clicks(&self.state.tempo, dur_ms, self.wrap_ms());
-        let mut frames: Vec<u64> = clicks.into_iter().map(|ms| (ms * rate / 1000.0).round() as u64).collect();
+        let mut frames: Vec<u64> = clicks
+            .into_iter()
+            .map(|ms| (ms * rate / 1000.0).round() as u64)
+            .collect();
         frames.dedup();
         Arc::new(frames.into_iter().map(|f| (f, false)).collect())
     }
@@ -1370,7 +1516,12 @@ impl Session {
         let loop_index = self.loop_index()?;
         let t = self.state.current()?.training?;
         let p = t.progress(u32::try_from(pass.checked_sub(1)?).ok()?);
-        Some(TrainingProgress { loop_index, speed_pct: p.speed_pct, repeat: p.repeat, of: p.of })
+        Some(TrainingProgress {
+            loop_index,
+            speed_pct: p.speed_pct,
+            repeat: p.repeat,
+            of: p.of,
+        })
     }
 
     fn transport_state(&self) -> PlayerTransport {
@@ -1400,22 +1551,35 @@ impl Session {
             Boundary::Ms { ms } => ms,
             Boundary::Tick { tick } => st.tempo.ms_at(tick),
         };
-        let loops: Vec<PlayerLoop> = st.loops.iter().map(|l: &LoopRec| PlayerLoop {
-            id: l.id.clone(),
-            start: l.start,
-            end: l.end,
-            start_ms: ms_of(l.start),
-            end_ms: l.end.map(ms_of),
-            repeat: l.repeat,
-            count_in: l.count_in,
-            training: l.training.unwrap_or_default(),
-        })
-        .collect();
-        let current_loop = st.current_loop.as_ref().and_then(|c| st.loops.iter().position(|l| &l.id == c));
+        let loops: Vec<PlayerLoop> = st
+            .loops
+            .iter()
+            .map(|l: &LoopRec| PlayerLoop {
+                id: l.id.clone(),
+                start: l.start,
+                end: l.end,
+                start_ms: ms_of(l.start),
+                end_ms: l.end.map(ms_of),
+                repeat: l.repeat,
+                count_in: l.count_in,
+                training: l.training.unwrap_or_default(),
+            })
+            .collect();
+        let current_loop = st
+            .current_loop
+            .as_ref()
+            .and_then(|c| st.loops.iter().position(|l| &l.id == c));
         PlayerSnapshot {
             id: self.id.clone(),
             title: self.title.clone(),
-            sources: self.sources.iter().map(|s| SourceEntry { key: s.key.clone(), label: s.label.clone() }).collect(),
+            sources: self
+                .sources
+                .iter()
+                .map(|s| SourceEntry {
+                    key: s.key.clone(),
+                    label: s.label.clone(),
+                })
+                .collect(),
             source: st.source.clone().unwrap_or_default(),
             duration_ms: self.ms_of(self.pcm.frames),
             sample_rate: self.pcm.rate,
@@ -1486,23 +1650,42 @@ fn publish(sink: &EventSink, s: &mut Session, now: Instant) -> PlayerTransport {
     let key = s.key();
     let key_changed = key != s.last_key;
     let moved = state.position_ms != s.last_position;
-    let due = s.last_emit.is_none_or(|t| now.saturating_duration_since(t) >= EVENT_INTERVAL);
+    let due = s
+        .last_emit
+        .is_none_or(|t| now.saturating_duration_since(t) >= EVENT_INTERVAL);
     if key_changed || (key.playing && due) || (!key.playing && moved) {
-        if key_changed && (key.playing, key.resume_pending, key.counting_in, key.loop_playing)
-            != (s.last_key.playing, s.last_key.resume_pending, s.last_key.counting_in, s.last_key.loop_playing)
+        if key_changed
+            && (
+                key.playing,
+                key.resume_pending,
+                key.counting_in,
+                key.loop_playing,
+            ) != (
+                s.last_key.playing,
+                s.last_key.resume_pending,
+                s.last_key.counting_in,
+                s.last_key.loop_playing,
+            )
         {
             eprintln!(
                 "calliope: player transport playing={} counting_in={} loop={} position_ms={}",
                 state.playing,
                 state.counting_in,
-                if state.loop_playing { s.loop_index().map_or("none".to_string(), |n| n.to_string()) } else { "none".into() },
+                if state.loop_playing {
+                    s.loop_index().map_or("none".to_string(), |n| n.to_string())
+                } else {
+                    "none".into()
+                },
                 state.position_ms
             );
         }
         s.last_key = key;
         s.last_position = state.position_ms;
         s.last_emit = Some(now);
-        sink(PlayerEvent::Transport { id: s.id.clone(), state: state.clone() });
+        sink(PlayerEvent::Transport {
+            id: s.id.clone(),
+            state: state.clone(),
+        });
     }
     state
 }
@@ -1540,13 +1723,40 @@ pub enum LoopAction {
 /// One edit of the tempo sections (the Player's Sections group and waveform).
 #[derive(Debug, Clone, PartialEq)]
 pub enum SectionEdit {
-    Bpm { index: usize, at: f64, bpm: f64 },
-    Scale { index: usize, at: f64, factor: Scale },
-    Add { position: f64, bpm: f64 },
-    Remove { index: usize, at: f64 },
-    Move { index: usize, at: f64, steps: i64 },
-    Flags { index: usize, at: f64, metronome: bool, count_in: bool },
-    Name { index: usize, at: f64, name: String },
+    Bpm {
+        index: usize,
+        at: f64,
+        bpm: f64,
+    },
+    Scale {
+        index: usize,
+        at: f64,
+        factor: Scale,
+    },
+    Add {
+        position: f64,
+        bpm: f64,
+    },
+    Remove {
+        index: usize,
+        at: f64,
+    },
+    Move {
+        index: usize,
+        at: f64,
+        steps: i64,
+    },
+    Flags {
+        index: usize,
+        at: f64,
+        metronome: bool,
+        count_in: bool,
+    },
+    Name {
+        index: usize,
+        at: f64,
+        name: String,
+    },
 }
 
 pub struct PlayerManager {
@@ -1563,7 +1773,15 @@ pub struct PlayerManager {
 
 impl PlayerManager {
     pub fn new(backend: Arc<dyn OutputBackend>, sink: EventSink) -> Self {
-        Self { backend, sink, session: None, pending: None, generation: 0, trash: Vec::new(), defer_drops: false }
+        Self {
+            backend,
+            sink,
+            session: None,
+            pending: None,
+            generation: 0,
+            trash: Vec::new(),
+            defer_drops: false,
+        }
     }
 
     pub fn defer_drops(&mut self) {
@@ -1594,7 +1812,10 @@ impl PlayerManager {
     pub fn begin_open(&mut self) -> OpenTicket {
         self.close();
         self.generation += 1;
-        let ticket = OpenTicket { gen: self.generation, cancel: Arc::new(AtomicBool::new(false)) };
+        let ticket = OpenTicket {
+            gen: self.generation,
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
         self.pending = Some(ticket.clone());
         ticket
     }
@@ -1610,17 +1831,32 @@ impl PlayerManager {
     }
 
     /// Installs a loaded track unless a newer `begin_open`/`close` superseded the ticket.
-    pub fn finish_open(&mut self, ticket: &OpenTicket, spec: &OpenSpec, loaded: Loaded) -> Result<PlayerSnapshot, String> {
+    pub fn finish_open(
+        &mut self,
+        ticket: &OpenTicket,
+        spec: &OpenSpec,
+        loaded: Loaded,
+    ) -> Result<PlayerSnapshot, String> {
         if ticket.gen != self.generation || ticket.cancel.load(Ordering::Relaxed) {
             return Err(SUPERSEDED.into());
         }
         self.pending = None;
-        let Loaded { mut state, mut note, source, pcm, peaks, revision } = loaded;
+        let Loaded {
+            mut state,
+            mut note,
+            source,
+            pcm,
+            peaks,
+            revision,
+        } = loaded;
         if revision_of(&spec.dir) != revision {
             // `player.json` was written (the Editor's tempo map) after it was read: use the new
             // content, so that write is not lost. The decoded source stays.
             let (fresh, fresh_note, _) = player_state::load(&spec.dir);
-            eprintln!("calliope: player reread id={} (player.json changed while opening)", spec.id);
+            eprintln!(
+                "calliope: player reread id={} (player.json changed while opening)",
+                spec.id
+            );
             state = fresh;
             note = fresh_note;
         }
@@ -1650,7 +1886,14 @@ impl PlayerManager {
             switching: None,
             select_gen: 0,
             select_cancel: None,
-            last_key: EventKey { playing: false, resume_pending: false, counting_in: false, loop_playing: false, speed_pct: 0, pass: 0 },
+            last_key: EventKey {
+                playing: false,
+                resume_pending: false,
+                counting_in: false,
+                loop_playing: false,
+                speed_pct: 0,
+                pass: 0,
+            },
             last_position: 0,
             last_emit: None,
             loop_message: None,
@@ -1666,7 +1909,11 @@ impl PlayerManager {
             "calliope: player open id={} source={} duration_ms={} rate={} position_ms={}",
             snap.id, source, snap.duration_ms, snap.sample_rate, snap.transport.position_ms
         );
-        let old = self.session.replace(session).and_then(|s| s.output).map(|o| o.handle);
+        let old = self
+            .session
+            .replace(session)
+            .and_then(|s| s.output)
+            .map(|o| o.handle);
         self.retire(old);
         Ok(snap)
     }
@@ -1760,7 +2007,9 @@ impl PlayerManager {
 
     /// The open session's id and whether it is sounding (no snapshot built).
     pub fn current_id_playing(&self) -> Option<(String, bool)> {
-        self.session.as_ref().map(|s| (s.id.clone(), s.transport.shows_playing()))
+        self.session
+            .as_ref()
+            .map(|s| (s.id.clone(), s.transport.shows_playing()))
     }
 
     // ------------------------------------------------------------ transport
@@ -1804,7 +2053,12 @@ impl PlayerManager {
     }
 
     /// Step 2 of Play: starts. Nothing changes if the device failed to open.
-    pub fn play_with(&mut self, id: &str, opened: Option<OpenedOutput>, now: Instant) -> Result<PlayerTransport, String> {
+    pub fn play_with(
+        &mut self,
+        id: &str,
+        opened: Option<OpenedOutput>,
+        now: Instant,
+    ) -> Result<PlayerTransport, String> {
         self.session(id)?;
         self.install(opened);
         let sink = self.sink.clone();
@@ -1825,7 +2079,9 @@ impl PlayerManager {
             s.plan_at(pos_ms, s.state.speed_pct())
         };
         s.log_count_in(&plan, s.state.tempo.segment_at(pos_ms));
-        s.shared.counting_in.store(plan.is_some(), Ordering::Release);
+        s.shared
+            .counting_in
+            .store(plan.is_some(), Ordering::Release);
         s.run_until = None; // a plain Play ends a run
         s.transport.play();
         s.send(Cmd::Play { count_in: plan });
@@ -1835,7 +2091,10 @@ impl PlayerManager {
 
     #[allow(dead_code)] // whole-call form, used by the tests
     pub fn play(&mut self, id: &str, now: Instant) -> Result<PlayerTransport, String> {
-        let opened = self.play_request(id)?.map(OutputRequest::open).transpose()?;
+        let opened = self
+            .play_request(id)?
+            .map(OutputRequest::open)
+            .transpose()?;
         self.play_with(id, opened, now)
     }
 
@@ -1851,7 +2110,12 @@ impl PlayerManager {
     }
 
     /// Moves to `position_ms` (clamped); while playing the sound resumes 0.3 s later.
-    pub fn seek(&mut self, id: &str, position_ms: u64, now: Instant) -> Result<PlayerTransport, String> {
+    pub fn seek(
+        &mut self,
+        id: &str,
+        position_ms: u64,
+        now: Instant,
+    ) -> Result<PlayerTransport, String> {
         let sink = self.sink.clone();
         let s = self.session(id)?;
         let f = s.frames_of(position_ms);
@@ -1863,14 +2127,24 @@ impl PlayerManager {
         Ok(publish(&sink, s, now))
     }
 
-    pub fn nudge(&mut self, id: &str, delta_ms: i64, now: Instant) -> Result<PlayerTransport, String> {
+    pub fn nudge(
+        &mut self,
+        id: &str,
+        delta_ms: i64,
+        now: Instant,
+    ) -> Result<PlayerTransport, String> {
         let s = self.session(id)?;
         let cur = s.ms_of(s.pos()) as i64;
         self.seek(id, cur.saturating_add(delta_ms).max(0) as u64, now)
     }
 
     /// Rew/FF: an instant jump (no scrub silence), clamped.
-    pub fn skip(&mut self, id: &str, delta_ms: i64, now: Instant) -> Result<PlayerTransport, String> {
+    pub fn skip(
+        &mut self,
+        id: &str,
+        delta_ms: i64,
+        now: Instant,
+    ) -> Result<PlayerTransport, String> {
         let sink = self.sink.clone();
         let s = self.session(id)?;
         let cur = s.ms_of(s.pos()) as i64;
@@ -1909,14 +2183,22 @@ impl PlayerManager {
         s.sync_grid();
         s.sync_loop();
         s.mark_dirty(now);
-        eprintln!("calliope: player bpm value={bpm} position_ms={}", s.ms_of(s.pos()));
+        eprintln!(
+            "calliope: player bpm value={bpm} position_ms={}",
+            s.ms_of(s.pos())
+        );
         Ok(s.snapshot())
     }
 
     /// Edits the tempo sections of the open session without pausing or moving the playback:
     /// loops keep their time, the engine gets the new grid and the file is saved after the debounce.
     /// A refusal changes nothing.
-    pub fn edit_sections(&mut self, id: &str, edit: SectionEdit, now: Instant) -> Result<PlayerSnapshot, String> {
+    pub fn edit_sections(
+        &mut self,
+        id: &str,
+        edit: SectionEdit,
+        now: Instant,
+    ) -> Result<PlayerSnapshot, String> {
         let s = self.session(id)?;
         let end_ms = s.pcm.frames as f64 * 1000.0 / f64::from(s.pcm.rate.max(1));
         let old = &s.state.tempo;
@@ -1930,11 +2212,21 @@ impl PlayerManager {
         let (kind, index, map, extra) = match edit {
             SectionEdit::Bpm { index, at, bpm } => {
                 guard(index, at)?;
-                ("bpm", index, old.set_section_bpm(index, bpm)?, String::new())
+                (
+                    "bpm",
+                    index,
+                    old.set_section_bpm(index, bpm)?,
+                    String::new(),
+                )
             }
             SectionEdit::Scale { index, at, factor } => {
                 guard(index, at)?;
-                ("scale", index, old.scale_section(index, factor)?, String::new())
+                (
+                    "scale",
+                    index,
+                    old.scale_section(index, factor)?,
+                    String::new(),
+                )
             }
             SectionEdit::Add { position, bpm } => {
                 let (map, index) = old.add_change(position, bpm, end_ms)?;
@@ -1947,15 +2239,35 @@ impl PlayerManager {
             SectionEdit::Move { index, at, steps } => {
                 guard(index, at)?;
                 let (map, applied) = old.move_change(index, steps, end_ms)?;
-                ("move", index, map, format!(" steps={steps} applied={applied}"))
+                (
+                    "move",
+                    index,
+                    map,
+                    format!(" steps={steps} applied={applied}"),
+                )
             }
-            SectionEdit::Flags { index, at, metronome, count_in } => {
+            SectionEdit::Flags {
+                index,
+                at,
+                metronome,
+                count_in,
+            } => {
                 guard(index, at)?;
-                ("flags", index, old.set_section_flags(index, metronome, count_in)?, String::new())
+                (
+                    "flags",
+                    index,
+                    old.set_section_flags(index, metronome, count_in)?,
+                    String::new(),
+                )
             }
             SectionEdit::Name { index, at, name } => {
                 guard(index, at)?;
-                ("name", index, old.set_section_name(index, &name)?, String::new())
+                (
+                    "name",
+                    index,
+                    old.set_section_name(index, &name)?,
+                    String::new(),
+                )
             }
         };
         s.state.apply_tempo_change(map);
@@ -1965,7 +2277,12 @@ impl PlayerManager {
         s.mark_dirty(now);
         let segs = &s.state.tempo.segments;
         let bpms: Vec<String> = segs.iter().map(|g| g.bpm.to_string()).collect();
-        let flag = |f: fn(&Segment) -> bool| segs.iter().map(|g| if f(g) { "1" } else { "0" }).collect::<Vec<_>>().join(",");
+        let flag = |f: fn(&Segment) -> bool| {
+            segs.iter()
+                .map(|g| if f(g) { "1" } else { "0" })
+                .collect::<Vec<_>>()
+                .join(",")
+        };
         eprintln!(
             "calliope: player section {kind} id={id} index={index} segments={} bpm={}{extra} metronome={} count_in={}",
             bpms.len(),
@@ -1977,7 +2294,14 @@ impl PlayerManager {
     }
 
     /// Start / End of a section: an instant jump like loop Prev/Next; playback goes on, a pre-roll is cancelled.
-    pub fn jump_section(&mut self, id: &str, index: usize, at: f64, edge: Edge, now: Instant) -> Result<PlayerSnapshot, String> {
+    pub fn jump_section(
+        &mut self,
+        id: &str,
+        index: usize,
+        at: f64,
+        edge: Edge,
+        now: Instant,
+    ) -> Result<PlayerSnapshot, String> {
         let sink = self.sink.clone();
         let s = self.session(id)?;
         match s.state.tempo.segments.get(index) {
@@ -1988,8 +2312,13 @@ impl PlayerManager {
         let ms = s.state.tempo.section_jump_ms(index, edge, end_ms)?;
         // Start lands on the first frame of the section and End on its last frame: either way the
         // playhead stays in the section (the lookup would otherwise pick the previous or next one).
-        let first = s.frame_at_or_after_ms(s.state.tempo.section_jump_ms(index, Edge::Start, end_ms)?);
-        let f = if edge == Edge::Start { first } else { s.frame_at_or_after_ms(ms).saturating_sub(1).max(first) };
+        let first =
+            s.frame_at_or_after_ms(s.state.tempo.section_jump_ms(index, Edge::Start, end_ms)?);
+        let f = if edge == Edge::Start {
+            first
+        } else {
+            s.frame_at_or_after_ms(ms).saturating_sub(1).max(first)
+        };
         s.set_pos(f);
         s.send(Cmd::Jump(f));
         s.mark_dirty(now);
@@ -2003,7 +2332,12 @@ impl PlayerManager {
     }
 
     /// The speed buttons and the typed speed; refused during a training run.
-    pub fn speed(&mut self, id: &str, action: SpeedAction, now: Instant) -> Result<PlayerSnapshot, String> {
+    pub fn speed(
+        &mut self,
+        id: &str,
+        action: SpeedAction,
+        now: Instant,
+    ) -> Result<PlayerSnapshot, String> {
         let s = self.session(id)?;
         if s.shared.pass.load(Ordering::Acquire) > 0 || s.run_until.is_some_and(|t| now < t) {
             return Err(TRAINING_RUNNING.into());
@@ -2040,7 +2374,12 @@ impl PlayerManager {
     }
 
     /// Step 2 of loop Play: jumps to the loop start and plays (count-in per 2.6).
-    pub fn loop_play_with(&mut self, id: &str, opened: Option<OpenedOutput>, now: Instant) -> Result<PlayerSnapshot, String> {
+    pub fn loop_play_with(
+        &mut self,
+        id: &str,
+        opened: Option<OpenedOutput>,
+        now: Instant,
+    ) -> Result<PlayerSnapshot, String> {
         self.playable_loop(id)?;
         self.session(id)?;
         self.install(opened);
@@ -2051,15 +2390,27 @@ impl PlayerManager {
         }
         let l = s.state.current().expect("checked");
         let (start_ms, loop_count_in) = (s.boundary_ms(l.start), l.count_in);
-        let first_pct = l.training.filter(|t| t.on && l.repeat).map_or(s.state.speed_pct(), |t| t.pass_speed(0));
+        let first_pct = l
+            .training
+            .filter(|t| t.on && l.repeat)
+            .map_or(s.state.speed_pct(), |t| t.pass_speed(0));
         let start = s.frame_of_ms_f(start_ms);
-        let plan = if loop_count_in { s.plan_at(start_ms, first_pct) } else { None };
+        let plan = if loop_count_in {
+            s.plan_at(start_ms, first_pct)
+        } else {
+            None
+        };
         s.loop_message = None;
         s.set_pos(start);
         s.log_count_in(&plan, None);
-        s.shared.counting_in.store(plan.is_some(), Ordering::Release);
+        s.shared
+            .counting_in
+            .store(plan.is_some(), Ordering::Release);
         s.shared.loop_playing.store(true, Ordering::Release);
-        s.run_until = l.training.filter(|t| t.on && l.repeat).map(|_| now + Duration::from_secs(1));
+        s.run_until = l
+            .training
+            .filter(|t| t.on && l.repeat)
+            .map(|_| now + Duration::from_secs(1));
         s.transport.play();
         s.send(Cmd::PlayLoop { count_in: plan });
         s.next_pos_save = Some(now + POSITION_SAVE);
@@ -2068,9 +2419,17 @@ impl PlayerManager {
     }
 
     /// One Loops-section action (all but loop Play, which needs the device: `loop_play_with`).
-    pub fn loop_action(&mut self, id: &str, action: LoopAction, now: Instant) -> Result<PlayerSnapshot, String> {
+    pub fn loop_action(
+        &mut self,
+        id: &str,
+        action: LoopAction,
+        now: Instant,
+    ) -> Result<PlayerSnapshot, String> {
         if action == LoopAction::Play {
-            let opened = self.loop_play_request(id)?.map(OutputRequest::open).transpose()?;
+            let opened = self
+                .loop_play_request(id)?
+                .map(OutputRequest::open)
+                .transpose()?;
             return self.loop_play_with(id, opened, now);
         }
         let sink = self.sink.clone();
@@ -2089,7 +2448,9 @@ impl PlayerManager {
                     return Err("There is no loop selected".into());
                 }
                 // With none current, Next picks the first loop and Prev the last.
-                let cur = s.loop_index().map_or(if delta >= 0 { -1 } else { n }, |i| i as i64);
+                let cur = s
+                    .loop_index()
+                    .map_or(if delta >= 0 { -1 } else { n }, |i| i as i64);
                 let to = (cur + i64::from(delta)).clamp(0, n - 1) as usize;
                 let id = s.state.loops[to].id.clone();
                 s.state.select(&id)?;
@@ -2112,7 +2473,9 @@ impl PlayerManager {
                 }
                 s.state.set(edge, value)?
             }
-            LoopAction::Flags { repeat, count_in } => s.state.flags(Some(repeat), Some(count_in))?,
+            LoopAction::Flags { repeat, count_in } => {
+                s.state.flags(Some(repeat), Some(count_in))?
+            }
             LoopAction::Training(t) => s.state.set_training(t)?,
             LoopAction::Stop => {
                 let l = s.state.current().ok_or("There is no loop selected")?;
@@ -2135,10 +2498,20 @@ impl PlayerManager {
 
     /// Step 1 (under the lock): stops playback, keeps the position, closes the output.
     /// `None` when `key` is already the source.
-    pub fn begin_select(&mut self, id: &str, key: &str, now: Instant) -> Result<Option<SelectJob>, String> {
+    pub fn begin_select(
+        &mut self,
+        id: &str,
+        key: &str,
+        now: Instant,
+    ) -> Result<Option<SelectJob>, String> {
         let sink = self.sink.clone();
         let s = self.session(id)?;
-        let entry = s.sources.iter().find(|x| x.key == key).cloned().ok_or_else(|| format!("unknown source {key}"))?;
+        let entry = s
+            .sources
+            .iter()
+            .find(|x| x.key == key)
+            .cloned()
+            .ok_or_else(|| format!("unknown source {key}"))?;
         if s.state.source.as_deref() == Some(key) && s.switching.is_none() {
             return Ok(None);
         }
@@ -2169,15 +2542,30 @@ impl PlayerManager {
     }
 
     pub fn abort_select(&mut self, job: &SelectJob) {
-        if let Some(s) = self.session.as_mut().filter(|s| s.id == job.id && s.switching == Some(job.token)) {
+        if let Some(s) = self
+            .session
+            .as_mut()
+            .filter(|s| s.id == job.id && s.switching == Some(job.token))
+        {
             s.switching = None;
         }
     }
 
     /// Step 3 (under the lock): installs the decoded source at the same position in time.
-    pub fn finish_select(&mut self, job: &SelectJob, loaded: LoadedSource, now: Instant) -> Result<PlayerSnapshot, String> {
+    pub fn finish_select(
+        &mut self,
+        job: &SelectJob,
+        loaded: LoadedSource,
+        now: Instant,
+    ) -> Result<PlayerSnapshot, String> {
         let s = match self.session.as_mut() {
-            Some(s) if s.id == job.id && s.switching == Some(job.token) && !job.cancel.load(Ordering::Relaxed) => s,
+            Some(s)
+                if s.id == job.id
+                    && s.switching == Some(job.token)
+                    && !job.cancel.load(Ordering::Relaxed) =>
+            {
+                s
+            }
             _ => return Err(SUPERSEDED.into()),
         };
         let ms = s.ms_of(s.pos());
@@ -2195,15 +2583,26 @@ impl PlayerManager {
         s.mark_dirty(now);
         eprintln!(
             "calliope: player open id={} source={} duration_ms={} rate={} position_ms={}",
-            s.id, job.key, s.ms_of(s.pcm.frames), s.pcm.rate, s.ms_of(f)
+            s.id,
+            job.key,
+            s.ms_of(s.pcm.frames),
+            s.pcm.rate,
+            s.ms_of(f)
         );
         Ok(s.snapshot())
     }
 
     /// Whole source change in one call; the IPC layer splits it to keep the manager unlocked.
     #[allow(dead_code)] // whole-call form, used by the tests
-    pub fn select_source(&mut self, id: &str, key: &str, now: Instant) -> Result<PlayerSnapshot, String> {
-        let Some(job) = self.begin_select(id, key, now)? else { return self.snapshot(id) };
+    pub fn select_source(
+        &mut self,
+        id: &str,
+        key: &str,
+        now: Instant,
+    ) -> Result<PlayerSnapshot, String> {
+        let Some(job) = self.begin_select(id, key, now)? else {
+            return self.snapshot(id);
+        };
         let sink = self.sink.clone();
         match load_source(&job, &sink) {
             Ok(l) => self.finish_select(&job, l, now),
@@ -2251,7 +2650,10 @@ impl PlayerManager {
                     }
                 } else {
                     let at = s.last_pass_loop.map_or(at, |n| n.to_string());
-                    eprintln!("calliope: player training end loop={at} speed={}", s.state.speed_pct());
+                    eprintln!(
+                        "calliope: player training end loop={at} speed={}",
+                        s.state.speed_pct()
+                    );
                 }
                 s.last_pass = pass;
             }
@@ -2275,7 +2677,10 @@ impl PlayerManager {
                 }
                 if let Some(message) = failed {
                     retired = s.output.take().map(|o| o.handle);
-                    sink(PlayerEvent::AudioError { id: s.id.clone(), message });
+                    sink(PlayerEvent::AudioError {
+                        id: s.id.clone(),
+                        message,
+                    });
                 }
             } else if s.transport.tick(now) {
                 s.send(Cmd::Resume);
@@ -2284,7 +2689,9 @@ impl PlayerManager {
                 s.next_pos_save = Some(now + POSITION_SAVE);
                 save_session(&sink, s);
             }
-            if s.dirty_at.is_some_and(|t| now.saturating_duration_since(t) >= SAVE_DEBOUNCE) {
+            if s.dirty_at
+                .is_some_and(|t| now.saturating_duration_since(t) >= SAVE_DEBOUNCE)
+            {
                 save_session(&sink, s);
             }
             publish(&sink, s, now);
@@ -2296,7 +2703,12 @@ impl PlayerManager {
 /// Decodes the source of a `SelectJob` (long; call without the manager lock).
 pub fn load_source(job: &SelectJob, sink: &EventSink) -> Result<LoadedSource, String> {
     let mut progress = progress_sink(&job.id, sink);
-    let pcm = player_source::decode(&job.dir.join(&job.file), job.ffmpeg.as_deref(), &job.cancel, &mut progress)?;
+    let pcm = player_source::decode(
+        &job.dir.join(&job.file),
+        job.ffmpeg.as_deref(),
+        &job.cancel,
+        &mut progress,
+    )?;
     if job.cancel.load(Ordering::Relaxed) {
         return Err(SUPERSEDED.into());
     }

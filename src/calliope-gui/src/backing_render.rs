@@ -306,10 +306,19 @@ pub struct SaveParams {
 pub fn spawn(params: SaveParams, shared: Arc<SaveShared>, sink: EventSink) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let id = params.id.clone();
-        let part = params.dir.join(format!(".calliope-backing-{}.part", uuid::Uuid::now_v7()));
+        let part = params
+            .dir
+            .join(format!(".calliope-backing-{}.part", uuid::Uuid::now_v7()));
         // A panic must not leave the job "running" forever or the part file behind.
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&params, &shared, &sink, &part)))
-            .unwrap_or_else(|_| Err((Some(part.clone()), "The save stopped unexpectedly".to_string())));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run(&params, &shared, &sink, &part)
+        }))
+        .unwrap_or_else(|_| {
+            Err((
+                Some(part.clone()),
+                "The save stopped unexpectedly".to_string(),
+            ))
+        });
         let part_cleanup = |p: &Path| {
             let _ = fs::remove_file(p);
         };
@@ -334,7 +343,12 @@ pub fn spawn(params: SaveParams, shared: Arc<SaveShared>, sink: EventSink) -> Jo
 
 type JobError = (Option<PathBuf>, String);
 
-fn run(p: &SaveParams, shared: &SaveShared, sink: &EventSink, part: &Path) -> Result<EditorEvent, JobError> {
+fn run(
+    p: &SaveParams,
+    shared: &SaveShared,
+    sink: &EventSink,
+    part: &Path,
+) -> Result<EditorEvent, JobError> {
     let mut throttle = Throttle::new(PROGRESS_INTERVAL);
     let mut report = |fraction: f32| {
         shared.progress.store(fraction.to_bits(), Ordering::Relaxed);

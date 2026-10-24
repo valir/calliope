@@ -4,16 +4,16 @@
 //! fixtures copied into a temp dir. User files and a sibling "outside" folder must never change.
 #![allow(dead_code, unused_imports, clippy::all)]
 
-use calliope_gui::fsutil;
-use calliope_gui::track_meta;
-use calliope_gui::repository;
-use calliope_gui::import_tmp;
-use calliope_gui::media;
 use calliope_gui::download;
-use calliope_gui::tools;
-use calliope_gui::stem_audio;
+use calliope_gui::fsutil;
 use calliope_gui::import_job;
+use calliope_gui::import_tmp;
 use calliope_gui::local_source;
+use calliope_gui::media;
+use calliope_gui::repository;
+use calliope_gui::stem_audio;
+use calliope_gui::tools;
+use calliope_gui::track_meta;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -38,12 +38,22 @@ fn fixture(name: &str) -> PathBuf {
     project().join("tests/fixtures/import").join(name)
 }
 fn tool(name: &str) -> PathBuf {
-    tools::find_in_path(name, &std::env::var_os("PATH").unwrap_or_default()).unwrap_or_else(|| panic!("{name} is needed"))
+    tools::find_in_path(name, &std::env::var_os("PATH").unwrap_or_default())
+        .unwrap_or_else(|| panic!("{name} is needed"))
 }
 fn stems_binary() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
-    let bin = exe.parent().unwrap().parent().unwrap().join("calliope-stems");
-    assert!(bin.is_file(), "{} is missing: cargo build -p calliope-stems", bin.display());
+    let bin = exe
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("calliope-stems");
+    assert!(
+        bin.is_file(),
+        "{} is missing: cargo build -p calliope-stems",
+        bin.display()
+    );
     bin
 }
 
@@ -68,7 +78,11 @@ fn fingerprint(dir: &Path) -> BTreeMap<String, String> {
             let p = e.path();
             let rel = p.strip_prefix(base).unwrap().to_string_lossy().to_string();
             let md = fs::symlink_metadata(&p).unwrap();
-            let mt = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+            let mt = md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
             if md.file_type().is_symlink() {
                 out.insert(rel, format!("link -> {:?}", fs::read_link(&p).unwrap()));
             } else if md.is_dir() {
@@ -80,7 +94,14 @@ fn fingerprint(dir: &Path) -> BTreeMap<String, String> {
                 for b in &bytes {
                     h = (h ^ *b as u64).wrapping_mul(0x100000001b3);
                 }
-                out.insert(rel, format!("file {} {mt} {h:x} mode={:o}", bytes.len(), md.permissions().mode()));
+                out.insert(
+                    rel,
+                    format!(
+                        "file {} {mt} {h:x} mode={:o}",
+                        bytes.len(),
+                        md.permissions().mode()
+                    ),
+                );
             }
         }
     }
@@ -94,7 +115,9 @@ fn procs_mentioning(needle: &str) -> Vec<(u32, String)> {
     let me = std::process::id();
     let mut v = Vec::new();
     for e in fs::read_dir("/proc").unwrap().flatten() {
-        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
+            continue;
+        };
         if pid == me {
             continue;
         }
@@ -134,7 +157,13 @@ fn until(what: &str, secs: u64, mut f: impl FnMut() -> bool) {
 }
 
 fn names_in(dir: &Path) -> Vec<String> {
-    let mut v: Vec<String> = fs::read_dir(dir).map(|r| r.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+    let mut v: Vec<String> = fs::read_dir(dir)
+        .map(|r| {
+            r.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
     v.sort();
     v
 }
@@ -176,7 +205,10 @@ impl RealServer {
         let mut line = String::new();
         let addr: SocketAddr = loop {
             line.clear();
-            assert!(lines.read_line(&mut line).unwrap() > 0, "server exited before listening");
+            assert!(
+                lines.read_line(&mut line).unwrap() > 0,
+                "server exited before listening"
+            );
             if let Some(rest) = line.split("listening addr=").nth(1) {
                 break rest.split_whitespace().next().unwrap().parse().unwrap();
             }
@@ -191,13 +223,24 @@ impl RealServer {
                 s.clear();
             }
         });
-        RealServer { child, url: format!("http://{addr}"), work, log, _outer: outer }
+        RealServer {
+            child,
+            url: format!("http://{addr}"),
+            work,
+            log,
+            _outer: outer,
+        }
     }
     fn saw(&self, needle: &str) -> bool {
         self.log.lock().unwrap().iter().any(|l| l.contains(needle))
     }
     fn count(&self, needle: &str) -> usize {
-        self.log.lock().unwrap().iter().filter(|l| l.contains(needle)).count()
+        self.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.contains(needle))
+            .count()
     }
     fn job_dirs(&self) -> Vec<String> {
         names_in(&self.work.join("jobs"))
@@ -226,7 +269,11 @@ impl Rig {
         }
         Repository::new(&root).ensure_layout().unwrap();
         fs::write(outside.join("precious.txt"), "do not touch").unwrap();
-        let tools = Tools { yt_dlp: None, ffmpeg: Some(tool("ffmpeg")), ffprobe: Some(tool("ffprobe")) };
+        let tools = Tools {
+            yt_dlp: None,
+            ffmpeg: Some(tool("ffmpeg")),
+            ffprobe: Some(tool("ffprobe")),
+        };
         let repo_lock = Arc::new(Mutex::new(()));
         let lock: Arc<dyn RepoLock> = Arc::new(move |f: &mut dyn FnMut()| {
             let _g = repo_lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -234,7 +281,14 @@ impl Rig {
         });
         let sink: Sink = Arc::new(|_| {});
         let state = ImportState::new(tools, lock, Duration::from_millis(40));
-        Rig { dir, root, outside, sources, state, sink }
+        Rig {
+            dir,
+            root,
+            outside,
+            sources,
+            state,
+            sink,
+        }
     }
 
     /// Copies a fixture into the sources folder under `as_name`.
@@ -245,8 +299,13 @@ impl Rig {
     }
 
     fn start(&self, path: &Path) -> Result<JobSnapshot, String> {
-        let kind = if path.extension().is_some_and(|e| e == "mp4") { FileKind::Video } else { FileKind::Audio };
-        self.state.start_file(&self.root, kind, path, self.sink.clone())
+        let kind = if path.extension().is_some_and(|e| e == "mp4") {
+            FileKind::Video
+        } else {
+            FileKind::Audio
+        };
+        self.state
+            .start_file(&self.root, kind, path, self.sink.clone())
     }
 
     fn idle(&self) -> JobSnapshot {
@@ -286,13 +345,20 @@ impl Rig {
         names_in(&self.root.join("import-tmp"))
     }
     fn outside_ok(&self) {
-        assert_eq!(fs::read_to_string(self.outside.join("precious.txt")).unwrap(), "do not touch");
+        assert_eq!(
+            fs::read_to_string(self.outside.join("precious.txt")).unwrap(),
+            "do not touch"
+        );
         assert_eq!(names_in(&self.outside), ["precious.txt"]);
     }
 }
 
 fn kind_of(path: &Path) -> LocalKind {
-    if path.extension().is_some_and(|e| e == "mp4") { LocalKind::Video } else { LocalKind::Audio }
+    if path.extension().is_some_and(|e| e == "mp4") {
+        LocalKind::Video
+    } else {
+        LocalKind::Audio
+    }
 }
 
 fn flac_seconds(p: &Path) -> f64 {
@@ -307,7 +373,12 @@ fn flac_seconds(p: &Path) -> f64 {
 fn typed_path_forms_import_audio_and_video() {
     let server = RealServer::start("ok");
     for (fix, spaced, title, band) in [
-        ("tagged.mp3", "My Song.mp3", "Glass Harbour", "The Example Band"),
+        (
+            "tagged.mp3",
+            "My Song.mp3",
+            "Glass Harbour",
+            "The Example Band",
+        ),
         ("with-audio.mp4", "My Clip.mp4", "Clip Title", ""),
     ] {
         let rig = Rig::new();
@@ -315,7 +386,11 @@ fn typed_path_forms_import_audio_and_video() {
         let spaced_path = rig.put(fix, spaced);
         let forms = [
             ("plain", plain.display().to_string(), plain.clone()),
-            ("quoted", format!("\"{}\"", spaced_path.display()), spaced_path.clone()),
+            (
+                "quoted",
+                format!("\"{}\"", spaced_path.display()),
+                spaced_path.clone(),
+            ),
             (
                 "file-url",
                 url::Url::from_file_path(&spaced_path).unwrap().to_string(),
@@ -327,12 +402,15 @@ fn typed_path_forms_import_audio_and_video() {
         let mut seen = 0;
         for (label, typed, file) in forms {
             let before = fs::read(&file).unwrap();
-            let resolved = resolve(&typed, kind_of(&file), None).unwrap_or_else(|e| panic!("{fix} {label}: {e:?}"));
+            let resolved = resolve(&typed, kind_of(&file), None)
+                .unwrap_or_else(|e| panic!("{fix} {label}: {e:?}"));
             assert_eq!(resolved, file, "{fix} {label}");
             rig.start(&resolved).unwrap();
             let ready = rig.ready();
             let m = ready.metadata.clone().unwrap();
-            rig.state.start_extraction(&ready.job, m, Some(&server.url), false).unwrap();
+            rig.state
+                .start_extraction(&ready.job, m, Some(&server.url), false)
+                .unwrap();
             let saved = rig.wait_saved();
             let t = saved.track.unwrap();
             seen += 1;
@@ -341,7 +419,8 @@ fn typed_path_forms_import_audio_and_video() {
             assert_eq!(dirs.len(), seen, "{fix} {label}: {dirs:?}");
             assert!(dirs.contains(&t.id));
             let tdir = rig.root.join("tracks").join(&t.id);
-            let j: serde_json::Value = serde_json::from_slice(&fs::read(tdir.join("track.json")).unwrap()).unwrap();
+            let j: serde_json::Value =
+                serde_json::from_slice(&fs::read(tdir.join("track.json")).unwrap()).unwrap();
             assert_eq!(j["type"], "stem", "{fix} {label}");
             assert_eq!(j["schema_version"], 2);
             assert_eq!(j["title"], title, "{fix} {label}");
@@ -350,12 +429,19 @@ fn typed_path_forms_import_audio_and_video() {
             }
             let listed = j["stems"].as_array().unwrap();
             assert_eq!(listed.len(), 6, "{fix} {label}");
-            let flacs: Vec<String> = names_in(&tdir.join("stems")).into_iter().filter(|n| n.ends_with(".flac")).collect();
+            let flacs: Vec<String> = names_in(&tdir.join("stems"))
+                .into_iter()
+                .filter(|n| n.ends_with(".flac"))
+                .collect();
             assert_eq!(flacs.len(), 6, "{fix} {label}: {flacs:?}");
             assert_eq!(t.track_type, TrackType::Stem);
 
             assert_eq!(rig.import_tmp(), Vec::<String>::new(), "{fix} {label}");
-            assert_eq!(fs::read(&file).unwrap(), before, "{fix} {label}: source changed");
+            assert_eq!(
+                fs::read(&file).unwrap(),
+                before,
+                "{fix} {label}: source changed"
+            );
             assert_eq!(fingerprint(&rig.outside), outside_before);
         }
         rig.outside_ok();
@@ -370,7 +456,10 @@ fn no_audio_video_resolves_but_the_job_fails() {
     rig.start(&resolved).unwrap();
     let s = rig.idle();
     assert_eq!(s.phase, Phase::Failed);
-    assert_eq!(s.error.unwrap().message, "Selected file no-audio.mp4 has no audio track");
+    assert_eq!(
+        s.error.unwrap().message,
+        "Selected file no-audio.mp4 has no audio track"
+    );
     assert_eq!(rig.import_tmp(), Vec::<String>::new());
     assert!(rig.tracks().is_empty());
 }
@@ -384,7 +473,9 @@ fn a_video_with_two_audio_streams_imports_the_first_one() {
         .args(["-f", "lavfi", "-i", "color=c=black:s=64x64:r=5:d=5"])
         .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=3"])
         .args(["-f", "lavfi", "-i", "sine=frequency=880:duration=5"])
-        .args(["-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "mpeg4", "-c:a", "aac"])
+        .args([
+            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "mpeg4", "-c:a", "aac",
+        ])
         .arg(&p)
         .status()
         .unwrap();
@@ -392,10 +483,22 @@ fn a_video_with_two_audio_streams_imports_the_first_one() {
     let resolved = resolve(&p.display().to_string(), LocalKind::Video, None).unwrap();
     rig.start(&resolved).unwrap();
     rig.ready();
-    let dirs: Vec<String> = rig.import_tmp().into_iter().filter(|n| n.starts_with("file-")).collect();
+    let dirs: Vec<String> = rig
+        .import_tmp()
+        .into_iter()
+        .filter(|n| n.starts_with("file-"))
+        .collect();
     assert_eq!(dirs.len(), 1, "{:?}", rig.import_tmp());
-    let secs = flac_seconds(&rig.root.join("import-tmp").join(&dirs[0]).join("audio.flac"));
-    assert!((2.8..3.3).contains(&secs), "expected the 3 s stream, got {secs} s");
+    let secs = flac_seconds(
+        &rig.root
+            .join("import-tmp")
+            .join(&dirs[0])
+            .join("audio.flac"),
+    );
+    assert!(
+        (2.8..3.3).contains(&secs),
+        "expected the 3 s stream, got {secs} s"
+    );
 }
 
 #[test]
@@ -417,7 +520,10 @@ fn rejected_paths_start_no_job_and_create_nothing() {
         "file://".to_string(),
     ];
     for c in cases {
-        assert!(resolve(&c, LocalKind::Audio, None).is_err(), "{c:?} was accepted");
+        assert!(
+            resolve(&c, LocalKind::Audio, None).is_err(),
+            "{c:?} was accepted"
+        );
     }
     assert!(!rig.state.is_active());
     assert!(rig.state.snapshot().is_none());
@@ -428,7 +534,9 @@ fn rejected_paths_start_no_job_and_create_nothing() {
 
 // ------------------------------------------------------------------ gui-import-local-batch
 
-use calliope_gui::ipc::{ImportKind, do_import_directory, do_import_path, do_pick_import_file, PickKind, RepoState};
+use calliope_gui::ipc::{
+    do_import_directory, do_import_path, do_pick_import_file, ImportKind, PickKind, RepoState,
+};
 use calliope_gui::picker::{DialogKind, ScriptedPicker};
 use calliope_gui::settings::SettingsStore;
 
@@ -461,7 +569,16 @@ impl<'a> Ipc<'a> {
         let sink: Sink = Arc::new(move |ev| e2.lock().unwrap().push(ev));
         let home = rig.dir.path().join("home");
         fs::create_dir_all(&home).unwrap();
-        Ipc { rig, store, picker, st, events, sink, home, settings_file }
+        Ipc {
+            rig,
+            store,
+            picker,
+            st,
+            events,
+            sink,
+            home,
+            settings_file,
+        }
     }
     fn browse(&self, kind: PickKind, typed: &str) -> Option<calliope_gui::ipc::PickedFile> {
         do_pick_import_file(&self.st, &self.store, kind, typed, Some(self.home.clone())).unwrap()
@@ -470,16 +587,40 @@ impl<'a> Ipc<'a> {
         self.picker.starts().pop().expect("a dialog was opened")
     }
     fn import_file(&self, path: &Path) -> Result<JobSnapshot, String> {
-        do_import_path(&self.st, &self.rig.state, &self.store, ImportKind::Audio, &path.display().to_string(), Some(self.home.clone()), self.sink.clone())
+        do_import_path(
+            &self.st,
+            &self.rig.state,
+            &self.store,
+            ImportKind::Audio,
+            &path.display().to_string(),
+            Some(self.home.clone()),
+            self.sink.clone(),
+        )
     }
     fn import_dir(&self, path: &Path) -> Result<JobSnapshot, String> {
-        do_import_directory(&self.st, &self.rig.state, &self.store, &path.display().to_string(), Some(self.home.clone()), self.sink.clone())
+        do_import_directory(
+            &self.st,
+            &self.rig.state,
+            &self.store,
+            &path.display().to_string(),
+            Some(self.home.clone()),
+            self.sink.clone(),
+        )
     }
     fn events(&self) -> Vec<ImportEvent> {
         self.events.lock().unwrap().clone()
     }
     fn batch_file_names(&self) -> Vec<String> {
-        self.events().into_iter().filter_map(|e| if let ImportEvent::BatchFile { name, .. } = e { Some(name) } else { None }).collect()
+        self.events()
+            .into_iter()
+            .filter_map(|e| {
+                if let ImportEvent::BatchFile { name, .. } = e {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
     fn wait_batch_over(&self) -> JobSnapshot {
         self.rig.idle()
@@ -501,12 +642,21 @@ fn ac_browse_opens_the_typed_files_folder() {
     let rig = Rig::new();
     let (rock, song) = music_tree(&rig);
     let ipc = Ipc::new(&rig, "import-audio CANCEL\nimport-video CANCEL\n", None);
-    assert!(ipc.browse(PickKind::Audio, &song.display().to_string()).is_none());
-    assert_eq!(ipc.last_start(), (DialogKind::ImportAudio, Some(rock.clone())));
+    assert!(ipc
+        .browse(PickKind::Audio, &song.display().to_string())
+        .is_none());
+    assert_eq!(
+        ipc.last_start(),
+        (DialogKind::ImportAudio, Some(rock.clone()))
+    );
     // a quoted path works the same way, for the video dialog too
     ipc.browse(PickKind::Video, &format!("\"{}\"", song.display()));
     assert_eq!(ipc.last_start(), (DialogKind::ImportVideo, Some(rock)));
-    assert_eq!(ipc.store.get().last_import_dir, None, "Browse alone remembers nothing");
+    assert_eq!(
+        ipc.store.get().last_import_dir,
+        None,
+        "Browse alone remembers nothing"
+    );
 }
 
 #[test]
@@ -516,7 +666,10 @@ fn ac_browse_opens_the_typed_directory() {
     let jazz = rig.dir.path().join("music/jazz");
     let ipc = Ipc::new(&rig, "import-audio CANCEL\nimport-directory CANCEL\n", None);
     ipc.browse(PickKind::Audio, &jazz.display().to_string());
-    assert_eq!(ipc.last_start(), (DialogKind::ImportAudio, Some(jazz.clone())));
+    assert_eq!(
+        ipc.last_start(),
+        (DialogKind::ImportAudio, Some(jazz.clone()))
+    );
     ipc.browse(PickKind::Directory, &jazz.display().to_string());
     assert_eq!(ipc.last_start(), (DialogKind::ImportDirectory, Some(jazz)));
 }
@@ -537,8 +690,14 @@ fn ac_browse_opens_the_last_location_also_after_restart() {
     assert_eq!(ipc.settings_file, rig.dir.path().join("settings.json"));
     assert_eq!(ipc.store.get().last_import_dir, Some(rock.clone()));
     ipc.browse(PickKind::Audio, "");
-    assert_eq!(ipc.last_start(), (DialogKind::ImportAudio, Some(rock.clone())));
-    ipc.browse(PickKind::Video, &rig.dir.path().join("music/nope.mp3").display().to_string());
+    assert_eq!(
+        ipc.last_start(),
+        (DialogKind::ImportAudio, Some(rock.clone()))
+    );
+    ipc.browse(
+        PickKind::Video,
+        &rig.dir.path().join("music/nope.mp3").display().to_string(),
+    );
     assert_eq!(ipc.last_start(), (DialogKind::ImportVideo, Some(rock)));
 }
 
@@ -547,16 +706,26 @@ fn ac_browse_opens_home_when_nothing_was_imported() {
     let rig = Rig::new();
     let ipc = Ipc::new(&rig, "import-audio CANCEL\nimport-directory CANCEL\n", None);
     ipc.browse(PickKind::Audio, "");
-    assert_eq!(ipc.last_start(), (DialogKind::ImportAudio, Some(ipc.home.clone())));
+    assert_eq!(
+        ipc.last_start(),
+        (DialogKind::ImportAudio, Some(ipc.home.clone()))
+    );
     ipc.browse(PickKind::Directory, "relative/nothing");
-    assert_eq!(ipc.last_start(), (DialogKind::ImportDirectory, Some(ipc.home.clone())));
+    assert_eq!(
+        ipc.last_start(),
+        (DialogKind::ImportDirectory, Some(ipc.home.clone()))
+    );
 }
 
 #[test]
 fn ac_directory_browse_uses_the_folder_dialog() {
     let rig = Rig::new();
     let (rock, _) = music_tree(&rig);
-    let ipc = Ipc::new(&rig, &format!("import-directory {}\n", rock.display()), None);
+    let ipc = Ipc::new(
+        &rig,
+        &format!("import-directory {}\n", rock.display()),
+        None,
+    );
     let picked = ipc.browse(PickKind::Directory, "").unwrap();
     assert_eq!(picked.path, rock.display().to_string());
     assert_eq!(picked.name, "rock");
@@ -586,18 +755,26 @@ fn ac_directory_import_order_and_ignored_entries() {
     assert_eq!(ipc.batch_file_names(), ["a.flac", "b.mp3"]);
     let items = done.batch.unwrap().items;
     assert_eq!(items.len(), 2);
-    assert!(items.iter().all(|i| matches!(i.outcome, BatchOutcome::Saved { .. })));
+    assert!(items
+        .iter()
+        .all(|i| matches!(i.outcome, BatchOutcome::Saved { .. })));
     assert_eq!(rig.tracks().len(), 2);
     let titles: Vec<String> = rig
         .tracks()
         .iter()
         .map(|id| {
-            let j: serde_json::Value = serde_json::from_slice(&fs::read(rig.root.join("tracks").join(id).join("track.json")).unwrap()).unwrap();
+            let j: serde_json::Value = serde_json::from_slice(
+                &fs::read(rig.root.join("tracks").join(id).join("track.json")).unwrap(),
+            )
+            .unwrap();
             assert_eq!(j["type"], "stem");
             j["title"].as_str().unwrap().to_string()
         })
         .collect();
-    assert!(titles.contains(&"a".to_string()) && titles.contains(&"Glass Harbour".to_string()), "{titles:?}");
+    assert!(
+        titles.contains(&"a".to_string()) && titles.contains(&"Glass Harbour".to_string()),
+        "{titles:?}"
+    );
     assert_eq!(rig.import_tmp(), Vec::<String>::new());
     assert_eq!(fingerprint(&dir), before, "sources changed");
     assert_eq!(ipc.store.get().last_import_dir, Some(dir));
@@ -614,7 +791,10 @@ fn ac_directory_without_audio_files() {
     fs::copy(fixture("with-audio.mp4"), dir.join("clip.mp4")).unwrap();
     let ipc = Ipc::new(&rig, "", None);
     let before = fingerprint(&rig.root);
-    assert_eq!(ipc.import_dir(&dir).unwrap_err(), format!("Directory {} has no audio files", dir.display()));
+    assert_eq!(
+        ipc.import_dir(&dir).unwrap_err(),
+        format!("Directory {} has no audio files", dir.display())
+    );
     assert!(!rig.state.is_active());
     assert!(rig.state.snapshot().is_none());
     assert!(ipc.events().is_empty());
@@ -636,7 +816,10 @@ fn ac_second_of_three_fails() {
     let done = ipc.wait_batch_over();
     assert_eq!(done.phase, Phase::Finished);
     let items = done.batch.unwrap().items;
-    assert_eq!(items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(), ["1.flac", "2.ogg", "3.mp3"]);
+    assert_eq!(
+        items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(),
+        ["1.flac", "2.ogg", "3.mp3"]
+    );
     assert!(matches!(items[0].outcome, BatchOutcome::Saved { .. }));
     assert!(matches!(items[2].outcome, BatchOutcome::Saved { .. }));
     match &items[1].outcome {
@@ -648,7 +831,11 @@ fn ac_second_of_three_fails() {
     }
     assert_eq!(rig.tracks().len(), 2);
     assert_eq!(rig.import_tmp(), Vec::<String>::new());
-    let finished: Vec<_> = ipc.events().into_iter().filter(|e| matches!(e, ImportEvent::Finished { .. })).collect();
+    let finished: Vec<_> = ipc
+        .events()
+        .into_iter()
+        .filter(|e| matches!(e, ImportEvent::Finished { .. }))
+        .collect();
     assert_eq!(finished.len(), 1);
 }
 
@@ -664,7 +851,9 @@ fn ac_cancel_on_file_two_of_three() {
     let ipc = Ipc::new(&rig, "", Some(&server));
     let snap = ipc.import_dir(&dir).unwrap();
     until("file 2 working", 60, || {
-        rig.state.snapshot().is_some_and(|s| s.phase == Phase::Working && s.batch.is_some_and(|b| b.current == Some(1)))
+        rig.state.snapshot().is_some_and(|s| {
+            s.phase == Phase::Working && s.batch.is_some_and(|b| b.current == Some(1))
+        })
     });
     rig.state.cancel(&snap.job).unwrap();
     let s = ipc.wait_batch_over();
@@ -673,8 +862,14 @@ fn ac_cancel_on_file_two_of_three() {
     let b = s.batch.unwrap();
     assert_eq!((b.current, b.items.len()), (None, 1));
     assert_eq!(rig.tracks().len(), 1);
-    assert_eq!(ipc.batch_file_names(), ["1.flac", "2.ogg"], "file 3 never started");
-    until("the server job to be deleted", 10, || server.job_dirs().is_empty());
+    assert_eq!(
+        ipc.batch_file_names(),
+        ["1.flac", "2.ogg"],
+        "file 3 never started"
+    );
+    until("the server job to be deleted", 10, || {
+        server.job_dirs().is_empty()
+    });
     assert!(server.count("method=DELETE") >= 2);
     assert_eq!(rig.import_tmp(), Vec::<String>::new());
 }
@@ -688,11 +883,16 @@ fn ac_progress_names_the_current_file() {
     let snap = ipc.import_dir(&dir).unwrap();
     assert_eq!(snap.source.label, "album");
     until("file 2 working", 60, || {
-        rig.state.snapshot().is_some_and(|s| s.phase == Phase::Working && s.batch.is_some_and(|b| b.current == Some(1)))
+        rig.state.snapshot().is_some_and(|s| {
+            s.phase == Phase::Working && s.batch.is_some_and(|b| b.current == Some(1))
+        })
     });
     let s = rig.state.snapshot().unwrap();
     let b = s.batch.unwrap();
-    assert_eq!((b.current, b.files.len(), b.files[1].as_str()), (Some(1), 2, "b.mp3"));
+    assert_eq!(
+        (b.current, b.files.len(), b.files[1].as_str()),
+        (Some(1), 2, "b.mp3")
+    );
     assert_eq!(b.items.len(), 1);
     assert_eq!(s.phase, Phase::Working);
     rig.state.cancel(&snap.job).unwrap();
@@ -713,20 +913,28 @@ fn ac_browse_tilde_relative_and_deleted_last_folder() {
     fs::create_dir_all(ipc.home.join("Songs")).unwrap();
     fs::copy(fixture("tagged.mp3"), ipc.home.join("Songs/t.mp3")).unwrap();
     ipc.browse(PickKind::Audio, "~/Songs/t.mp3");
-    assert_eq!(ipc.last_start(), (DialogKind::ImportAudio, Some(ipc.home.join("Songs"))));
+    assert_eq!(
+        ipc.last_start(),
+        (DialogKind::ImportAudio, Some(ipc.home.join("Songs")))
+    );
     ipc.browse(PickKind::Audio, "~/Songs");
     assert_eq!(ipc.last_start().1, Some(ipc.home.join("Songs")));
     // accepted import remembers rock; a relative typed path falls back to it
     ipc.import_file(&song).unwrap();
     rig.ready();
     ipc.browse(PickKind::Audio, "music/rock/song.mp3");
-    assert_eq!(ipc.last_start().1, Some(rock.clone()), "relative paths are not resolved");
+    assert_eq!(
+        ipc.last_start().1,
+        Some(rock.clone()),
+        "relative paths are not resolved"
+    );
     // the folder disappears: home is used, the setting is forgotten, nothing is an error
     fs::remove_dir_all(&rock).unwrap();
     assert!(ipc.browse(PickKind::Audio, "").is_none());
     assert_eq!(ipc.last_start().1, Some(ipc.home.clone()));
     assert_eq!(ipc.store.get().last_import_dir, None);
-    let on_disk: serde_json::Value = serde_json::from_slice(&fs::read(&ipc.settings_file).unwrap()).unwrap();
+    let on_disk: serde_json::Value =
+        serde_json::from_slice(&fs::read(&ipc.settings_file).unwrap()).unwrap();
     assert!(on_disk["last_import_dir"].is_null(), "{on_disk}");
 }
 
@@ -746,7 +954,15 @@ fn ac_directory_with_spaces_uppercase_extensions_and_hidden_files() {
     fs::copy(fixture("with-audio.mp4"), dir.join("clip.MP4")).unwrap();
     let before = fingerprint(&dir);
     let typed = "~/My Music/Rock Album";
-    do_import_directory(&ipc.st, &rig.state, &ipc.store, typed, Some(ipc.home.clone()), ipc.sink.clone()).unwrap();
+    do_import_directory(
+        &ipc.st,
+        &rig.state,
+        &ipc.store,
+        typed,
+        Some(ipc.home.clone()),
+        ipc.sink.clone(),
+    )
+    .unwrap();
     let done = ipc.wait_batch_over();
     assert_eq!(done.phase, Phase::Finished, "{:?}", done.error);
     assert_eq!(ipc.batch_file_names(), ["B.Mp3", "Song One.FLAC"]);
@@ -769,11 +985,23 @@ fn ac_directory_rejections_do_not_touch_the_remembered_folder() {
     fs::create_dir_all(&hidden).unwrap();
     fs::copy(fixture("tagged.mp3"), hidden.join(".song.mp3")).unwrap();
     fs::write(hidden.join("README.TXT"), b"x").unwrap();
-    assert_eq!(ipc.import_dir(&hidden).unwrap_err(), format!("Directory {} has no audio files", hidden.display()));
+    assert_eq!(
+        ipc.import_dir(&hidden).unwrap_err(),
+        format!("Directory {} has no audio files", hidden.display())
+    );
     let missing = rig.dir.path().join("music/nope");
-    assert_eq!(ipc.import_dir(&missing).unwrap_err(), format!("No folder found at {}", missing.display()));
-    assert_eq!(ipc.import_dir(&song).unwrap_err(), format!("{} is not a folder", song.display()));
-    assert_eq!(ipc.import_dir(Path::new("")).unwrap_err(), "Enter the path of a folder or choose one with Browse");
+    assert_eq!(
+        ipc.import_dir(&missing).unwrap_err(),
+        format!("No folder found at {}", missing.display())
+    );
+    assert_eq!(
+        ipc.import_dir(&song).unwrap_err(),
+        format!("{} is not a folder", song.display())
+    );
+    assert_eq!(
+        ipc.import_dir(Path::new("")).unwrap_err(),
+        "Enter the path of a folder or choose one with Browse"
+    );
     assert!(ipc.import_dir(Path::new("music/rock")).is_err(), "relative");
     assert_eq!(ipc.store.get().last_import_dir, Some(rock));
     assert!(rig.state.snapshot().is_none());
@@ -795,20 +1023,40 @@ fn ac_cancel_on_the_last_file_and_busy_refusal() {
     let ipc = Ipc::new(&rig, "", Some(&server));
     let snap = ipc.import_dir(&dir).unwrap();
     until("file 3 working", 90, || {
-        rig.state.snapshot().is_some_and(|s| s.phase == Phase::Working && s.batch.is_some_and(|b| b.current == Some(2)))
+        rig.state.snapshot().is_some_and(|s| {
+            s.phase == Phase::Working && s.batch.is_some_and(|b| b.current == Some(2))
+        })
     });
-    assert_eq!(ipc.import_dir(&other).unwrap_err(), "An import is already running");
-    assert_eq!(ipc.store.get().last_import_dir, Some(dir.clone()), "a refused import is not remembered");
+    assert_eq!(
+        ipc.import_dir(&other).unwrap_err(),
+        "An import is already running"
+    );
+    assert_eq!(
+        ipc.store.get().last_import_dir,
+        Some(dir.clone()),
+        "a refused import is not remembered"
+    );
     rig.state.cancel(&snap.job).unwrap();
     let s = ipc.wait_batch_over();
     assert_eq!(s.phase, Phase::Cancelled);
     let b = s.batch.unwrap();
     assert_eq!((b.current, b.items.len(), b.files.len()), (None, 2, 3));
-    assert!(b.items.iter().all(|i| matches!(i.outcome, BatchOutcome::Saved { .. })));
+    assert!(b
+        .items
+        .iter()
+        .all(|i| matches!(i.outcome, BatchOutcome::Saved { .. })));
     assert_eq!(rig.tracks().len(), 2);
-    assert!(ipc.events().iter().any(|e| matches!(e, ImportEvent::Cancelled { .. })));
-    assert!(!ipc.events().iter().any(|e| matches!(e, ImportEvent::Finished { .. })));
-    until("the server job to be deleted", 10, || server.job_dirs().is_empty());
+    assert!(ipc
+        .events()
+        .iter()
+        .any(|e| matches!(e, ImportEvent::Cancelled { .. })));
+    assert!(!ipc
+        .events()
+        .iter()
+        .any(|e| matches!(e, ImportEvent::Finished { .. })));
+    until("the server job to be deleted", 10, || {
+        server.job_dirs().is_empty()
+    });
     assert_eq!(rig.import_tmp(), Vec::<String>::new());
     // the slot is free again
     assert!(!rig.state.is_active());
@@ -830,26 +1078,42 @@ fn ac_batch_log_lines_for_started_saved_failed_cancelled() {
         let ipc = Ipc::new(&rig, "", Some(&server));
         let snap = ipc.import_dir(&dir).unwrap();
         until("file 3 working", 90, || {
-            rig.state.snapshot().is_some_and(|s| s.phase == Phase::Working && s.batch.is_some_and(|b| b.current == Some(2)))
+            rig.state.snapshot().is_some_and(|s| {
+                s.phase == Phase::Working && s.batch.is_some_and(|b| b.current == Some(2))
+            })
         });
         rig.state.cancel(&snap.job).unwrap();
         ipc.wait_batch_over();
         return;
     }
     let out = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "ac_batch_log_lines_for_started_saved_failed_cancelled", "--nocapture", "--test-threads=1"])
+        .args([
+            "--exact",
+            "ac_batch_log_lines_for_started_saved_failed_cancelled",
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .env("ACQ_BATCH_LOG_CHILD", "1")
         .output()
         .unwrap();
     let err = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(out.status.success(), "child failed:\n{err}");
-    let has = |needle: &[&str]| err.lines().any(|l| l.contains("calliope: import batch") && needle.iter().all(|n| l.contains(n)));
+    let has = |needle: &[&str]| {
+        err.lines()
+            .any(|l| l.contains("calliope: import batch") && needle.iter().all(|n| l.contains(n)))
+    };
     assert!(has(&["files=3"]), "{err}");
     for (i, n) in [(1, "1.flac"), (2, "2.ogg"), (3, "3.mp3")] {
-        assert!(has(&[&format!("file={i}/3 name={n} result=started")]), "started {n}\n{err}");
+        assert!(
+            has(&[&format!("file={i}/3 name={n} result=started")]),
+            "started {n}\n{err}"
+        );
     }
     assert!(has(&["file=1/3 name=1.flac result=saved id="]), "{err}");
-    assert!(has(&["file=2/3 name=2.ogg result=failed stage=server message="]), "{err}");
+    assert!(
+        has(&["file=2/3 name=2.ogg result=failed stage=server message="]),
+        "{err}"
+    );
     assert!(has(&["file=3/3 name=3.mp3 result=cancelled"]), "{err}");
     assert!(has(&["cancelled saved=1 skipped=1"]), "{err}");
 }
@@ -857,12 +1121,21 @@ fn ac_batch_log_lines_for_started_saved_failed_cancelled() {
 /// A copy of `src` with the given tags set (real ffmpeg, audio copied).
 fn tagged_copy(src: &Path, dest: &Path, tags: &[(&str, &str)]) {
     let mut cmd = Command::new(tool("ffmpeg"));
-    cmd.args(["-nostdin", "-loglevel", "error", "-y", "-i"]).arg(format!("file:{}", src.display())).args(["-map", "0:a", "-c", "copy"]);
+    cmd.args(["-nostdin", "-loglevel", "error", "-y", "-i"])
+        .arg(format!("file:{}", src.display()))
+        .args(["-map", "0:a", "-c", "copy"]);
     for (k, v) in tags {
         cmd.arg("-metadata").arg(format!("{k}={v}"));
     }
-    let out = cmd.arg(format!("file:{}", dest.display())).output().unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = cmd
+        .arg(format!("file:{}", dest.display()))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// gui-library-album-order: a directory of files tagged with track numbers 2, 1 and 3 is imported;
@@ -896,23 +1169,60 @@ fn ac_directory_import_takes_the_positions_from_the_track_tags() {
 
     let dir = rig.dir.path().join("music/numbered");
     fs::create_dir_all(&dir).unwrap();
-    for (file, title, n) in [("a.mp3", "Second", "2"), ("b.mp3", "First", "1"), ("c.mp3", "Third", "3")] {
-        tagged_copy(&fixture("tagged.mp3"), &dir.join(file), &[("album", "Order"), ("artist", "Band"), ("title", title), ("track", n)]);
+    for (file, title, n) in [
+        ("a.mp3", "Second", "2"),
+        ("b.mp3", "First", "1"),
+        ("c.mp3", "Third", "3"),
+    ] {
+        tagged_copy(
+            &fixture("tagged.mp3"),
+            &dir.join(file),
+            &[
+                ("album", "Order"),
+                ("artist", "Band"),
+                ("title", title),
+                ("track", n),
+            ],
+        );
     }
     let before = fingerprint(&dir);
     let ipc = Ipc::new(&rig, "", Some(&server));
     ipc.import_dir(&dir).unwrap();
     let done = ipc.wait_batch_over();
     assert_eq!(done.phase, Phase::Finished, "{:?}", done.error);
-    assert!(done.batch.unwrap().items.iter().all(|i| matches!(i.outcome, BatchOutcome::Saved { .. })));
+    assert!(done
+        .batch
+        .unwrap()
+        .items
+        .iter()
+        .all(|i| matches!(i.outcome, BatchOutcome::Saved { .. })));
 
-    let mut got: Vec<(String, String, Option<u32>)> =
-        repo.scan().tracks.into_iter().map(|t| (t.title, t.album, t.position)).collect();
+    let mut got: Vec<(String, String, Option<u32>)> = repo
+        .scan()
+        .tracks
+        .into_iter()
+        .map(|t| (t.title, t.album, t.position))
+        .collect();
     got.sort();
     let o = |s: &str, p: Option<u32>| (s.to_string(), "Order".to_string(), p);
-    assert_eq!(got, [o("Existing", None), o("First", Some(1)), o("Second", Some(2)), o("Third", Some(3))]);
-    assert_eq!(fs::read(&existing_json).unwrap(), existing_bytes, "the existing track was rewritten");
-    assert_eq!(repo.load_record("t-existing").unwrap().revision, existing.revision);
+    assert_eq!(
+        got,
+        [
+            o("Existing", None),
+            o("First", Some(1)),
+            o("Second", Some(2)),
+            o("Third", Some(3))
+        ]
+    );
+    assert_eq!(
+        fs::read(&existing_json).unwrap(),
+        existing_bytes,
+        "the existing track was rewritten"
+    );
+    assert_eq!(
+        repo.load_record("t-existing").unwrap().revision,
+        existing.revision
+    );
     assert_eq!(fingerprint(&dir), before, "sources changed");
     rig.outside_ok();
 }

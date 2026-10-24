@@ -59,13 +59,25 @@ pub fn count_in_plan(map: &TempoMap, rate: u32) -> Option<CountInPlan> {
     for (t, off) in ticks.iter_mut().zip(TICK_BEATS) {
         *t = first + (off * beat as f64).round() as u64;
     }
-    Some(CountInPlan { bpm: seg.bpm, beat_frames: beat, lead_frames: lead, first_beat_frame: lead + first, ticks })
+    Some(CountInPlan {
+        bpm: seg.bpm,
+        beat_frames: beat,
+        lead_frames: lead,
+        first_beat_frame: lead + first,
+        ticks,
+    })
 }
 
 /// Adds the ticks that overlap `block` (interleaved, `channels`, starting at output frame
 /// `start`). Only the samples under a tick are touched; they are clamped to [-1, 1]. Returns
 /// how many samples were clamped.
-pub(crate) fn mix_ticks(block: &mut [f32], channels: usize, start: u64, plan: &CountInPlan, click: &[f32]) -> u32 {
+pub(crate) fn mix_ticks(
+    block: &mut [f32],
+    channels: usize,
+    start: u64,
+    plan: &CountInPlan,
+    click: &[f32],
+) -> u32 {
     if channels == 0 {
         return 0;
     }
@@ -111,13 +123,30 @@ fn file_arg(prefix: &str, p: &Path) -> OsString {
 
 /// `ffmpeg` arguments that decode `src` (absolute) to raw f32 at `rate` / `channels` on stdout.
 pub fn decoder_args(src: &Path, rate: u32, channels: u32) -> Vec<OsString> {
-    let mut a: Vec<OsString> = ["-nostdin", "-hide_banner", "-loglevel", "error", "-protocol_whitelist", "file,pipe", "-i"]
-        .iter()
-        .map(|s| os(s))
-        .collect();
+    let mut a: Vec<OsString> = [
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-protocol_whitelist",
+        "file,pipe",
+        "-i",
+    ]
+    .iter()
+    .map(|s| os(s))
+    .collect();
     a.push(file_arg("file:", src));
     for s in [
-        "-map", "0:a:0", "-vn", "-sn", "-dn", "-f", "f32le", "-acodec", "pcm_f32le", "-ac",
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-sn",
+        "-dn",
+        "-f",
+        "f32le",
+        "-acodec",
+        "pcm_f32le",
+        "-ac",
     ] {
         a.push(os(s));
     }
@@ -138,19 +167,47 @@ pub fn encoder_args(
     tags: &[(&'static str, String)],
     part: &Path,
 ) -> Vec<OsString> {
-    let mut a: Vec<OsString> = ["-nostdin", "-hide_banner", "-loglevel", "error", "-f", "f32le", "-ar"]
-        .iter()
-        .map(|s| os(s))
-        .collect();
+    let mut a: Vec<OsString> = [
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "f32le",
+        "-ar",
+    ]
+    .iter()
+    .map(|s| os(s))
+    .collect();
     a.push(rate.to_string().into());
     a.push(os("-ac"));
     a.push(channels.to_string().into());
-    for s in ["-i", "pipe:0", "-map_metadata", "-1", "-fflags", "+bitexact", "-flags:a", "+bitexact"] {
+    for s in [
+        "-i",
+        "pipe:0",
+        "-map_metadata",
+        "-1",
+        "-fflags",
+        "+bitexact",
+        "-flags:a",
+        "+bitexact",
+    ] {
         a.push(os(s));
     }
     let codec: &[&str] = match kind {
         ExportKind::Ogg => &["-c:a", "libvorbis", "-q:a", "6", "-f", "ogg"],
-        _ => &["-c:a", "libmp3lame", "-q:a", "2", "-id3v2_version", "3", "-write_id3v1", "0", "-f", "mp3"],
+        _ => &[
+            "-c:a",
+            "libmp3lame",
+            "-q:a",
+            "2",
+            "-id3v2_version",
+            "3",
+            "-write_id3v1",
+            "0",
+            "-f",
+            "mp3",
+        ],
     };
     for s in codec {
         a.push(os(s));
@@ -183,7 +240,10 @@ pub(crate) enum Output {
     /// The RC-5 file (stereo only).
     Wav(WavWriter),
     /// A second `ffmpeg` (the encoder) reading raw f32 on stdin.
-    Encode { ffmpeg: PathBuf, args: Vec<OsString> },
+    Encode {
+        ffmpeg: PathBuf,
+        args: Vec<OsString>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,7 +299,10 @@ fn with_reason(what: String, last: &str) -> String {
 }
 
 fn label(p: &Path) -> String {
-    p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned())
+    p.file_name().map_or_else(
+        || p.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
 }
 
 /// Sleeps (in short steps, watching `cancel`) until `frames` of audio at `rate` have taken
@@ -305,7 +368,11 @@ pub(crate) fn run(
             let (running, stdin) =
                 process::spawn_with_stdin(&ffmpeg, &args, None, |_| {}, last_line_sink(&last))
                     .map_err(|e| format!("Cannot encode: {e}"))?;
-            encoder = Some(Child { handle: running.cancel_handle(), running: Some(running), last_err: last });
+            encoder = Some(Child {
+                handle: running.cancel_handle(),
+                running: Some(running),
+                last_err: last,
+            });
             Sink::Pipe(stdin)
         }
     };
@@ -333,7 +400,11 @@ pub(crate) fn run(
         last_line_sink(&dec_err),
     );
     let mut decoder = match spawned {
-        Ok(r) => Child { handle: r.cancel_handle(), running: Some(r), last_err: dec_err },
+        Ok(r) => Child {
+            handle: r.cancel_handle(),
+            running: Some(r),
+            last_err: dec_err,
+        },
         Err(e) => {
             abort(&mut encoder, &mut writer);
             return Err(format!("Cannot decode {}: {e}", label(&p.source)));
@@ -347,7 +418,11 @@ pub(crate) fn run(
             let mut c = enc.take().expect("encoder");
             let _ = c.wait();
             let last = c.last();
-            return if last.is_empty() { format!("Cannot encode: {e}") } else { format!("Cannot encode: {last}") };
+            return if last.is_empty() {
+                format!("Cannot encode: {e}")
+            } else {
+                format!("Cannot encode: {last}")
+            };
         }
         format!("Cannot write {part}: {e}")
     };
@@ -406,7 +481,11 @@ pub(crate) fn run(
             continue;
         }
         buf.clear();
-        buf.extend(pending[..usable].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])));
+        buf.extend(
+            pending[..usable]
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+        );
         pending.drain(..usable);
         if let Err(e) = writer.emit(&mut buf) {
             drop(rx);
@@ -423,21 +502,28 @@ pub(crate) fn run(
     }
     drop(rx);
 
-    let status = decoder.wait().map_err(|e| format!("Cannot decode {}: {e}", label(&p.source)))?;
+    let status = decoder
+        .wait()
+        .map_err(|e| format!("Cannot decode {}: {e}", label(&p.source)))?;
     if cancel.load(Ordering::SeqCst) {
         abort(&mut encoder, &mut writer);
         return Err(CANCELLED.into());
     }
     if !status.success() {
         abort(&mut encoder, &mut writer);
-        return Err(with_reason(format!("Cannot decode {}", label(&p.source)), &decoder.last()));
+        return Err(with_reason(
+            format!("Cannot decode {}", label(&p.source)),
+            &decoder.last(),
+        ));
     }
 
     // 3. Finish the output.
     let frames = writer.pos;
     let clipped = writer.clipped;
     match writer.sink.take() {
-        Some(Sink::Wav(w)) => w.finish().map_err(|e| format!("Cannot write {part}: {e}"))?,
+        Some(Sink::Wav(w)) => w
+            .finish()
+            .map_err(|e| format!("Cannot write {part}: {e}"))?,
         Some(Sink::Pipe(stdin)) => {
             drop(stdin);
             let mut enc = encoder.take().expect("encoder");

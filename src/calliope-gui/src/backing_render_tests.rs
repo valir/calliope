@@ -282,7 +282,12 @@ fn a_stem_that_changed_rate_or_depth_fails_the_render_naming_it() {
     let part = dir.path().join("out.part");
     let run = |bits_in: usize, rate_in: usize, session_bits: u32| {
         let p = dir.path().join("vocals.flac");
-        write_flac_at(&p, &noise(2000 * 2, bits_in as u32, 0.5, 1), bits_in, rate_in);
+        write_flac_at(
+            &p,
+            &noise(2000 * 2, bits_in as u32, 0.5, 1),
+            bits_in,
+            rate_in,
+        );
         let input = RenderInput {
             stems: vec![RenderStem { path: p, gain: 1.0 }],
             sample_rate: RATE as u32,
@@ -292,9 +297,15 @@ fn a_stem_that_changed_rate_or_depth_fails_the_render_naming_it() {
         render_flac(&input, &part, &AtomicBool::new(false), &mut |_| {})
     };
     let err = run(16, 44100, 16).unwrap_err();
-    assert!(err.contains("vocals.flac") && err.contains("44100 Hz") && err.contains("22050 Hz"), "{err}");
+    assert!(
+        err.contains("vocals.flac") && err.contains("44100 Hz") && err.contains("22050 Hz"),
+        "{err}"
+    );
     let err = run(24, RATE, 16).unwrap_err();
-    assert!(err.contains("vocals.flac") && err.contains("24 bits"), "{err}");
+    assert!(
+        err.contains("vocals.flac") && err.contains("24 bits"),
+        "{err}"
+    );
     assert!(!part.exists());
     assert!(run(16, RATE, 16).is_ok());
     fs::remove_file(&part).unwrap();

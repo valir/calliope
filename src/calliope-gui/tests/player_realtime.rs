@@ -48,8 +48,15 @@ const RATE: u32 = 22050;
 #[test]
 fn render_and_apply_never_allocate_in_stretch_mode() {
     let frames = 3 * RATE as usize;
-    let samples: Vec<i16> = (0..frames).map(|i| ((i as f32 * 0.05).sin() * 12000.0) as i16).collect();
-    let pcm = Arc::new(Pcm { rate: RATE, channels: 1, frames: frames as u64, samples });
+    let samples: Vec<i16> = (0..frames)
+        .map(|i| ((i as f32 * 0.05).sin() * 12000.0) as i16)
+        .collect();
+    let pcm = Arc::new(Pcm {
+        rate: RATE,
+        channels: 1,
+        frames: frames as u64,
+        samples,
+    });
     let shared = Arc::new(Shared::default());
     let (tx, _rx) = sync_channel(8);
     // everything the commands carry is built before the callback runs, as the manager does
@@ -58,8 +65,22 @@ fn render_and_apply_never_allocate_in_stretch_mode() {
     let grid2: Arc<Vec<Beat>> = Arc::new((0..8).map(|k| (k * 7000, false)).collect());
     let empty: Arc<Vec<Beat>> = Arc::new(Vec::new());
     let r = RATE as u64;
-    let plain = LoopSpec { start: r / 4, end: r / 2, repeat: true, count_in_bpm_milli: None, count_in_lead: 0, training: None };
-    let counted = LoopSpec { start: r / 2, end: r, repeat: true, count_in_bpm_milli: Some(120_000), count_in_lead: 0, training: None };
+    let plain = LoopSpec {
+        start: r / 4,
+        end: r / 2,
+        repeat: true,
+        count_in_bpm_milli: None,
+        count_in_lead: 0,
+        training: None,
+    };
+    let counted = LoopSpec {
+        start: r / 2,
+        end: r,
+        repeat: true,
+        count_in_bpm_milli: Some(120_000),
+        count_in_lead: 0,
+        training: None,
+    };
     let mut out = vec![0.0f32; 2 * 512];
 
     COUNTING.with(|c| c.set(true));

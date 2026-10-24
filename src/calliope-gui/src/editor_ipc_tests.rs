@@ -85,7 +85,10 @@ impl OutputBackend for FakeBackend {
             return Err("The audio output failed to start".into());
         }
         let inner = self.inner.open(rate, render)?;
-        Ok(Box::new(FakeHandle { inner: Some(inner), drop_gate: self.drop_gate.clone() }))
+        Ok(Box::new(FakeHandle {
+            inner: Some(inner),
+            drop_gate: self.drop_gate.clone(),
+        }))
     }
 }
 
@@ -111,18 +114,30 @@ struct Env {
 fn env() -> Env {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("lib");
-    copy_tree(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-editor"), &root);
-    let repo = Arc::new(RepoState::new(root, Box::new(ScriptedPicker::new(dir.path().join("answers")))));
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-editor"),
+        &root,
+    );
+    let repo = Arc::new(RepoState::new(
+        root,
+        Box::new(ScriptedPicker::new(dir.path().join("answers"))),
+    ));
     let backend = FakeBackend::new();
     let st = Arc::new(EditorState::new(Arc::new(backend.clone())));
     st.set_sink(Arc::new(|_| {}));
-    Env { _dir: dir, repo, st, backend }
+    Env {
+        _dir: dir,
+        repo,
+        st,
+        backend,
+    }
 }
 
 /// Opens FOUR with its first lane checked.
 fn open_checked(e: &Env) {
     do_open_editor(&e.st, &e.repo, &FileTempoStore, FOUR, Arc::new(|_| {})).unwrap();
-    e.st.with(|m| m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())).unwrap();
+    e.st.with(|m| m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()))
+        .unwrap();
 }
 
 /// Runs `f` on a thread and fails when it does not finish in time.
@@ -131,7 +146,8 @@ fn finishes<T: Send + 'static>(what: &str, f: impl FnOnce() -> T + Send + 'stati
     std::thread::spawn(move || {
         let _ = tx.send(f());
     });
-    rx.recv_timeout(WAIT).unwrap_or_else(|_| panic!("{what} did not finish: the manager is blocked"))
+    rx.recv_timeout(WAIT)
+        .unwrap_or_else(|_| panic!("{what} did not finish: the manager is blocked"))
 }
 
 fn spawn_play(e: &Env) -> std::thread::JoinHandle<Result<TransportState, String>> {
@@ -153,12 +169,15 @@ fn a_stalled_device_open_does_not_block_other_commands_or_the_ticker() {
     open_checked(&e);
     e.backend.open_gate.set(false);
     let play = spawn_play(&e);
-    wait_until("the device open to start", || e.backend.opens.load(Ordering::SeqCst) == 1);
+    wait_until("the device open to start", || {
+        e.backend.opens.load(Ordering::SeqCst) == 1
+    });
     let st = e.st.clone();
     finishes("other commands during the open", move || {
         st.tick(Instant::now());
         do_editor_seek(&st, FOUR, 1000).unwrap();
-        st.with(|m| m.set_stem(FOUR, "drums", Some(-3.0), false, Instant::now())).unwrap();
+        st.with(|m| m.set_stem(FOUR, "drums", Some(-3.0), false, Instant::now()))
+            .unwrap();
         assert!(st.with(|m| m.current()).is_some());
     });
     e.backend.open_gate.set(true);
@@ -183,7 +202,8 @@ fn a_stalled_device_close_does_not_block_other_commands_or_the_ticker() {
     finishes("other commands during the close", move || {
         st.tick(Instant::now());
         do_editor_seek(&st, FOUR, 500).unwrap();
-        st.with(|m| m.set_stem(FOUR, "drums", Some(-3.0), true, Instant::now())).unwrap();
+        st.with(|m| m.set_stem(FOUR, "drums", Some(-3.0), true, Instant::now()))
+            .unwrap();
     });
     assert!(!stop.is_finished());
     e.backend.drop_gate.set(true);
@@ -198,9 +218,13 @@ fn closing_the_editor_with_a_stalled_device_leaves_the_manager_free() {
     e.backend.drop_gate.set(false);
     let st = e.st.clone();
     let close = std::thread::spawn(move || do_close_editor(&st));
-    wait_until("the session to be closed", || e.st.with(|m| m.current().is_none()));
+    wait_until("the session to be closed", || {
+        e.st.with(|m| m.current().is_none())
+    });
     let st = e.st.clone();
-    finishes("a command during the close", move || st.tick(Instant::now()));
+    finishes("a command during the close", move || {
+        st.tick(Instant::now())
+    });
     e.backend.drop_gate.set(true);
     close.join().unwrap();
 }
@@ -223,8 +247,15 @@ fn shutdown_returns_within_its_bound_when_the_manager_is_stuck_and_still_cancels
     let t0 = Instant::now();
     let st = e.st.clone();
     finishes("shutdown", move || st.shutdown(Duration::from_millis(300)));
-    assert!(t0.elapsed() < Duration::from_secs(2), "shutdown took {:?}", t0.elapsed());
-    assert!(shared.cancel.load(Ordering::Relaxed), "the save was not cancelled");
+    assert!(
+        t0.elapsed() < Duration::from_secs(2),
+        "shutdown took {:?}",
+        t0.elapsed()
+    );
+    assert!(
+        shared.cancel.load(Ordering::Relaxed),
+        "the save was not cancelled"
+    );
     release.set(true);
     stuck.join().unwrap();
 }
@@ -238,7 +269,11 @@ fn shutdown_returns_within_its_bound_when_the_device_close_hangs() {
     let t0 = Instant::now();
     let st = e.st.clone();
     finishes("shutdown", move || st.shutdown(Duration::from_millis(300)));
-    assert!(t0.elapsed() < Duration::from_secs(2), "shutdown took {:?}", t0.elapsed());
+    assert!(
+        t0.elapsed() < Duration::from_secs(2),
+        "shutdown took {:?}",
+        t0.elapsed()
+    );
     e.backend.drop_gate.set(true); // lets the helper thread end
 }
 
@@ -259,7 +294,13 @@ fn a_failed_device_open_changes_no_state() {
     do_open_editor(&e.st, &e.repo, &FileTempoStore, MIXED, Arc::new(|_| {})).unwrap();
     let before = e.st.with(|m| m.snapshot(MIXED)).unwrap();
     e.backend.fail_open.store(true, Ordering::SeqCst);
-    let name = before.stems.iter().find(|l| !l.unmuted).unwrap().name.clone();
+    let name = before
+        .stems
+        .iter()
+        .find(|l| !l.unmuted)
+        .unwrap()
+        .name
+        .clone();
     let err = do_editor_lane_play(&e.st, MIXED, &name).unwrap_err();
     assert!(err.contains("failed to start"), "{err}");
     let after = e.st.with(|m| m.snapshot(MIXED)).unwrap();
@@ -270,10 +311,14 @@ fn a_failed_device_open_changes_no_state() {
     e.backend.fail_open.store(false, Ordering::SeqCst);
     do_editor_lane_play(&e.st, MIXED, &name).unwrap();
     e.st.with(|m| m.stop(MIXED)).unwrap();
-    e.st.with(|m| m.set_stem(MIXED, &name, Some(0.0), true, Instant::now())).unwrap();
+    e.st.with(|m| m.set_stem(MIXED, &name, Some(0.0), true, Instant::now()))
+        .unwrap();
     e.backend.fail_open.store(true, Ordering::SeqCst);
     assert!(do_editor_play(&e.st, MIXED).is_err());
-    assert_eq!(e.st.with(|m| m.snapshot(MIXED)).unwrap().transport.solo, None);
+    assert_eq!(
+        e.st.with(|m| m.snapshot(MIXED)).unwrap().transport.solo,
+        None
+    );
 }
 
 #[test]
@@ -285,7 +330,13 @@ fn stop_silences_before_it_resets_the_position() {
     assert!(e.backend.inner.pull(512).iter().any(|x| *x != 0.0));
     e.st.with(|m| m.stop(FOUR)).unwrap();
     assert!(e.backend.inner.pull(512).iter().all(|x| *x == 0.0));
-    assert_eq!(e.st.with(|m| m.snapshot(FOUR)).unwrap().transport.position_ms, 0);
+    assert_eq!(
+        e.st.with(|m| m.snapshot(FOUR))
+            .unwrap()
+            .transport
+            .position_ms,
+        0
+    );
 }
 
 // ---- the event sink (m3, m4)
@@ -306,7 +357,8 @@ fn a_late_watch_does_not_take_the_sink_from_an_open_in_progress() {
     let guard = repo.lock();
     let st = e.st.clone();
     let r2 = repo.clone();
-    let open = std::thread::spawn(move || do_open_editor(&st, &r2, &FileTempoStore, FOUR, open_sink));
+    let open =
+        std::thread::spawn(move || do_open_editor(&st, &r2, &FileTempoStore, FOUR, open_sink));
     wait_until("the open to begin", || e.st.with(|m| m.is_opening()));
     assert!(do_watch_editor(&e.st, watch_sink.clone()).is_none());
     drop(guard);
@@ -324,7 +376,14 @@ fn a_late_watch_does_not_take_the_sink_from_an_open_in_progress() {
 #[test]
 fn a_failed_open_is_not_left_in_progress() {
     let e = env();
-    assert!(do_open_editor(&e.st, &e.repo, &FileTempoStore, "no-such-track", Arc::new(|_| {})).is_err());
+    assert!(do_open_editor(
+        &e.st,
+        &e.repo,
+        &FileTempoStore,
+        "no-such-track",
+        Arc::new(|_| {})
+    )
+    .is_err());
     assert!(!e.st.with(|m| m.is_opening()));
     let (sink, _) = collecting();
     do_watch_editor(&e.st, sink);
@@ -338,13 +397,19 @@ fn an_open_is_registered_before_the_record_is_read() {
     let guard = repo.lock();
     let st = e.st.clone();
     let r2 = repo.clone();
-    let a = std::thread::spawn(move || do_open_editor(&st, &r2, &FileTempoStore, FOUR, Arc::new(|_| {})));
+    let a = std::thread::spawn(move || {
+        do_open_editor(&st, &r2, &FileTempoStore, FOUR, Arc::new(|_| {}))
+    });
     wait_until("the first open to begin", || e.st.with(|m| m.is_opening()));
     let first = e.st.with(|m| m.generation_for_test());
     let st = e.st.clone();
     let r3 = repo.clone();
-    let b = std::thread::spawn(move || do_open_editor(&st, &r3, &FileTempoStore, MIXED, Arc::new(|_| {})));
-    wait_until("the second open to begin", || e.st.with(|m| m.generation_for_test()) > first);
+    let b = std::thread::spawn(move || {
+        do_open_editor(&st, &r3, &FileTempoStore, MIXED, Arc::new(|_| {}))
+    });
+    wait_until("the second open to begin", || {
+        e.st.with(|m| m.generation_for_test()) > first
+    });
     drop(guard);
     let ra = a.join().unwrap();
     let rb = b.join().unwrap();
@@ -357,7 +422,9 @@ fn an_open_is_registered_before_the_record_is_read() {
 // ---- editor_tempo and editor_detect ----
 
 fn write_tempo(e: &Env, tempo: serde_json::Value) {
-    let dir = Repository::new(e.repo.current_root()).tracks_dir().join(FOUR);
+    let dir = Repository::new(e.repo.current_root())
+        .tracks_dir()
+        .join(FOUR);
     let v = serde_json::json!({"schema_version": 2, "tempo": tempo});
     std::fs::write(dir.join("player.json"), serde_json::to_vec(&v).unwrap()).unwrap();
 }
@@ -368,7 +435,10 @@ fn two_sections(e: &Env, detected: bool) {
     } else {
         serde_json::json!({"start_ms": 8500.0, "bpm": 100.0})
     };
-    write_tempo(e, serde_json::json!({"beats_per_bar": 4, "segments": [{"start_ms": 500.0, "bpm": 120.0}, second]}));
+    write_tempo(
+        e,
+        serde_json::json!({"beats_per_bar": 4, "segments": [{"start_ms": 500.0, "bpm": 120.0}, second]}),
+    );
 }
 
 #[test]
@@ -377,19 +447,57 @@ fn tempo_move_uses_absolute_steps_and_persists() {
     two_sections(&e, true);
     do_open_editor(&e.st, &e.repo, &FileTempoStore, FOUR, Arc::new(|_| {})).unwrap();
     let fine = crate::tempo_map::fine_ms(120.0);
-    let a = do_editor_tempo(&e.st, &FileTempoStore, FOUR, TempoEdit::Move { index: 1, steps: 3 }).unwrap();
+    let a = do_editor_tempo(
+        &e.st,
+        &FileTempoStore,
+        FOUR,
+        TempoEdit::Move { index: 1, steps: 3 },
+    )
+    .unwrap();
     assert!((a.tempo.segments[1].start_ms - (8500.0 + 3.0 * fine)).abs() < 1e-6);
     // Absolute: the same steps again change nothing, other steps are relative to detected_ms.
-    let b = do_editor_tempo(&e.st, &FileTempoStore, FOUR, TempoEdit::Move { index: 1, steps: 3 }).unwrap();
+    let b = do_editor_tempo(
+        &e.st,
+        &FileTempoStore,
+        FOUR,
+        TempoEdit::Move { index: 1, steps: 3 },
+    )
+    .unwrap();
     assert_eq!(a.tempo.segments, b.tempo.segments);
-    let c = do_editor_tempo(&e.st, &FileTempoStore, FOUR, TempoEdit::Move { index: 1, steps: -2 }).unwrap();
+    let c = do_editor_tempo(
+        &e.st,
+        &FileTempoStore,
+        FOUR,
+        TempoEdit::Move {
+            index: 1,
+            steps: -2,
+        },
+    )
+    .unwrap();
     assert!((c.tempo.segments[1].start_ms - (8500.0 - 2.0 * fine)).abs() < 1e-6);
     assert_eq!(c.tempo.segments[1].detected_ms, Some(8500.0));
-    let on_disk = FileTempoStore.load(FOUR, &e.st.with(|m| m.dir_of(FOUR)).unwrap()).unwrap();
+    let on_disk = FileTempoStore
+        .load(FOUR, &e.st.with(|m| m.dir_of(FOUR)).unwrap())
+        .unwrap();
     assert_eq!(on_disk.segments, c.tempo.segments);
     // Out of range and the first section are refused.
-    assert!(do_editor_tempo(&e.st, &FileTempoStore, FOUR, TempoEdit::Move { index: 1, steps: 257 }).is_err());
-    assert!(do_editor_tempo(&e.st, &FileTempoStore, FOUR, TempoEdit::Move { index: 0, steps: 1 }).is_err());
+    assert!(do_editor_tempo(
+        &e.st,
+        &FileTempoStore,
+        FOUR,
+        TempoEdit::Move {
+            index: 1,
+            steps: 257
+        }
+    )
+    .is_err());
+    assert!(do_editor_tempo(
+        &e.st,
+        &FileTempoStore,
+        FOUR,
+        TempoEdit::Move { index: 0, steps: 1 }
+    )
+    .is_err());
 }
 
 #[test]
@@ -398,10 +506,19 @@ fn tempo_move_is_refused_while_a_detection_runs() {
     two_sections(&e, true);
     do_open_editor(&e.st, &e.repo, &FileTempoStore, FOUR, Arc::new(|_| {})).unwrap();
     e.st.with(|m| m.test_fake_detect(FOUR));
-    let err = do_editor_tempo(&e.st, &FileTempoStore, FOUR, TempoEdit::Move { index: 1, steps: 3 }).unwrap_err();
+    let err = do_editor_tempo(
+        &e.st,
+        &FileTempoStore,
+        FOUR,
+        TempoEdit::Move { index: 1, steps: 3 },
+    )
+    .unwrap_err();
     assert_eq!(err, "Beat detection is running; wait for it to finish");
     let dir = e.st.with(|m| m.dir_of(FOUR)).unwrap();
-    assert_eq!(FileTempoStore.load(FOUR, &dir).unwrap().segments[1].start_ms, 8500.0);
+    assert_eq!(
+        FileTempoStore.load(FOUR, &dir).unwrap().segments[1].start_ms,
+        8500.0
+    );
 }
 
 #[test]
@@ -409,9 +526,19 @@ fn tempo_move_refuses_a_typed_change_and_unknown_sessions() {
     let e = env();
     two_sections(&e, false);
     do_open_editor(&e.st, &e.repo, &FileTempoStore, FOUR, Arc::new(|_| {})).unwrap();
-    let err = do_editor_tempo(&e.st, &FileTempoStore, FOUR, TempoEdit::Move { index: 1, steps: 1 }).unwrap_err();
+    let err = do_editor_tempo(
+        &e.st,
+        &FileTempoStore,
+        FOUR,
+        TempoEdit::Move { index: 1, steps: 1 },
+    )
+    .unwrap_err();
     assert!(err.contains("Only detected"), "{err}");
-    assert!(do_editor_tempo(&e.st, &FileTempoStore, MIXED, TempoEdit::Reload).unwrap_err().contains("no editor session"));
+    assert!(
+        do_editor_tempo(&e.st, &FileTempoStore, MIXED, TempoEdit::Reload)
+            .unwrap_err()
+            .contains("no editor session")
+    );
 }
 
 #[test]
@@ -419,7 +546,10 @@ fn tempo_reload_rereads_the_file() {
     let e = env();
     two_sections(&e, true);
     do_open_editor(&e.st, &e.repo, &FileTempoStore, FOUR, Arc::new(|_| {})).unwrap();
-    write_tempo(&e, serde_json::json!({"beats_per_bar": 3, "segments": [{"start_ms": 100.0, "bpm": 90.0}]}));
+    write_tempo(
+        &e,
+        serde_json::json!({"beats_per_bar": 3, "segments": [{"start_ms": 100.0, "bpm": 90.0}]}),
+    );
     let snap = do_editor_tempo(&e.st, &FileTempoStore, FOUR, TempoEdit::Reload).unwrap();
     assert_eq!(snap.tempo.beats_per_bar, 3);
     assert_eq!(snap.tempo.segments.len(), 1);
@@ -429,8 +559,17 @@ fn tempo_reload_rereads_the_file() {
 #[test]
 fn tempo_edit_parses_from_the_wire_form() {
     let m: TempoEdit = serde_json::from_str(r#"{"kind":"move","index":2,"steps":-5}"#).unwrap();
-    assert_eq!(m, TempoEdit::Move { index: 2, steps: -5 });
-    assert_eq!(serde_json::from_str::<TempoEdit>(r#"{"kind":"reload"}"#).unwrap(), TempoEdit::Reload);
+    assert_eq!(
+        m,
+        TempoEdit::Move {
+            index: 2,
+            steps: -5
+        }
+    );
+    assert_eq!(
+        serde_json::from_str::<TempoEdit>(r#"{"kind":"reload"}"#).unwrap(),
+        TempoEdit::Reload
+    );
 }
 
 #[test]
@@ -438,9 +577,13 @@ fn editor_detect_refusals() {
     let e = env();
     let store: Arc<dyn TempoStore> = Arc::new(FileTempoStore);
     let url = "http://127.0.0.1:9".to_string();
-    assert!(do_editor_detect(&e.st, store.clone(), url.clone(), FOUR).unwrap_err().contains("no editor session"));
+    assert!(do_editor_detect(&e.st, store.clone(), url.clone(), FOUR)
+        .unwrap_err()
+        .contains("no editor session"));
     do_open_editor(&e.st, &e.repo, &FileTempoStore, FOUR, Arc::new(|_| {})).unwrap();
     // No stem is checked: that is not a refusal any more (detection ignores the checks).
-    assert!(do_editor_detect(&e.st, store, String::new(), FOUR).unwrap_err().contains("Settings"));
+    assert!(do_editor_detect(&e.st, store, String::new(), FOUR)
+        .unwrap_err()
+        .contains("Settings"));
     assert!(e.st.with(|m| m.current()).unwrap().detect.is_none());
 }

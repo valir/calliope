@@ -59,13 +59,22 @@ pub struct Env {
 
 impl Env {
     pub fn from_process() -> Env {
-        let get = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-        Env { home: get("HOME"), xdg_state_home: get("XDG_STATE_HOME") }
+        let get = |k: &str| {
+            std::env::var_os(k)
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+        };
+        Env {
+            home: get("HOME"),
+            xdg_state_home: get("XDG_STATE_HOME"),
+        }
     }
 }
 
 fn number(flag: &str, value: &str, min: u64) -> Result<u64, String> {
-    let n: u64 = value.parse().map_err(|_| format!("{flag} needs a whole number, got '{value}'"))?;
+    let n: u64 = value
+        .parse()
+        .map_err(|_| format!("{flag} needs a whole number, got '{value}'"))?;
     if n < min {
         return Err(format!("{flag} must be at least {min}"));
     }
@@ -76,17 +85,22 @@ fn valid_model(m: &str) -> bool {
     !m.is_empty()
         && m.len() <= 64
         && !m.starts_with('.')
-        && m.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-'))
+        && m.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-'))
 }
 
 fn is_executable_file(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+    std::fs::metadata(p)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 /// Parses the arguments after the program name. `Err` is a message for the user (exit 2).
 pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parsed, String> {
-    let mut listen = DEFAULT_LISTEN.parse::<SocketAddr>().expect("default address");
+    let mut listen = DEFAULT_LISTEN
+        .parse::<SocketAddr>()
+        .expect("default address");
     let mut work_dir: Option<PathBuf> = None;
     let mut separator: Option<PathBuf> = None;
     let mut model = DEFAULT_MODEL.to_string();
@@ -121,18 +135,29 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
             "--version" | "-V" => return Ok(Parsed::Version),
             "--licenses" => return Ok(Parsed::Licenses),
             "--no-stem-levels" if inline.is_none() => stem_levels = false,
-            "--listen" | "--work-dir" | "--separator" | "--model" | "--max-upload-mb" | "--max-duration-s"
-            | "--queue" | "--separator-timeout-min" | "--retention-hours" | "--janitor-interval-ms"
-            | "--separator-timeout-ms" | "--beat-tracker" | "--beat-timeout-min" | "--beat-timeout-ms" => {
+            "--listen"
+            | "--work-dir"
+            | "--separator"
+            | "--model"
+            | "--max-upload-mb"
+            | "--max-duration-s"
+            | "--queue"
+            | "--separator-timeout-min"
+            | "--retention-hours"
+            | "--janitor-interval-ms"
+            | "--separator-timeout-ms"
+            | "--beat-tracker"
+            | "--beat-timeout-min"
+            | "--beat-timeout-ms" => {
                 let value = match inline {
                     Some(v) => v,
                     None => it.next().ok_or_else(|| format!("{flag} needs a value"))?,
                 };
                 match flag.as_str() {
                     "--listen" => {
-                        listen = value
-                            .parse()
-                            .map_err(|_| format!("--listen needs ADDR:PORT (e.g. 127.0.0.1:8765), got '{value}'"))?
+                        listen = value.parse().map_err(|_| {
+                            format!("--listen needs ADDR:PORT (e.g. 127.0.0.1:8765), got '{value}'")
+                        })?
                     }
                     "--work-dir" => work_dir = Some(PathBuf::from(value)),
                     "--separator" => separator = Some(PathBuf::from(value)),
@@ -148,7 +173,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
                     "--separator-timeout-min" => timeout_min = number(&flag, &value, 1)?,
                     "--retention-hours" => retention_hours = number(&flag, &value, 0)?,
                     // Hidden: lets the tests exercise retention quickly.
-                    "--janitor-interval-ms" => janitor_interval = Duration::from_millis(number(&flag, &value, 10)?),
+                    "--janitor-interval-ms" => {
+                        janitor_interval = Duration::from_millis(number(&flag, &value, 10)?)
+                    }
                     // Hidden: lets the tests exercise the separator timeout quickly. When given, it
                     // wins over --separator-timeout-min whatever the order.
                     "--separator-timeout-ms" => timeout_ms = Some(number(&flag, &value, 100)?),
@@ -168,7 +195,10 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
             .to_string()
     })?;
     if !is_executable_file(&separator) {
-        return Err(format!("--separator: '{}' is not an executable file", separator.display()));
+        return Err(format!(
+            "--separator: '{}' is not an executable file",
+            separator.display()
+        ));
     }
     let separator = std::path::absolute(&separator).map_err(|e| format!("--separator: {e}"))?;
 
@@ -193,7 +223,11 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
         None => match (&env.xdg_state_home, &env.home) {
             (Some(x), _) => x.join("calliope-stems"),
             (None, Some(h)) => h.join(".local/state/calliope-stems"),
-            (None, None) => return Err("--work-dir is required (neither XDG_STATE_HOME nor HOME is set)".into()),
+            (None, None) => {
+                return Err(
+                    "--work-dir is required (neither XDG_STATE_HOME nor HOME is set)".into(),
+                )
+            }
         },
     };
     let work_dir = std::path::absolute(&work_dir).map_err(|e| format!("--work-dir: {e}"))?;
@@ -206,9 +240,13 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I, env: &Env) -> Result<Parse
         max_upload_bytes: max_upload_mb.saturating_mul(1024 * 1024),
         max_duration_s,
         queue,
-        separator_timeout: timeout_ms.map(Duration::from_millis).unwrap_or(Duration::from_secs(timeout_min * 60)),
+        separator_timeout: timeout_ms
+            .map(Duration::from_millis)
+            .unwrap_or(Duration::from_secs(timeout_min * 60)),
         beat_tracker,
-        beat_timeout: beat_timeout_ms.map(Duration::from_millis).unwrap_or(Duration::from_secs(beat_timeout_min * 60)),
+        beat_timeout: beat_timeout_ms
+            .map(Duration::from_millis)
+            .unwrap_or(Duration::from_secs(beat_timeout_min * 60)),
         retention: Duration::from_secs(retention_hours.saturating_mul(3600)),
         janitor_interval,
         stem_levels,
@@ -220,7 +258,11 @@ mod tests {
     use super::*;
 
     fn stub() -> String {
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../calliope-gui/tests/support/stub-separator").to_string()
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../calliope-gui/tests/support/stub-separator"
+        )
+        .to_string()
     }
 
     fn args(a: &[&str]) -> Vec<String> {
@@ -228,7 +270,10 @@ mod tests {
     }
 
     fn run(a: &[&str]) -> Result<Config, String> {
-        let env = Env { home: Some("/home/u".into()), xdg_state_home: None };
+        let env = Env {
+            home: Some("/home/u".into()),
+            xdg_state_home: None,
+        };
         match parse(args(a), &env)? {
             Parsed::Run(c) => Ok(*c),
             other => panic!("expected Run, got {other:?}"),
@@ -239,7 +284,10 @@ mod tests {
     fn defaults() {
         let c = run(&["--separator", &stub()]).unwrap();
         assert_eq!(c.listen, "0.0.0.0:8765".parse().unwrap());
-        assert_eq!(c.work_dir, PathBuf::from("/home/u/.local/state/calliope-stems"));
+        assert_eq!(
+            c.work_dir,
+            PathBuf::from("/home/u/.local/state/calliope-stems")
+        );
         assert_eq!(c.model, "htdemucs_6s");
         assert_eq!(c.max_upload_bytes, 314_572_800);
         assert_eq!(c.max_duration_s, 900);
@@ -251,8 +299,13 @@ mod tests {
 
     #[test]
     fn xdg_state_home_wins_over_home() {
-        let env = Env { home: Some("/home/u".into()), xdg_state_home: Some("/state".into()) };
-        let Parsed::Run(c) = parse(args(&["--separator", &stub()]), &env).unwrap() else { panic!() };
+        let env = Env {
+            home: Some("/home/u".into()),
+            xdg_state_home: Some("/state".into()),
+        };
+        let Parsed::Run(c) = parse(args(&["--separator", &stub()]), &env).unwrap() else {
+            panic!()
+        };
         assert_eq!(c.work_dir, PathBuf::from("/state/calliope-stems"));
     }
 
@@ -267,15 +320,41 @@ mod tests {
     #[test]
     fn flags_in_both_forms() {
         let c = run(&[
-            "--separator", &stub(), "--listen=127.0.0.1:0", "--work-dir", "/tmp/w", "--model", "m1",
-            "--max-upload-mb=1", "--max-duration-s", "60", "--queue", "0", "--separator-timeout-min", "2",
-            "--retention-hours", "0", "--janitor-interval-ms", "50",
+            "--separator",
+            &stub(),
+            "--listen=127.0.0.1:0",
+            "--work-dir",
+            "/tmp/w",
+            "--model",
+            "m1",
+            "--max-upload-mb=1",
+            "--max-duration-s",
+            "60",
+            "--queue",
+            "0",
+            "--separator-timeout-min",
+            "2",
+            "--retention-hours",
+            "0",
+            "--janitor-interval-ms",
+            "50",
         ])
         .unwrap();
         assert_eq!(c.listen.port(), 0);
         assert_eq!(c.work_dir, PathBuf::from("/tmp/w"));
-        assert_eq!((c.model.as_str(), c.max_upload_bytes, c.max_duration_s, c.queue), ("m1", 1 << 20, 60, 0));
-        assert_eq!((c.separator_timeout.as_secs(), c.retention.as_secs()), (120, 0));
+        assert_eq!(
+            (
+                c.model.as_str(),
+                c.max_upload_bytes,
+                c.max_duration_s,
+                c.queue
+            ),
+            ("m1", 1 << 20, 60, 0)
+        );
+        assert_eq!(
+            (c.separator_timeout.as_secs(), c.retention.as_secs()),
+            (120, 0)
+        );
         assert_eq!(c.janitor_interval, Duration::from_millis(50));
         assert!(c.stem_levels);
     }
@@ -285,9 +364,24 @@ mod tests {
         let s = stub();
         let c = run(&["--separator", &s, "--separator-timeout-ms", "1000"]).unwrap();
         assert_eq!(c.separator_timeout, Duration::from_millis(1000));
-        let c = run(&["--separator", &s, "--separator-timeout-ms=250", "--separator-timeout-min", "5"]).unwrap();
+        let c = run(&[
+            "--separator",
+            &s,
+            "--separator-timeout-ms=250",
+            "--separator-timeout-min",
+            "5",
+        ])
+        .unwrap();
         assert_eq!(c.separator_timeout, Duration::from_millis(250));
-        let c = run(&["--separator", &s, "--separator-timeout-min", "5", "--separator-timeout-ms", "250"]).unwrap();
+        let c = run(&[
+            "--separator",
+            &s,
+            "--separator-timeout-min",
+            "5",
+            "--separator-timeout-ms",
+            "250",
+        ])
+        .unwrap();
         assert_eq!(c.separator_timeout, Duration::from_millis(250));
         let c = run(&["--separator", &s, "--separator-timeout-min", "5"]).unwrap();
         assert_eq!(c.separator_timeout, Duration::from_secs(300));
@@ -300,17 +394,43 @@ mod tests {
     #[test]
     fn beat_tracker_flags() {
         let s = stub();
-        let tracker = concat!(env!("CARGO_MANIFEST_DIR"), "/../calliope-gui/tests/support/stub-beat-tracker");
+        let tracker = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../calliope-gui/tests/support/stub-beat-tracker"
+        );
         let c = run(&["--separator", &s]).unwrap();
         assert!(c.beat_tracker.is_none());
         assert_eq!(c.beat_timeout, Duration::from_secs(600));
-        let c = run(&["--separator", &s, "--beat-tracker", tracker, "--beat-timeout-min", "2"]).unwrap();
+        let c = run(&[
+            "--separator",
+            &s,
+            "--beat-tracker",
+            tracker,
+            "--beat-timeout-min",
+            "2",
+        ])
+        .unwrap();
         assert!(c.beat_tracker.unwrap().is_absolute());
         assert_eq!(c.beat_timeout, Duration::from_secs(120));
         // the hidden milliseconds flag wins in any order
-        let c = run(&["--separator", &s, "--beat-timeout-ms=250", "--beat-timeout-min", "5"]).unwrap();
+        let c = run(&[
+            "--separator",
+            &s,
+            "--beat-timeout-ms=250",
+            "--beat-timeout-min",
+            "5",
+        ])
+        .unwrap();
         assert_eq!(c.beat_timeout, Duration::from_millis(250));
-        let c = run(&["--separator", &s, "--beat-timeout-min", "5", "--beat-timeout-ms", "250"]).unwrap();
+        let c = run(&[
+            "--separator",
+            &s,
+            "--beat-timeout-min",
+            "5",
+            "--beat-timeout-ms",
+            "250",
+        ])
+        .unwrap();
         assert_eq!(c.beat_timeout, Duration::from_millis(250));
         // a missing or non-executable tracker only turns beats off (the server still starts)
         for missing in ["/nonexistent/tracker", "/etc/passwd"] {
@@ -333,7 +453,11 @@ mod tests {
     #[test]
     fn no_stem_levels_flag() {
         assert!(run(&["--separator", &stub()]).unwrap().stem_levels);
-        assert!(!run(&["--separator", &stub(), "--no-stem-levels"]).unwrap().stem_levels);
+        assert!(
+            !run(&["--separator", &stub(), "--no-stem-levels"])
+                .unwrap()
+                .stem_levels
+        );
         assert!(run(&["--separator", &stub(), "--no-stem-levels=1"]).is_err());
         assert!(HELP.contains("--no-stem-levels"));
     }
@@ -362,7 +486,9 @@ mod tests {
     fn measure_takes_files_and_needs_no_separator() {
         let env = Env::default();
         match parse(args(&["--measure", "a.flac", "b.flac"]), &env) {
-            Ok(Parsed::Measure(f)) => assert_eq!(f, vec![PathBuf::from("a.flac"), PathBuf::from("b.flac")]),
+            Ok(Parsed::Measure(f)) => {
+                assert_eq!(f, vec![PathBuf::from("a.flac"), PathBuf::from("b.flac")])
+            }
             other => panic!("{other:?}"),
         }
         let e = parse(args(&["--measure"]), &env).unwrap_err();
@@ -374,8 +500,14 @@ mod tests {
     fn help_and_version() {
         let env = Env::default();
         assert!(matches!(parse(args(&["--help"]), &env), Ok(Parsed::Help)));
-        assert!(matches!(parse(args(&["--version"]), &env), Ok(Parsed::Version)));
-        assert!(matches!(parse(args(&["--licenses"]), &env), Ok(Parsed::Licenses)));
+        assert!(matches!(
+            parse(args(&["--version"]), &env),
+            Ok(Parsed::Version)
+        ));
+        assert!(matches!(
+            parse(args(&["--licenses"]), &env),
+            Ok(Parsed::Licenses)
+        ));
         assert!(HELP.contains("--separator") && HELP.contains("required"));
     }
 

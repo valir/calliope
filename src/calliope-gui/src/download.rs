@@ -29,7 +29,8 @@ pub const MAX_FILESIZE: &str = "1G";
 /// Refuses live streams and known durations over 15 minutes (unknown durations pass; the
 /// converter's own limit catches those).
 pub const MATCH_FILTER: &str = "!is_live & duration <=? 900";
-pub const TOO_LONG_MESSAGE: &str = "Download refused: the video is a live stream or longer than 15 minutes";
+pub const TOO_LONG_MESSAGE: &str =
+    "Download refused: the video is a live stream or longer than 15 minutes";
 pub const TOO_BIG_MESSAGE: &str = "Download refused: the file is larger than 1 GiB";
 pub const INFO_JSON: &str = "info.json";
 /// What the real yt-dlp makes of `--output infojson:info` (it appends `.info.json`).
@@ -40,14 +41,18 @@ const INFO_JSON_YTDLP: &str = "info.info.json";
 pub fn validate_url(input: &str) -> Result<url::Url, String> {
     let s = input.trim();
     let invalid = || INVALID_URL_MESSAGE.to_string();
-    if s.is_empty() || s.chars().count() > MAX_URL_CHARS || s.chars().any(|c| c.is_whitespace() || c.is_control()) {
+    if s.is_empty()
+        || s.chars().count() > MAX_URL_CHARS
+        || s.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
         return Err(invalid());
     }
     let u = url::Url::parse(s).map_err(|_| invalid())?;
     if !matches!(u.scheme(), "http" | "https") {
         return Err(invalid());
     }
-    if u.host_str().is_none_or(str::is_empty) || !u.username().is_empty() || u.password().is_some() {
+    if u.host_str().is_none_or(str::is_empty) || !u.username().is_empty() || u.password().is_some()
+    {
         return Err(invalid());
     }
     Ok(u)
@@ -83,10 +88,22 @@ pub fn ytdlp_args(job_dir: &Path, url: &str, resume: bool) -> Vec<String> {
     .map(|s| s.to_string())
     .collect();
     // limits are enforced by yt-dlp itself, before the bytes are fetched
-    for s in ["--max-filesize", MAX_FILESIZE, "--match-filter", MATCH_FILTER] {
+    for s in [
+        "--max-filesize",
+        MAX_FILESIZE,
+        "--match-filter",
+        MATCH_FILTER,
+    ] {
         a.push(s.into());
     }
-    a.push(if resume { "--continue" } else { "--no-continue" }.into());
+    a.push(
+        if resume {
+            "--continue"
+        } else {
+            "--no-continue"
+        }
+        .into(),
+    );
     for s in [
         "--write-info-json",
         "--no-write-thumbnail",
@@ -100,7 +117,13 @@ pub fn ytdlp_args(job_dir: &Path, url: &str, resume: bool) -> Vec<String> {
     a.push(dir.clone());
     a.push("--paths".into());
     a.push(format!("temp:{dir}"));
-    for s in ["--output", "download.%(ext)s", "--output", "infojson:info", "--"] {
+    for s in [
+        "--output",
+        "download.%(ext)s",
+        "--output",
+        "infojson:info",
+        "--",
+    ] {
         a.push(s.into());
     }
     a.push(url.into());
@@ -151,11 +174,18 @@ pub fn parse_error(line: &str) -> Option<String> {
         return Some(format!("Error {code} when attempting download"));
     }
     let msg = clean_text(msg, MAX_ERROR_CHARS);
-    Some(if msg.is_empty() { "Download failed".to_string() } else { format!("Download failed: {msg}") })
+    Some(if msg.is_empty() {
+        "Download failed".to_string()
+    } else {
+        format!("Download failed: {msg}")
+    })
 }
 
 fn json_str(v: &serde_json::Value, key: &str, max: usize) -> Option<String> {
-    v.get(key).and_then(|x| x.as_str()).map(|s| clean_text(s, max)).filter(|s| !s.is_empty())
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .map(|s| clean_text(s, max))
+        .filter(|s| !s.is_empty())
 }
 
 fn json_year(v: &serde_json::Value, key: &str) -> Option<i64> {
@@ -174,7 +204,9 @@ fn split_title(title: &str) -> Option<(String, String)> {
 }
 
 fn split_composers(s: &str) -> impl Iterator<Item = String> + '_ {
-    s.split([';', '/']).map(|x| clean_text(x, MAX_NAME)).filter(|x| !x.is_empty())
+    s.split([';', '/'])
+        .map(|x| clean_text(x, MAX_NAME))
+        .filter(|x| !x.is_empty())
 }
 
 /// Maps yt-dlp's `info.json` to the editable fields (plan section 2.6). `entered_url` is the
@@ -195,7 +227,9 @@ pub fn edits_from_info(json: &str, entered_url: &str) -> Option<TrackEdits> {
     };
     let title = json_str(&v, "track", MAX_NAME)
         .or_else(|| match &split {
-            Some((x, y)) if from_title || x.to_lowercase() == band.to_lowercase() => Some(y.clone()),
+            Some((x, y)) if from_title || x.to_lowercase() == band.to_lowercase() => {
+                Some(y.clone())
+            }
             _ => title_raw.clone(),
         })
         .unwrap_or_else(|| clean_text(entered_url, MAX_NAME));
@@ -209,7 +243,9 @@ pub fn edits_from_info(json: &str, entered_url: &str) -> Option<TrackEdits> {
         }
     }
     composers.truncate(MAX_COMPOSERS);
-    let year = json_year(&v, "release_year").or_else(|| json_year(&v, "release_date")).or_else(|| json_year(&v, "upload_date"));
+    let year = json_year(&v, "release_year")
+        .or_else(|| json_year(&v, "release_date"))
+        .or_else(|| json_year(&v, "upload_date"));
     let source_url = json_str(&v, "webpage_url", MAX_URL_CHARS)
         .and_then(|u| normalise(&u).ok())
         .unwrap_or_else(|| entered_url.to_string());
@@ -228,7 +264,10 @@ pub fn edits_from_info(json: &str, entered_url: &str) -> Option<TrackEdits> {
 pub enum DownloadError {
     /// Stopped by the user; the partial file is kept for a resume.
     Cancelled,
-    Failed { message: String, http_status: Option<u16> },
+    Failed {
+        message: String,
+        http_status: Option<u16>,
+    },
 }
 
 impl fmt::Display for DownloadError {
@@ -241,7 +280,10 @@ impl fmt::Display for DownloadError {
 }
 
 fn failed<T>(message: impl Into<String>) -> Result<T, DownloadError> {
-    Err(DownloadError::Failed { message: message.into(), http_status: None })
+    Err(DownloadError::Failed {
+        message: message.into(),
+        http_status: None,
+    })
 }
 
 /// What a finished download left in the job folder.
@@ -316,11 +358,17 @@ pub fn run_download(
             }
         },
     )
-    .map_err(|e| DownloadError::Failed { message: e.to_string(), http_status: None })?;
+    .map_err(|e| DownloadError::Failed {
+        message: e.to_string(),
+        http_status: None,
+    })?;
     cancel.register(running.cancel_handle());
     let status = running.wait();
     cancel.clear();
-    let status = status.map_err(|e| DownloadError::Failed { message: e.to_string(), http_status: None })?;
+    let status = status.map_err(|e| DownloadError::Failed {
+        message: e.to_string(),
+        http_status: None,
+    })?;
     if cancel.is_cancelled() {
         return Err(DownloadError::Cancelled);
     }
@@ -347,7 +395,10 @@ pub fn run_download(
     if ytdlp_info.is_file() {
         let _ = std::fs::rename(&ytdlp_info, &info);
     }
-    Ok(Downloaded { file, info: info.is_file().then_some(info) })
+    Ok(Downloaded {
+        file,
+        info: info.is_file().then_some(info),
+    })
 }
 
 #[cfg(test)]
@@ -363,7 +414,9 @@ mod tests {
     }
 
     fn fixture(name: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/import").join(name)
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/import")
+            .join(name)
     }
 
     /// A temp repository root with the URL's job folder prepared.
@@ -395,7 +448,11 @@ mod tests {
     fn fake_with_log(dir: &Path, log: &Path) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let w = dir.join("yt-dlp-wrapper");
-        let body = format!("#!/bin/sh\nFAKE_YTDLP_LOG='{}' exec '{}' \"$@\"\n", log.display(), fake().display());
+        let body = format!(
+            "#!/bin/sh\nFAKE_YTDLP_LOG='{}' exec '{}' \"$@\"\n",
+            log.display(),
+            fake().display()
+        );
         fs::write(&w, body).unwrap();
         fs::set_permissions(&w, fs::Permissions::from_mode(0o755)).unwrap();
         w
@@ -419,12 +476,25 @@ mod tests {
             "data:text/html,hi",
             long.as_str(),
         ] {
-            assert_eq!(validate_url(bad).unwrap_err(), "Entered URL is invalid", "{bad:?}");
+            assert_eq!(
+                validate_url(bad).unwrap_err(),
+                "Entered URL is invalid",
+                "{bad:?}"
+            );
             assert!(normalise(bad).is_err(), "{bad:?}");
         }
-        assert_eq!(normalise("https://media.example/watch?v=ok#t=5").unwrap(), "https://media.example/watch?v=ok");
-        assert_eq!(normalise("  HTTP://Media.Example/a b").unwrap_err(), "Entered URL is invalid");
-        assert_eq!(normalise(" HTTP://Media.Example/watch?v=1 ").unwrap(), "http://media.example/watch?v=1");
+        assert_eq!(
+            normalise("https://media.example/watch?v=ok#t=5").unwrap(),
+            "https://media.example/watch?v=ok"
+        );
+        assert_eq!(
+            normalise("  HTTP://Media.Example/a b").unwrap_err(),
+            "Entered URL is invalid"
+        );
+        assert_eq!(
+            normalise(" HTTP://Media.Example/watch?v=1 ").unwrap(),
+            "http://media.example/watch?v=1"
+        );
         assert!(normalise("https://a.example/").is_ok());
         let exactly = format!("https://a.example/{}", "x".repeat(2000 - 18));
         assert_eq!(exactly.chars().count(), 2000);
@@ -442,58 +512,114 @@ mod tests {
 
     #[test]
     fn argv_is_one_entry_per_value_with_the_url_last_after_double_dash() {
-        let a = ytdlp_args(Path::new("/tmp/my job"), "https://h.example/watch?v=1&x=2", true);
+        let a = ytdlp_args(
+            Path::new("/tmp/my job"),
+            "https://h.example/watch?v=1&x=2",
+            true,
+        );
         assert_eq!(a[0], "--ignore-config");
         assert!(a.contains(&"--continue".to_string()) && !a.contains(&"--no-continue".to_string()));
         assert_eq!(a[a.len() - 2], "--");
         assert_eq!(a[a.len() - 1], "https://h.example/watch?v=1&x=2");
-        assert!(a.windows(2).any(|w| w[0] == "--paths" && w[1] == "/tmp/my job"));
-        assert!(a.windows(2).any(|w| w[0] == "--paths" && w[1] == "temp:/tmp/my job"));
-        assert!(a.windows(2).any(|w| w[0] == "--output" && w[1] == "download.%(ext)s"));
-        assert!(a.windows(2).any(|w| w[0] == "--output" && w[1] == "infojson:info"));
-        assert!(a.windows(2).any(|w| w[0] == "--format" && w[1] == "bestaudio/best"));
-        for f in ["--no-playlist", "--newline", "--no-colors", "--no-mtime", "--write-info-json"] {
+        assert!(a
+            .windows(2)
+            .any(|w| w[0] == "--paths" && w[1] == "/tmp/my job"));
+        assert!(a
+            .windows(2)
+            .any(|w| w[0] == "--paths" && w[1] == "temp:/tmp/my job"));
+        assert!(a
+            .windows(2)
+            .any(|w| w[0] == "--output" && w[1] == "download.%(ext)s"));
+        assert!(a
+            .windows(2)
+            .any(|w| w[0] == "--output" && w[1] == "infojson:info"));
+        assert!(a
+            .windows(2)
+            .any(|w| w[0] == "--format" && w[1] == "bestaudio/best"));
+        for f in [
+            "--no-playlist",
+            "--newline",
+            "--no-colors",
+            "--no-mtime",
+            "--write-info-json",
+        ] {
             assert!(a.contains(&f.to_string()), "{f}");
         }
-        assert!(ytdlp_args(Path::new("/x"), "https://h.example/", false).contains(&"--no-continue".to_string()));
+        assert!(ytdlp_args(Path::new("/x"), "https://h.example/", false)
+            .contains(&"--no-continue".to_string()));
     }
 
     #[test]
     fn argv_carries_the_size_and_duration_limits() {
         let a = ytdlp_args(Path::new("/x"), "https://h.example/", true);
-        assert!(a.windows(2).any(|w| w[0] == "--max-filesize" && w[1] == "1G"));
-        assert!(a.windows(2).any(|w| w[0] == "--match-filter" && w[1] == "!is_live & duration <=? 900"));
+        assert!(a
+            .windows(2)
+            .any(|w| w[0] == "--max-filesize" && w[1] == "1G"));
+        assert!(a
+            .windows(2)
+            .any(|w| w[0] == "--match-filter" && w[1] == "!is_live & duration <=? 900"));
     }
 
     #[test]
     fn skipped_videos_get_a_clear_message() {
-        for (path, msg) in [("live", TOO_LONG_MESSAGE), ("long", TOO_LONG_MESSAGE), ("huge", TOO_BIG_MESSAGE)] {
+        for (path, msg) in [
+            ("live", TOO_LONG_MESSAGE),
+            ("long", TOO_LONG_MESSAGE),
+            ("huge", TOO_BIG_MESSAGE),
+        ] {
             let url = normalise(&format!("https://media.example/{path}")).unwrap();
             let (_r, dir) = setup(&url);
             let e = run_download(&fake(), &dir, &url, true, &Cancel::new(), |_, _| {}).unwrap_err();
-            assert_eq!(e, DownloadError::Failed { message: msg.into(), http_status: None }, "{path}");
+            assert_eq!(
+                e,
+                DownloadError::Failed {
+                    message: msg.into(),
+                    http_status: None
+                },
+                "{path}"
+            );
         }
     }
 
     #[test]
     fn fragments_are_not_the_download() {
         let d = tempfile::tempdir().unwrap();
-        for n in ["download.f251.webm", "download.f137.mp4", "download.webm.part", "download.webm.ytdl", "download.f251.webm.part"] {
+        for n in [
+            "download.f251.webm",
+            "download.f137.mp4",
+            "download.webm.part",
+            "download.webm.ytdl",
+            "download.f251.webm.part",
+        ] {
             fs::write(d.path().join(n), b"x").unwrap();
         }
         assert_eq!(find_download(d.path()), None);
         fs::write(d.path().join("download.webm"), b"x").unwrap();
-        assert_eq!(find_download(d.path()), Some(d.path().join("download.webm")));
+        assert_eq!(
+            find_download(d.path()),
+            Some(d.path().join("download.webm"))
+        );
         assert!(crate::import_tmp::is_finished_download("download.m4a"));
         assert!(crate::import_tmp::is_finished_download("download.flac"));
-        assert!(!crate::import_tmp::is_finished_download("download.f140.m4a"));
+        assert!(!crate::import_tmp::is_finished_download(
+            "download.f140.m4a"
+        ));
     }
 
     #[test]
     fn progress_lines() {
-        assert_eq!(parse_progress("calliope-progress 100 1000 NA"), Some((100, Some(1000))));
-        assert_eq!(parse_progress("calliope-progress 100 NA 2000"), Some((100, Some(2000))));
-        assert_eq!(parse_progress("calliope-progress 100.0 NA NA"), Some((100, None)));
+        assert_eq!(
+            parse_progress("calliope-progress 100 1000 NA"),
+            Some((100, Some(1000)))
+        );
+        assert_eq!(
+            parse_progress("calliope-progress 100 NA 2000"),
+            Some((100, Some(2000)))
+        );
+        assert_eq!(
+            parse_progress("calliope-progress 100.0 NA NA"),
+            Some((100, None))
+        );
         assert_eq!(parse_progress("calliope-progress NA NA NA"), None);
         assert_eq!(parse_progress("[download] 50%"), None);
         assert_eq!(parse_progress("calliope-progress"), None);
@@ -502,15 +628,22 @@ mod tests {
     #[test]
     fn error_lines() {
         assert_eq!(
-            parse_error("ERROR: [generic] Unable to download webpage: HTTP Error 403: Forbidden").unwrap(),
+            parse_error("ERROR: [generic] Unable to download webpage: HTTP Error 403: Forbidden")
+                .unwrap(),
             "Error 403 when attempting download"
         );
         assert_eq!(http_status("HTTP Error 404: Not Found"), Some(404));
         assert_eq!(http_status("HTTP Error 4: x"), None);
-        assert_eq!(parse_error("ERROR: Unsupported URL: https://x.example/").unwrap(), "Download failed: Unsupported URL: https://x.example/");
+        assert_eq!(
+            parse_error("ERROR: Unsupported URL: https://x.example/").unwrap(),
+            "Download failed: Unsupported URL: https://x.example/"
+        );
         assert_eq!(parse_error("WARNING: something"), None);
         let long = format!("ERROR: {}", "y".repeat(1000));
-        assert_eq!(parse_error(&long).unwrap().chars().count(), "Download failed: ".len() + 300);
+        assert_eq!(
+            parse_error(&long).unwrap().chars().count(),
+            "Download failed: ".len() + 300
+        );
     }
 
     #[test]
@@ -520,7 +653,10 @@ mod tests {
         assert_eq!(e.band, "The Example Band");
         assert_eq!(e.title, "Night Drive");
         assert_eq!(e.year, Some(2020));
-        assert_eq!(e.source_url.as_deref(), Some("https://media.example/watch?v=abc123"));
+        assert_eq!(
+            e.source_url.as_deref(),
+            Some("https://media.example/watch?v=abc123")
+        );
         assert_eq!(e.album, "");
         assert!(e.composers.is_empty());
     }
@@ -534,13 +670,23 @@ mod tests {
             u,
         )
         .unwrap();
-        assert_eq!((e.band.as_str(), e.title.as_str(), e.album.as_str()), ("A", "T", "Alb"));
+        assert_eq!(
+            (e.band.as_str(), e.title.as_str(), e.album.as_str()),
+            ("A", "T", "Alb")
+        );
         assert_eq!(e.composers, ["X", "Y", "Z", "W"]);
         assert_eq!(e.year, Some(1999));
         assert_eq!(e.copyright.as_deref(), Some("CC"));
         assert_eq!(e.source_url.as_deref(), Some(u));
-        let e = edits_from_info(r#"{"creator":"C","title":"C - Song","release_date":"20100101"}"#, u).unwrap();
-        assert_eq!((e.band.as_str(), e.title.as_str(), e.year), ("C", "Song", Some(2010)));
+        let e = edits_from_info(
+            r#"{"creator":"C","title":"C - Song","release_date":"20100101"}"#,
+            u,
+        )
+        .unwrap();
+        assert_eq!(
+            (e.band.as_str(), e.title.as_str(), e.year),
+            ("C", "Song", Some(2010))
+        );
         let e = edits_from_info(r#"{"artist":"A","title":"Some Title"}"#, u).unwrap();
         assert_eq!(e.title, "Some Title");
         let e = edits_from_info(r#"{"webpage_url":"javascript:1"}"#, u).unwrap();
@@ -553,7 +699,10 @@ mod tests {
     fn fake_refuses_real_hosts_and_demands_safe_flags() {
         let d = tempfile::tempdir().unwrap();
         let run = |args: &[&str]| {
-            std::process::Command::new(fake()).args(args).output().unwrap()
+            std::process::Command::new(fake())
+                .args(args)
+                .output()
+                .unwrap()
         };
         let o = run(&[
             "--ignore-config",
@@ -568,7 +717,12 @@ mod tests {
         ]);
         assert_eq!(o.status.code(), Some(2));
         assert!(String::from_utf8_lossy(&o.stderr).contains("real network URLs are not allowed"));
-        let o = run(&["--paths", d.path().to_str().unwrap(), "--", "https://media.example/watch"]);
+        let o = run(&[
+            "--paths",
+            d.path().to_str().unwrap(),
+            "--",
+            "https://media.example/watch",
+        ]);
         assert_eq!(o.status.code(), Some(2));
         let o = run(&["--ignore-config", "https://media.example/watch"]);
         assert_eq!(o.status.code(), Some(2));
@@ -595,7 +749,10 @@ mod tests {
         let got = run_download(&fake(), &dir, &url, true, &Cancel::new(), cb).unwrap();
         assert_eq!(got.file, dir.join("download.webm"));
         assert_eq!(got.info, Some(dir.join("info.json")));
-        assert_eq!(fs::read(&got.file).unwrap(), fs::read(fixture("download.webm")).unwrap());
+        assert_eq!(
+            fs::read(&got.file).unwrap(),
+            fs::read(fixture("download.webm")).unwrap()
+        );
         assert!(!dir.join("info.info.json").exists());
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 5);
@@ -620,12 +777,24 @@ mod tests {
         let url = normalise("https://media.example/http403").unwrap();
         let (_r, dir) = setup(&url);
         let e = run_download(&fake(), &dir, &url, true, &Cancel::new(), |_, _| {}).unwrap_err();
-        assert_eq!(e, DownloadError::Failed { message: "Error 403 when attempting download".into(), http_status: Some(403) });
+        assert_eq!(
+            e,
+            DownloadError::Failed {
+                message: "Error 403 when attempting download".into(),
+                http_status: Some(403)
+            }
+        );
         let url = normalise("https://media.example/offline").unwrap();
         let (_r, dir) = setup(&url);
         match run_download(&fake(), &dir, &url, true, &Cancel::new(), |_, _| {}).unwrap_err() {
-            DownloadError::Failed { message, http_status: None } => {
-                assert!(message.starts_with("Download failed: [generic] Unable to download webpage"), "{message}")
+            DownloadError::Failed {
+                message,
+                http_status: None,
+            } => {
+                assert!(
+                    message.starts_with("Download failed: [generic] Unable to download webpage"),
+                    "{message}"
+                )
             }
             e => panic!("{e:?}"),
         }
@@ -635,12 +804,36 @@ mod tests {
     fn missing_program_and_bad_url_are_failures_not_panics() {
         let url = normalise("https://media.example/watch").unwrap();
         let (_r, dir) = setup(&url);
-        let e = run_download(Path::new("/nonexistent/yt-dlp"), &dir, &url, true, &Cancel::new(), |_, _| {}).unwrap_err();
+        let e = run_download(
+            Path::new("/nonexistent/yt-dlp"),
+            &dir,
+            &url,
+            true,
+            &Cancel::new(),
+            |_, _| {},
+        )
+        .unwrap_err();
         assert!(e.to_string().contains("not found"), "{e}");
-        let e = run_download(&fake(), &dir, "file:///etc/passwd", true, &Cancel::new(), |_, _| {}).unwrap_err();
+        let e = run_download(
+            &fake(),
+            &dir,
+            "file:///etc/passwd",
+            true,
+            &Cancel::new(),
+            |_, _| {},
+        )
+        .unwrap_err();
         assert_eq!(e.to_string(), "Entered URL is invalid");
         // not normalised (fragment) is refused too: the caller must normalise
-        let e = run_download(&fake(), &dir, "https://media.example/watch#x", true, &Cancel::new(), |_, _| {}).unwrap_err();
+        let e = run_download(
+            &fake(),
+            &dir,
+            "https://media.example/watch#x",
+            true,
+            &Cancel::new(),
+            |_, _| {},
+        )
+        .unwrap_err();
         assert_eq!(e.to_string(), "Entered URL is invalid");
     }
 
@@ -671,12 +864,19 @@ mod tests {
 
         // resume
         let got = run_download(&prog, &dir, &url, true, &Cancel::new(), |_, _| {}).unwrap();
-        assert_eq!(fs::read(got.file).unwrap(), fs::read(fixture("download.webm")).unwrap());
+        assert_eq!(
+            fs::read(got.file).unwrap(),
+            fs::read(fixture("download.webm")).unwrap()
+        );
         let lines = log_lines(&log);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0]["resume_from"], 0);
         assert_eq!(lines[1]["resume_from"], size);
-        assert!(lines[1]["argv"].as_array().unwrap().iter().any(|a| a == "--continue"));
+        assert!(lines[1]["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a == "--continue"));
     }
 
     #[test]
@@ -691,7 +891,11 @@ mod tests {
         assert_eq!(fs::read(got.file).unwrap(), data);
         let lines = log_lines(&log);
         assert_eq!(lines[0]["resume_from"], 0);
-        assert!(lines[0]["argv"].as_array().unwrap().iter().any(|a| a == "--no-continue"));
+        assert!(lines[0]["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a == "--no-continue"));
     }
 
     #[test]
@@ -701,8 +905,12 @@ mod tests {
         let log = root.path().join("fake.log");
         let prog = fake_with_log(root.path(), &log);
         run_download(&prog, &dir, &url, true, &Cancel::new(), |_, _| {}).unwrap();
-        let argv: Vec<String> =
-            log_lines(&log)[0]["argv"].as_array().unwrap().iter().map(|a| a.as_str().unwrap().to_string()).collect();
+        let argv: Vec<String> = log_lines(&log)[0]["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a.as_str().unwrap().to_string())
+            .collect();
         assert_eq!(argv[0], "--ignore-config");
         assert_eq!(&argv[argv.len() - 2..], ["--", url.as_str()]);
     }

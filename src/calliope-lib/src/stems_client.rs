@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::stems_api::{
-    check_beats, check_stem_levels, is_valid_job_id, is_valid_stem_name, Beats, ErrorBody, Health, JobCreated, JobState, JobStatus, API_VERSION,
-    MAX_BEATS_JSON_BYTES, MAX_STEMS, SERVICE_NAME,
+    check_beats, check_stem_levels, is_valid_job_id, is_valid_stem_name, Beats, ErrorBody, Health,
+    JobCreated, JobState, JobStatus, API_VERSION, MAX_BEATS_JSON_BYTES, MAX_STEMS, SERVICE_NAME,
 };
 
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -36,7 +36,10 @@ pub enum ClientError {
     /// Reachable, but not a calliope-stems API v1 server (or an unusable answer).
     Incompatible(String),
     /// The server answered with an error status.
-    Rejected { status: u16, message: String },
+    Rejected {
+        status: u16,
+        message: String,
+    },
     /// A job is unknown to the server (it was restarted).
     Restarted,
     /// No state change for `STALL_TIMEOUT`.
@@ -53,7 +56,9 @@ impl std::fmt::Display for ClientError {
         match self {
             ClientError::Unreachable(e) => write!(f, "Cannot reach the edge-AI server: {e}"),
             ClientError::Incompatible(e) => write!(f, "The edge-AI server is incompatible: {e}"),
-            ClientError::Rejected { status, message } => write!(f, "The edge-AI server said {status}: {message}"),
+            ClientError::Rejected { status, message } => {
+                write!(f, "The edge-AI server said {status}: {message}")
+            }
             ClientError::Restarted => write!(f, "The edge-AI server restarted; try again"),
             ClientError::Stalled => write!(f, "The edge-AI server stopped responding"),
             ClientError::Cancelled => write!(f, "Cancelled"),
@@ -67,7 +72,9 @@ impl std::error::Error for ClientError {}
 
 fn net_error(e: ureq::Error) -> ClientError {
     match e {
-        ureq::Error::Io(ref io) if io.kind() == std::io::ErrorKind::Interrupted => ClientError::Cancelled,
+        ureq::Error::Io(ref io) if io.kind() == std::io::ErrorKind::Interrupted => {
+            ClientError::Cancelled
+        }
         other => ClientError::Unreachable(other.to_string()),
     }
 }
@@ -77,7 +84,8 @@ fn valid_model(m: &str) -> bool {
     !m.is_empty()
         && m.len() <= 64
         && !m.starts_with('.')
-        && m.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-'))
+        && m.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-'))
 }
 
 pub struct StemsClient {
@@ -111,7 +119,10 @@ struct CountingReader<'a, R, F: FnMut(u64, u64)> {
 impl<R: Read, F: FnMut(u64, u64)> Read for CountingReader<'_, R, F> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if self.sent < self.total && self.cancel.load(Ordering::SeqCst) {
-            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "cancelled",
+            ));
         }
         let want = buf.len().min((self.total - self.sent) as usize);
         let n = self.inner.read(&mut buf[..want])?;
@@ -138,7 +149,9 @@ impl StemsClient {
     }
 
     /// Turns an error status into `Rejected`, using the `{"error": ...}` body when there is one.
-    fn check(mut resp: ureq::http::Response<ureq::Body>) -> Result<ureq::http::Response<ureq::Body>, ClientError> {
+    fn check(
+        mut resp: ureq::http::Response<ureq::Body>,
+    ) -> Result<ureq::http::Response<ureq::Body>, ClientError> {
         let status = resp.status().as_u16();
         if (200..300).contains(&status) {
             return Ok(resp);
@@ -150,12 +163,20 @@ impl StemsClient {
             .read_to_vec()
             .ok()
             .and_then(|b| serde_json::from_slice::<ErrorBody>(&b).ok())
-            .map(|e| e.error.chars().filter(|c| !c.is_control()).take(MAX_ERROR_CHARS).collect::<String>())
+            .map(|e| {
+                e.error
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(MAX_ERROR_CHARS)
+                    .collect::<String>()
+            })
             .unwrap_or_else(|| format!("HTTP {status}"));
         Err(ClientError::Rejected { status, message })
     }
 
-    fn json<T: serde::de::DeserializeOwned>(resp: ureq::http::Response<ureq::Body>) -> Result<T, ClientError> {
+    fn json<T: serde::de::DeserializeOwned>(
+        resp: ureq::http::Response<ureq::Body>,
+    ) -> Result<T, ClientError> {
         let mut resp = Self::check(resp)?;
         let bytes = resp
             .body_mut()
@@ -163,21 +184,34 @@ impl StemsClient {
             .limit(MAX_JSON_BYTES)
             .read_to_vec()
             .map_err(|e| ClientError::Incompatible(format!("unreadable answer: {e}")))?;
-        serde_json::from_slice(&bytes).map_err(|e| ClientError::Incompatible(format!("unexpected answer: {e}")))
+        serde_json::from_slice(&bytes)
+            .map_err(|e| ClientError::Incompatible(format!("unexpected answer: {e}")))
     }
 
     /// `GET /v1/health`; the service must be calliope-stems API v1.
     pub fn health(&self) -> Result<Health, ClientError> {
-        let resp = self.agent.get(&self.url("/v1/health")).call().map_err(net_error)?;
+        let resp = self
+            .agent
+            .get(&self.url("/v1/health"))
+            .call()
+            .map_err(net_error)?;
         let h: Health = Self::json(resp)?;
         if h.service != SERVICE_NAME {
-            return Err(ClientError::Incompatible(format!("the service is '{}', not '{SERVICE_NAME}'", h.service)));
+            return Err(ClientError::Incompatible(format!(
+                "the service is '{}', not '{SERVICE_NAME}'",
+                h.service
+            )));
         }
         if h.api != API_VERSION {
-            return Err(ClientError::Incompatible(format!("API version {} (this Calliope speaks {API_VERSION})", h.api)));
+            return Err(ClientError::Incompatible(format!(
+                "API version {} (this Calliope speaks {API_VERSION})",
+                h.api
+            )));
         }
         if !valid_model(&h.default_model) {
-            return Err(ClientError::Incompatible("the default model name is not valid".into()));
+            return Err(ClientError::Incompatible(
+                "the default model name is not valid".into(),
+            ));
         }
         Ok(h)
     }
@@ -218,15 +252,25 @@ impl StemsClient {
         with_model: bool,
     ) -> Result<String, ClientError> {
         let health = self.health()?;
-        let f = File::open(file).map_err(|e| ClientError::Io(format!("{}: {e}", file.display())))?;
-        let total = f.metadata().map_err(|e| ClientError::Io(e.to_string()))?.len();
+        let f =
+            File::open(file).map_err(|e| ClientError::Io(format!("{}: {e}", file.display())))?;
+        let total = f
+            .metadata()
+            .map_err(|e| ClientError::Io(e.to_string()))?
+            .len();
         if total > health.max_upload_bytes {
             return Err(ClientError::Invalid(format!(
                 "the file is {total} bytes; the server accepts at most {}",
                 health.max_upload_bytes
             )));
         }
-        let mut reader = CountingReader { inner: f, sent: 0, total, cancel, on_sent };
+        let mut reader = CountingReader {
+            inner: f,
+            sent: 0,
+            total,
+            cancel,
+            on_sent,
+        };
         let url = if with_model {
             format!("{}?model={}", self.url(path), health.default_model)
         } else {
@@ -260,7 +304,11 @@ impl StemsClient {
         if !is_valid_job_id(job) {
             return Err(ClientError::Invalid("bad job id".into()));
         }
-        let resp = self.agent.get(&self.url(&format!("/v1/jobs/{job}/beats"))).call().map_err(net_error)?;
+        let resp = self
+            .agent
+            .get(&self.url(&format!("/v1/jobs/{job}/beats")))
+            .call()
+            .map_err(net_error)?;
         match resp.status().as_u16() {
             404 => return Err(ClientError::Restarted),
             409 => return Err(ClientError::Invalid("not done".into())),
@@ -284,7 +332,11 @@ impl StemsClient {
         if !is_valid_job_id(job) {
             return Err(ClientError::Invalid("bad job id".into()));
         }
-        let resp = self.agent.get(&self.url(&format!("/v1/jobs/{job}"))).call().map_err(net_error)?;
+        let resp = self
+            .agent
+            .get(&self.url(&format!("/v1/jobs/{job}")))
+            .call()
+            .map_err(net_error)?;
         if resp.status().as_u16() == 404 {
             return Err(ClientError::Restarted);
         }
@@ -360,7 +412,13 @@ impl StemsClient {
 
     /// Downloads one stem into `dest_part` (replaced if present). Checks the `fLaC` magic and
     /// the size limit; stops with `Cancelled` when `cancel` is set; on any error the partial file is removed. Returns the size.
-    pub fn fetch_stem(&self, job: &str, name: &str, dest_part: &Path, cancel: &AtomicBool) -> Result<u64, ClientError> {
+    pub fn fetch_stem(
+        &self,
+        job: &str,
+        name: &str,
+        dest_part: &Path,
+        cancel: &AtomicBool,
+    ) -> Result<u64, ClientError> {
         if !is_valid_job_id(job) || !is_valid_stem_name(name) {
             return Err(ClientError::Invalid("bad job id or stem name".into()));
         }
@@ -385,7 +443,9 @@ impl StemsClient {
             body.read_exact(&mut head)
                 .map_err(|_| ClientError::Invalid(format!("stem '{name}' is not a FLAC file")))?;
             if &head != b"fLaC" {
-                return Err(ClientError::Invalid(format!("stem '{name}' is not a FLAC file")));
+                return Err(ClientError::Invalid(format!(
+                    "stem '{name}' is not a FLAC file"
+                )));
             }
             file.write_all(&head).map_err(io)?;
             let mut total = 4u64;
@@ -394,7 +454,9 @@ impl StemsClient {
                 if cancel.load(Ordering::SeqCst) {
                     return Err(ClientError::Cancelled);
                 }
-                let n = body.read(&mut buf).map_err(|e| ClientError::Unreachable(e.to_string()))?;
+                let n = body
+                    .read(&mut buf)
+                    .map_err(|e| ClientError::Unreachable(e.to_string()))?;
                 if n == 0 {
                     break;
                 }
@@ -414,7 +476,10 @@ impl StemsClient {
     /// `DELETE /v1/jobs/<id>`, best effort (errors are ignored: the server cleans up anyway).
     pub fn delete(&self, job: &str) {
         if is_valid_job_id(job) {
-            let _ = self.agent.delete(&self.url(&format!("/v1/jobs/{job}"))).call();
+            let _ = self
+                .agent
+                .delete(&self.url(&format!("/v1/jobs/{job}")))
+                .call();
         }
     }
 }

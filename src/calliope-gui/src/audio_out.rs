@@ -107,9 +107,15 @@ impl OutputBackend for NullBackend {
         }
     }
 
-    fn open(&self, sample_rate: u32, mut render: RenderFn) -> Result<Box<dyn OutputHandle>, String> {
+    fn open(
+        &self,
+        sample_rate: u32,
+        mut render: RenderFn,
+    ) -> Result<Box<dyn OutputHandle>, String> {
         let mut wav = match &self.capture {
-            Some(p) => Some(WavWriter::create(p, sample_rate).map_err(|e| format!("capture file: {e}"))?),
+            Some(p) => {
+                Some(WavWriter::create(p, sample_rate).map_err(|e| format!("capture file: {e}"))?)
+            }
             None => None,
         };
         log_open(self.name(), sample_rate);
@@ -142,7 +148,10 @@ impl OutputBackend for NullBackend {
                 let _ = w.finish();
             }
         });
-        Ok(Box::new(NullHandle { stop, thread: Some(thread) }))
+        Ok(Box::new(NullHandle {
+            stop,
+            thread: Some(thread),
+        }))
     }
 }
 
@@ -198,7 +207,11 @@ impl OutputBackend for CpalBackend {
         match ready_rx.recv() {
             Ok(Ok(())) => {
                 log_open("cpal", sample_rate);
-                Ok(Box::new(CpalHandle { stop: Some(stop_tx), thread: Some(thread), error }))
+                Ok(Box::new(CpalHandle {
+                    stop: Some(stop_tx),
+                    thread: Some(thread),
+                    error,
+                }))
             }
             Ok(Err(e)) => {
                 let _ = thread.join();
@@ -225,7 +238,13 @@ fn build_stream(
         .filter(|r| r.min_sample_rate() <= rate && rate <= r.max_sample_rate() && r.channels() >= 1)
         .collect();
     // Prefer stereo or more, then f32, then the fewest channels.
-    ranges.sort_by_key(|r| (r.channels() < 2, r.sample_format() != SampleFormat::F32, r.channels()));
+    ranges.sort_by_key(|r| {
+        (
+            r.channels() < 2,
+            r.sample_format() != SampleFormat::F32,
+            r.channels(),
+        )
+    });
     let cfg = ranges
         .into_iter()
         .next()
@@ -249,9 +268,13 @@ fn build_stream(
         SampleFormat::I64 => typed::<i64>(&device, config, render, on_err),
         SampleFormat::U32 => typed::<u32>(&device, config, render, on_err),
         SampleFormat::U64 => typed::<u64>(&device, config, render, on_err),
-        other => Err(format!("The audio output uses an unsupported sample format ({other})")),
+        other => Err(format!(
+            "The audio output uses an unsupported sample format ({other})"
+        )),
     }?;
-    stream.play().map_err(|e| format!("The audio output cannot start: {e}"))?;
+    stream
+        .play()
+        .map_err(|e| format!("The audio output cannot start: {e}"))?;
     Ok(stream)
 }
 
@@ -260,7 +283,12 @@ const MAX_BLOCK_FRAMES: usize = 8192;
 
 /// One device callback: renders through the fixed `scratch` in chunks (the device may ask
 /// for more frames than it holds), so the callback never allocates.
-fn fill_device<T: SizedSample + FromSample<f32>>(data: &mut [T], channels: usize, scratch: &mut [f32], render: &mut RenderFn) {
+fn fill_device<T: SizedSample + FromSample<f32>>(
+    data: &mut [T],
+    channels: usize,
+    scratch: &mut [f32],
+    render: &mut RenderFn,
+) {
     for part in data.chunks_mut(MAX_BLOCK_FRAMES * channels) {
         let frames = part.len() / channels;
         let block = &mut scratch[..frames * 2];
@@ -348,7 +376,10 @@ impl OutputBackend for ManualBackend {
     fn open(&self, _rate: u32, render: RenderFn) -> Result<Box<dyn OutputHandle>, String> {
         *self.error.lock().unwrap() = None;
         *self.render.lock().unwrap() = Some(render);
-        Ok(Box::new(ManualHandle { render: self.render.clone(), error: self.error.clone() }))
+        Ok(Box::new(ManualHandle {
+            render: self.render.clone(),
+            error: self.error.clone(),
+        }))
     }
 }
 
@@ -390,7 +421,11 @@ mod tests {
         fill_device(&mut data, 3, &mut scratch, &mut render);
         sizes.extend(seen.lock().unwrap().iter().copied());
         assert_eq!(sizes, vec![MAX_BLOCK_FRAMES, MAX_BLOCK_FRAMES, 100]);
-        assert_eq!((scratch.as_ptr(), scratch.len()), (ptr, len), "the scratch must not be reallocated");
+        assert_eq!(
+            (scratch.as_ptr(), scratch.len()),
+            (ptr, len),
+            "the scratch must not be reallocated"
+        );
         for (i, f) in data.chunks(3).enumerate() {
             assert_eq!(f, [(i + 1) as f32, -((i + 1) as f32), 0.0]);
         }
@@ -440,7 +475,11 @@ mod tests {
         let got = frames.load(Ordering::SeqCst) as f64;
         assert!((got - 2205.0).abs() <= 2205.0 * 0.3, "got {got} frames");
         std::thread::sleep(Duration::from_millis(50));
-        assert_eq!(frames.load(Ordering::SeqCst) as f64, got, "render called after drop");
+        assert_eq!(
+            frames.load(Ordering::SeqCst) as f64,
+            got,
+            "render called after drop"
+        );
     }
 
     #[test]
@@ -470,7 +509,10 @@ mod tests {
         assert_eq!(&w[36..40], b"data");
         let data_len = u32::from_le_bytes(w[40..44].try_into().unwrap()) as usize;
         assert_eq!(data_len, w.len() - 44);
-        assert_eq!(u32::from_le_bytes(w[4..8].try_into().unwrap()) as usize, w.len() - 8);
+        assert_eq!(
+            u32::from_le_bytes(w[4..8].try_into().unwrap()) as usize,
+            w.len() - 8
+        );
         assert!(data_len >= 80 * 4 * 2, "at least one block was captured");
         for pair in w[44..].chunks(8) {
             assert_eq!(f32::from_le_bytes(pair[0..4].try_into().unwrap()), 0.25);
@@ -481,7 +523,11 @@ mod tests {
 
     #[test]
     fn backend_kind_cases() {
-        let abs = if cfg!(windows) { "C:\\x\\a.wav" } else { "/tmp/a.wav" };
+        let abs = if cfg!(windows) {
+            "C:\\x\\a.wav"
+        } else {
+            "/tmp/a.wav"
+        };
         let cap = format!("capture:{abs}");
         // Without e2e-hooks: always the real device, whatever the env says.
         assert_eq!(backend_kind(false, None), BackendKind::Cpal);
@@ -493,8 +539,14 @@ mod tests {
         assert_eq!(backend_kind(true, Some("cpal")), BackendKind::Null);
         assert_eq!(backend_kind(true, Some("capture")), BackendKind::Null);
         assert_eq!(backend_kind(true, Some("capture:")), BackendKind::Null);
-        assert_eq!(backend_kind(true, Some("capture:rel/a.wav")), BackendKind::Null);
-        assert_eq!(backend_kind(true, Some(&cap)), BackendKind::Capture(PathBuf::from(abs)));
+        assert_eq!(
+            backend_kind(true, Some("capture:rel/a.wav")),
+            BackendKind::Null
+        );
+        assert_eq!(
+            backend_kind(true, Some(&cap)),
+            BackendKind::Capture(PathBuf::from(abs))
+        );
     }
 
     #[test]

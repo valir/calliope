@@ -7,26 +7,32 @@
 //! `#[path]`; imports run against the REAL `calliope-stems` binary with the stub separator
 //! (`sparse` / `silent` modes) or a scripted loopback server whose stem bodies are FLAC files
 //! built here with `flacenc`. Loopback only, no audio device (ManualBackend), no real model.
-#![allow(dead_code, unused_imports, unused_variables, clippy::type_complexity, clippy::all)]
+#![allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    clippy::type_complexity,
+    clippy::all
+)]
 
-use calliope_gui::fsutil;
-use calliope_gui::track_meta;
-use calliope_gui::repository;
-use calliope_gui::settings;
-use calliope_gui::picker;
-#[allow(dead_code)]
-use calliope_gui::local_source;
-use calliope_gui::import_tmp;
-use calliope_gui::media;
-use calliope_gui::download;
-use calliope_gui::tools;
-use calliope_gui::import_job;
-use calliope_gui::transport;
-use calliope_gui::mixer;
-use calliope_gui::stem_audio;
 use calliope_gui::audio_out;
 use calliope_gui::backing_render;
+use calliope_gui::download;
 use calliope_gui::editor;
+use calliope_gui::fsutil;
+use calliope_gui::import_job;
+use calliope_gui::import_tmp;
+#[allow(dead_code)]
+use calliope_gui::local_source;
+use calliope_gui::media;
+use calliope_gui::mixer;
+use calliope_gui::picker;
+use calliope_gui::repository;
+use calliope_gui::settings;
+use calliope_gui::stem_audio;
+use calliope_gui::tools;
+use calliope_gui::track_meta;
+use calliope_gui::transport;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -57,12 +63,22 @@ fn fixture(name: &str) -> PathBuf {
     project().join("tests/fixtures/import").join(name)
 }
 fn tool(name: &str) -> PathBuf {
-    tools::find_in_path(name, &std::env::var_os("PATH").unwrap_or_default()).unwrap_or_else(|| panic!("{name} is needed"))
+    tools::find_in_path(name, &std::env::var_os("PATH").unwrap_or_default())
+        .unwrap_or_else(|| panic!("{name} is needed"))
 }
 fn stems_binary() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
-    let bin = exe.parent().unwrap().parent().unwrap().join("calliope-stems");
-    assert!(bin.is_file(), "{} is missing: cargo build -p calliope-stems", bin.display());
+    let bin = exe
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("calliope-stems");
+    assert!(
+        bin.is_file(),
+        "{} is missing: cargo build -p calliope-stems",
+        bin.display()
+    );
     bin
 }
 
@@ -87,7 +103,11 @@ fn fingerprint(dir: &Path) -> BTreeMap<String, String> {
             let p = e.path();
             let rel = p.strip_prefix(base).unwrap().to_string_lossy().to_string();
             let md = fs::symlink_metadata(&p).unwrap();
-            let mt = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+            let mt = md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
             if md.file_type().is_symlink() {
                 out.insert(rel, format!("link -> {:?}", fs::read_link(&p).unwrap()));
             } else if md.is_dir() {
@@ -99,7 +119,14 @@ fn fingerprint(dir: &Path) -> BTreeMap<String, String> {
                 for b in &bytes {
                     h = (h ^ *b as u64).wrapping_mul(0x100000001b3);
                 }
-                out.insert(rel, format!("file {} {mt} {h:x} mode={:o}", bytes.len(), md.permissions().mode()));
+                out.insert(
+                    rel,
+                    format!(
+                        "file {} {mt} {h:x} mode={:o}",
+                        bytes.len(),
+                        md.permissions().mode()
+                    ),
+                );
             }
         }
     }
@@ -113,7 +140,9 @@ fn procs_mentioning(needle: &str) -> Vec<(u32, String)> {
     let me = std::process::id();
     let mut v = Vec::new();
     for e in fs::read_dir("/proc").unwrap().flatten() {
-        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
+            continue;
+        };
         if pid == me {
             continue;
         }
@@ -153,11 +182,16 @@ fn until(what: &str, secs: u64, mut f: impl FnMut() -> bool) {
 }
 
 fn names_in(dir: &Path) -> Vec<String> {
-    let mut v: Vec<String> = fs::read_dir(dir).map(|r| r.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+    let mut v: Vec<String> = fs::read_dir(dir)
+        .map(|r| {
+            r.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
     v.sort();
     v
 }
-
 
 // ------------------------------------------------------------------ servers
 
@@ -197,7 +231,10 @@ impl RealServer {
         let mut line = String::new();
         let addr: SocketAddr = loop {
             line.clear();
-            assert!(lines.read_line(&mut line).unwrap() > 0, "server exited before listening");
+            assert!(
+                lines.read_line(&mut line).unwrap() > 0,
+                "server exited before listening"
+            );
             if let Some(rest) = line.split("listening addr=").nth(1) {
                 break rest.split_whitespace().next().unwrap().parse().unwrap();
             }
@@ -212,13 +249,24 @@ impl RealServer {
                 s.clear();
             }
         });
-        RealServer { child, url: format!("http://{addr}"), work, log, _outer: outer }
+        RealServer {
+            child,
+            url: format!("http://{addr}"),
+            work,
+            log,
+            _outer: outer,
+        }
     }
     fn saw(&self, needle: &str) -> bool {
         self.log.lock().unwrap().iter().any(|l| l.contains(needle))
     }
     fn count(&self, needle: &str) -> usize {
-        self.log.lock().unwrap().iter().filter(|l| l.contains(needle)).count()
+        self.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.contains(needle))
+            .count()
     }
     fn job_dirs(&self) -> Vec<String> {
         names_in(&self.work.join("jobs"))
@@ -248,8 +296,14 @@ impl AiConfig {
     fn good() -> AiConfig {
         AiConfig {
             job_id: "0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b".into(),
-            stems: ["vocals", "drums", "bass", "guitar", "piano", "other"].iter().map(|s| s.to_string()).collect(),
-            body: Arc::new(|n| fs::read(fixture(&format!("stems/{n}.flac"))).unwrap_or_else(|_| b"fLaC-generic-body".to_vec())),
+            stems: ["vocals", "drums", "bass", "guitar", "piano", "other"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            body: Arc::new(|n| {
+                fs::read(fixture(&format!("stems/{n}.flac")))
+                    .unwrap_or_else(|_| b"fLaC-generic-body".to_vec())
+            }),
             slow_stem_ms: 0,
             max_upload: 300 << 20,
             final_state: "done",
@@ -283,7 +337,21 @@ impl FakeAi {
     }
     /// names of the stems fetched, in request order
     fn fetched(&self) -> Vec<String> {
-        self.hits.lock().unwrap().iter().filter(|l| l.starts_with("GET") && l.contains("/stems/")).map(|l| l.split("/stems/").nth(1).unwrap().split(' ').next().unwrap().to_string()).collect()
+        self.hits
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.starts_with("GET") && l.contains("/stems/"))
+            .map(|l| {
+                l.split("/stems/")
+                    .nth(1)
+                    .unwrap()
+                    .split(' ')
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect()
     }
 }
 
@@ -316,17 +384,27 @@ fn fake_ai(cfg: AiConfig) -> FakeAi {
                 hits.lock().unwrap().push(line.clone());
                 let clen: usize = text
                     .lines()
-                    .find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0)))
+                    .find_map(|l| {
+                        l.to_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|v| v.trim().parse().unwrap_or(0))
+                    })
                     .unwrap_or(0);
                 let send = |s: &mut TcpStream, status: &str, ctype: &str, body: &[u8]| {
                     let h = format!("HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
                     let _ = s.write_all(h.as_bytes());
                     let _ = s.write_all(body);
                 };
-                let json = |s: &mut TcpStream, status: &str, v: serde_json::Value| send(s, status, "application/json", v.to_string().as_bytes());
+                let json = |s: &mut TcpStream, status: &str, v: serde_json::Value| {
+                    send(s, status, "application/json", v.to_string().as_bytes())
+                };
                 if line.starts_with("GET /v1/health") {
-                    json(&mut s, "200 OK", serde_json::json!({"service":"calliope-stems","api":1,"version":"x","models":["htdemucs_6s"],
-                        "default_model":"htdemucs_6s","busy":false,"max_duration_s":900,"max_upload_bytes":cfg.max_upload}));
+                    json(
+                        &mut s,
+                        "200 OK",
+                        serde_json::json!({"service":"calliope-stems","api":1,"version":"x","models":["htdemucs_6s"],
+                        "default_model":"htdemucs_6s","busy":false,"max_duration_s":900,"max_upload_bytes":cfg.max_upload}),
+                    );
                 } else if line.starts_with("POST /v1/jobs") {
                     let mut left = clen;
                     let mut buf = vec![0u8; 65536];
@@ -336,11 +414,19 @@ fn fake_ai(cfg: AiConfig) -> FakeAi {
                             Ok(n) => left -= n,
                         }
                     }
-                    json(&mut s, "202 Accepted", serde_json::json!({"job": cfg.job_id, "state": "queued"}));
+                    json(
+                        &mut s,
+                        "202 Accepted",
+                        serde_json::json!({"job": cfg.job_id, "state": "queued"}),
+                    );
                 } else if line.starts_with("DELETE") {
                     let _ = s.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
                 } else if line.contains("/stems/") {
-                    let name = line.split("/stems/").nth(1).and_then(|r| r.split(' ').next()).unwrap_or("");
+                    let name = line
+                        .split("/stems/")
+                        .nth(1)
+                        .and_then(|r| r.split(' ').next())
+                        .unwrap_or("");
                     let body = (cfg.body)(name);
                     let h = format!("HTTP/1.1 200 OK\r\nContent-Type: audio/flac\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
                     let _ = s.write_all(h.as_bytes());
@@ -403,7 +489,15 @@ impl Rig {
             Repository::new(&root).ensure_layout().unwrap();
         }
         fs::write(outside.join("precious.txt"), "do not touch").unwrap();
-        for f in ["tagged.mp3", "tagged.ogg", "with-audio.mp4", "no-audio.mp4", "long.flac", "untagged.flac", "not-audio.mp3"] {
+        for f in [
+            "tagged.mp3",
+            "tagged.ogg",
+            "with-audio.mp4",
+            "no-audio.mp4",
+            "long.flac",
+            "untagged.flac",
+            "not-audio.mp3",
+        ] {
             fs::copy(fixture(f), sources.join(f)).unwrap();
         }
         // wrapper so that each rig has its own fake-yt-dlp log
@@ -411,11 +505,19 @@ impl Rig {
         let wrapper = dir.path().join("yt-dlp");
         fs::write(
             &wrapper,
-            format!("#!/bin/sh\nexport FAKE_YTDLP_LOG='{}'\nexec python3 '{}' \"$@\"\n", ytlog.display(), project().join("tests/support/bin/yt-dlp").display()),
+            format!(
+                "#!/bin/sh\nexport FAKE_YTDLP_LOG='{}'\nexec python3 '{}' \"$@\"\n",
+                ytlog.display(),
+                project().join("tests/support/bin/yt-dlp").display()
+            ),
         )
         .unwrap();
         fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
-        let tools = Tools { yt_dlp: Some(wrapper), ffmpeg: Some(tool("ffmpeg")), ffprobe: Some(tool("ffprobe")) };
+        let tools = Tools {
+            yt_dlp: Some(wrapper),
+            ffmpeg: Some(tool("ffmpeg")),
+            ffprobe: Some(tool("ffprobe")),
+        };
         let repo_lock = Arc::new(Mutex::new(()));
         let lock: Arc<dyn RepoLock> = Arc::new(move |f: &mut dyn FnMut()| {
             let _g = repo_lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -425,7 +527,17 @@ impl Rig {
         let e2 = events.clone();
         let sink: Sink = Arc::new(move |ev| e2.lock().unwrap().push(ev));
         let state = ImportState::new(tools.clone(), lock, Duration::from_millis(40));
-        Rig { dir, root, outside, sources, state, tools, events, sink, ytlog }
+        Rig {
+            dir,
+            root,
+            outside,
+            sources,
+            state,
+            tools,
+            events,
+            sink,
+            ytlog,
+        }
     }
 
     fn needle(&self) -> String {
@@ -433,11 +545,17 @@ impl Rig {
     }
 
     fn url(&self, url: &str, resume: bool) -> Result<JobSnapshot, String> {
-        self.state.start_url(&self.root, url, resume, self.sink.clone())
+        self.state
+            .start_url(&self.root, url, resume, self.sink.clone())
     }
     fn file_at(&self, path: &Path) -> Result<JobSnapshot, String> {
-        let kind = if path.extension().is_some_and(|e| e == "mp4") { FileKind::Video } else { FileKind::Audio };
-        self.state.start_file(&self.root, kind, path, self.sink.clone())
+        let kind = if path.extension().is_some_and(|e| e == "mp4") {
+            FileKind::Video
+        } else {
+            FileKind::Audio
+        };
+        self.state
+            .start_file(&self.root, kind, path, self.sink.clone())
     }
     fn file(&self, name: &str) -> Result<JobSnapshot, String> {
         self.file_at(&self.sources.join(name))
@@ -451,7 +569,11 @@ impl Rig {
                     return s;
                 }
             }
-            assert!(Instant::now() < end, "timed out waiting for {what}; at {:?}", self.state.snapshot().map(|s| (s.phase, s.error)));
+            assert!(
+                Instant::now() < end,
+                "timed out waiting for {what}; at {:?}",
+                self.state.snapshot().map(|s| (s.phase, s.error))
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
     }
@@ -474,14 +596,23 @@ impl Rig {
         assert_eq!(s.phase, Phase::Ready, "{:?}", s.error);
         s
     }
-    fn extract(&self, s: &JobSnapshot, server_url: &str, keep: bool) -> Result<JobSnapshot, String> {
-        self.state.start_extraction(&s.job, s.metadata.clone().unwrap(), Some(server_url), keep)
+    fn extract(
+        &self,
+        s: &JobSnapshot,
+        server_url: &str,
+        keep: bool,
+    ) -> Result<JobSnapshot, String> {
+        self.state
+            .start_extraction(&s.job, s.metadata.clone().unwrap(), Some(server_url), keep)
     }
     fn tracks(&self) -> Vec<String> {
         names_in(&self.root.join("tracks"))
     }
     fn staging(&self) -> Vec<String> {
-        self.tracks().into_iter().filter(|n| n.starts_with(".staging")).collect()
+        self.tracks()
+            .into_iter()
+            .filter(|n| n.starts_with(".staging"))
+            .collect()
     }
     fn import_tmp(&self) -> Vec<String> {
         names_in(&self.root.join("import-tmp"))
@@ -494,16 +625,20 @@ impl Rig {
             .collect()
     }
     fn outside_ok(&self) {
-        assert_eq!(fs::read_to_string(self.outside.join("precious.txt")).unwrap(), "do not touch");
+        assert_eq!(
+            fs::read_to_string(self.outside.join("precious.txt")).unwrap(),
+            "do not touch"
+        );
         assert_eq!(names_in(&self.outside), ["precious.txt"]);
     }
     fn no_stray_processes(&self) {
         until("no process mentioning the rig remains", 10, || {
-            procs_mentioning(&self.needle()).iter().all(|(_, c)| c.contains("calliope-stems") && false)
+            procs_mentioning(&self.needle())
+                .iter()
+                .all(|(_, c)| c.contains("calliope-stems") && false)
         });
     }
 }
-
 
 // ====================================================================== FLAC builders
 
@@ -545,7 +680,10 @@ fn start_custom(separator: &Path, extra: &[&str]) -> RealServer {
     let mut line = String::new();
     let addr: SocketAddr = loop {
         line.clear();
-        assert!(lines.read_line(&mut line).unwrap() > 0, "server exited before listening");
+        assert!(
+            lines.read_line(&mut line).unwrap() > 0,
+            "server exited before listening"
+        );
         if let Some(rest) = line.split("listening addr=").nth(1) {
             break rest.split_whitespace().next().unwrap().parse().unwrap();
         }
@@ -559,7 +697,13 @@ fn start_custom(separator: &Path, extra: &[&str]) -> RealServer {
             s.clear();
         }
     });
-    RealServer { child, url: format!("http://{addr}"), work, log, _outer: outer }
+    RealServer {
+        child,
+        url: format!("http://{addr}"),
+        work,
+        log,
+        _outer: outer,
+    }
 }
 
 fn start_real(mode: &str, extra: &[&str]) -> RealServer {
@@ -575,8 +719,18 @@ impl RealServer {
             .lock()
             .unwrap()
             .iter()
-            .filter(|l| l.contains("method=GET") && l.contains("/stems/") && l.contains("status=200"))
-            .map(|l| l.split("/stems/").nth(1).unwrap().split_whitespace().next().unwrap().to_string())
+            .filter(|l| {
+                l.contains("method=GET") && l.contains("/stems/") && l.contains("status=200")
+            })
+            .map(|l| {
+                l.split("/stems/")
+                    .nth(1)
+                    .unwrap()
+                    .split_whitespace()
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
             .collect()
     }
 }
@@ -593,7 +747,10 @@ fn rep(ms: u64) -> Option<Report> {
 fn scripted(items: Vec<(&str, Vec<u8>, Option<Report>)>, report: bool) -> FakeAi {
     let mut cfg = AiConfig::good();
     cfg.stems = items.iter().map(|i| i.0.to_string()).collect();
-    let bodies: BTreeMap<String, Vec<u8>> = items.iter().map(|i| (i.0.to_string(), i.1.clone())).collect();
+    let bodies: BTreeMap<String, Vec<u8>> = items
+        .iter()
+        .map(|i| (i.0.to_string(), i.1.clone()))
+        .collect();
     cfg.body = Arc::new(move |n| bodies.get(n).cloned().unwrap_or_default());
     if report {
         let list: Vec<serde_json::Value> = items
@@ -610,7 +767,10 @@ fn scripted(items: Vec<(&str, Vec<u8>, Option<Report>)>, report: bool) -> FakeAi
 fn outcome(done: &JobSnapshot) -> (Vec<String>, Vec<(String, u64)>) {
     (
         done.track.as_ref().map(kept_names).unwrap_or_default(),
-        done.dropped.iter().map(|d| (d.name.clone(), d.audible_ms)).collect(),
+        done.dropped
+            .iter()
+            .map(|d| (d.name.clone(), d.audible_ms))
+            .collect(),
     )
 }
 fn kept_names(t: &repository::TrackRecord) -> Vec<String> {
@@ -620,7 +780,9 @@ fn import_with(rig: &Rig, url: &str) -> JobSnapshot {
     rig.file("untagged.flac").unwrap();
     let ready = rig.ready();
     rig.extract(&ready, url, false).unwrap();
-    rig.wait("saved or failed", |s| matches!(s.phase, Phase::Saved | Phase::Failed) && !rig.state.is_running())
+    rig.wait("saved or failed", |s| {
+        matches!(s.phase, Phase::Saved | Phase::Failed) && !rig.state.is_running()
+    })
 }
 fn assert_nothing_left(rig: &Rig) {
     assert!(rig.staging().is_empty(), "{:?}", rig.staging());
@@ -642,8 +804,16 @@ fn activity(name: &str) -> Vec<u8> {
 #[test]
 fn decision_is_identical_for_server_and_local_at_the_boundary() {
     // (fixture, audible ms, empty?)
-    for (file, ms, empty) in [("audible-14900ms.flac", 14_900u64, true), ("audible-15000ms.flac", 15_000, false)] {
-        let items = || vec![("vocals", real_vocals(), rep(16_000)), ("drums", activity(file), rep(ms))];
+    for (file, ms, empty) in [
+        ("audible-14900ms.flac", 14_900u64, true),
+        ("audible-15000ms.flac", 15_000, false),
+    ] {
+        let items = || {
+            vec![
+                ("vocals", real_vocals(), rep(16_000)),
+                ("drums", activity(file), rep(ms)),
+            ]
+        };
         let with = scripted(items(), true);
         let without = scripted(items(), false);
         let (rig_a, rig_b) = (Rig::new(false), Rig::new(false));
@@ -653,9 +823,21 @@ fn decision_is_identical_for_server_and_local_at_the_boundary() {
         assert_eq!(b.phase, Phase::Saved, "{file}: {:?}", b.error);
         assert_eq!(outcome(&a), outcome(&b), "server vs local differ at {file}");
         assert_eq!(a.dropped.is_empty(), !empty, "{file}");
-        assert_eq!(without.fetched(), ["vocals", "drums"], "old server: everything fetched");
-        let want: Vec<&str> = if empty { vec!["vocals"] } else { vec!["vocals", "drums"] };
-        assert_eq!(with.fetched(), want, "{file}: empty stems must not be fetched");
+        assert_eq!(
+            without.fetched(),
+            ["vocals", "drums"],
+            "old server: everything fetched"
+        );
+        let want: Vec<&str> = if empty {
+            vec!["vocals"]
+        } else {
+            vec!["vocals", "drums"]
+        };
+        assert_eq!(
+            with.fetched(),
+            want,
+            "{file}: empty stems must not be fetched"
+        );
         assert!(rig_a.staging().is_empty() && rig_b.staging().is_empty());
         if empty {
             assert_eq!(outcome(&a).0, ["vocals"]);
@@ -676,7 +858,14 @@ fn short_loud_bursts_are_dropped_and_a_part_in_pieces_is_kept() {
         let rig = Rig::new(false);
         let done = import_with(&rig, &ai.url());
         assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
-        assert_eq!(outcome(&done), (vec!["vocals".into(), "bass".into()], vec![("drums".into(), 9_500)]), "report={report}");
+        assert_eq!(
+            outcome(&done),
+            (
+                vec!["vocals".into(), "bass".into()],
+                vec![("drums".into(), 9_500)]
+            ),
+            "report={report}"
+        );
         assert_eq!(ai.fetched().len(), if report { 2 } else { 3 });
     }
 }
@@ -698,7 +887,11 @@ fn stem_order_and_dropped_order_follow_the_server_list() {
     assert_eq!(outcome(&done).0, ["vocals", "bass", "piano"]);
     assert_eq!(
         outcome(&done).1,
-        [("drums".to_string(), 5_000), ("guitar".to_string(), 0), ("other".to_string(), 14_900)]
+        [
+            ("drums".to_string(), 5_000),
+            ("guitar".to_string(), 0),
+            ("other".to_string(), 14_900)
+        ]
     );
     assert_eq!(ai.fetched(), ["vocals", "bass", "piano"]);
     assert_eq!(done.stems_done, 6, "progress counts skipped stems");
@@ -707,16 +900,22 @@ fn stem_order_and_dropped_order_follow_the_server_list() {
 #[test]
 fn partial_report_fetches_the_unreported_stems_and_checks_them_locally() {
     let items = vec![
-        ("vocals", real_vocals(), None),                 // not reported, audible: kept
-        ("drums", zeros(), None),                        // not reported, empty: fetched then dropped locally
-        ("bass", zeros(), rep(0)),                       // reported empty: not fetched
+        ("vocals", real_vocals(), None), // not reported, audible: kept
+        ("drums", zeros(), None),        // not reported, empty: fetched then dropped locally
+        ("bass", zeros(), rep(0)),       // reported empty: not fetched
     ];
     let ai = scripted(items, true);
     let rig = Rig::new(false);
     let done = import_with(&rig, &ai.url());
     assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
     assert_eq!(outcome(&done).0, ["vocals"]);
-    assert_eq!(done.dropped.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["drums", "bass"]);
+    assert_eq!(
+        done.dropped
+            .iter()
+            .map(|d| d.name.as_str())
+            .collect::<Vec<_>>(),
+        ["drums", "bass"]
+    );
     assert_eq!(ai.fetched(), ["vocals", "drums"]);
 }
 
@@ -732,9 +931,18 @@ fn a_report_at_another_level_or_window_is_not_used() {
         let ai = scripted(items, true);
         let rig = Rig::new(false);
         let done = import_with(&rig, &ai.url());
-        assert_eq!(done.phase, Phase::Saved, "{level}/{window}: {:?}", done.error);
+        assert_eq!(
+            done.phase,
+            Phase::Saved,
+            "{level}/{window}: {:?}",
+            done.error
+        );
         assert_eq!(ai.fetched(), ["vocals", "drums"], "{level}/{window}");
-        assert_eq!(outcome(&done), (vec!["vocals".into()], vec![("drums".into(), 0)]), "{level}/{window}");
+        assert_eq!(
+            outcome(&done),
+            (vec!["vocals".into()], vec![("drums".into(), 0)]),
+            "{level}/{window}"
+        );
     }
 }
 
@@ -753,8 +961,16 @@ fn old_server_without_the_key_downloads_and_checks_everything() {
     assert_eq!(outcome(&a).0, ["vocals", "drums", "bass", "guitar"]);
     let mut got = old.stem_gets();
     got.sort();
-    assert_eq!(got, ["bass", "drums", "guitar", "other", "piano", "vocals"], "old server: all 6 downloaded");
-    assert_eq!(new.stem_gets(), ["vocals", "drums", "bass", "guitar"], "new server: piano/other never downloaded");
+    assert_eq!(
+        got,
+        ["bass", "drums", "guitar", "other", "piano", "vocals"],
+        "old server: all 6 downloaded"
+    );
+    assert_eq!(
+        new.stem_gets(),
+        ["vocals", "drums", "bass", "guitar"],
+        "new server: piano/other never downloaded"
+    );
     assert!(!new.stem_gets().iter().any(|n| n == "piano" || n == "other"));
 }
 
@@ -774,7 +990,10 @@ fn a_server_peaks_era_server_is_treated_as_an_old_server() {
     let done = import_with(&rig, &ai.url());
     assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
     assert_eq!(ai.fetched(), ["vocals", "drums"]);
-    assert_eq!(outcome(&done), (vec!["vocals".into()], vec![("drums".into(), 0)]));
+    assert_eq!(
+        outcome(&done),
+        (vec!["vocals".into()], vec![("drums".into(), 0)])
+    );
 }
 
 #[test]
@@ -849,14 +1068,20 @@ fn a_server_that_calls_an_empty_stem_audible_is_overruled_by_the_local_check() {
 
 #[test]
 fn everything_reported_empty_fails_with_zero_downloads_and_no_residue() {
-    let items: Vec<_> = ["vocals", "drums", "bass", "guitar", "piano", "other"].iter().map(|n| (*n, real_vocals(), rep(0))).collect();
+    let items: Vec<_> = ["vocals", "drums", "bass", "guitar", "piano", "other"]
+        .iter()
+        .map(|n| (*n, real_vocals(), rep(0)))
+        .collect();
     let ai = scripted(items, true);
     let rig = Rig::new(false);
     let done = import_with(&rig, &ai.url());
     assert_eq!(done.phase, Phase::Failed);
     let e = done.error.unwrap();
     assert_eq!(e.stage, Stage::Server);
-    assert_eq!(e.message, "Every stem is empty (less than 15 s above -40 dBFS), so no track was saved");
+    assert_eq!(
+        e.message,
+        "Every stem is empty (less than 15 s above -40 dBFS), so no track was saved"
+    );
     assert!(ai.fetched().is_empty(), "{:?}", ai.fetched());
     assert_nothing_left(&rig);
     assert!(ai.saw("DELETE"), "server job still deleted");
@@ -864,7 +1089,10 @@ fn everything_reported_empty_fails_with_zero_downloads_and_no_residue() {
 
 #[test]
 fn malformed_level_lists_are_rejected_before_any_download() {
-    let e = |name: &str, ms: serde_json::Value, level: serde_json::Value, window: serde_json::Value| {
+    let e = |name: &str,
+             ms: serde_json::Value,
+             level: serde_json::Value,
+             window: serde_json::Value| {
         serde_json::json!({"name": name, "audible_ms": ms, "level_dbfs": level, "window_ms": window})
     };
     macro_rules! j {
@@ -875,23 +1103,50 @@ fn malformed_level_lists_are_rejected_before_any_download() {
     let good = |name: &str| e(name, j!(0), j!(-40), j!(100));
     let bad: Vec<(&str, serde_json::Value)> = vec![
         ("unknown name", j!([good("kazoo")])),
-        ("duplicate", j!([good("vocals"), e("vocals", j!(100), j!(-40), j!(100))])),
+        (
+            "duplicate",
+            j!([good("vocals"), e("vocals", j!(100), j!(-40), j!(100))]),
+        ),
         ("window 0", j!([e("vocals", j!(0), j!(-40), j!(0))])),
         ("window 1001", j!([e("vocals", j!(0), j!(-40), j!(1001))])),
         ("level 1", j!([e("vocals", j!(0), j!(1), j!(100))])),
         ("level -151", j!([e("vocals", j!(0), j!(-151), j!(100))])),
-        ("not a multiple of the window", j!([e("vocals", j!(150), j!(-40), j!(100))])),
-        ("more than a day", j!([e("vocals", j!(86_400_100u64), j!(-40), j!(100))])),
-        ("negative audible_ms", j!([e("vocals", j!(-100), j!(-40), j!(100))])),
-        ("string audible_ms", j!([e("vocals", j!("0"), j!(-40), j!(100))])),
-        ("float audible_ms", j!([e("vocals", j!(0.5), j!(-40), j!(100))])),
-        ("huge audible_ms", j!([e("vocals", j!(18446744073709551615u64), j!(-40), j!(100))])),
+        (
+            "not a multiple of the window",
+            j!([e("vocals", j!(150), j!(-40), j!(100))]),
+        ),
+        (
+            "more than a day",
+            j!([e("vocals", j!(86_400_100u64), j!(-40), j!(100))]),
+        ),
+        (
+            "negative audible_ms",
+            j!([e("vocals", j!(-100), j!(-40), j!(100))]),
+        ),
+        (
+            "string audible_ms",
+            j!([e("vocals", j!("0"), j!(-40), j!(100))]),
+        ),
+        (
+            "float audible_ms",
+            j!([e("vocals", j!(0.5), j!(-40), j!(100))]),
+        ),
+        (
+            "huge audible_ms",
+            j!([e("vocals", j!(18446744073709551615u64), j!(-40), j!(100))]),
+        ),
         ("float level", j!([e("vocals", j!(0), j!(-40.5), j!(100))])),
-        ("missing window_ms", j!([{"name":"vocals","audible_ms":0,"level_dbfs":-40}])),
+        (
+            "missing window_ms",
+            j!([{"name":"vocals","audible_ms":0,"level_dbfs":-40}]),
+        ),
         ("object instead of list", j!({"vocals":0})),
         ("string name list", j!(["vocals"])),
         ("path-like name", j!([good("../x")])),
-        ("too many", serde_json::Value::Array((0..50).map(|_| good("vocals")).collect())),
+        (
+            "too many",
+            serde_json::Value::Array((0..50).map(|_| good("vocals")).collect()),
+        ),
     ];
     for (what, levels) in bad {
         let mut cfg = AiConfig::good();
@@ -901,9 +1156,20 @@ fn malformed_level_lists_are_rejected_before_any_download() {
         let ai = fake_ai(cfg);
         let rig = Rig::new(false);
         let done = import_with(&rig, &ai.url());
-        assert_eq!(done.phase, Phase::Failed, "{what}: a malformed list must not be trusted");
-        eprintln!("QA: malformed '{what}' -> {:?}", done.error.as_ref().map(|e| (&e.stage, &e.message)));
-        assert!(ai.fetched().is_empty(), "{what}: downloads happened {:?}", ai.fetched());
+        assert_eq!(
+            done.phase,
+            Phase::Failed,
+            "{what}: a malformed list must not be trusted"
+        );
+        eprintln!(
+            "QA: malformed '{what}' -> {:?}",
+            done.error.as_ref().map(|e| (&e.stage, &e.message))
+        );
+        assert!(
+            ai.fetched().is_empty(),
+            "{what}: downloads happened {:?}",
+            ai.fetched()
+        );
         assert_nothing_left(&rig);
     }
 }
@@ -913,12 +1179,17 @@ fn bad_level_list_on_a_failed_status_does_not_hide_the_jobs_own_error() {
     let mut cfg = AiConfig::good();
     cfg.final_state = "failed";
     cfg.error = Some("separator exploded".into());
-    cfg.levels = Some(serde_json::json!([{"name":"x","audible_ms":1,"level_dbfs":-40,"window_ms":0}]));
+    cfg.levels =
+        Some(serde_json::json!([{"name":"x","audible_ms":1,"level_dbfs":-40,"window_ms":0}]));
     let ai = fake_ai(cfg);
     let rig = Rig::new(false);
     let done = import_with(&rig, &ai.url());
     assert_eq!(done.phase, Phase::Failed);
-    let m = done.error.as_ref().map(|e| e.message.clone()).unwrap_or_default();
+    let m = done
+        .error
+        .as_ref()
+        .map(|e| e.message.clone())
+        .unwrap_or_default();
     assert!(m.contains("separator exploded"), "{m}");
     assert_nothing_left(&rig);
 }
@@ -928,7 +1199,8 @@ fn reported_level_for_a_stem_missing_from_the_list_is_rejected_even_when_empty()
     let mut cfg = AiConfig::good();
     cfg.stems = vec!["vocals".into(), "drums".into()];
     cfg.body = Arc::new(|_| real_vocals());
-    cfg.levels = Some(serde_json::json!([{"name":"piano","audible_ms":0,"level_dbfs":-40,"window_ms":100}]));
+    cfg.levels =
+        Some(serde_json::json!([{"name":"piano","audible_ms":0,"level_dbfs":-40,"window_ms":100}]));
     let ai = fake_ai(cfg);
     let rig = Rig::new(false);
     assert_eq!(import_with(&rig, &ai.url()).phase, Phase::Failed);
@@ -943,11 +1215,16 @@ fn real_server_all_silent_has_zero_stem_downloads() {
     let rig = Rig::new(true);
     let done = import_with(&rig, &server.url);
     assert_eq!(done.phase, Phase::Failed);
-    assert_eq!(done.error.unwrap().message, "Every stem is empty (less than 15 s above -40 dBFS), so no track was saved");
+    assert_eq!(
+        done.error.unwrap().message,
+        "Every stem is empty (less than 15 s above -40 dBFS), so no track was saved"
+    );
     assert!(server.stem_gets().is_empty(), "{:?}", server.stem_gets());
     let tmp = rig.import_tmp();
     assert_eq!(tmp.len(), 1, "audio.flac kept: {tmp:?}");
-    assert!(names_in(&rig.root.join("import-tmp").join(&tmp[0])).contains(&"audio.flac".to_string()));
+    assert!(
+        names_in(&rig.root.join("import-tmp").join(&tmp[0])).contains(&"audio.flac".to_string())
+    );
     assert!(rig.staging().is_empty());
     until("server job removed", 10, || server.job_dirs().is_empty());
 }
@@ -959,7 +1236,10 @@ fn real_server_sparse_never_serves_piano_or_other() {
     let done = import_with(&rig, &server.url);
     assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
     assert_eq!(server.stem_gets(), ["vocals", "drums", "bass", "guitar"]);
-    assert_eq!(outcome(&done).1, [("piano".to_string(), 0), ("other".to_string(), 9_500)]);
+    assert_eq!(
+        outcome(&done).1,
+        [("piano".to_string(), 0), ("other".to_string(), 9_500)]
+    );
     assert!(rig.staging().is_empty() && rig.import_tmp().is_empty());
 }
 
@@ -970,7 +1250,10 @@ fn real_server_boundary_drops_14_9_and_9_5_seconds_unseen_and_keeps_15_0() {
     let done = import_with(&rig, &server.url);
     assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
     assert_eq!(outcome(&done).0, ["vocals", "drums", "bass", "guitar"]);
-    assert_eq!(outcome(&done).1, [("piano".to_string(), 9_500), ("other".to_string(), 14_900)]);
+    assert_eq!(
+        outcome(&done).1,
+        [("piano".to_string(), 9_500), ("other".to_string(), 14_900)]
+    );
     assert_eq!(server.stem_gets(), ["vocals", "drums", "bass", "guitar"]);
 }
 
@@ -980,8 +1263,17 @@ fn real_server_undecodable_stem_is_kept_and_downloaded() {
     let rig = Rig::new(false);
     let done = import_with(&rig, &server.url);
     assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
-    assert_eq!(outcome(&done).0, ["vocals", "drums", "bass", "guitar", "piano"]);
-    assert_eq!(done.dropped.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["other"]);
+    assert_eq!(
+        outcome(&done).0,
+        ["vocals", "drums", "bass", "guitar", "piano"]
+    );
+    assert_eq!(
+        done.dropped
+            .iter()
+            .map(|d| d.name.as_str())
+            .collect::<Vec<_>>(),
+        ["other"]
+    );
     assert!(server.stem_gets().contains(&"piano".to_string()));
     assert!(!server.stem_gets().contains(&"other".to_string()));
 }
@@ -991,7 +1283,21 @@ fn long_separator(secs: u32) -> (PathBuf, tempfile::TempDir) {
     let d = tempfile::tempdir().unwrap();
     let stem = d.path().join("long.flac");
     let st = Command::new(tool("ffmpeg"))
-        .args(["-nostdin", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", &secs.to_string(), "-sample_fmt", "s16", "-c:a", "flac"])
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=44100:cl=stereo",
+            "-t",
+            &secs.to_string(),
+            "-sample_fmt",
+            "s16",
+            "-c:a",
+            "flac",
+        ])
         .arg(&stem)
         .status()
         .unwrap();
@@ -1015,7 +1321,9 @@ fn cancel_while_the_server_is_measuring_leaves_nothing() {
     rig.file("untagged.flac").unwrap();
     let ready = rig.ready();
     rig.extract(&ready, &server.url, true).unwrap();
-    until("server measuring", 60, || server.saw("stem=vocals audible_ms=") || !rig.state.is_running());
+    until("server measuring", 60, || {
+        server.saw("stem=vocals audible_ms=") || !rig.state.is_running()
+    });
     if server.saw("measured=6/6") {
         eprintln!("QA: measuring finished before cancel could be issued; weak run");
     }
@@ -1023,10 +1331,17 @@ fn cancel_while_the_server_is_measuring_leaves_nothing() {
     rig.state.cancel(&ready.job).unwrap();
     rig.wait("stopped", |_| !rig.state.is_running());
     assert!(t.elapsed() < Duration::from_secs(10), "{:?}", t.elapsed());
-    eprintln!("QA: app cancel during server measuring -> stopped after {:?}", t.elapsed());
+    eprintln!(
+        "QA: app cancel during server measuring -> stopped after {:?}",
+        t.elapsed()
+    );
     assert!(rig.staging().is_empty());
     assert_eq!(rig.tracks().len(), v1_ids().len());
-    assert!(server.stem_gets().is_empty(), "no stem downloaded after a cancel in measuring: {:?}", server.stem_gets());
+    assert!(
+        server.stem_gets().is_empty(),
+        "no stem downloaded after a cancel in measuring: {:?}",
+        server.stem_gets()
+    );
     until("server job removed", 15, || server.job_dirs().is_empty());
     let now = fingerprint(&rig.root);
     for (k, v) in &before {
@@ -1045,15 +1360,29 @@ fn server_killed_while_measuring_fails_the_import_cleanly() {
     rig.file("untagged.flac").unwrap();
     let ready = rig.ready();
     rig.extract(&ready, &server.url, false).unwrap();
-    until("server measuring", 60, || server.saw("stem=vocals audible_ms=") || !rig.state.is_running());
+    until("server measuring", 60, || {
+        server.saw("stem=vocals audible_ms=") || !rig.state.is_running()
+    });
     let t = Instant::now();
-    let _ = Command::new("kill").args(["-TERM", &server.child.id().to_string()]).status();
-    let s = rig.wait("failed", |s| matches!(s.phase, Phase::Saved | Phase::Failed) && !rig.state.is_running());
-    eprintln!("QA: server SIGTERM during measuring -> app {:?} after {:?}: {:?}", s.phase, t.elapsed(), s.error.as_ref().map(|e| (&e.stage, &e.message)));
+    let _ = Command::new("kill")
+        .args(["-TERM", &server.child.id().to_string()])
+        .status();
+    let s = rig.wait("failed", |s| {
+        matches!(s.phase, Phase::Saved | Phase::Failed) && !rig.state.is_running()
+    });
+    eprintln!(
+        "QA: server SIGTERM during measuring -> app {:?} after {:?}: {:?}",
+        s.phase,
+        t.elapsed(),
+        s.error.as_ref().map(|e| (&e.stage, &e.message))
+    );
     if s.phase == Phase::Failed {
         assert_nothing_left(&rig);
     }
-    assert!(s.track.is_none(), "a track must not be saved from a half-measured job");
+    assert!(
+        s.track.is_none(),
+        "a track must not be saved from a half-measured job"
+    );
 }
 
 fn v1_ids() -> Vec<String> {

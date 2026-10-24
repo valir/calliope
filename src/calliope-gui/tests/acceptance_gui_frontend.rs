@@ -12,7 +12,10 @@ fn read(p: &str) -> String {
 
 /// The repository root (workspace): `target/`, `docs/`, `specs/` and the workspace Cargo.toml.
 fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
 }
 /// Reads a file relative to the repository root (docs/, specs/).
 fn read_repo(p: &str) -> String {
@@ -35,13 +38,26 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 fn req1_typescript_svelte_vite_all_source_in_src() {
     let pkg = json("package.json");
-    let deps = |k: &str| pkg[k].as_object().unwrap().keys().cloned().collect::<Vec<_>>();
-    let all: Vec<String> = deps("dependencies").into_iter().chain(deps("devDependencies")).collect();
+    let deps = |k: &str| {
+        pkg[k]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let all: Vec<String> = deps("dependencies")
+        .into_iter()
+        .chain(deps("devDependencies"))
+        .collect();
     for d in ["svelte", "typescript", "vite", "tailwindcss", "bits-ui"] {
         assert!(all.iter().any(|x| x == d), "missing dependency {d}");
     }
     assert!(root().join("src/ui/main.ts").exists());
-    assert!(root().join("components.json").exists(), "shadcn-svelte config");
+    assert!(
+        root().join("components.json").exists(),
+        "shadcn-svelte config"
+    );
     // No frontend source outside src/ (config files at the root are not source).
     let mut files = Vec::new();
     walk(&root().join("tests"), &mut files);
@@ -50,15 +66,26 @@ fn req1_typescript_svelte_vite_all_source_in_src() {
     }
     for f in files {
         let ext = f.extension().and_then(|e| e.to_str()).unwrap_or("");
-        assert!(!["ts", "svelte", "tsx", "js"].contains(&ext), "frontend source outside src/: {}", f.display());
+        assert!(
+            !["ts", "svelte", "tsx", "js"].contains(&ext),
+            "frontend source outside src/: {}",
+            f.display()
+        );
     }
     // every svelte script block is TypeScript
     let mut all = Vec::new();
     walk(&root().join("src/ui"), &mut all);
-    for f in all.iter().filter(|f| f.extension().is_some_and(|e| e == "svelte")) {
+    for f in all
+        .iter()
+        .filter(|f| f.extension().is_some_and(|e| e == "svelte"))
+    {
         let t = fs::read_to_string(f).unwrap();
         if t.contains("<script") {
-            assert!(t.contains("lang=\"ts\""), "{} is not TypeScript", f.display());
+            assert!(
+                t.contains("lang=\"ts\""),
+                "{} is not TypeScript",
+                f.display()
+            );
         }
     }
 }
@@ -67,12 +94,19 @@ fn req1_typescript_svelte_vite_all_source_in_src() {
 fn req2_readme_documents_one_command_each_and_scripts_exist() {
     let readme = read("README.md");
     let pkg = json("package.json");
-    for (cmd, script) in [("npm run build:app", "build:app"), ("npm run app", "app"), ("npm run dev:app", "dev:app")] {
+    for (cmd, script) in [
+        ("npm run build:app", "build:app"),
+        ("npm run app", "app"),
+        ("npm run dev:app", "dev:app"),
+    ] {
         assert!(readme.contains(cmd), "README lacks `{cmd}`");
         assert!(pkg["scripts"].get(script).is_some());
     }
     assert!(readme.contains("npm ci"));
-    assert!(pkg["scripts"]["build:app"].as_str().unwrap().contains("cargo build --release"));
+    assert!(pkg["scripts"]["build:app"]
+        .as_str()
+        .unwrap()
+        .contains("cargo build --release"));
     assert!(readme.contains("target/release/calliope-gui"));
 }
 
@@ -88,17 +122,25 @@ fn req3_dark_default_light_exists_fonts_bundled() {
     let html = read("src/ui/index.html");
     assert!(html.contains("class=\"dark\""), "first paint must be dark");
     let css = read("src/ui/app.css");
-    assert!(css.contains(":root") && css.contains(".dark"), "both themes defined");
+    assert!(
+        css.contains(":root") && css.contains(".dark"),
+        "both themes defined"
+    );
     assert!(css.contains("@fontsource-variable/inter"));
     // built CSS references only local font files that exist in dist/assets
     let mut files = Vec::new();
     walk(&root().join("dist/assets"), &mut files);
-    assert!(files.iter().any(|f| f.extension().is_some_and(|e| e == "woff2")));
+    assert!(files
+        .iter()
+        .any(|f| f.extension().is_some_and(|e| e == "woff2")));
     let theme = read("src/ui/lib/theme.ts");
     assert!(theme.contains("dark"));
     // components required by the spec: buttons, inputs, dialogs, tabs
     for c in ["button", "input", "dialog", "tabs"] {
-        assert!(root().join("src/ui/lib/components/ui").join(c).is_dir(), "missing component {c}");
+        assert!(
+            root().join("src/ui/lib/components/ui").join(c).is_dir(),
+            "missing component {c}"
+        );
     }
 }
 
@@ -112,8 +154,20 @@ fn req3_no_remote_references_anywhere_in_dist() {
         }
         let t = String::from_utf8_lossy(&fs::read(&f).unwrap()).to_string();
         // Only src/href/url/import/fetch style loads matter; licence URLs in comments do not.
-        for needle in ["src=\"http", "href=\"http", "url(http", "url(\"http", "url(//", "import(\"http", "from\"http"] {
-            assert!(!t.contains(needle), "{} contains remote load `{needle}`", f.display());
+        for needle in [
+            "src=\"http",
+            "href=\"http",
+            "url(http",
+            "url(\"http",
+            "url(//",
+            "import(\"http",
+            "from\"http",
+        ] {
+            assert!(
+                !t.contains(needle),
+                "{} contains remote load `{needle}`",
+                f.display()
+            );
         }
     }
 }
@@ -130,7 +184,11 @@ fn req5_ipc_command_registered_and_typed_wrapper_exists() {
             continue;
         }
         if f.extension().is_some_and(|e| e == "ts" || e == "svelte") {
-            assert!(!fs::read_to_string(&f).unwrap().contains("@tauri-apps/api"), "{}", f.display());
+            assert!(
+                !fs::read_to_string(&f).unwrap().contains("@tauri-apps/api"),
+                "{}",
+                f.display()
+            );
         }
     }
 }
@@ -155,9 +213,14 @@ fn req5_version_flag_matches_format_the_frontend_expects() {
 #[test]
 fn req6_focus_ring_is_defined_globally() {
     let css = read("src/ui/app.css");
-    let i = css.find(":focus-visible").expect("global :focus-visible rule");
+    let i = css
+        .find(":focus-visible")
+        .expect("global :focus-visible rule");
     let rule = &css[i..css[i..].find('}').unwrap() + i];
-    assert!(rule.contains("outline") || rule.contains("ring") || rule.contains("box-shadow"), "{rule}");
+    assert!(
+        rule.contains("outline") || rule.contains("ring") || rule.contains("box-shadow"),
+        "{rule}"
+    );
     assert!(!rule.contains("outline: none") && !rule.contains("outline:none"));
 }
 
@@ -170,7 +233,10 @@ fn req7_window_min_size_and_state_plugin() {
     assert!(w["height"].as_u64().unwrap() >= w["minHeight"].as_u64().unwrap());
     assert!(read("Cargo.toml").contains("tauri-plugin-window-state"));
     assert!(read("src/gui.rs").contains("tauri_plugin_window_state"));
-    assert!(read_repo("docs/ui.md").contains("1024"), "docs/ui.md min size");
+    assert!(
+        read_repo("docs/ui.md").contains("1024"),
+        "docs/ui.md min size"
+    );
 }
 
 #[test]
@@ -193,10 +259,20 @@ fn req8_main_ts_reports_csp_violations() {
 #[test]
 fn ac10_architecture_doc_is_updated() {
     let a = read_repo("docs/architecture.md");
-    for needle in ["Svelte 5", "npm run build:app", "src/ipc.rs", "gui-shot", "`:1`", "test:gui"] {
+    for needle in [
+        "Svelte 5",
+        "npm run build:app",
+        "src/ipc.rs",
+        "gui-shot",
+        "`:1`",
+        "test:gui",
+    ] {
         assert!(a.contains(needle), "architecture.md lacks {needle}");
     }
-    assert!(a.contains("outdated"), "old 'no display server' note must be marked outdated");
+    assert!(
+        a.contains("outdated"),
+        "old 'no display server' note must be marked outdated"
+    );
     assert!(a.contains("earlier note that agents have no display server is\n  outdated"));
 }
 

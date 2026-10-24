@@ -2,15 +2,26 @@ use super::*;
 use crate::player_source::{peaks, Pcm};
 
 fn stem(channels: u32, samples: Vec<i16>) -> StemPcm {
-    StemPcm { channels, frames: samples.len() as u64 / u64::from(channels), samples }
+    StemPcm {
+        channels,
+        frames: samples.len() as u64 / u64::from(channels),
+        samples,
+    }
 }
 
 fn pcm_of(s: &StemPcm) -> Pcm {
-    Pcm { rate: 44100, channels: s.channels, frames: s.frames, samples: s.samples.clone() }
+    Pcm {
+        rate: 44100,
+        channels: s.channels,
+        frames: s.frames,
+        samples: s.samples.clone(),
+    }
 }
 
 fn wave(n: usize, ch: usize, amp: f32) -> Vec<i16> {
-    (0..n * ch).map(|i| (((i as f32) * 0.37).sin() * amp * 32767.0) as i16).collect()
+    (0..n * ch)
+        .map(|i| (((i as f32) * 0.37).sin() * amp * 32767.0) as i16)
+        .collect()
 }
 
 fn run(stems: &[StemPcm], gains: &[f32], buckets: usize) -> Vec<f32> {
@@ -22,7 +33,10 @@ fn run(stems: &[StemPcm], gains: &[f32], buckets: usize) -> Vec<f32> {
 fn one_stem_at_unity_equals_player_peaks() {
     for (n, buckets) in [(10_000, 64), (9_999, 100), (50, 64)] {
         let s = stem(2, wave(n, 2, 0.9));
-        assert_eq!(run(std::slice::from_ref(&s), &[1.0], buckets), peaks(&pcm_of(&s), buckets));
+        assert_eq!(
+            run(std::slice::from_ref(&s), &[1.0], buckets),
+            peaks(&pcm_of(&s), buckets)
+        );
     }
 }
 
@@ -49,7 +63,10 @@ fn zero_gains_give_zeros_without_iterating() {
 #[test]
 fn cancel_gives_none() {
     let s = stem(2, wave(10_000, 2, 0.5));
-    assert_eq!(mix_peaks(&[s], &[1.0], 10_000, 8, &AtomicBool::new(true)), None);
+    assert_eq!(
+        mix_peaks(&[s], &[1.0], 10_000, 8, &AtomicBool::new(true)),
+        None
+    );
 }
 
 #[test]

@@ -22,7 +22,13 @@ use std::time::{Duration, Instant};
 const LONG: Duration = Duration::from_secs(40);
 
 fn ready() -> bool {
-    have_display() && have("xdotool") && have("i3-msg") && have("ip") && have("unshare") && have("ffmpeg") && have("python3")
+    have_display()
+        && have("xdotool")
+        && have("i3-msg")
+        && have("ip")
+        && have("unshare")
+        && have("ffmpeg")
+        && have("python3")
 }
 
 fn sleep_ms(ms: u64) {
@@ -45,8 +51,14 @@ fn real_user_fingerprint() -> BTreeMap<String, (u64, u64)> {
     let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
     let mut m = BTreeMap::new();
     fn walk(p: &Path, m: &mut BTreeMap<String, (u64, u64)>) {
-        let Ok(md) = std::fs::symlink_metadata(p) else { return };
-        let mt = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as u64);
+        let Ok(md) = std::fs::symlink_metadata(p) else {
+            return;
+        };
+        let mt = md
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos() as u64);
         m.insert(p.display().to_string(), (md.len(), mt));
         if md.is_dir() {
             if let Ok(rd) = std::fs::read_dir(p) {
@@ -56,7 +68,12 @@ fn real_user_fingerprint() -> BTreeMap<String, (u64, u64)> {
             }
         }
     }
-    for d in [".config/app.calliope.gui", ".local/share/app.calliope.gui", ".local/share/calliope", ".cache/app.calliope.gui"] {
+    for d in [
+        ".config/app.calliope.gui",
+        ".local/share/app.calliope.gui",
+        ".local/share/calliope",
+        ".cache/app.calliope.gui",
+    ] {
         walk(&home.join(d), &mut m);
     }
     m
@@ -64,8 +81,16 @@ fn real_user_fingerprint() -> BTreeMap<String, (u64, u64)> {
 
 /// Starts the e2e app and a server inside `unshare -rn`. `server_cmd` is the shell command that
 /// starts the edge-AI stand-in on 127.0.0.1:8765 (stderr to `<base>/stems.log`).
-fn start_app(dirs: &Dirs, server_cmd: &str, keep_original: bool, answers: &[String]) -> (App, String) {
-    assert!(dirs.base().starts_with(repo().join("target")), "temp dir is not under target/");
+fn start_app(
+    dirs: &Dirs,
+    server_cmd: &str,
+    keep_original: bool,
+    answers: &[String],
+) -> (App, String) {
+    assert!(
+        dirs.base().starts_with(repo().join("target")),
+        "temp dir is not under target/"
+    );
     let cfg = dirs.app_config();
     std::fs::create_dir_all(&cfg).unwrap();
     let settings = serde_json::json!({
@@ -73,10 +98,23 @@ fn start_app(dirs: &Dirs, server_cmd: &str, keep_original: bool, answers: &[Stri
         "edge_ai_url": format!("http://127.0.0.1:{STEMS_PORT}"),
         "keep_original": keep_original,
     });
-    std::fs::write(cfg.join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap()).unwrap();
+    std::fs::write(
+        cfg.join("settings.json"),
+        serde_json::to_vec_pretty(&settings).unwrap(),
+    )
+    .unwrap();
     let ans = dirs.base().join("answers");
-    std::fs::write(&ans, answers.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
-    let tag = dirs.base().file_name().unwrap().to_string_lossy().to_string();
+    std::fs::write(
+        &ans,
+        answers.iter().map(|l| format!("{l}\n")).collect::<String>(),
+    )
+    .unwrap();
+    let tag = dirs
+        .base()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
     kill_tagged(&tag);
     let _ = std::fs::remove_file(dirs.base().join("stems.log"));
     let script = format!(
@@ -85,7 +123,11 @@ fn start_app(dirs: &Dirs, server_cmd: &str, keep_original: bool, answers: &[Stri
         log = sh_quote(&dirs.base().join("stems.log")),
         bin = sh_quote(Path::new(BIN)),
     );
-    let xauth = std::env::var_os("XAUTHORITY").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".Xauthority"));
+    let xauth = std::env::var_os("XAUTHORITY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".Xauthority")
+        });
     let mut cmd = Command::new("unshare");
     cmd.args(["-rn", "sh", "-c", &script])
         .env("XDG_CONFIG_HOME", dirs.base().join("config"))
@@ -94,7 +136,14 @@ fn start_app(dirs: &Dirs, server_cmd: &str, keep_original: bool, answers: &[Stri
         .env("XDG_STATE_HOME", dirs.base().join("state"))
         .env("XAUTHORITY", xauth)
         .env("HOME", dirs.base().join("home"))
-        .env("PATH", format!("{}:{}", root().join("tests/support/bin").display(), std::env::var("PATH").unwrap_or_default()))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                root().join("tests/support/bin").display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
         .env("FAKE_YTDLP_LOG", dirs.base().join("ytdlp.log"))
         .env("CALLIOPE_E2E_DIALOG_ANSWERS", &ans)
         .env("CALLIOPE_E2E_TAG", &tag);
@@ -103,7 +152,9 @@ fn start_app(dirs: &Dirs, server_cmd: &str, keep_original: bool, answers: &[Stri
     if server_cmd.contains("python3") {
         sleep_ms(1000);
     } else {
-        until(15, "the server starting", || dirs.stems_log().contains("listening"));
+        until(15, "the server starting", || {
+            dirs.stems_log().contains("listening")
+        });
     }
     sleep_ms(300);
     app.wait_line(|l| l.contains("library root="), Duration::from_secs(20));
@@ -118,7 +169,11 @@ fn start_app(dirs: &Dirs, server_cmd: &str, keep_original: bool, answers: &[Stri
 
 fn real_server(dirs: &Dirs, mode: &str) -> String {
     std::fs::create_dir_all(dirs.base().join("stems-work")).unwrap();
-    std::fs::write(dirs.base().join("stems-work/stub-mode"), format!("{mode}\n")).unwrap();
+    std::fs::write(
+        dirs.base().join("stems-work/stub-mode"),
+        format!("{mode}\n"),
+    )
+    .unwrap();
     format!(
         "{} --listen 127.0.0.1:{STEMS_PORT} --work-dir {} --separator {}",
         sh_quote(&repo().join("target/debug/calliope-stems")),
@@ -128,7 +183,10 @@ fn real_server(dirs: &Dirs, mode: &str) -> String {
 }
 
 fn hostile_server(mode: &str) -> String {
-    format!("python3 {} {STEMS_PORT} {mode}", sh_quote(&root().join("tests/support/hostile-edge-ai.py")))
+    format!(
+        "python3 {} {STEMS_PORT} {mode}",
+        sh_quote(&root().join("tests/support/hostile-edge-ai.py"))
+    )
 }
 
 struct Rig {
@@ -153,10 +211,20 @@ impl Rig {
         let repo_before = snapshot(&dirs.repo());
         let media = dirs.base().join("media");
         let media_before = snapshot(&media);
-        let answers: Vec<String> = answers.iter().map(|a| a.replace("{media}", &media.display().to_string())).collect();
+        let answers: Vec<String> = answers
+            .iter()
+            .map(|a| a.replace("{media}", &media.display().to_string()))
+            .collect();
         let cmd = server(&dirs);
         let (app, wid) = start_app(&dirs, &cmd, false, &answers);
-        Rig { dirs, app_slot: Some(app), wid, repo_before, media_before, user_before }
+        Rig {
+            dirs,
+            app_slot: Some(app),
+            wid,
+            repo_before,
+            media_before,
+            user_before,
+        }
     }
 
     fn wait_ui(&mut self, what: &str) -> String {
@@ -164,7 +232,18 @@ impl Rig {
         self.app_mut().wait_line(|l| l.contains(&full), LONG)
     }
     fn top(&self) {
-        let s = Command::new("xdotool").args(["mousemove", "--window", &self.wid, "700", "55", "click", "1"]).status().unwrap();
+        let s = Command::new("xdotool")
+            .args([
+                "mousemove",
+                "--window",
+                &self.wid,
+                "700",
+                "55",
+                "click",
+                "1",
+            ])
+            .status()
+            .unwrap();
         assert!(s.success());
         sleep_ms(150);
     }
@@ -192,7 +271,10 @@ impl Rig {
     }
     fn browse(&mut self) {
         self.key("Tab Tab Return");
-        self.app_mut().wait_line(|l| l.contains("dialog kind=import-") && l.contains("result=picked"), LONG);
+        self.app_mut().wait_line(
+            |l| l.contains("dialog kind=import-") && l.contains("result=picked"),
+            LONG,
+        );
         self.wait_ui("path-picked");
         settle();
         self.key("Return");
@@ -203,7 +285,9 @@ impl Rig {
         self.key("Return");
     }
     fn kill_app(&mut self) {
-        let _ = Command::new("kill").args(["-9", &self.app().pid().to_string()]).status();
+        let _ = Command::new("kill")
+            .args(["-9", &self.app().pid().to_string()])
+            .status();
         self.app_mut().wait_exit(Duration::from_secs(10));
     }
     /// A second run of the app on the same folders (the first one was killed).
@@ -211,7 +295,10 @@ impl Rig {
         // drop the old handle first: its Drop kills everything carrying the test's tag
         drop(self.app_slot.take());
         let media = self.dirs.base().join("media").display().to_string();
-        let answers: Vec<String> = answers.iter().map(|a| a.replace("{media}", &media)).collect();
+        let answers: Vec<String> = answers
+            .iter()
+            .map(|a| a.replace("{media}", &media))
+            .collect();
         let (app, wid) = start_app(&self.dirs, server_cmd, false, &answers);
         self.app_slot = Some(app);
         self.wid = wid;
@@ -245,10 +332,22 @@ impl Rig {
     fn assert_originals_intact(&self) {
         let now = snapshot(&self.dirs.repo());
         for (k, v) in &self.repo_before {
-            assert_eq!(now.get(k), Some(v), "existing file changed or vanished: {k}");
+            assert_eq!(
+                now.get(k),
+                Some(v),
+                "existing file changed or vanished: {k}"
+            );
         }
-        assert_eq!(snapshot(&self.dirs.base().join("media")), self.media_before, "a source file changed");
-        assert_eq!(real_user_fingerprint(), self.user_before, "the real user's folders changed");
+        assert_eq!(
+            snapshot(&self.dirs.base().join("media")),
+            self.media_before,
+            "a source file changed"
+        );
+        assert_eq!(
+            real_user_fingerprint(),
+            self.user_before,
+            "the real user's folders changed"
+        );
         assert!(self.dirs.trash().is_empty());
     }
 }
@@ -259,7 +358,11 @@ fn qa_walkthrough_with_screenshots() {
     if !ready() {
         return;
     }
-    let mut r = Rig::new("qa_walkthrough", |d| real_server(d, "slow"), &["import-audio {media}/tagged.mp3".into()]);
+    let mut r = Rig::new(
+        "qa_walkthrough",
+        |d| real_server(d, "slow"),
+        &["import-audio {media}/tagged.mp3".into()],
+    );
     // AC1: the Import tab shows a "Stem Extraction" button
     r.key("alt+2");
     r.app_mut().wait_view("import");
@@ -290,16 +393,34 @@ fn qa_walkthrough_with_screenshots() {
     r.key("Return");
     r.wait_ui("phase=downloading");
     until(20, "some bytes", || {
-        std::fs::read_dir(r.dirs.import_tmp()).into_iter().flatten().flatten().any(|d| {
-            std::fs::read_dir(d.path()).into_iter().flatten().flatten().any(|f| f.file_name().to_string_lossy().ends_with(".part") && f.metadata().map(|m| m.len() > 0).unwrap_or(false))
-        })
+        std::fs::read_dir(r.dirs.import_tmp())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|d| {
+                std::fs::read_dir(d.path())
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .any(|f| {
+                        f.file_name().to_string_lossy().ends_with(".part")
+                            && f.metadata().map(|m| m.len() > 0).unwrap_or(false)
+                    })
+            })
     });
     shot("qa-5-download-progress");
     // AC: download complete -> temp file inside the repository, edit pane with metadata
     r.wait_ui("phase=ready");
-    let tmp: Vec<String> = std::fs::read_dir(r.dirs.import_tmp()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+    let tmp: Vec<String> = std::fs::read_dir(r.dirs.import_tmp())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
     assert_eq!(tmp.len(), 1, "{tmp:?}");
-    assert!(std::fs::read_dir(r.dirs.import_tmp().join(&tmp[0])).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("download.")));
+    assert!(std::fs::read_dir(r.dirs.import_tmp().join(&tmp[0]))
+        .unwrap()
+        .flatten()
+        .any(|e| e.file_name().to_string_lossy().starts_with("download.")));
     settle();
     shot("qa-6-edit-pane");
     // AC: Extract -> "Working..." wheel when the server confirms start
@@ -312,7 +433,13 @@ fn qa_walkthrough_with_screenshots() {
     let id = field(&l, "id");
     assert_eq!(field(&l, "stems"), "6");
     // AC: temp file removed after processing
-    assert!(std::fs::read_dir(r.dirs.import_tmp()).unwrap().next().is_none(), "import-tmp not empty");
+    assert!(
+        std::fs::read_dir(r.dirs.import_tmp())
+            .unwrap()
+            .next()
+            .is_none(),
+        "import-tmp not empty"
+    );
     let json = r.dirs.json(&id);
     assert_eq!(json["type"], "stem");
     assert_eq!(json["schema_version"], 2);
@@ -322,7 +449,10 @@ fn qa_walkthrough_with_screenshots() {
     r.top();
     r.key("Tab Return");
     r.app_mut().wait_view("library");
-    r.app_mut().wait_line(|l| l.contains("library root=") && field(l, "tracks") == "7", LONG);
+    r.app_mut().wait_line(
+        |l| l.contains("library root=") && field(l, "tracks") == "7",
+        LONG,
+    );
     settle();
     shot("qa-9-library-badge");
     // v1 fixtures are untouched
@@ -334,10 +464,17 @@ impl Rig {
     fn assert_originals_intact_except_new(&self, new_id: &str) {
         let now = snapshot(&self.dirs.repo());
         for (k, v) in &self.repo_before {
-            assert_eq!(now.get(k), Some(v), "existing file changed or vanished: {k}");
+            assert_eq!(
+                now.get(k),
+                Some(v),
+                "existing file changed or vanished: {k}"
+            );
         }
         for k in now.keys() {
-            assert!(self.repo_before.contains_key(k) || k.starts_with(&format!("tracks/{new_id}/")), "unexpected new file {k}");
+            assert!(
+                self.repo_before.contains_key(k) || k.starts_with(&format!("tracks/{new_id}/")),
+                "unexpected new file {k}"
+            );
         }
         assert_eq!(snapshot(&self.dirs.base().join("media")), self.media_before);
         assert_eq!(real_user_fingerprint(), self.user_before);
@@ -355,9 +492,20 @@ fn qa_sigkill_during_download_then_resume_prompt() {
     r.enter_url("https://media.example/slow?v=killme");
     r.wait_ui("phase=downloading");
     until(20, "some bytes", || {
-        std::fs::read_dir(r.dirs.import_tmp()).into_iter().flatten().flatten().any(|d| {
-            std::fs::read_dir(d.path()).into_iter().flatten().flatten().any(|f| f.file_name().to_string_lossy().ends_with(".part") && f.metadata().map(|m| m.len() > 0).unwrap_or(false))
-        })
+        std::fs::read_dir(r.dirs.import_tmp())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|d| {
+                std::fs::read_dir(d.path())
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .any(|f| {
+                        f.file_name().to_string_lossy().ends_with(".part")
+                            && f.metadata().map(|m| m.len() > 0).unwrap_or(false)
+                    })
+            })
     });
     r.kill_app();
     r.assert_no_children();
@@ -368,7 +516,13 @@ fn qa_sigkill_during_download_then_resume_prompt() {
     // restart: the library loads with its 6 tracks and no problems; the same URL offers the prompt
     let cmd = real_server(&r.dirs, "ok");
     r.restart(&cmd, &[]);
-    let lib = r.app().all_lines().into_iter().rev().find(|l| l.contains("library root=")).unwrap();
+    let lib = r
+        .app()
+        .all_lines()
+        .into_iter()
+        .rev()
+        .find(|l| l.contains("library root="))
+        .unwrap();
     assert_eq!(field(&lib, "tracks"), "6", "{lib}");
     assert_eq!(field(&lib, "problems"), "0", "{lib}");
     r.open_source(0);
@@ -386,7 +540,10 @@ fn qa_sigkill_during_download_then_resume_prompt() {
     let l = r.wait_ui("saved id=");
     assert_eq!(field(&l, "stems"), "6");
     r.assert_originals_intact_except_new(&field(&l, "id"));
-    assert!(std::fs::read_dir(r.dirs.import_tmp()).unwrap().next().is_none());
+    assert!(std::fs::read_dir(r.dirs.import_tmp())
+        .unwrap()
+        .next()
+        .is_none());
     r.assert_no_children();
 }
 
@@ -396,13 +553,22 @@ fn qa_sigkill_while_working_leaves_the_library_intact_and_the_next_run_cleans_up
     if !ready() {
         return;
     }
-    let mut r = Rig::new("qa_kill_working", |d| real_server(d, "hang"), &["import-audio {media}/untagged.flac".into()]);
+    let mut r = Rig::new(
+        "qa_kill_working",
+        |d| real_server(d, "hang"),
+        &["import-audio {media}/untagged.flac".into()],
+    );
     r.open_source(1);
     r.browse();
     r.wait_ui("phase=ready");
     r.extract();
     r.wait_ui("phase=working");
-    until(10, "the stub separator", || r.app().leftovers().iter().any(|(_, c)| c.contains("stub-separator") && c.contains("input.flac")));
+    until(10, "the stub separator", || {
+        r.app()
+            .leftovers()
+            .iter()
+            .any(|(_, c)| c.contains("stub-separator") && c.contains("input.flac"))
+    });
     r.kill_app();
     r.assert_no_client_children();
     // no partial track, no visible staging in tracks/
@@ -410,18 +576,45 @@ fn qa_sigkill_while_working_leaves_the_library_intact_and_the_next_run_cleans_up
     for (k, v) in &r.repo_before {
         assert_eq!(snapshot(&r.dirs.repo()).get(k), Some(v), "{k}");
     }
-    let leftovers: Vec<String> = std::fs::read_dir(r.dirs.import_tmp()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
-    assert!(leftovers.iter().all(|n| n.starts_with("file-")), "{leftovers:?}");
+    let leftovers: Vec<String> = std::fs::read_dir(r.dirs.import_tmp())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    assert!(
+        leftovers.iter().all(|n| n.starts_with("file-")),
+        "{leftovers:?}"
+    );
     // restart (server restarted too: its old job folder is cleaned, its state forgotten)
     let cmd = real_server(&r.dirs, "ok");
     r.restart(&cmd, &["import-audio {media}/untagged.flac"]);
-    let lib = r.app().all_lines().into_iter().rev().find(|l| l.contains("library root=")).unwrap();
-    assert_eq!((field(&lib, "tracks").as_str(), field(&lib, "problems").as_str()), ("6", "0"), "{lib}");
+    let lib = r
+        .app()
+        .all_lines()
+        .into_iter()
+        .rev()
+        .find(|l| l.contains("library root="))
+        .unwrap();
+    assert_eq!(
+        (
+            field(&lib, "tracks").as_str(),
+            field(&lib, "problems").as_str()
+        ),
+        ("6", "0"),
+        "{lib}"
+    );
     // a new import works and removes the stale file-* folder
     r.open_source(1);
     r.browse();
     r.wait_ui("phase=ready");
-    assert!(std::fs::read_dir(r.dirs.import_tmp()).unwrap().flatten().count() == 1, "the stale folder was not cleaned");
+    assert!(
+        std::fs::read_dir(r.dirs.import_tmp())
+            .unwrap()
+            .flatten()
+            .count()
+            == 1,
+        "the stale folder was not cleaned"
+    );
     r.extract();
     let l = r.wait_ui("saved id=");
     r.assert_originals_intact_except_new(&field(&l, "id"));
@@ -441,26 +634,47 @@ fn qa_malicious_server_stem_names_are_refused_in_the_ui() {
         return;
     }
     for mode in ["traversal", "duplicate", "notflac"] {
-        let mut r = Rig::new(&format!("qa_hostile_{mode}"), |_| hostile_server(mode), &["import-audio {media}/untagged.flac".into()]);
+        let mut r = Rig::new(
+            &format!("qa_hostile_{mode}"),
+            |_| hostile_server(mode),
+            &["import-audio {media}/untagged.flac".into()],
+        );
         r.open_source(1);
         r.browse();
-            r.wait_ui("phase=ready");
+        r.wait_ui("phase=ready");
         r.extract();
         let l = r.wait_ui("error stage=");
         settle();
         shot(&format!("qa-hostile-{mode}"));
         eprintln!("[qa] {mode}: {l}");
-        assert!(l.contains("stage=server") || l.contains("stage=save"), "{l}");
+        assert!(
+            l.contains("stage=server") || l.contains("stage=save"),
+            "{l}"
+        );
         // nothing was saved, nothing escaped the repository
-        assert_eq!(r.dirs.track_ids().len(), 6, "{mode}: {:?}", r.dirs.track_ids());
+        assert_eq!(
+            r.dirs.track_ids().len(),
+            6,
+            "{mode}: {:?}",
+            r.dirs.track_ids()
+        );
         assert!(!r.dirs.repo().join("evil.flac").exists());
         assert!(!r.dirs.base().join("data/evil.flac").exists());
         assert!(!r.dirs.base().join("evil.flac").exists());
-        for e in std::fs::read_dir(r.dirs.repo().join("tracks")).unwrap().flatten() {
-            assert!(!e.file_name().to_string_lossy().starts_with(".staging"), "staging left");
+        for e in std::fs::read_dir(r.dirs.repo().join("tracks"))
+            .unwrap()
+            .flatten()
+        {
+            assert!(
+                !e.file_name().to_string_lossy().starts_with(".staging"),
+                "staging left"
+            );
         }
         // the Extract button is usable again (the prepared audio is kept)
-        let tmp: Vec<_> = std::fs::read_dir(r.dirs.import_tmp()).unwrap().flatten().collect();
+        let tmp: Vec<_> = std::fs::read_dir(r.dirs.import_tmp())
+            .unwrap()
+            .flatten()
+            .collect();
         assert_eq!(tmp.len(), 1, "the prepared audio should stay for a retry");
         for (k, v) in &r.repo_before {
             assert_eq!(snapshot(&r.dirs.repo()).get(k), Some(v), "{k}");

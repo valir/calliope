@@ -189,9 +189,10 @@ fn main() {
     }
 
     let secs: i64 = match std::env::var("SOURCE_DATE_EPOCH") {
-        Ok(v) => v.trim().parse().unwrap_or_else(|_| {
-            fail(&format!("SOURCE_DATE_EPOCH must be an integer, got '{v}'"))
-        }),
+        Ok(v) => v
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| fail(&format!("SOURCE_DATE_EPOCH must be an integer, got '{v}'"))),
         Err(_) => SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)

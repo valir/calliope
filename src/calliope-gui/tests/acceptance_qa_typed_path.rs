@@ -1,15 +1,15 @@
 #![allow(dead_code, unused_imports, clippy::all)]
 
-use calliope_gui::fsutil;
-use calliope_gui::track_meta;
-use calliope_gui::repository;
-use calliope_gui::import_tmp;
-use calliope_gui::media;
 use calliope_gui::download;
-use calliope_gui::tools;
-use calliope_gui::stem_audio;
+use calliope_gui::fsutil;
 use calliope_gui::import_job;
+use calliope_gui::import_tmp;
 use calliope_gui::local_source;
+use calliope_gui::media;
+use calliope_gui::repository;
+use calliope_gui::stem_audio;
+use calliope_gui::tools;
+use calliope_gui::track_meta;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -34,12 +34,22 @@ fn fixture(name: &str) -> PathBuf {
     project().join("tests/fixtures/import").join(name)
 }
 fn tool(name: &str) -> PathBuf {
-    tools::find_in_path(name, &std::env::var_os("PATH").unwrap_or_default()).unwrap_or_else(|| panic!("{name} is needed"))
+    tools::find_in_path(name, &std::env::var_os("PATH").unwrap_or_default())
+        .unwrap_or_else(|| panic!("{name} is needed"))
 }
 fn stems_binary() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
-    let bin = exe.parent().unwrap().parent().unwrap().join("calliope-stems");
-    assert!(bin.is_file(), "{} is missing: cargo build -p calliope-stems", bin.display());
+    let bin = exe
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("calliope-stems");
+    assert!(
+        bin.is_file(),
+        "{} is missing: cargo build -p calliope-stems",
+        bin.display()
+    );
     bin
 }
 
@@ -64,7 +74,11 @@ fn fingerprint(dir: &Path) -> BTreeMap<String, String> {
             let p = e.path();
             let rel = p.strip_prefix(base).unwrap().to_string_lossy().to_string();
             let md = fs::symlink_metadata(&p).unwrap();
-            let mt = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+            let mt = md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
             if md.file_type().is_symlink() {
                 out.insert(rel, format!("link -> {:?}", fs::read_link(&p).unwrap()));
             } else if md.is_dir() {
@@ -76,7 +90,14 @@ fn fingerprint(dir: &Path) -> BTreeMap<String, String> {
                 for b in &bytes {
                     h = (h ^ *b as u64).wrapping_mul(0x100000001b3);
                 }
-                out.insert(rel, format!("file {} {mt} {h:x} mode={:o}", bytes.len(), md.permissions().mode()));
+                out.insert(
+                    rel,
+                    format!(
+                        "file {} {mt} {h:x} mode={:o}",
+                        bytes.len(),
+                        md.permissions().mode()
+                    ),
+                );
             }
         }
     }
@@ -90,7 +111,9 @@ fn procs_mentioning(needle: &str) -> Vec<(u32, String)> {
     let me = std::process::id();
     let mut v = Vec::new();
     for e in fs::read_dir("/proc").unwrap().flatten() {
-        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
+            continue;
+        };
         if pid == me {
             continue;
         }
@@ -130,7 +153,13 @@ fn until(what: &str, secs: u64, mut f: impl FnMut() -> bool) {
 }
 
 fn names_in(dir: &Path) -> Vec<String> {
-    let mut v: Vec<String> = fs::read_dir(dir).map(|r| r.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+    let mut v: Vec<String> = fs::read_dir(dir)
+        .map(|r| {
+            r.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
     v.sort();
     v
 }
@@ -172,7 +201,10 @@ impl RealServer {
         let mut line = String::new();
         let addr: SocketAddr = loop {
             line.clear();
-            assert!(lines.read_line(&mut line).unwrap() > 0, "server exited before listening");
+            assert!(
+                lines.read_line(&mut line).unwrap() > 0,
+                "server exited before listening"
+            );
             if let Some(rest) = line.split("listening addr=").nth(1) {
                 break rest.split_whitespace().next().unwrap().parse().unwrap();
             }
@@ -187,13 +219,24 @@ impl RealServer {
                 s.clear();
             }
         });
-        RealServer { child, url: format!("http://{addr}"), work, log, _outer: outer }
+        RealServer {
+            child,
+            url: format!("http://{addr}"),
+            work,
+            log,
+            _outer: outer,
+        }
     }
     fn saw(&self, needle: &str) -> bool {
         self.log.lock().unwrap().iter().any(|l| l.contains(needle))
     }
     fn count(&self, needle: &str) -> usize {
-        self.log.lock().unwrap().iter().filter(|l| l.contains(needle)).count()
+        self.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.contains(needle))
+            .count()
     }
     fn job_dirs(&self) -> Vec<String> {
         names_in(&self.work.join("jobs"))
@@ -222,7 +265,11 @@ impl Rig {
         }
         Repository::new(&root).ensure_layout().unwrap();
         fs::write(outside.join("precious.txt"), "do not touch").unwrap();
-        let tools = Tools { yt_dlp: None, ffmpeg: Some(tool("ffmpeg")), ffprobe: Some(tool("ffprobe")) };
+        let tools = Tools {
+            yt_dlp: None,
+            ffmpeg: Some(tool("ffmpeg")),
+            ffprobe: Some(tool("ffprobe")),
+        };
         let repo_lock = Arc::new(Mutex::new(()));
         let lock: Arc<dyn RepoLock> = Arc::new(move |f: &mut dyn FnMut()| {
             let _g = repo_lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -230,7 +277,14 @@ impl Rig {
         });
         let sink: Sink = Arc::new(|_| {});
         let state = ImportState::new(tools, lock, Duration::from_millis(40));
-        Rig { dir, root, outside, sources, state, sink }
+        Rig {
+            dir,
+            root,
+            outside,
+            sources,
+            state,
+            sink,
+        }
     }
 
     /// Copies a fixture into the sources folder under `as_name`.
@@ -241,8 +295,13 @@ impl Rig {
     }
 
     fn start(&self, path: &Path) -> Result<JobSnapshot, String> {
-        let kind = if path.extension().is_some_and(|e| e == "mp4") { FileKind::Video } else { FileKind::Audio };
-        self.state.start_file(&self.root, kind, path, self.sink.clone())
+        let kind = if path.extension().is_some_and(|e| e == "mp4") {
+            FileKind::Video
+        } else {
+            FileKind::Audio
+        };
+        self.state
+            .start_file(&self.root, kind, path, self.sink.clone())
     }
 
     fn idle(&self) -> JobSnapshot {
@@ -282,13 +341,20 @@ impl Rig {
         names_in(&self.root.join("import-tmp"))
     }
     fn outside_ok(&self) {
-        assert_eq!(fs::read_to_string(self.outside.join("precious.txt")).unwrap(), "do not touch");
+        assert_eq!(
+            fs::read_to_string(self.outside.join("precious.txt")).unwrap(),
+            "do not touch"
+        );
         assert_eq!(names_in(&self.outside), ["precious.txt"]);
     }
 }
 
 fn kind_of(path: &Path) -> LocalKind {
-    if path.extension().is_some_and(|e| e == "mp4") { LocalKind::Video } else { LocalKind::Audio }
+    if path.extension().is_some_and(|e| e == "mp4") {
+        LocalKind::Video
+    } else {
+        LocalKind::Audio
+    }
 }
 
 fn flac_seconds(p: &Path) -> f64 {
@@ -309,7 +375,10 @@ fn msg(r: Result<PathBuf, local_source::PathProblem>) -> (String, String) {
 #[test]
 fn qa_ac1_ac2_home_tilde_and_symlink_paths_import_stems() {
     let server = RealServer::start("ok");
-    for (fix, name) in [("tagged.mp3", "qa song.mp3"), ("with-audio.mp4", "qa clip.mp4")] {
+    for (fix, name) in [
+        ("tagged.mp3", "qa song.mp3"),
+        ("with-audio.mp4", "qa clip.mp4"),
+    ] {
         let rig = Rig::new();
         let home = rig.dir.path().join("home");
         fs::create_dir_all(home.join("Music")).unwrap();
@@ -328,19 +397,31 @@ fn qa_ac1_ac2_home_tilde_and_symlink_paths_import_stems() {
             rig.start(&p).unwrap();
             let r = rig.ready();
             let m = r.metadata.clone().unwrap();
-            rig.state.start_extraction(&r.job, m, Some(&server.url), false).unwrap();
+            rig.state
+                .start_extraction(&r.job, m, Some(&server.url), false)
+                .unwrap();
             let saved = rig.wait_saved();
             let t = saved.track.unwrap();
             let tdir = rig.root.join("tracks").join(&t.id);
-            let j: serde_json::Value = serde_json::from_slice(&fs::read(tdir.join("track.json")).unwrap()).unwrap();
+            let j: serde_json::Value =
+                serde_json::from_slice(&fs::read(tdir.join("track.json")).unwrap()).unwrap();
             assert_eq!(j["type"], "stem");
             assert_eq!(j["stems"].as_array().unwrap().len(), 6);
-            assert_eq!(names_in(&tdir.join("stems")).iter().filter(|n| n.ends_with(".flac")).count(), 6);
+            assert_eq!(
+                names_in(&tdir.join("stems"))
+                    .iter()
+                    .filter(|n| n.ends_with(".flac"))
+                    .count(),
+                6
+            );
             assert!(rig.import_tmp().is_empty());
         }
         assert_eq!(rig.tracks().len(), 3);
         assert_eq!(fs::read(&real).unwrap(), before);
-        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         rig.outside_ok();
     }
 }
@@ -357,43 +438,114 @@ fn qa_exact_rejection_messages() {
     fs::create_dir(p.join("dir")).unwrap();
     fs::create_dir(p.join("x.mp3")).unwrap();
     let empty = "Enter the path of a file or choose one with Browse";
-    assert_eq!(msg(resolve("", LocalKind::Audio, None)), ("empty".into(), empty.into()));
+    assert_eq!(
+        msg(resolve("", LocalKind::Audio, None)),
+        ("empty".into(), empty.into())
+    );
     assert_eq!(msg(resolve(" \t ", LocalKind::Video, None)).1, empty);
     let inv = ("invalid".to_string(), "The path is not valid".to_string());
     assert_eq!(msg(resolve("/tmp/a\nb.mp3", LocalKind::Audio, None)), inv);
     assert_eq!(msg(resolve("/tmp/a\0b.mp3", LocalKind::Audio, None)), inv);
     assert_eq!(msg(resolve("/tmp/a\tb.mp3", LocalKind::Audio, None)), inv);
-    assert_eq!(msg(resolve(&format!("/{}.mp3", "a".repeat(5000)), LocalKind::Audio, None)), inv);
-    assert_eq!(msg(resolve("file://otherhost/x.mp3", LocalKind::Audio, None)), inv);
-    assert_eq!(msg(resolve("\"\"", LocalKind::Audio, None)).0.len() > 0, true);
-    let rel = ("relative".to_string(), "Enter the full path, starting with / or ~/".to_string());
-    for t in ["song.mp3", "./song.mp3", "../song.mp3", "~bob/x.mp3", "dir/a.mp3", "mp3"] {
+    assert_eq!(
+        msg(resolve(
+            &format!("/{}.mp3", "a".repeat(5000)),
+            LocalKind::Audio,
+            None
+        )),
+        inv
+    );
+    assert_eq!(
+        msg(resolve("file://otherhost/x.mp3", LocalKind::Audio, None)),
+        inv
+    );
+    assert_eq!(
+        msg(resolve("\"\"", LocalKind::Audio, None)).0.len() > 0,
+        true
+    );
+    let rel = (
+        "relative".to_string(),
+        "Enter the full path, starting with / or ~/".to_string(),
+    );
+    for t in [
+        "song.mp3",
+        "./song.mp3",
+        "../song.mp3",
+        "~bob/x.mp3",
+        "dir/a.mp3",
+        "mp3",
+    ] {
         assert_eq!(msg(resolve(t, LocalKind::Audio, Some(&home))), rel, "{t}");
     }
     assert_eq!(msg(resolve("~/a.mp3", LocalKind::Audio, None)), rel);
     let miss = p.join("nope.mp3");
     assert_eq!(
         msg(resolve(&miss.display().to_string(), LocalKind::Audio, None)),
-        ("missing".into(), format!("No file found at {}", miss.display()))
+        (
+            "missing".into(),
+            format!("No file found at {}", miss.display())
+        )
     );
     // typo in a wrong-type name -> missing wins over extension
-    assert_eq!(msg(resolve(&p.join("nope.txt").display().to_string(), LocalKind::Audio, None)).0, "missing");
+    assert_eq!(
+        msg(resolve(
+            &p.join("nope.txt").display().to_string(),
+            LocalKind::Audio,
+            None
+        ))
+        .0,
+        "missing"
+    );
     let dd = p.join("dir");
     assert_eq!(
         msg(resolve(&dd.display().to_string(), LocalKind::Audio, None)),
-        ("folder".into(), format!("{} is a folder, not a file", dd.display()))
+        (
+            "folder".into(),
+            format!("{} is a folder, not a file", dd.display())
+        )
     );
-    assert_eq!(msg(resolve(&p.join("x.mp3").display().to_string(), LocalKind::Audio, None)).0, "folder");
     assert_eq!(
-        msg(resolve(&p.join("n.txt").display().to_string(), LocalKind::Audio, None)),
+        msg(resolve(
+            &p.join("x.mp3").display().to_string(),
+            LocalKind::Audio,
+            None
+        ))
+        .0,
+        "folder"
+    );
+    assert_eq!(
+        msg(resolve(
+            &p.join("n.txt").display().to_string(),
+            LocalKind::Audio,
+            None
+        )),
         ("extension".into(), "\"n.txt\" is not an audio file".into())
     );
-    assert_eq!(msg(resolve(&p.join("a.mp3").display().to_string(), LocalKind::Video, None)).1, "\"a.mp3\" is not a video file");
-    assert_eq!(msg(resolve(&p.join("v.mp4").display().to_string(), LocalKind::Audio, None)).1, "\"v.mp4\" is not an audio file");
+    assert_eq!(
+        msg(resolve(
+            &p.join("a.mp3").display().to_string(),
+            LocalKind::Video,
+            None
+        ))
+        .1,
+        "\"a.mp3\" is not a video file"
+    );
+    assert_eq!(
+        msg(resolve(
+            &p.join("v.mp4").display().to_string(),
+            LocalKind::Audio,
+            None
+        ))
+        .1,
+        "\"v.mp4\" is not an audio file"
+    );
     // dangling symlink
     let dl = p.join("dangling.mp3");
     std::os::unix::fs::symlink(p.join("gone"), &dl).unwrap();
-    assert_eq!(msg(resolve(&dl.display().to_string(), LocalKind::Audio, None)).0, "missing");
+    assert_eq!(
+        msg(resolve(&dl.display().to_string(), LocalKind::Audio, None)).0,
+        "missing"
+    );
     // unreadable
     let un = p.join("secret.mp3");
     fs::write(&un, b"x").unwrap();
@@ -401,17 +553,49 @@ fn qa_exact_rejection_messages() {
     if fs::File::open(&un).is_err() {
         assert_eq!(
             msg(resolve(&un.display().to_string(), LocalKind::Audio, None)),
-            ("unreadable".into(), format!("Cannot read {} (permission denied)", un.display()))
+            (
+                "unreadable".into(),
+                format!("Cannot read {} (permission denied)", un.display())
+            )
         );
     }
     // valid, uppercase extension
     fs::write(p.join("UP.MP3"), b"x").unwrap();
-    assert!(resolve(&p.join("UP.MP3").display().to_string(), LocalKind::Audio, None).is_ok());
+    assert!(resolve(
+        &p.join("UP.MP3").display().to_string(),
+        LocalKind::Audio,
+        None
+    )
+    .is_ok());
     // file:// with %20 and localhost
     fs::write(p.join("a b.mp3"), b"x").unwrap();
-    assert_eq!(resolve(&format!("file://{}/a%20b.mp3", p.display()), LocalKind::Audio, None).unwrap(), p.join("a b.mp3"));
-    assert_eq!(resolve(&format!("file://localhost{}/a%20b.mp3", p.display()), LocalKind::Audio, None).unwrap(), p.join("a b.mp3"));
-    assert_eq!(resolve(&format!("'{}'", p.join("a b.mp3").display()), LocalKind::Audio, None).unwrap(), p.join("a b.mp3"));
+    assert_eq!(
+        resolve(
+            &format!("file://{}/a%20b.mp3", p.display()),
+            LocalKind::Audio,
+            None
+        )
+        .unwrap(),
+        p.join("a b.mp3")
+    );
+    assert_eq!(
+        resolve(
+            &format!("file://localhost{}/a%20b.mp3", p.display()),
+            LocalKind::Audio,
+            None
+        )
+        .unwrap(),
+        p.join("a b.mp3")
+    );
+    assert_eq!(
+        resolve(
+            &format!("'{}'", p.join("a b.mp3").display()),
+            LocalKind::Audio,
+            None
+        )
+        .unwrap(),
+        p.join("a b.mp3")
+    );
 }
 
 #[test]
@@ -419,7 +603,11 @@ fn qa_security_fifo_dev_and_hostile_inputs_do_not_hang_or_write() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path();
     let fifo = p.join("pipe.mp3");
-    assert!(Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    assert!(Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
     let before = names_in(p);
     let t = Instant::now();
     let r = resolve(&fifo.display().to_string(), LocalKind::Audio, None);
@@ -429,10 +617,16 @@ fn qa_security_fifo_dev_and_hostile_inputs_do_not_hang_or_write() {
     let lf = p.join("lpipe.mp3");
     std::os::unix::fs::symlink(&fifo, &lf).unwrap();
     let t = Instant::now();
-    assert_eq!(msg(resolve(&lf.display().to_string(), LocalKind::Audio, None)).0, "not-file");
+    assert_eq!(
+        msg(resolve(&lf.display().to_string(), LocalKind::Audio, None)).0,
+        "not-file"
+    );
     assert!(t.elapsed() < Duration::from_secs(2));
     // device
-    assert_eq!(msg(resolve("/dev/null", LocalKind::Audio, None)).0, "not-file");
+    assert_eq!(
+        msg(resolve("/dev/null", LocalKind::Audio, None)).0,
+        "not-file"
+    );
     // symlink loop
     let a = p.join("loop-a.mp3");
     let b = p.join("loop-b.mp3");
@@ -441,7 +635,16 @@ fn qa_security_fifo_dev_and_hostile_inputs_do_not_hang_or_write() {
     let r = msg(resolve(&a.display().to_string(), LocalKind::Audio, None));
     assert!(r.0 == "unreadable" || r.0 == "missing", "{r:?}");
     // huge / odd inputs
-    for s in ["a".repeat(1_000_000), format!("/{}", "x/".repeat(100_000)), "~".repeat(10000), "file:".repeat(2000), "\u{202e}/tmp/x.mp3".into(), "/".into(), "~".into(), "file:///".into()] {
+    for s in [
+        "a".repeat(1_000_000),
+        format!("/{}", "x/".repeat(100_000)),
+        "~".repeat(10000),
+        "file:".repeat(2000),
+        "\u{202e}/tmp/x.mp3".into(),
+        "/".into(),
+        "~".into(),
+        "file:///".into(),
+    ] {
         let t = Instant::now();
         assert!(resolve(&s, LocalKind::Audio, Some(p)).is_err());
         assert!(t.elapsed() < Duration::from_secs(2));
@@ -450,7 +653,16 @@ fn qa_security_fifo_dev_and_hostile_inputs_do_not_hang_or_write() {
     let r = resolve(&format!("/{}.mp3", "a".repeat(300)), LocalKind::Audio, None);
     assert!(r.is_err());
     // nothing was created or changed
-    assert_eq!(names_in(p), { let mut b = before; b.extend(["lpipe.mp3".to_string(),"loop-a.mp3".into(),"loop-b.mp3".into()]); b.sort(); b });
+    assert_eq!(names_in(p), {
+        let mut b = before;
+        b.extend([
+            "lpipe.mp3".to_string(),
+            "loop-a.mp3".into(),
+            "loop-b.mp3".into(),
+        ]);
+        b.sort();
+        b
+    });
 }
 
 #[test]
@@ -477,10 +689,14 @@ fn qa_state_start_file_failures_leave_no_job_and_no_files() {
 fn qa_req3_video_without_audio_and_first_stream() {
     let rig = Rig::new();
     let p = rig.put("no-audio.mp4", "silent.mp4");
-    rig.start(&resolve(&p.display().to_string(), LocalKind::Video, None).unwrap()).unwrap();
+    rig.start(&resolve(&p.display().to_string(), LocalKind::Video, None).unwrap())
+        .unwrap();
     let s = rig.idle();
     assert_eq!(s.phase, Phase::Failed);
-    assert_eq!(s.error.unwrap().message, "Selected file silent.mp4 has no audio track");
+    assert_eq!(
+        s.error.unwrap().message,
+        "Selected file silent.mp4 has no audio track"
+    );
     assert!(rig.tracks().is_empty() && rig.import_tmp().is_empty());
 }
 
@@ -489,6 +705,10 @@ fn qa_req3_video_without_audio_and_first_stream() {
 #[test]
 fn qa_percent_encoded_control_chars_in_file_urls_are_invalid() {
     for t in ["file:///tmp/a%00b.mp3", "file:///tmp/a%0Ab.mp3"] {
-        assert_eq!(msg(resolve(t, LocalKind::Audio, None)), ("invalid".into(), "The path is not valid".into()), "{t}");
+        assert_eq!(
+            msg(resolve(t, LocalKind::Audio, None)),
+            ("invalid".into(), "The path is not valid".into()),
+            "{t}"
+        );
     }
 }

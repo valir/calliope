@@ -46,7 +46,10 @@ pub enum JobState {
 impl JobState {
     /// No further change will happen.
     pub fn is_final(self) -> bool {
-        matches!(self, JobState::Done | JobState::Failed | JobState::Cancelled)
+        matches!(
+            self,
+            JobState::Done | JobState::Failed | JobState::Cancelled
+        )
     }
 }
 
@@ -172,7 +175,8 @@ pub fn is_valid_job_id(id: &str) -> bool {
     !b.is_empty()
         && b.len() <= 64
         && b[0] != b'-'
-        && b.iter().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c) || *c == b'-')
+        && b.iter()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c) || *c == b'-')
 }
 
 /// A stem name: `^[a-z0-9][a-z0-9_-]{0,31}$`.
@@ -260,8 +264,8 @@ pub fn flac_info(reader: &mut impl Read) -> Result<FlacInfo, FlacError> {
     // 5 bits bits-per-sample - 1, 36 bits total samples.
     let sample_rate = (u32::from(b[10]) << 12) | (u32::from(b[11]) << 4) | u32::from(b[12] >> 4);
     let channels = ((b[12] >> 1) & 0x07) + 1;
-    let total_samples =
-        (u64::from(b[13] & 0x0f) << 32) | u64::from(u32::from_be_bytes([b[14], b[15], b[16], b[17]]));
+    let total_samples = (u64::from(b[13] & 0x0f) << 32)
+        | u64::from(u32::from_be_bytes([b[14], b[15], b[16], b[17]]));
     if sample_rate == 0 {
         return Err(FlacError::BadSampleRate);
     }
@@ -282,7 +286,9 @@ mod tests {
     use std::path::PathBuf;
 
     fn fixture(name: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../calliope-gui/tests/fixtures/import").join(name)
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../calliope-gui/tests/fixtures/import")
+            .join(name)
     }
 
     fn info_of(name: &str) -> Result<FlacInfo, FlacError> {
@@ -319,37 +325,86 @@ mod tests {
     #[test]
     fn synthetic_headers() {
         let i = flac_info(&mut header(44100, 2, 44100 * 90).as_slice()).unwrap();
-        assert_eq!((i.sample_rate, i.channels, i.total_samples), (44100, 2, 3_969_000));
+        assert_eq!(
+            (i.sample_rate, i.channels, i.total_samples),
+            (44100, 2, 3_969_000)
+        );
         assert!((i.duration_s - 90.0).abs() < 1e-9);
         // total samples above 32 bits
         let big = (1u64 << 33) + 5;
-        assert_eq!(flac_info(&mut header(96000, 8, big).as_slice()).unwrap().total_samples, big);
-        assert!(matches!(flac_info(&mut header(44100, 2, 0).as_slice()), Err(FlacError::UnknownLength)));
-        assert!(matches!(flac_info(&mut header(0, 2, 10).as_slice()), Err(FlacError::BadSampleRate)));
+        assert_eq!(
+            flac_info(&mut header(96000, 8, big).as_slice())
+                .unwrap()
+                .total_samples,
+            big
+        );
+        assert!(matches!(
+            flac_info(&mut header(44100, 2, 0).as_slice()),
+            Err(FlacError::UnknownLength)
+        ));
+        assert!(matches!(
+            flac_info(&mut header(0, 2, 10).as_slice()),
+            Err(FlacError::BadSampleRate)
+        ));
     }
 
     #[test]
     fn malformed_headers() {
         assert!(matches!(flac_info(&mut &b""[..]), Err(FlacError::NotFlac)));
-        assert!(matches!(flac_info(&mut &b"fLa"[..]), Err(FlacError::NotFlac)));
-        assert!(matches!(flac_info(&mut &b"OggS\0\0\0\0"[..]), Err(FlacError::NotFlac)));
-        assert!(matches!(flac_info(&mut &b"fLaC"[..]), Err(FlacError::Truncated)));
+        assert!(matches!(
+            flac_info(&mut &b"fLa"[..]),
+            Err(FlacError::NotFlac)
+        ));
+        assert!(matches!(
+            flac_info(&mut &b"OggS\0\0\0\0"[..]),
+            Err(FlacError::NotFlac)
+        ));
+        assert!(matches!(
+            flac_info(&mut &b"fLaC"[..]),
+            Err(FlacError::Truncated)
+        ));
         let full = header(44100, 2, 100);
-        assert!(matches!(flac_info(&mut &full[..20]), Err(FlacError::Truncated)));
+        assert!(matches!(
+            flac_info(&mut &full[..20]),
+            Err(FlacError::Truncated)
+        ));
         let mut not_first = full.clone();
         not_first[4] = 0x84; // VORBIS_COMMENT first
-        assert!(matches!(flac_info(&mut not_first.as_slice()), Err(FlacError::NoStreamInfo)));
+        assert!(matches!(
+            flac_info(&mut not_first.as_slice()),
+            Err(FlacError::NoStreamInfo)
+        ));
         let mut wrong_len = full;
         wrong_len[7] = 33;
-        assert!(matches!(flac_info(&mut wrong_len.as_slice()), Err(FlacError::NoStreamInfo)));
+        assert!(matches!(
+            flac_info(&mut wrong_len.as_slice()),
+            Err(FlacError::NoStreamInfo)
+        ));
     }
 
     #[test]
     fn job_ids() {
-        for ok in ["0199c1a2-0000-4000-8000-000000000001", "abc", "0", &"a".repeat(64)] {
+        for ok in [
+            "0199c1a2-0000-4000-8000-000000000001",
+            "abc",
+            "0",
+            &"a".repeat(64),
+        ] {
             assert!(is_valid_job_id(ok), "{ok}");
         }
-        for bad in ["", "-abc", "ABC", "a/b", "a b", "..", "a.b", "g", "a\n", "é", &"a".repeat(65)] {
+        for bad in [
+            "",
+            "-abc",
+            "ABC",
+            "a/b",
+            "a b",
+            "..",
+            "a.b",
+            "g",
+            "a\n",
+            "é",
+            &"a".repeat(65),
+        ] {
             assert!(!is_valid_job_id(bad), "{bad:?}");
         }
     }
@@ -359,7 +414,19 @@ mod tests {
         for ok in ["vocals", "a", "0", "bass-2", "lead_gtr", &"a".repeat(32)] {
             assert!(is_valid_stem_name(ok), "{ok}");
         }
-        for bad in ["", "_a", "-a", "Vocals", "a.b", "a/b", "a b", "..", "é", &"a".repeat(33), "a\n"] {
+        for bad in [
+            "",
+            "_a",
+            "-a",
+            "Vocals",
+            "a.b",
+            "a/b",
+            "a b",
+            "..",
+            "é",
+            &"a".repeat(33),
+            "a\n",
+        ] {
             assert!(!is_valid_stem_name(bad), "{bad:?}");
         }
     }
@@ -384,8 +451,14 @@ mod tests {
         assert!(old.busy);
         assert!(old.tasks.is_empty());
 
-        assert_eq!(serde_json::to_string(&JobCreated { job: "ab".into(), state: JobState::Queued }).unwrap(),
-            r#"{"job":"ab","state":"queued"}"#);
+        assert_eq!(
+            serde_json::to_string(&JobCreated {
+                job: "ab".into(),
+                state: JobState::Queued
+            })
+            .unwrap(),
+            r#"{"job":"ab","state":"queued"}"#
+        );
         for (s, name) in [
             (JobState::Queued, "queued"),
             (JobState::Running, "running"),
@@ -394,7 +467,10 @@ mod tests {
             (JobState::Cancelled, "cancelled"),
         ] {
             assert_eq!(serde_json::to_string(&s).unwrap(), format!("\"{name}\""));
-            assert_eq!(serde_json::from_str::<JobState>(&format!("\"{name}\"")).unwrap(), s);
+            assert_eq!(
+                serde_json::from_str::<JobState>(&format!("\"{name}\"")).unwrap(),
+                s
+            );
         }
         assert!(serde_json::from_str::<JobState>("\"Queued\"").is_err());
         assert!(JobState::Done.is_final() && !JobState::Running.is_final());
@@ -414,25 +490,42 @@ mod tests {
         let b: JobStatus = serde_json::from_str(r#"{"job":"ab","state":"queued","progress":null,"stems":null,"error":null,"kind":"beats"}"#).unwrap();
         assert_eq!(b.kind.as_deref(), Some("beats"));
         assert_eq!(serde_json::from_str::<JobStatus>(&text).unwrap(), st);
-        let queued: JobStatus =
-            serde_json::from_str(r#"{"job":"ab","state":"queued","progress":null,"stems":null,"error":null}"#).unwrap();
+        let queued: JobStatus = serde_json::from_str(
+            r#"{"job":"ab","state":"queued","progress":null,"stems":null,"error":null}"#,
+        )
+        .unwrap();
         assert_eq!(queued.progress, None);
-        let e = ErrorBody { error: "bad".into() };
-        assert_eq!(serde_json::from_str::<ErrorBody>(&serde_json::to_string(&e).unwrap()).unwrap(), e);
+        let e = ErrorBody {
+            error: "bad".into(),
+        };
+        assert_eq!(
+            serde_json::from_str::<ErrorBody>(&serde_json::to_string(&e).unwrap()).unwrap(),
+            e
+        );
     }
 
     fn sl(name: &str, audible_ms: u64, level_dbfs: i32, window_ms: u32) -> StemLevel {
-        StemLevel { name: name.into(), audible_ms, level_dbfs, window_ms, peak_dbfs: None }
+        StemLevel {
+            name: name.into(),
+            audible_ms,
+            level_dbfs,
+            window_ms,
+            peak_dbfs: None,
+        }
     }
 
     #[test]
     fn stem_levels_serde_and_compat() {
-        let base = r#"{"job":"ab","state":"done","progress":1.0,"stems":["vocals","piano"],"error":null"#;
+        let base =
+            r#"{"job":"ab","state":"done","progress":1.0,"stems":["vocals","piano"],"error":null"#;
         let absent: JobStatus = serde_json::from_str(&format!("{base}}}")).unwrap();
         assert_eq!(absent.stem_levels, None);
-        let null: JobStatus = serde_json::from_str(&format!(r#"{base},"stem_levels":null}}"#)).unwrap();
+        let null: JobStatus =
+            serde_json::from_str(&format!(r#"{base},"stem_levels":null}}"#)).unwrap();
         assert_eq!(null.stem_levels, None);
-        assert!(!serde_json::to_string(&absent).unwrap().contains("stem_levels"));
+        assert!(!serde_json::to_string(&absent)
+            .unwrap()
+            .contains("stem_levels"));
         let st: JobStatus = serde_json::from_str(&format!(
             r#"{base},"stem_levels":[{{"name":"vocals","audible_ms":200600,"level_dbfs":-40,"window_ms":100,"peak_dbfs":-1.23}},{{"name":"piano","audible_ms":0,"level_dbfs":-40,"window_ms":100}}]}}"#
         ))
@@ -456,9 +549,20 @@ mod tests {
         let stems = vec!["vocals".to_string(), "piano".to_string()];
         assert!(check_stem_levels(&stems, &[]).is_ok());
         assert!(check_stem_levels(&stems, &[sl("piano", 0, -40, 100)]).is_ok());
-        assert!(check_stem_levels(&stems, &[sl("vocals", 86_400_000, 0, 1000), sl("piano", 200, -150, 100)]).is_ok());
+        assert!(check_stem_levels(
+            &stems,
+            &[
+                sl("vocals", 86_400_000, 0, 1000),
+                sl("piano", 200, -150, 100)
+            ]
+        )
+        .is_ok());
         assert!(check_stem_levels(&stems, &[sl("drums", 0, -40, 100)]).is_err());
-        assert!(check_stem_levels(&stems, &[sl("piano", 0, -40, 100), sl("piano", 0, -40, 100)]).is_err());
+        assert!(check_stem_levels(
+            &stems,
+            &[sl("piano", 0, -40, 100), sl("piano", 0, -40, 100)]
+        )
+        .is_err());
         assert!(check_stem_levels(&stems, &[sl("piano", 0, -40, 0)]).is_err());
         assert!(check_stem_levels(&stems, &[sl("piano", 0, -40, 1001)]).is_err());
         assert!(check_stem_levels(&stems, &[sl("piano", 0, 1, 100)]).is_err());
@@ -470,7 +574,11 @@ mod tests {
     }
 
     fn bt(beats: &[f64], downbeats: &[f64]) -> Beats {
-        Beats { beats: beats.to_vec(), downbeats: downbeats.to_vec(), tracker: "t".into() }
+        Beats {
+            beats: beats.to_vec(),
+            downbeats: downbeats.to_vec(),
+            tracker: "t".into(),
+        }
     }
 
     #[test]

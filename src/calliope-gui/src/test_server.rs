@@ -11,7 +11,11 @@ use std::time::{Duration, Instant};
 
 /// Some process has `pattern` in its command line.
 pub(crate) fn pgrep(pattern: &str) -> bool {
-    Command::new("pgrep").args(["-f", "--", pattern]).output().map(|o| !o.stdout.is_empty()).unwrap_or(false)
+    Command::new("pgrep")
+        .args(["-f", "--", pattern])
+        .output()
+        .map(|o| !o.stdout.is_empty())
+        .unwrap_or(false)
 }
 
 pub(crate) fn project() -> PathBuf {
@@ -21,8 +25,17 @@ pub(crate) fn project() -> PathBuf {
 fn stems_binary() -> PathBuf {
     // unit tests live in target/<profile>/deps/
     let exe = std::env::current_exe().unwrap();
-    let bin = exe.parent().unwrap().parent().unwrap().join("calliope-stems");
-    assert!(bin.is_file(), "{} is missing: run cargo build -p calliope-stems (cargo test --workspace builds it)", bin.display());
+    let bin = exe
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("calliope-stems");
+    assert!(
+        bin.is_file(),
+        "{} is missing: run cargo build -p calliope-stems (cargo test --workspace builds it)",
+        bin.display()
+    );
     bin
 }
 
@@ -64,7 +77,8 @@ impl TestServer {
         let mut cmd = Command::new(stems_binary());
         if let Some(t) = tracker_mode {
             fs::write(work.join("stub-tracker-mode"), format!("{t}\n")).unwrap();
-            cmd.arg("--beat-tracker").arg(project().join("tests/support/stub-beat-tracker"));
+            cmd.arg("--beat-tracker")
+                .arg(project().join("tests/support/stub-beat-tracker"));
             if !extra_args.contains(&"--beat-timeout-ms") {
                 cmd.args(["--beat-timeout-ms", "1000"]);
             }
@@ -84,7 +98,10 @@ impl TestServer {
         let mut line = String::new();
         let addr: SocketAddr = loop {
             line.clear();
-            assert!(lines.read_line(&mut line).unwrap() > 0, "server exited before listening");
+            assert!(
+                lines.read_line(&mut line).unwrap() > 0,
+                "server exited before listening"
+            );
             if let Some(rest) = line.split("listening addr=").nth(1) {
                 break rest.split_whitespace().next().unwrap().parse().unwrap();
             }
@@ -99,11 +116,20 @@ impl TestServer {
                 s.clear();
             }
         });
-        TestServer { child, url: format!("http://{addr}"), log, outer }
+        TestServer {
+            child,
+            url: format!("http://{addr}"),
+            log,
+            outer,
+        }
     }
 
     pub(crate) fn set_mode(&self, mode: &str) {
-        fs::write(self.outer.path().join("work/stub-mode"), format!("{mode}\n")).unwrap();
+        fs::write(
+            self.outer.path().join("work/stub-mode"),
+            format!("{mode}\n"),
+        )
+        .unwrap();
     }
 
     pub(crate) fn saw(&self, needle: &str) -> bool {
@@ -123,14 +149,26 @@ impl TestServer {
 
     pub(crate) fn stem_gets(&self, name: &str) -> usize {
         let suffix = format!("/stems/{name} ");
-        self.log.lock().unwrap().iter().filter(|l| l.contains("method=GET path=/v1/jobs/") && l.contains(&suffix)).count()
+        self.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.contains("method=GET path=/v1/jobs/") && l.contains(&suffix))
+            .count()
     }
 
     pub(crate) fn all_stem_gets(&self) -> usize {
-        self.log.lock().unwrap().iter().filter(|l| l.contains("method=GET path=/v1/jobs/") && l.contains("/stems/")).count()
+        self.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.contains("method=GET path=/v1/jobs/") && l.contains("/stems/"))
+            .count()
     }
 
     pub(crate) fn job_dirs(&self) -> usize {
-        fs::read_dir(self.outer.path().join("work/jobs")).map(|r| r.flatten().count()).unwrap_or(0)
+        fs::read_dir(self.outer.path().join("work/jobs"))
+            .map(|r| r.flatten().count())
+            .unwrap_or(0)
     }
 }

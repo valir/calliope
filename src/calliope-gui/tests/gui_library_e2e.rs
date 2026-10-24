@@ -34,13 +34,22 @@ fn list_names(dir: &Path) -> Vec<String> {
 }
 
 fn tablatures(dirs: &Dirs, id: &str) -> Vec<String> {
-    dirs.json(id)["tablatures"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect()
+    dirs.json(id)["tablatures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect()
 }
 
 /// Files in every `trash/<stamp>-<id>-tablatures/` folder of the track, sorted.
 fn trashed_tablatures(dirs: &Dirs, id: &str) -> Vec<String> {
     let mut v = Vec::new();
-    for t in dirs.trash().iter().filter(|n| n.ends_with(&format!("{id}-tablatures"))) {
+    for t in dirs
+        .trash()
+        .iter()
+        .filter(|n| n.ends_with(&format!("{id}-tablatures")))
+    {
         v.extend(list_names(&dirs.repo().join("trash").join(t)));
     }
     v.sort();
@@ -117,9 +126,19 @@ fn edit_and_save() {
     assert_eq!(v["album"], "Brand New Album");
     assert_eq!(v["band"], "Amber Fields");
     assert_eq!(v["imported"], FIXTURE_TIME, "imported must be preserved");
-    assert!(v["modified"].as_str().unwrap() > FIXTURE_TIME, "modified not updated: {}", v["modified"]);
-    assert_eq!(v["tablatures"], serde_json::json!(["slow-burn.gp5", "slow-burn-solo.gp"]));
-    assert_ne!(std::fs::read_to_string(dirs.track_json(ID1)).unwrap(), before);
+    assert!(
+        v["modified"].as_str().unwrap() > FIXTURE_TIME,
+        "modified not updated: {}",
+        v["modified"]
+    );
+    assert_eq!(
+        v["tablatures"],
+        serde_json::json!(["slow-burn.gp5", "slow-burn-solo.gp"])
+    );
+    assert_ne!(
+        std::fs::read_to_string(dirs.track_json(ID1)).unwrap(),
+        before
+    );
     shot("library-saved");
 
     // A hand edit while in edit mode makes Save refuse and leaves the file as the owner wrote it.
@@ -130,7 +149,9 @@ fn edit_and_save() {
     app.typ(&wid, "Never Saved");
     settle();
     shot("library-conflict-draft");
-    let hand = std::fs::read_to_string(dirs.track_json(ID1)).unwrap().replace("Brand New Album", "Hand Edited");
+    let hand = std::fs::read_to_string(dirs.track_json(ID1))
+        .unwrap()
+        .replace("Brand New Album", "Hand Edited");
     std::fs::write(dirs.track_json(ID1), &hand).unwrap();
     app.key(&wid, "ctrl+s");
     settle();
@@ -138,19 +159,39 @@ fn edit_and_save() {
     let l = app.wait_contains("error save_track");
     assert!(l.contains("conflict"), "{l}");
     settle();
-    assert_eq!(std::fs::read_to_string(dirs.track_json(ID1)).unwrap(), hand, "conflicting save changed the file");
+    assert_eq!(
+        std::fs::read_to_string(dirs.track_json(ID1)).unwrap(),
+        hand,
+        "conflicting save changed the file"
+    );
     shot("library-conflict");
     // The draft is kept (still in edit mode, nothing reloaded); Escape discards and reloads.
-    let views_before = app.all_lines().iter().filter(|l| l.contains(&format!("mode=view id={ID1}"))).count();
+    let views_before = app
+        .all_lines()
+        .iter()
+        .filter(|l| l.contains(&format!("mode=view id={ID1}")))
+        .count();
     app.key(&wid, "Escape");
     app.wait_line(
         |l| l.contains(&format!("mode=view id={ID1}")),
         Duration::from_secs(10),
     );
     settle();
-    let views_after = app.all_lines().iter().filter(|l| l.contains(&format!("mode=view id={ID1}"))).count();
-    assert_eq!(views_after, views_before + 1, "Escape after a conflict should leave edit mode once");
-    assert_eq!(std::fs::read_to_string(dirs.track_json(ID1)).unwrap(), hand, "discarding changed the file");
+    let views_after = app
+        .all_lines()
+        .iter()
+        .filter(|l| l.contains(&format!("mode=view id={ID1}")))
+        .count();
+    assert_eq!(
+        views_after,
+        views_before + 1,
+        "Escape after a conflict should leave edit mode once"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dirs.track_json(ID1)).unwrap(),
+        hand,
+        "discarding changed the file"
+    );
     shot("library-conflict-discarded");
     app.no_csp_violation();
 }
@@ -170,7 +211,10 @@ fn tablature_add_and_remove() {
     std::fs::write(&src2, b"v2-bytes").unwrap();
     let ans = answers(
         &dirs,
-        &[format!("add-tablature {}", src.display()), format!("update-tablature {}", src2.display())],
+        &[
+            format!("add-tablature {}", src.display()),
+            format!("update-tablature {}", src2.display()),
+        ],
     );
     let (mut app, wid, _) = App::start_lib(&dirs, &[("CALLIOPE_E2E_DIALOG_ANSWERS", &ans)]);
     app.select_by_search(&wid, "after midnight", ID2);
@@ -188,7 +232,10 @@ fn tablature_add_and_remove() {
     app.wait_contains(&format!("saved id={ID2}"));
     settle();
     assert_eq!(tablatures(&dirs, ID2), vec!["riff.gp5"]);
-    assert_eq!(std::fs::read(dirs.track_dir(ID2).join("riff.gp5")).unwrap(), b"GP5-bytes");
+    assert_eq!(
+        std::fs::read(dirs.track_dir(ID2).join("riff.gp5")).unwrap(),
+        b"GP5-bytes"
+    );
     assert!(src.is_file(), "the picked source must stay untouched");
     assert_eq!(std::fs::read(&src).unwrap(), b"GP5-bytes");
 
@@ -207,11 +254,21 @@ fn tablature_add_and_remove() {
     app.wait_contains(&format!("saved id={ID2}"));
     settle();
     assert_eq!(tablatures(&dirs, ID2), vec!["riff2.gp5"]);
-    assert_eq!(std::fs::read(dirs.track_dir(ID2).join("riff2.gp5")).unwrap(), b"v2-bytes");
+    assert_eq!(
+        std::fs::read(dirs.track_dir(ID2).join("riff2.gp5")).unwrap(),
+        b"v2-bytes"
+    );
     assert!(!dirs.track_dir(ID2).join("riff.gp5").exists());
     let old = trashed_tablatures(&dirs, ID2);
-    assert_eq!(old, vec!["riff.gp5"], "old file must be in trash/*-tablatures/");
-    assert!(src.is_file() && src2.is_file(), "the picked sources must stay untouched");
+    assert_eq!(
+        old,
+        vec!["riff.gp5"],
+        "old file must be in trash/*-tablatures/"
+    );
+    assert!(
+        src.is_file() && src2.is_file(),
+        "the picked sources must stay untouched"
+    );
 
     // Remove it.
     app.key(&wid, "ctrl+e");
@@ -234,9 +291,15 @@ fn tablature_add_and_remove() {
     settle();
     assert!(tablatures(&dirs, ID2).is_empty());
     assert!(!dirs.track_dir(ID2).join("riff2.gp5").exists());
-    assert_eq!(trashed_tablatures(&dirs, ID2), vec!["riff.gp5", "riff2.gp5"]);
+    assert_eq!(
+        trashed_tablatures(&dirs, ID2),
+        vec!["riff.gp5", "riff2.gp5"]
+    );
     assert!(src.is_file() && src2.is_file());
-    assert_eq!(list_names(&dirs.track_dir(ID2)), vec!["backing.mp3", "track.json"]);
+    assert_eq!(
+        list_names(&dirs.track_dir(ID2)),
+        vec!["backing.mp3", "track.json"]
+    );
     app.no_csp_violation();
 }
 
@@ -254,7 +317,10 @@ fn wait_until(timeout: Duration, mut cond: impl FnMut() -> bool) -> bool {
 }
 
 fn dialog_open() -> bool {
-    let o = Command::new("xdotool").args(["search", "--onlyvisible", "--name", "^Add tablature$"]).output().unwrap();
+    let o = Command::new("xdotool")
+        .args(["search", "--onlyvisible", "--name", "^Add tablature$"])
+        .output()
+        .unwrap();
     !String::from_utf8_lossy(&o.stdout).trim().is_empty()
 }
 
@@ -282,15 +348,20 @@ fn add_opens_real_file_dialog() {
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".Xauthority")))
         .unwrap_or_default();
-    let (mut app, wid, _) =
-        App::start_lib(&dirs, &[("HOME", home.as_path()), ("XAUTHORITY", xauth.as_path())]);
+    let (mut app, wid, _) = App::start_lib(
+        &dirs,
+        &[("HOME", home.as_path()), ("XAUTHORITY", xauth.as_path())],
+    );
     app.select_by_search(&wid, "after midnight", ID2);
     let json_before = std::fs::read(dirs.track_json(ID2)).unwrap();
     app.key(&wid, "ctrl+e");
     app.wait_contains(&format!("mode=edit id={ID2}"));
     app.key(&wid, &"Tab ".repeat(15));
     app.key(&wid, "Return");
-    let dlg = out("xdotool", &["search", "--sync", "--name", "^Add tablature$"]);
+    let dlg = out(
+        "xdotool",
+        &["search", "--sync", "--name", "^Add tablature$"],
+    );
     let dlg = dlg.lines().next().expect("dialog window").to_string();
     // Poll until the dialog is mapped and has a size, instead of a fixed sleep.
     assert!(
@@ -308,7 +379,10 @@ fn add_opens_real_file_dialog() {
     );
     settle();
     shot("library-dialog-cancelled");
-    assert!(!app.all_lines().iter().any(|l| l.contains("tab-staged")), "nothing must be staged");
+    assert!(
+        !app.all_lines().iter().any(|l| l.contains("tab-staged")),
+        "nothing must be staged"
+    );
     assert_eq!(std::fs::read(dirs.track_json(ID2)).unwrap(), json_before);
     app.no_csp_violation();
 }
@@ -334,9 +408,19 @@ fn delete_track_to_trash() {
     settle();
     assert!(!dirs.track_dir(ID4).exists(), "folder still in tracks/");
     let trash = dirs.trash();
-    assert!(trash.iter().any(|n| n.ends_with(ID4) && !n.ends_with("-tablatures")), "{trash:?}");
+    assert!(
+        trash
+            .iter()
+            .any(|n| n.ends_with(ID4) && !n.ends_with("-tablatures")),
+        "{trash:?}"
+    );
     let t = trash.iter().find(|n| n.ends_with(ID4)).unwrap();
-    assert!(dirs.repo().join("trash").join(t).join("track.json").is_file());
+    assert!(dirs
+        .repo()
+        .join("trash")
+        .join(t)
+        .join("track.json")
+        .is_file());
     assert!(dirs.track_dir(ID1).is_dir());
     shot("library-deleted");
     app.no_csp_violation();
@@ -351,10 +435,7 @@ fn settings_change_root() {
     let dirs = lib_dirs("settings_change_root");
     // A second root with only track 6 (no marker, so the app asks before using it).
     let second = dirs.base().join("second-root");
-    copy_dir(
-        &dirs.track_dir(ID6),
-        &second.join("tracks").join(ID6),
-    );
+    copy_dir(&dirs.track_dir(ID6), &second.join("tracks").join(ID6));
     let ans = answers(&dirs, &[format!("repository-root {}", second.display())]);
     let (mut app, wid, lib) = App::start_lib(&dirs, &[("CALLIOPE_E2E_DIALOG_ANSWERS", &ans)]);
     assert_eq!(tracks_in(&lib), 6);
@@ -371,8 +452,12 @@ fn settings_change_root() {
     app.key(&wid, "Tab Return");
     app.wait_contains(&format!("repository root={}", second.display()));
     settle();
-    let settings = std::fs::read_to_string(dirs.app_config().join("settings.json")).expect("settings.json");
-    assert!(settings.contains("repository_root") && settings.contains(second.to_str().unwrap()), "{settings}");
+    let settings =
+        std::fs::read_to_string(dirs.app_config().join("settings.json")).expect("settings.json");
+    assert!(
+        settings.contains("repository_root") && settings.contains(second.to_str().unwrap()),
+        "{settings}"
+    );
     app.key(&wid, "alt+1");
     let l = app.wait_contains("library root=");
     assert_eq!(tracks_in(&l), 1, "{l}");
@@ -411,7 +496,17 @@ fn click_band_label(wid: &str) {
     // The pane's field area scrolls (it is taller than the window since the Type row was added)
     // and keeps its offset between edits: scroll it to the top first.
     let s = Command::new("xdotool")
-        .args(["mousemove", "--window", wid, "900", "300", "click", "--repeat", "8", "4"])
+        .args([
+            "mousemove",
+            "--window",
+            wid,
+            "900",
+            "300",
+            "click",
+            "--repeat",
+            "8",
+            "4",
+        ])
         .status()
         .unwrap();
     assert!(s.success());
@@ -445,7 +540,11 @@ const TREE_DELETE: (i32, i32) = (549, 88);
 
 /// Waits until at least `n` log lines contain `what`.
 fn wait_log(app: &App, what: &str, n: usize) {
-    assert!(wait_until(Duration::from_secs(15), || app.count(what) >= n), "no {n}x {what:?}; got {:?}", app.all_lines());
+    assert!(
+        wait_until(Duration::from_secs(15), || app.count(what) >= n),
+        "no {n}x {what:?}; got {:?}",
+        app.all_lines()
+    );
 }
 
 /// Ctrl+F, Shift+Tab, Enter: "Expand all".
@@ -460,7 +559,9 @@ fn positions(dirs: &Dirs, ids: &[&str]) -> Vec<Option<u64>> {
 }
 
 fn files(dirs: &Dirs, ids: &[&str]) -> Vec<Vec<u8>> {
-    ids.iter().map(|id| std::fs::read(dirs.track_json(id)).unwrap()).collect()
+    ids.iter()
+        .map(|id| std::fs::read(dirs.track_json(id)).unwrap())
+        .collect()
 }
 
 #[test]
@@ -471,7 +572,12 @@ fn library_reorder_tracks() {
     }
     let dirs = seed_dirs(
         "library_reorder_tracks",
-        &[seed("t-a", "Band", "Order", "A"), seed("t-b", "Band", "Order", "B"), seed("t-c", "Band", "Order", "C"), seed("t-d", "Other", "Elsewhere", "D")],
+        &[
+            seed("t-a", "Band", "Order", "A"),
+            seed("t-b", "Band", "Order", "B"),
+            seed("t-c", "Band", "Order", "C"),
+            seed("t-d", "Other", "Elsewhere", "D"),
+        ],
     );
     let abc = ["t-a", "t-b", "t-c"];
     let (mut app, wid, lib) = App::start_lib(&dirs, &[]);
@@ -487,9 +593,19 @@ fn library_reorder_tracks() {
         shot("library-order-drag");
     });
     wait_log(&app, "reorder tracks album=", 1);
-    assert!(app.all_lines().iter().any(|l| l.contains("id=t-c from=3 to=1 via=drag written=3 failed=0")), "{:?}", app.all_lines());
+    assert!(
+        app.all_lines()
+            .iter()
+            .any(|l| l.contains("id=t-c from=3 to=1 via=drag written=3 failed=0")),
+        "{:?}",
+        app.all_lines()
+    );
     settle();
-    assert_eq!(positions(&dirs, &abc), [Some(2), Some(3), Some(1)], "C=1, A=2, B=3");
+    assert_eq!(
+        positions(&dirs, &abc),
+        [Some(2), Some(3), Some(1)],
+        "C=1, A=2, B=3"
+    );
     shot("library-order-dragged");
 
     // Click A (now the second track), Alt+Up: A moves to the top and keeps the focus.
@@ -497,9 +613,19 @@ fn library_reorder_tracks() {
     app.wait_contains("select id=t-a");
     app.key(&wid, "alt+Up");
     wait_log(&app, "reorder tracks album=", 2);
-    assert!(app.all_lines().iter().any(|l| l.contains("id=t-a from=2 to=1 via=key")), "{:?}", app.all_lines());
+    assert!(
+        app.all_lines()
+            .iter()
+            .any(|l| l.contains("id=t-a from=2 to=1 via=key")),
+        "{:?}",
+        app.all_lines()
+    );
     settle();
-    assert_eq!(positions(&dirs, &abc), [Some(1), Some(3), Some(2)], "A=1, C=2, B=3");
+    assert_eq!(
+        positions(&dirs, &abc),
+        [Some(1), Some(3), Some(2)],
+        "A=1, C=2, B=3"
+    );
     let fixed = files(&dirs, &abc);
     // The same key on the first track changes nothing, and the focus is still on A.
     app.key(&wid, "alt+Up");
@@ -530,7 +656,11 @@ fn library_reorder_tracks() {
     // After a restart (light theme): "1. A", "2. C", "3. B".
     app.close_gracefully(&wid);
     drop(app);
-    std::fs::write(dirs.app_config().join("settings.json"), r#"{"theme":"light"}"#).unwrap();
+    std::fs::write(
+        dirs.app_config().join("settings.json"),
+        r#"{"theme":"light"}"#,
+    )
+    .unwrap();
     let (app, wid, _) = App::start_lib(&dirs, &[]);
     expand_all(&app, &wid);
     shot("library-order-restarted");
@@ -542,7 +672,11 @@ fn library_reorder_tracks() {
     });
     wait_log(&app, "reorder tracks album=", 1);
     settle();
-    assert_eq!(positions(&dirs, &abc), [Some(2), Some(1), Some(3)], "B=1, A=2, C=3");
+    assert_eq!(
+        positions(&dirs, &abc),
+        [Some(2), Some(1), Some(3)],
+        "B=1, A=2, C=3"
+    );
     // The minimum window size: toolbar, numbers and the marker line.
     size(&wid, 1024, 640);
     settle();
@@ -556,7 +690,10 @@ fn library_reorder_albums() {
     if !ready() {
         return;
     }
-    let pos = |id, band, album, title, p| Seed { position: Some(p), ..seed(id, band, album, title) };
+    let pos = |id, band, album, title, p| Seed {
+        position: Some(p),
+        ..seed(id, band, album, title)
+    };
     let dirs = seed_dirs(
         "library_reorder_albums",
         &[
@@ -571,7 +708,10 @@ fn library_reorder_albums() {
         ],
     );
     let album_pos = |dirs: &Dirs| -> Vec<Option<u64>> {
-        ["t-a1", "t-b1", "t-g1"].iter().map(|id| dirs.positions(id).1).collect()
+        ["t-a1", "t-b1", "t-g1"]
+            .iter()
+            .map(|id| dirs.positions(id).1)
+            .collect()
     };
     let tracks = ["t-a1", "t-a2", "t-b1", "t-b2", "t-g1", "t-g2"];
     let (mut app, wid, _) = App::start_lib(&dirs, &[]);
@@ -585,10 +725,24 @@ fn library_reorder_albums() {
         shot("library-albums-drag");
     });
     wait_log(&app, "reorder albums band=", 1);
-    assert!(app.all_lines().iter().any(|l| l.contains("from=3 to=1 via=drag written=6 failed=0")), "{:?}", app.all_lines());
+    assert!(
+        app.all_lines()
+            .iter()
+            .any(|l| l.contains("from=3 to=1 via=drag written=6 failed=0")),
+        "{:?}",
+        app.all_lines()
+    );
     settle();
-    assert_eq!(album_pos(&dirs), [Some(2), Some(3), Some(1)], "G=1, A=2, B=3");
-    assert_eq!(positions(&dirs, &tracks), [Some(1), Some(2), Some(1), Some(2), Some(1), Some(2)], "track order kept");
+    assert_eq!(
+        album_pos(&dirs),
+        [Some(2), Some(3), Some(1)],
+        "G=1, A=2, B=3"
+    );
+    assert_eq!(
+        positions(&dirs, &tracks),
+        [Some(1), Some(2), Some(1), Some(2), Some(1), Some(2)],
+        "track order kept"
+    );
 
     // Alt+Down on Alpha (rows: 0 Band, 1 Gamma, 2-3, 4 Alpha): G, B, A.
     app.click(&wid, TREE_X, row_y(14));
@@ -597,8 +751,15 @@ fn library_reorder_albums() {
     app.key(&wid, "alt+Down");
     wait_log(&app, "reorder albums band=", 2);
     settle();
-    assert_eq!(album_pos(&dirs), [Some(3), Some(2), Some(1)], "G=1, B=2, A=3");
-    assert_eq!(positions(&dirs, &tracks), [Some(1), Some(2), Some(1), Some(2), Some(1), Some(2)]);
+    assert_eq!(
+        album_pos(&dirs),
+        [Some(3), Some(2), Some(1)],
+        "G=1, B=2, A=3"
+    );
+    assert_eq!(
+        positions(&dirs, &tracks),
+        [Some(1), Some(2), Some(1), Some(2), Some(1), Some(2)]
+    );
     shot("library-albums-moved");
     let fixed = files(&dirs, &tracks);
 
@@ -653,7 +814,11 @@ fn library_delete_from_tree() {
     assert_eq!(tracks_in(&l), 5, "{l}");
     settle();
     assert!(!dirs.track_dir("t-s").exists());
-    assert!(dirs.trash().iter().any(|n| n.ends_with("t-s")), "{:?}", dirs.trash());
+    assert!(
+        dirs.trash().iter().any(|n| n.ends_with("t-s")),
+        "{:?}",
+        dirs.trash()
+    );
 
     // The album "Order" (4 tracks): the toolbar button asks, Escape cancels.
     app.key(&wid, "Home Down");
@@ -675,9 +840,17 @@ fn library_delete_from_tree() {
     changed.push(b'\n');
     std::fs::write(dirs.track_json("t-b"), &changed).unwrap();
     app.key(&wid, "Tab Return");
-    wait_log(&app, "deleted album band=\"Band\" album=\"Order\" tracks=4 failed=1", 1);
+    wait_log(
+        &app,
+        "deleted album band=\"Band\" album=\"Order\" tracks=4 failed=1",
+        1,
+    );
     settle();
-    assert_eq!(app.count("calliope-ui: deleted id=t-"), 4, "t-s and three of the album");
+    assert_eq!(
+        app.count("calliope-ui: deleted id=t-"),
+        4,
+        "t-s and three of the album"
+    );
     assert!(dirs.track_dir("t-b").is_dir());
     assert_eq!(std::fs::read(dirs.track_json("t-b")).unwrap(), changed);
     for id in ["t-a", "t-c", "t-d"] {
@@ -710,7 +883,11 @@ fn library_rename_album_for_all() {
     if !ready() {
         return;
     }
-    let pos = |id, album, title, p, ap| Seed { position: Some(p), album_position: Some(ap), ..seed(id, "Metalica", album, title) };
+    let pos = |id, album, title, p, ap| Seed {
+        position: Some(p),
+        album_position: Some(ap),
+        ..seed(id, "Metalica", album, title)
+    };
     let m = "Masterof Puppets";
     let r = "Ride the Lightning";
     let dirs = seed_dirs(
@@ -756,7 +933,13 @@ fn library_rename_album_for_all() {
     settle();
     app.key(&wid, "Tab Return");
     wait_log(&app, "rename kind=album", 1);
-    assert!(app.all_lines().iter().any(|l| l.contains("tracks=8") && l.contains("failed=0")), "{:?}", app.all_lines());
+    assert!(
+        app.all_lines()
+            .iter()
+            .any(|l| l.contains("tracks=8") && l.contains("failed=0")),
+        "{:?}",
+        app.all_lines()
+    );
     settle();
     for (i, id) in master.iter().enumerate() {
         let v = dirs.json(id);
@@ -779,7 +962,13 @@ fn library_rename_album_for_all() {
     shot("library-rename-band-confirm");
     app.key(&wid, "Tab Return");
     wait_log(&app, "rename kind=band", 1);
-    assert!(app.all_lines().iter().any(|l| l.contains("rename kind=band") && l.contains("tracks=10")), "{:?}", app.all_lines());
+    assert!(
+        app.all_lines()
+            .iter()
+            .any(|l| l.contains("rename kind=band") && l.contains("tracks=10")),
+        "{:?}",
+        app.all_lines()
+    );
     settle();
     for id in &all {
         assert_eq!(dirs.json(id)["band"], "Metallica", "{id}");

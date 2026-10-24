@@ -55,7 +55,11 @@ pub struct SectionMeta {
 
 impl Default for SectionMeta {
     fn default() -> Self {
-        SectionMeta { name: String::new(), metronome: true, count_in: false }
+        SectionMeta {
+            name: String::new(),
+            metronome: true,
+            count_in: false,
+        }
     }
 }
 
@@ -108,7 +112,10 @@ pub enum Boundary {
 
 impl Default for TempoMap {
     fn default() -> Self {
-        TempoMap { beats_per_bar: DEFAULT_BEATS_PER_BAR, segments: Vec::new() }
+        TempoMap {
+            beats_per_bar: DEFAULT_BEATS_PER_BAR,
+            segments: Vec::new(),
+        }
     }
 }
 
@@ -119,7 +126,9 @@ pub(crate) fn validate_bpm(bpm: f64) -> Result<f64, String> {
     }
     let one_decimal = bpm.is_finite() && ((bpm * 10.0).round() - bpm * 10.0).abs() < 1e-6;
     if !one_decimal || !(MIN_BPM..=MAX_BPM).contains(&bpm) {
-        return Err(format!("BPM must be 0 or between {MIN_BPM} and {MAX_BPM} with one decimal"));
+        return Err(format!(
+            "BPM must be 0 or between {MIN_BPM} and {MAX_BPM} with one decimal"
+        ));
     }
     Ok((bpm * 10.0).round() / 10.0)
 }
@@ -179,12 +188,18 @@ impl TempoMap {
         if self.segments.is_empty() {
             return None;
         }
-        Some(self.segments.iter().rposition(|s| s.start_ms <= ms).unwrap_or(0))
+        Some(
+            self.segments
+                .iter()
+                .rposition(|s| s.start_ms <= ms)
+                .unwrap_or(0),
+        )
     }
 
     /// Whether the section under `ms` has Count In (the Play pre-roll); false on an empty map.
     pub fn count_in_at(&self, ms: f64) -> bool {
-        self.segment_at(ms).is_some_and(|i| self.segments[i].meta.count_in)
+        self.segment_at(ms)
+            .is_some_and(|i| self.segments[i].meta.count_in)
     }
 
     /// The smallest segment tick base greater than `tick`.
@@ -196,7 +211,9 @@ impl TempoMap {
     /// Click of `old`'s first section, the first one also its Count In. Names are not carried.
     /// An empty `old` changes nothing.
     pub fn with_play_settings_of(&self, old: &TempoMap) -> TempoMap {
-        let Some(first) = old.segments.first() else { return self.clone() };
+        let Some(first) = old.segments.first() else {
+            return self.clone();
+        };
         let mut map = self.clone();
         for (i, s) in map.segments.iter_mut().enumerate() {
             s.meta.metronome = first.meta.metronome;
@@ -225,7 +242,12 @@ impl TempoMap {
             return None;
         }
         let s = &self.segments[i];
-        Some(Stretch { a, a_ms: s.start_ms + (a - bases[i]) as f64 * tick_ms(s.bpm), end, end_ms: next.start_ms })
+        Some(Stretch {
+            a,
+            a_ms: s.start_ms + (a - bases[i]) as f64 * tick_ms(s.bpm),
+            end,
+            end_ms: next.start_ms,
+        })
     }
 
     /// Time of a tick. An empty map gives 0.
@@ -244,7 +266,9 @@ impl TempoMap {
 
     /// Nearest tick (ties away from zero). An empty map gives 0.
     pub fn tick_near(&self, ms: f64) -> i64 {
-        let Some(i) = self.segment_at(ms) else { return 0 };
+        let Some(i) = self.segment_at(ms) else {
+            return 0;
+        };
         let s = &self.segments[i];
         let bases = self.bases();
         if let Some(st) = self.stretch(&bases, i).filter(|st| ms >= st.a_ms) {
@@ -262,7 +286,9 @@ impl TempoMap {
         }
         let tpb = TICKS_PER_BEAT;
         let bar = tpb * self.beats_per_bar.max(1) as i64;
-        let mut tick = (self.tick_near(a).saturating_sub(tpb)).div_euclid(tpb).saturating_mul(tpb);
+        let mut tick = (self.tick_near(a).saturating_sub(tpb))
+            .div_euclid(tpb)
+            .saturating_mul(tpb);
         loop {
             let ms = self.ms_at(tick);
             if ms >= b {
@@ -314,11 +340,27 @@ impl TempoMap {
                 self.segments[i].bpm = bpm;
             } else {
                 let start_ms = self.ms_at(tick);
-                let at = self.segments.iter().position(|s| s.start_ms > start_ms).unwrap_or(self.segments.len());
+                let at = self
+                    .segments
+                    .iter()
+                    .position(|s| s.start_ms > start_ms)
+                    .unwrap_or(self.segments.len());
                 // the new section keeps the metronome flag of the one it splits
                 let metronome = self.segments[at.saturating_sub(1)].meta.metronome;
-                let meta = SectionMeta { metronome, ..SectionMeta::default() };
-                self.segments.insert(at, Segment { start_ms, bpm, detected_ms: None, on_beat: false, meta });
+                let meta = SectionMeta {
+                    metronome,
+                    ..SectionMeta::default()
+                };
+                self.segments.insert(
+                    at,
+                    Segment {
+                        start_ms,
+                        bpm,
+                        detected_ms: None,
+                        on_beat: false,
+                        meta,
+                    },
+                );
             }
         }
         self.segments.dedup_by(|b, a| a.bpm == b.bpm);
@@ -340,7 +382,12 @@ impl TempoMap {
     /// Move change `index` by `steps` fine steps of the left tempo (plan 2.4). A detected change
     /// counts from `detected_ms` (widened limit), any other from the left section's start. Clamped
     /// to one beat from its neighbours and from `end_ms`. Returns the new map and the applied steps.
-    pub fn move_change(&self, index: usize, steps: i64, end_ms: f64) -> Result<(TempoMap, i64), String> {
+    pub fn move_change(
+        &self,
+        index: usize,
+        steps: i64,
+        end_ms: f64,
+    ) -> Result<(TempoMap, i64), String> {
         if index == 0 || index >= self.segments.len() {
             return Err("The first tempo section can't be moved".to_string());
         }
@@ -389,10 +436,16 @@ impl TempoMap {
     /// equal neighbours are not merged.
     pub fn set_section_bpm(&self, index: usize, bpm: f64) -> Result<TempoMap, String> {
         let bpm = section_bpm(bpm)?;
-        let seg = self.segments.get(index).ok_or_else(|| format!("There is no tempo section {}", index + 1))?;
+        let seg = self
+            .segments
+            .get(index)
+            .ok_or_else(|| format!("There is no tempo section {}", index + 1))?;
         if let Some(n) = self.segments.get(index + 1) {
             if n.start_ms - seg.start_ms < 60000.0 / bpm {
-                return Err(format!("Section {} is too short for {bpm} BPM (it needs at least one beat)", index + 1));
+                return Err(format!(
+                    "Section {} is too short for {bpm} BPM (it needs at least one beat)",
+                    index + 1
+                ));
             }
         }
         let mut map = self.clone();
@@ -402,7 +455,10 @@ impl TempoMap {
 
     /// Double or halve the BPM of section `index` (rounded to one decimal).
     pub fn scale_section(&self, index: usize, factor: Scale) -> Result<TempoMap, String> {
-        let seg = self.segments.get(index).ok_or_else(|| format!("There is no tempo section {}", index + 1))?;
+        let seg = self
+            .segments
+            .get(index)
+            .ok_or_else(|| format!("There is no tempo section {}", index + 1))?;
         let f = if factor == Scale::Double { 2.0 } else { 0.5 };
         let bpm = (seg.bpm * f * 10.0).round() / 10.0;
         if bpm > MAX_BPM {
@@ -416,7 +472,12 @@ impl TempoMap {
 
     /// Add a placed change near `position_ms` (on the split section's fine grid). Returns the new
     /// map and the index of the new section.
-    pub fn add_change(&self, position_ms: f64, bpm: f64, end_ms: f64) -> Result<(TempoMap, usize), String> {
+    pub fn add_change(
+        &self,
+        position_ms: f64,
+        bpm: f64,
+        end_ms: f64,
+    ) -> Result<(TempoMap, usize), String> {
         if self.segments.is_empty() {
             return Err("Enter a BPM first".to_string());
         }
@@ -439,8 +500,20 @@ impl TempoMap {
             return Err("A tempo change needs at least one beat on each side".to_string());
         }
         let mut map = self.clone();
-        let meta = SectionMeta { metronome: left.meta.metronome, ..SectionMeta::default() };
-        map.segments.insert(k + 1, Segment { start_ms: start, bpm, detected_ms: None, on_beat: true, meta });
+        let meta = SectionMeta {
+            metronome: left.meta.metronome,
+            ..SectionMeta::default()
+        };
+        map.segments.insert(
+            k + 1,
+            Segment {
+                start_ms: start,
+                bpm,
+                detected_ms: None,
+                on_beat: true,
+                meta,
+            },
+        );
         Ok((map, k + 1))
     }
 
@@ -455,7 +528,12 @@ impl TempoMap {
     }
 
     /// Set the metronome flag and the count-in of section `index`.
-    pub fn set_section_flags(&self, index: usize, metronome: bool, count_in: bool) -> Result<TempoMap, String> {
+    pub fn set_section_flags(
+        &self,
+        index: usize,
+        metronome: bool,
+        count_in: bool,
+    ) -> Result<TempoMap, String> {
         if index >= self.segments.len() {
             return Err("There is no such section".to_string());
         }
@@ -475,7 +553,9 @@ impl TempoMap {
             return Err("Section names can't contain control characters".to_string());
         }
         if name.chars().count() > MAX_SECTION_NAME {
-            return Err(format!("Section names can have at most {MAX_SECTION_NAME} characters"));
+            return Err(format!(
+                "Section names can have at most {MAX_SECTION_NAME} characters"
+            ));
         }
         let mut map = self.clone();
         map.segments[index].meta.name = name.to_string();
@@ -486,7 +566,10 @@ impl TempoMap {
     /// or its end (the next change, or `end_ms` for the last section). The player lands End on the
     /// last frame before that end, so the playhead stays in the section.
     pub fn section_jump_ms(&self, index: usize, edge: Edge, end_ms: f64) -> Result<f64, String> {
-        let seg = self.segments.get(index).ok_or_else(|| "There is no such section".to_string())?;
+        let seg = self
+            .segments
+            .get(index)
+            .ok_or_else(|| "There is no such section".to_string())?;
         let start = if index == 0 { 0.0 } else { seg.start_ms };
         if edge == Edge::Start {
             return Ok(start);
@@ -521,7 +604,9 @@ pub(crate) fn resnap(boundary: Boundary, old: &TempoMap, new: &TempoMap) -> Boun
     if new.is_empty() {
         Boundary::Ms { ms }
     } else {
-        Boundary::Tick { tick: new.tick_near(ms) }
+        Boundary::Tick {
+            tick: new.tick_near(ms),
+        }
     }
 }
 
@@ -532,7 +617,16 @@ mod tests {
     fn map(segs: &[(f64, f64)]) -> TempoMap {
         TempoMap {
             beats_per_bar: 4,
-            segments: segs.iter().map(|&(start_ms, bpm)| Segment { start_ms, bpm, detected_ms: None, on_beat: false, meta: SectionMeta::default() }).collect(),
+            segments: segs
+                .iter()
+                .map(|&(start_ms, bpm)| Segment {
+                    start_ms,
+                    bpm,
+                    detected_ms: None,
+                    on_beat: false,
+                    meta: SectionMeta::default(),
+                })
+                .collect(),
         }
     }
     fn with_tempo() -> TempoMap {
@@ -564,7 +658,10 @@ mod tests {
     #[test]
     fn beats() {
         let m = map(&[(500.0, 120.0)]);
-        assert_eq!(m.beats_in(250.0, 2000.0), vec![(500.0, true), (1000.0, false), (1500.0, false)]);
+        assert_eq!(
+            m.beats_in(250.0, 2000.0),
+            vec![(500.0, true), (1000.0, false), (1500.0, false)]
+        );
         assert!(TempoMap::default().beats_in(0.0, 5000.0).is_empty());
     }
 
@@ -572,7 +669,16 @@ mod tests {
     fn set_bpm_empty_and_snap() {
         let mut m = TempoMap::default();
         m.set_bpm_at(1234.0, 120.0).unwrap();
-        assert_eq!(m.segments, vec![Segment { start_ms: 1234.0, bpm: 120.0, detected_ms: None, on_beat: false, meta: SectionMeta::default() }]);
+        assert_eq!(
+            m.segments,
+            vec![Segment {
+                start_ms: 1234.0,
+                bpm: 120.0,
+                detected_ms: None,
+                on_beat: false,
+                meta: SectionMeta::default()
+            }]
+        );
 
         let mut m = map(&[(500.0, 120.0)]);
         m.set_bpm_at(10510.0, 90.0).unwrap();
@@ -584,7 +690,16 @@ mod tests {
         let mut m = with_tempo();
         m.set_bpm_at(5000.0, 100.0).unwrap();
         assert_eq!(m.segments.len(), 3);
-        assert_eq!(m.segments[1], Segment { start_ms: 5000.0, bpm: 100.0, detected_ms: None, on_beat: false, meta: SectionMeta::default() });
+        assert_eq!(
+            m.segments[1],
+            Segment {
+                start_ms: 5000.0,
+                bpm: 100.0,
+                detected_ms: None,
+                on_beat: false,
+                meta: SectionMeta::default()
+            }
+        );
         assert_eq!(m.segments[2].start_ms, 10500.0);
         assert_eq!(m.bpm_at(4999.0), 120.0);
         assert_eq!(m.bpm_at(9000.0), 100.0);
@@ -598,7 +713,16 @@ mod tests {
         assert_eq!(m.segments[0].bpm, 110.0);
         let mut m = with_tempo();
         m.set_bpm_at(12000.0, 0.0).unwrap();
-        assert_eq!(m.segments, vec![Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false, meta: SectionMeta::default() }]);
+        assert_eq!(
+            m.segments,
+            vec![Segment {
+                start_ms: 500.0,
+                bpm: 120.0,
+                detected_ms: None,
+                on_beat: false,
+                meta: SectionMeta::default()
+            }]
+        );
         m.set_bpm_at(12000.0, 0.0).unwrap();
         assert!(m.is_empty());
         m.set_bpm_at(12000.0, 0.0).unwrap();
@@ -653,20 +777,35 @@ mod tests {
             Boundary::Ms { ms } => assert_eq!(ms, 2500.0),
             b => panic!("{b:?}"),
         }
-        assert_eq!(resnap(Boundary::Ms { ms: 2500.0 }, &empty, &m), Boundary::Tick { tick: 64 });
+        assert_eq!(
+            resnap(Boundary::Ms { ms: 2500.0 }, &empty, &m),
+            Boundary::Tick { tick: 64 }
+        );
     }
 
     #[test]
     fn boundary_serde() {
-        assert_eq!(serde_json::to_string(&Boundary::Tick { tick: 64 }).unwrap(), r#"{"tick":64}"#);
-        assert_eq!(serde_json::from_str::<Boundary>(r#"{"ms":12.5}"#).unwrap(), Boundary::Ms { ms: 12.5 });
+        assert_eq!(
+            serde_json::to_string(&Boundary::Tick { tick: 64 }).unwrap(),
+            r#"{"tick":64}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<Boundary>(r#"{"ms":12.5}"#).unwrap(),
+            Boundary::Ms { ms: 12.5 }
+        );
     }
 
     /// 120 BPM first section (500 ms anchor), a detected change at `detected + steps` fine steps,
     /// then a typed 90 BPM change far away and another detected one.
     fn detected(detected_ms: f64, start_ms: f64) -> TempoMap {
         let mut m = map(&[(500.0, 120.0), (0.0, 90.0), (30000.0, 100.0)]);
-        m.segments[1] = Segment { start_ms, bpm: 90.0, detected_ms: Some(detected_ms), on_beat: false, meta: SectionMeta::default() };
+        m.segments[1] = Segment {
+            start_ms,
+            bpm: 90.0,
+            detected_ms: Some(detected_ms),
+            on_beat: false,
+            meta: SectionMeta::default(),
+        };
         m.segments[2].detected_ms = Some(30000.0);
         m
     }
@@ -723,12 +862,19 @@ mod tests {
         c.segments[2].detected_ms = Some(29900.0);
         let (m2, applied) = c.set_change_offset(1, 100).unwrap();
         let limit = 29900.0 - 60000.0 / 90.0;
-        assert!(m2.segments[1].start_ms <= limit && limit - m2.segments[1].start_ms < fine_ms(120.0));
-        assert_eq!(m2.segments[1].start_ms, 29000.0 + applied as f64 * fine_ms(120.0));
+        assert!(
+            m2.segments[1].start_ms <= limit && limit - m2.segments[1].start_ms < fine_ms(120.0)
+        );
+        assert_eq!(
+            m2.segments[1].start_ms,
+            29000.0 + applied as f64 * fine_ms(120.0)
+        );
         assert!(applied < 100);
         // lower limit: one beat of 120 BPM after the anchor
         let (m3, applied) = detected(1100.0, 1100.0).set_change_offset(1, -256).unwrap();
-        assert!(m3.segments[1].start_ms >= 1000.0 && m3.segments[1].start_ms - 1000.0 < fine_ms(120.0));
+        assert!(
+            m3.segments[1].start_ms >= 1000.0 && m3.segments[1].start_ms - 1000.0 < fine_ms(120.0)
+        );
         assert!(applied > -256);
     }
 
@@ -779,7 +925,9 @@ mod tests {
         assert_eq!(m.segments.len(), 2);
         assert_eq!(m.segments[1].start_ms, 30000.0);
         // serde: absent anchor is not written, old json reads
-        assert!(!serde_json::to_string(&with_tempo().segments[0]).unwrap().contains("detected"));
+        assert!(!serde_json::to_string(&with_tempo().segments[0])
+            .unwrap()
+            .contains("detected"));
         let s: Segment = serde_json::from_str(r#"{"start_ms":1.0,"bpm":100.0}"#).unwrap();
         assert_eq!(s.detected_ms, None);
     }
@@ -814,7 +962,10 @@ mod tests {
         assert_eq!(m.segments.len(), 1);
         // splitting the middle section keeps the later change
         let (n2, idx) = with_tempo().add_change(5000.0, 100.0, 60000.0).unwrap();
-        assert_eq!((idx, n2.segments.len(), n2.segments[2].start_ms), (1, 3, 10500.0));
+        assert_eq!(
+            (idx, n2.segments.len(), n2.segments[2].start_ms),
+            (1, 3, 10500.0)
+        );
         assert_monotonic_around(&n2, 1);
         assert_monotonic_around(&n2, 2);
     }
@@ -822,10 +973,21 @@ mod tests {
     #[test]
     fn add_change_refusals() {
         let m = map(&[(500.0, 120.0)]);
-        let err = |m: &TempoMap, pos: f64, bpm: f64, end: f64| m.add_change(pos, bpm, end).map(|_| ()).unwrap_err();
-        assert_eq!(err(&TempoMap::default(), 1000.0, 100.0, 1e6), "Enter a BPM first");
-        assert_eq!(err(&m, 100.0, 100.0, 1e6), "Add tempo changes after the start of the first tempo");
-        assert_eq!(err(&m, 5000.0, 100.0, 5000.0), "Add tempo changes inside the track");
+        let err = |m: &TempoMap, pos: f64, bpm: f64, end: f64| {
+            m.add_change(pos, bpm, end).map(|_| ()).unwrap_err()
+        };
+        assert_eq!(
+            err(&TempoMap::default(), 1000.0, 100.0, 1e6),
+            "Enter a BPM first"
+        );
+        assert_eq!(
+            err(&m, 100.0, 100.0, 1e6),
+            "Add tempo changes after the start of the first tempo"
+        );
+        assert_eq!(
+            err(&m, 5000.0, 100.0, 5000.0),
+            "Add tempo changes inside the track"
+        );
         assert_eq!(err(&m, 5000.0, 0.0, 1e6), "Enter a BPM between 20 and 300");
         assert!(m.add_change(5000.0, 301.0, 1e6).is_err());
         let side = "A tempo change needs at least one beat on each side";
@@ -857,7 +1019,13 @@ mod tests {
         assert!(!m.segments[1].on_beat);
         // the Editor refuses typed and placed ones
         let msg = "Only detected tempo changes can be moved; type the BPM again in the Player to change this one";
-        assert_eq!(with_tempo().set_change_offset(1, 1).map(|_| ()).unwrap_err(), msg);
+        assert_eq!(
+            with_tempo()
+                .set_change_offset(1, 1)
+                .map(|_| ())
+                .unwrap_err(),
+            msg
+        );
         assert_eq!(n.set_change_offset(1, 1).map(|_| ()).unwrap_err(), msg);
     }
 
@@ -865,7 +1033,13 @@ mod tests {
     fn move_change_widened_limit_and_clamps() {
         // left 60 BPM, change at +200 steps; doubling the left BPM makes it +400
         let mut d = map(&[(500.0, 60.0), (0.0, 90.0), (60000.0, 100.0)]);
-        d.segments[1] = Segment { start_ms: 10500.0 + 200.0 * fine_ms(60.0), bpm: 90.0, detected_ms: Some(10500.0), on_beat: false, meta: SectionMeta::default() };
+        d.segments[1] = Segment {
+            start_ms: 10500.0 + 200.0 * fine_ms(60.0),
+            bpm: 90.0,
+            detected_ms: Some(10500.0),
+            on_beat: false,
+            meta: SectionMeta::default(),
+        };
         let d = d.set_section_bpm(0, 120.0).unwrap();
         assert_eq!(d.move_change(1, 400, 1e6).unwrap().1, 400);
         assert_eq!(d.move_change(1, 399, 1e6).unwrap().1, 399);
@@ -890,17 +1064,42 @@ mod tests {
     fn section_bpm_keeps_everything_else() {
         let d = detected(10300.0, 10316.0);
         let n = d.set_section_bpm(1, 91.5).unwrap();
-        assert_eq!(n.segments[1], Segment { start_ms: 10316.0, bpm: 91.5, detected_ms: Some(10300.0), on_beat: false, meta: SectionMeta::default() });
-        assert_eq!((n.segments[0].clone(), n.segments[2].clone()), (d.segments[0].clone(), d.segments[2].clone()));
+        assert_eq!(
+            n.segments[1],
+            Segment {
+                start_ms: 10316.0,
+                bpm: 91.5,
+                detected_ms: Some(10300.0),
+                on_beat: false,
+                meta: SectionMeta::default()
+            }
+        );
+        assert_eq!(
+            (n.segments[0].clone(), n.segments[2].clone()),
+            (d.segments[0].clone(), d.segments[2].clone())
+        );
         // an equal neighbour is not merged
-        assert_eq!(with_tempo().set_section_bpm(1, 120.0).unwrap().segments.len(), 2);
+        assert_eq!(
+            with_tempo()
+                .set_section_bpm(1, 120.0)
+                .unwrap()
+                .segments
+                .len(),
+            2
+        );
         // too short: a one-beat section set slower
         let p = map(&[(500.0, 120.0), (5000.0, 120.0), (5500.0, 120.0)]);
         let err = p.set_section_bpm(1, 100.0).unwrap_err();
-        assert_eq!(err, "Section 2 is too short for 100 BPM (it needs at least one beat)");
+        assert_eq!(
+            err,
+            "Section 2 is too short for 100 BPM (it needs at least one beat)"
+        );
         assert!(p.set_section_bpm(2, 100.0).is_ok());
         // validation
-        assert_eq!(with_tempo().set_section_bpm(0, 0.0).unwrap_err(), "Enter a BPM between 20 and 300");
+        assert_eq!(
+            with_tempo().set_section_bpm(0, 0.0).unwrap_err(),
+            "Enter a BPM between 20 and 300"
+        );
         assert!(with_tempo().set_section_bpm(0, 100.25).is_err());
         assert!(with_tempo().set_section_bpm(0, 301.0).is_err());
         assert!(with_tempo().set_section_bpm(7, 100.0).is_err());
@@ -911,16 +1110,39 @@ mod tests {
         let m = map(&[(500.0, 93.0)]);
         let up = m.scale_section(0, Scale::Double).unwrap();
         assert_eq!(up.segments[0].bpm, 186.0);
-        assert_eq!(up.scale_section(0, Scale::Halve).unwrap().segments[0].bpm, 93.0);
-        assert_eq!(map(&[(0.0, 93.5)]).scale_section(0, Scale::Halve).unwrap().segments[0].bpm, 46.8);
-        assert_eq!(map(&[(0.0, 160.0)]).scale_section(0, Scale::Double).unwrap_err(), "320 BPM is over 300");
-        assert_eq!(map(&[(0.0, 39.8)]).scale_section(0, Scale::Halve).unwrap_err(), "19.9 BPM is under 20");
+        assert_eq!(
+            up.scale_section(0, Scale::Halve).unwrap().segments[0].bpm,
+            93.0
+        );
+        assert_eq!(
+            map(&[(0.0, 93.5)])
+                .scale_section(0, Scale::Halve)
+                .unwrap()
+                .segments[0]
+                .bpm,
+            46.8
+        );
+        assert_eq!(
+            map(&[(0.0, 160.0)])
+                .scale_section(0, Scale::Double)
+                .unwrap_err(),
+            "320 BPM is over 300"
+        );
+        assert_eq!(
+            map(&[(0.0, 39.8)])
+                .scale_section(0, Scale::Halve)
+                .unwrap_err(),
+            "19.9 BPM is under 20"
+        );
     }
 
     #[test]
     fn remove_change_joins_sections() {
         let m = detected(10300.0, 10300.0);
-        assert_eq!(m.remove_change(0).unwrap_err(), "The first section has no tempo change to remove");
+        assert_eq!(
+            m.remove_change(0).unwrap_err(),
+            "The first section has no tempo change to remove"
+        );
         assert!(m.remove_change(3).is_err());
         let n = m.remove_change(1).unwrap();
         assert_eq!(n.segments.len(), 2);
@@ -932,12 +1154,25 @@ mod tests {
         assert_eq!(n.ms_at(b[1]), 30000.0);
         let last = m.remove_change(2).unwrap();
         assert_eq!(last.segments.len(), 2);
-        assert_eq!(map(&[(500.0, 120.0), (10500.0, 90.0)]).remove_change(1).unwrap().segments.len(), 1);
+        assert_eq!(
+            map(&[(500.0, 120.0), (10500.0, 90.0)])
+                .remove_change(1)
+                .unwrap()
+                .segments
+                .len(),
+            1
+        );
     }
 
     #[test]
     fn on_beat_serde() {
-        let mut s = Segment { start_ms: 1.0, bpm: 100.0, detected_ms: None, on_beat: false, meta: SectionMeta::default() };
+        let mut s = Segment {
+            start_ms: 1.0,
+            bpm: 100.0,
+            detected_ms: None,
+            on_beat: false,
+            meta: SectionMeta::default(),
+        };
         assert!(!serde_json::to_string(&s).unwrap().contains("on_beat"));
         s.on_beat = true;
         let json = serde_json::to_string(&s).unwrap();
@@ -947,18 +1182,42 @@ mod tests {
 
     #[test]
     fn meta_serde() {
-        let mut s = Segment { start_ms: 1.0, bpm: 100.0, detected_ms: None, on_beat: false, meta: SectionMeta::default() };
-        assert_eq!(serde_json::to_string(&s).unwrap(), r#"{"start_ms":1.0,"bpm":100.0}"#);
-        assert_eq!(serde_json::from_str::<Segment>(r#"{"start_ms":1.0,"bpm":100.0}"#).unwrap(), s);
-        s.meta = SectionMeta { name: "Verse".to_string(), metronome: false, count_in: true };
+        let mut s = Segment {
+            start_ms: 1.0,
+            bpm: 100.0,
+            detected_ms: None,
+            on_beat: false,
+            meta: SectionMeta::default(),
+        };
+        assert_eq!(
+            serde_json::to_string(&s).unwrap(),
+            r#"{"start_ms":1.0,"bpm":100.0}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<Segment>(r#"{"start_ms":1.0,"bpm":100.0}"#).unwrap(),
+            s
+        );
+        s.meta = SectionMeta {
+            name: "Verse".to_string(),
+            metronome: false,
+            count_in: true,
+        };
         let json = serde_json::to_string(&s).unwrap();
-        assert!(json.contains(r#""name":"Verse""#) && json.contains(r#""metronome":false"#) && json.contains(r#""count_in":true"#));
+        assert!(
+            json.contains(r#""name":"Verse""#)
+                && json.contains(r#""metronome":false"#)
+                && json.contains(r#""count_in":true"#)
+        );
         assert_eq!(serde_json::from_str::<Segment>(&json).unwrap(), s);
     }
 
     fn flagged(index: usize, metronome: bool, count_in: bool) -> TempoMap {
         let mut m = map(&[(500.0, 120.0), (8500.0, 93.0), (20500.0, 100.0)]);
-        m.segments[index].meta = SectionMeta { name: format!("S{index}"), metronome, count_in };
+        m.segments[index].meta = SectionMeta {
+            name: format!("S{index}"),
+            metronome,
+            count_in,
+        };
         m
     }
 
@@ -970,7 +1229,14 @@ mod tests {
             let (n, k) = m.add_change(14500.0, 110.0, 40000.0).unwrap();
             assert_eq!(k, 2);
             assert_eq!(n.segments[1].meta, m.segments[1].meta);
-            assert_eq!(n.segments[2].meta, SectionMeta { name: String::new(), metronome: on, count_in: false });
+            assert_eq!(
+                n.segments[2].meta,
+                SectionMeta {
+                    name: String::new(),
+                    metronome: on,
+                    count_in: false
+                }
+            );
         }
         // Remove keeps the left section's meta and drops the removed one's
         let m = flagged(1, false, true);
@@ -981,9 +1247,18 @@ mod tests {
         assert_eq!(n.segments[1].meta, SectionMeta::default());
         // move, section BPM and scale keep the meta
         let m = flagged(1, false, true);
-        assert_eq!(m.move_change(1, 3, 40000.0).unwrap().0.segments[1].meta, m.segments[1].meta);
-        assert_eq!(m.set_section_bpm(1, 95.0).unwrap().segments[1].meta, m.segments[1].meta);
-        assert_eq!(m.scale_section(1, Scale::Halve).unwrap().segments[1].meta, m.segments[1].meta);
+        assert_eq!(
+            m.move_change(1, 3, 40000.0).unwrap().0.segments[1].meta,
+            m.segments[1].meta
+        );
+        assert_eq!(
+            m.set_section_bpm(1, 95.0).unwrap().segments[1].meta,
+            m.segments[1].meta
+        );
+        assert_eq!(
+            m.scale_section(1, Scale::Halve).unwrap().segments[1].meta,
+            m.segments[1].meta
+        );
     }
 
     #[test]
@@ -992,7 +1267,14 @@ mod tests {
         let mut m = flagged(1, false, true);
         m.set_bpm_at(14500.0, 110.0).unwrap();
         assert_eq!(m.segments.len(), 4);
-        assert_eq!(m.segments[2].meta, SectionMeta { name: String::new(), metronome: false, count_in: false });
+        assert_eq!(
+            m.segments[2].meta,
+            SectionMeta {
+                name: String::new(),
+                metronome: false,
+                count_in: false
+            }
+        );
         assert_eq!(m.segments[1].meta.name, "S1");
         // retyping an existing change's BPM keeps its meta
         let mut m = flagged(1, false, true);
@@ -1007,7 +1289,14 @@ mod tests {
         let mut m = flagged(1, false, true);
         m.set_bpm_at(500.0, 0.0).unwrap();
         assert_eq!(m.segments.len(), 2);
-        assert_eq!(m.segments[0].meta, SectionMeta { name: "S1".to_string(), metronome: false, count_in: true });
+        assert_eq!(
+            m.segments[0].meta,
+            SectionMeta {
+                name: "S1".to_string(),
+                metronome: false,
+                count_in: true
+            }
+        );
         let mut m = flagged(1, false, false);
         m.segments[1].meta.count_in = true;
         m.set_bpm_at(500.0, 0.0).unwrap();
@@ -1023,18 +1312,38 @@ mod tests {
         assert!(m.set_section_flags(0, false, false).is_ok());
         let n = m.set_section_flags(0, true, true).unwrap();
         assert!(n.segments[0].meta.count_in && n.segments[0].meta.metronome);
-        assert_eq!(m.set_section_flags(3, true, false).unwrap_err(), "There is no such section");
+        assert_eq!(
+            m.set_section_flags(3, true, false).unwrap_err(),
+            "There is no such section"
+        );
 
-        assert_eq!(m.set_section_name(1, "  Verse ").unwrap().segments[1].meta.name, "Verse");
-        assert_eq!(m.set_section_name(1, "  ").unwrap().segments[1].meta.name, "");
+        assert_eq!(
+            m.set_section_name(1, "  Verse ").unwrap().segments[1]
+                .meta
+                .name,
+            "Verse"
+        );
+        assert_eq!(
+            m.set_section_name(1, "  ").unwrap().segments[1].meta.name,
+            ""
+        );
         let forty = "é".repeat(40);
-        assert_eq!(m.set_section_name(0, &forty).unwrap().segments[0].meta.name, forty);
+        assert_eq!(
+            m.set_section_name(0, &forty).unwrap().segments[0].meta.name,
+            forty
+        );
         assert_eq!(
             m.set_section_name(0, &"x".repeat(41)).unwrap_err(),
             "Section names can have at most 40 characters"
         );
-        assert_eq!(m.set_section_name(0, "a\tb").unwrap_err(), "Section names can't contain control characters");
-        assert_eq!(m.set_section_name(3, "x").unwrap_err(), "There is no such section");
+        assert_eq!(
+            m.set_section_name(0, "a\tb").unwrap_err(),
+            "Section names can't contain control characters"
+        );
+        assert_eq!(
+            m.set_section_name(3, "x").unwrap_err(),
+            "There is no such section"
+        );
     }
 
     #[test]
@@ -1071,12 +1380,25 @@ mod tests {
     #[test]
     fn with_play_settings_of_carries_section_one() {
         let mut old = map(&[(500.0, 120.0), (8500.0, 93.0)]);
-        old.segments[0].meta = SectionMeta { name: "Intro".to_string(), metronome: false, count_in: true };
+        old.segments[0].meta = SectionMeta {
+            name: "Intro".to_string(),
+            metronome: false,
+            count_in: true,
+        };
         old.segments[1].meta.count_in = true;
         let new = map(&[(400.0, 100.0), (5000.0, 90.0), (9000.0, 95.0)]);
         let n = new.with_play_settings_of(&old);
-        assert!(n.segments.iter().all(|s| !s.meta.metronome && s.meta.name.is_empty()));
-        assert_eq!(n.segments.iter().map(|s| s.meta.count_in).collect::<Vec<_>>(), [true, false, false]);
+        assert!(n
+            .segments
+            .iter()
+            .all(|s| !s.meta.metronome && s.meta.name.is_empty()));
+        assert_eq!(
+            n.segments
+                .iter()
+                .map(|s| s.meta.count_in)
+                .collect::<Vec<_>>(),
+            [true, false, false]
+        );
         assert_eq!(n.segments[1].bpm, 90.0);
         assert_eq!(new.with_play_settings_of(&TempoMap::default()), new);
     }
@@ -1088,7 +1410,11 @@ mod tests {
         assert_eq!(ms(0, Edge::Start), 0.0);
         assert_eq!(ms(1, Edge::Start), 8500.0);
         assert_eq!(ms(0, Edge::End), 8500.0, "the next change");
-        assert_eq!(ms(1, Edge::End), 20000.0, "the last section ends with the track");
+        assert_eq!(
+            ms(1, Edge::End),
+            20000.0,
+            "the last section ends with the track"
+        );
         assert!(m.section_jump_ms(2, Edge::Start, 20000.0).is_err());
         assert!(m.section_jump_ms(1, Edge::End, f64::INFINITY).is_err());
     }

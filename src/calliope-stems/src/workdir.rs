@@ -21,7 +21,10 @@ pub fn create_job_dir(work_dir: &Path, id: &str) -> io::Result<PathBuf> {
     debug_assert!(is_valid_job_id(id));
     let dir = jobs_root(work_dir).join(id);
     std::fs::create_dir(&dir)?;
-    std::fs::write(dir.join(MARKER), b"calliope-stems job folder; deleted by the server\n")?;
+    std::fs::write(
+        dir.join(MARKER),
+        b"calliope-stems job folder; deleted by the server\n",
+    )?;
     Ok(dir)
 }
 
@@ -50,7 +53,9 @@ pub fn remove_job_dir(work_dir: &Path, id: &str) -> io::Result<()> {
 
 /// Start-up cleanup: deletes every `jobs/<id>/` folder that has the marker. Returns how many.
 pub fn clean_start(work_dir: &Path) -> usize {
-    let Ok(entries) = std::fs::read_dir(jobs_root(work_dir)) else { return 0 };
+    let Ok(entries) = std::fs::read_dir(jobs_root(work_dir)) else {
+        return 0;
+    };
     let mut removed = 0;
     for e in entries.flatten() {
         let path = e.path();
@@ -91,7 +96,10 @@ mod tests {
         assert!(!a.exists() && !b.exists());
         assert!(foreign.join("precious.txt").exists());
         assert!(jobs_root(w).join("loose.txt").exists());
-        assert!(outside.join("data").exists(), "a symlink must not be followed");
+        assert!(
+            outside.join("data").exists(),
+            "a symlink must not be followed"
+        );
         assert!(w.join("notes.txt").exists());
     }
 

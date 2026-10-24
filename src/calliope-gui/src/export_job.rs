@@ -141,7 +141,9 @@ struct Inner {
 
 impl Inner {
     fn running(&self) -> bool {
-        self.job.as_ref().is_some_and(|j| matches!(j.snap.phase, ExportPhase::Writing | ExportPhase::Finishing))
+        self.job
+            .as_ref()
+            .is_some_and(|j| matches!(j.snap.phase, ExportPhase::Writing | ExportPhase::Finishing))
     }
 }
 
@@ -153,7 +155,10 @@ pub struct ExportState {
 }
 
 fn refuse<T>(kind: ExportKind, reason: &str, message: impl Into<String>) -> Result<T, String> {
-    eprintln!("calliope: export refused target={} reason={reason}", kind.as_str());
+    eprintln!(
+        "calliope: export refused target={} reason={reason}",
+        kind.as_str()
+    );
     Err(message.into())
 }
 
@@ -192,19 +197,34 @@ fn capture(program: &Path, args: &[std::ffi::OsString]) -> Result<String, String
     let status = running.wait().map_err(|e| e.to_string())?;
     if !status.success() {
         let e = err.lock().map(|s| s.clone()).unwrap_or_default();
-        return Err(if e.is_empty() { format!("{} failed", program.display()) } else { e });
+        return Err(if e.is_empty() {
+            format!("{} failed", program.display())
+        } else {
+            e
+        });
     }
     let v = out.lock().map(|v| v.join("\n")).unwrap_or_default();
     Ok(v)
 }
 
 fn probe(ffprobe: &Path, src: &Path) -> Result<StreamInfo, String> {
-    let name = src.file_name().map_or_else(|| src.display().to_string(), |n| n.to_string_lossy().into_owned());
+    let name = src.file_name().map_or_else(
+        || src.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
     let mut file = std::ffi::OsString::from("file:");
     file.push(src.as_os_str());
     let mut args: Vec<std::ffi::OsString> = [
-        "-v", "error", "-protocol_whitelist", "file,pipe", "-select_streams", "a:0", "-show_entries",
-        "stream=sample_rate,channels,duration:format=duration", "-of", "json",
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file,pipe",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=sample_rate,channels,duration:format=duration",
+        "-of",
+        "json",
     ]
     .iter()
     .map(Into::into)
@@ -215,18 +235,38 @@ fn probe(ffprobe: &Path, src: &Path) -> Result<StreamInfo, String> {
 }
 
 /// The destination checks of plan 2.5, in order. `Err((reason, message))`.
-fn check_destination(kind: ExportKind, base: &Path, repo_root: &Path, target: &Path) -> Result<(), (&'static str, String)> {
+fn check_destination(
+    kind: ExportKind,
+    base: &Path,
+    repo_root: &Path,
+    target: &Path,
+) -> Result<(), (&'static str, String)> {
     if !base.is_dir() {
-        return Err(("not-folder", format!("{} is not an existing folder", base.display())));
+        return Err((
+            "not-folder",
+            format!("{} is not an existing folder", base.display()),
+        ));
     }
     if kind == ExportKind::Rc5 && !base.join("ROLAND").is_dir() {
-        return Err(("no-roland", format!("No ROLAND folder in {}: is the RC-5 mounted?", base.display())));
+        return Err((
+            "no-roland",
+            format!(
+                "No ROLAND folder in {}: is the RC-5 mounted?",
+                base.display()
+            ),
+        ));
     }
     if inside_root(repo_root, base) {
-        return Err(("inside-repo", "Cannot export into the repository folder".into()));
+        return Err((
+            "inside-repo",
+            "Cannot export into the repository folder".into(),
+        ));
     }
     if kind == ExportKind::Rc5 {
-        let dirs = [base.join("ROLAND").join("WAVE"), target.parent().map(Path::to_path_buf).unwrap_or_default()];
+        let dirs = [
+            base.join("ROLAND").join("WAVE"),
+            target.parent().map(Path::to_path_buf).unwrap_or_default(),
+        ];
         for d in dirs {
             if d.exists() && !d.is_dir() {
                 return Err(("not-folder", format!("{} is not a folder", d.display())));
@@ -242,14 +282,29 @@ fn check_destination(kind: ExportKind, base: &Path, repo_root: &Path, target: &P
 fn target_of(kind: ExportKind, base: &Path, memory: Option<u8>, track: &TrackRecord) -> PathBuf {
     match kind {
         ExportKind::Rc5 => export_rules::rc5_target(base, memory.unwrap_or(1)),
-        ExportKind::Mp3 => base.join(export_rules::file_name(&track.band, &track.title, "mp3", &track.id)),
-        ExportKind::Ogg => base.join(export_rules::file_name(&track.band, &track.title, "ogg", &track.id)),
+        ExportKind::Mp3 => base.join(export_rules::file_name(
+            &track.band,
+            &track.title,
+            "mp3",
+            &track.id,
+        )),
+        ExportKind::Ogg => base.join(export_rules::file_name(
+            &track.band,
+            &track.title,
+            "ogg",
+            &track.id,
+        )),
     }
 }
 
 impl ExportState {
     pub fn new(tools: Box<dyn Fn() -> Tools + Send + Sync>) -> Self {
-        Self { tools, pace: None, inner: Arc::new(Mutex::new(Inner::default())), part_counter: AtomicU64::new(0) }
+        Self {
+            tools,
+            pace: None,
+            inner: Arc::new(Mutex::new(Inner::default())),
+            part_counter: AtomicU64::new(0),
+        }
     }
 
     /// Tests only: the export takes `factor` times the audio's duration.
@@ -270,7 +325,8 @@ impl ExportState {
             ExportKind::Mp3 => ("libmp3lame", "MP3 encoder (libmp3lame)"),
             ExportKind::Ogg => ("libvorbis", "Ogg Vorbis encoder (libvorbis)"),
         };
-        let listing = capture(&ffmpeg, &["-hide_banner".into(), "-encoders".into()]).unwrap_or_default();
+        let listing =
+            capture(&ffmpeg, &["-hide_banner".into(), "-encoders".into()]).unwrap_or_default();
         if !has_encoder(&listing, name) {
             return refuse(
                 kind,
@@ -307,7 +363,11 @@ impl ExportState {
         }
         g.next_token += 1;
         let token = format!("x{}", g.next_token);
-        let plan = ExportPlan { token: token.clone(), path: target.display().to_string(), exists: target.exists() };
+        let plan = ExportPlan {
+            token: token.clone(),
+            path: target.display().to_string(),
+            exists: target.exists(),
+        };
         g.planned = Some(Planned {
             token,
             id: p.track.id.clone(),
@@ -344,7 +404,10 @@ impl ExportState {
     /// pending plan `token`, if it is still valid.
     pub fn planned(&self, token: &str) -> Option<(String, PathBuf, ExportKind, Option<u8>)> {
         let g = lock(&self.inner);
-        g.planned.as_ref().filter(|p| p.token == token).map(|p| (p.id.clone(), p.track_dir.clone(), p.kind, p.memory))
+        g.planned
+            .as_ref()
+            .filter(|p| p.token == token)
+            .map(|p| (p.id.clone(), p.track_dir.clone(), p.kind, p.memory))
     }
 
     /// Starts the planned export. `overwrite` must be true when the target exists. `tempo` is the
@@ -385,7 +448,11 @@ impl ExportState {
         }
         if pl.target.exists() && !overwrite {
             drop(g);
-            return refuse(kind, "exists", format!("{} already exists", pl.target.display()));
+            return refuse(
+                kind,
+                "exists",
+                format!("{} already exists", pl.target.display()),
+            );
         }
 
         // Folders and the part file; remembering what we created.
@@ -398,7 +465,11 @@ impl ExportState {
         };
         if kind == ExportKind::Rc5 {
             let wave = pl.base.join("ROLAND").join("WAVE");
-            let mem = pl.target.parent().map(Path::to_path_buf).unwrap_or_else(|| wave.clone());
+            let mem = pl
+                .target
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| wave.clone());
             for d in [wave, mem] {
                 if !d.exists() {
                     if let Err(e) = std::fs::create_dir(&d) {
@@ -409,8 +480,16 @@ impl ExportState {
                 }
             }
         }
-        let dir = pl.target.parent().map(Path::to_path_buf).unwrap_or_default();
-        let name = pl.target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let dir = pl
+            .target
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let name = pl
+            .target
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let n = self.part_counter.fetch_add(1, Ordering::SeqCst);
         let part = dir.join(format!(".{name}.calliope-{}-{n}.part", std::process::id()));
         let file = match OpenOptions::new().write(true).create_new(true).open(&part) {
@@ -458,7 +537,12 @@ impl ExportState {
             on_done,
         };
         let thread = std::thread::spawn(move || work.run());
-        g.job = Some(Job { snap: snap.clone(), cancel, sink: Some(sink), thread: Some(thread) });
+        g.job = Some(Job {
+            snap: snap.clone(),
+            cancel,
+            sink: Some(sink),
+            thread: Some(thread),
+        });
         Ok(snap)
     }
 
@@ -552,7 +636,10 @@ impl Work {
         match result {
             Ok(stats) => {
                 let path = self.pl.target.display().to_string();
-                eprintln!("calliope: export done job={} path={path} frames={} clipped={}", self.job, stats.frames, stats.clipped);
+                eprintln!(
+                    "calliope: export done job={} path={path} frames={} clipped={}",
+                    self.job, stats.frames, stats.clipped
+                );
                 // Before `done` is published, so that whoever reacts to it (the pane reloads the
                 // memory suggestion) sees what `on_done` saved.
                 on_done();
@@ -562,7 +649,10 @@ impl Work {
                         s.progress = 1.0;
                         s.clipped = stats.clipped;
                     },
-                    ExportEvent::Done { path, clipped: stats.clipped },
+                    ExportEvent::Done {
+                        path,
+                        clipped: stats.clipped,
+                    },
                 );
             }
             Err(msg) => {
@@ -600,15 +690,22 @@ impl Work {
         let part = self.part.display().to_string();
         let output = match pl.kind {
             ExportKind::Rc5 => {
-                let f = self.file.try_clone().map_err(|e| format!("Cannot write {part}: {e}"))?;
-                Output::Wav(WavWriter::from_file(f, pl.rate).map_err(|e| format!("Cannot write {part}: {e}"))?)
+                let f = self
+                    .file
+                    .try_clone()
+                    .map_err(|e| format!("Cannot write {part}: {e}"))?;
+                Output::Wav(
+                    WavWriter::from_file(f, pl.rate)
+                        .map_err(|e| format!("Cannot write {part}: {e}"))?,
+                )
             }
             kind => Output::Encode {
                 ffmpeg: self.ffmpeg.clone(),
                 args: export_audio::encoder_args(kind, pl.rate, pl.channels, &pl.tags, &self.part),
             },
         };
-        let expected = self.count_in.lead_frames + (pl.duration_s * f64::from(pl.rate)).round() as u64;
+        let expected =
+            self.count_in.lead_frames + (pl.duration_s * f64::from(pl.rate)).round() as u64;
         let mut throttle = Throttle::new(PROGRESS_INTERVAL);
         let stats = export_audio::run(&pipeline, output, &self.cancel, &mut |frames| {
             let p = (frames as f64 / expected.max(1) as f64).min(0.99) as f32;

@@ -9,11 +9,22 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 const BIN: &str = env!("CARGO_BIN_EXE_calliope-gui");
-const VIEWS: [&str; 7] = ["library", "import", "editor", "playlists", "player", "export", "settings"];
+const VIEWS: [&str; 7] = [
+    "library",
+    "import",
+    "editor",
+    "playlists",
+    "player",
+    "export",
+    "settings",
+];
 
 /// The repository root (workspace): `target/`, `docs/`, `specs/` and the workspace Cargo.toml.
 fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
 }
 
 fn have_display() -> bool {
@@ -86,7 +97,11 @@ impl App {
                 l2.lock().unwrap().push(line);
             }
         });
-        App { child, lines, seen: 0 }
+        App {
+            child,
+            lines,
+            seen: 0,
+        }
     }
 
     fn all_lines(&self) -> Vec<String> {
@@ -107,7 +122,11 @@ impl App {
                     }
                 }
             }
-            assert!(Instant::now() < end, "timeout waiting for a stderr line; got: {:?}", self.all_lines());
+            assert!(
+                Instant::now() < end,
+                "timeout waiting for a stderr line; got: {:?}",
+                self.all_lines()
+            );
             sleep(Duration::from_millis(50));
         }
     }
@@ -122,7 +141,10 @@ impl App {
     }
 
     fn wid(&self) -> String {
-        let o = out("xdotool", &["search", "--sync", "--onlyvisible", "--name", "^calliope$"]);
+        let o = out(
+            "xdotool",
+            &["search", "--sync", "--onlyvisible", "--name", "^calliope$"],
+        );
         o.lines().next().expect("window id").to_string()
     }
 
@@ -136,7 +158,9 @@ impl App {
     }
 
     fn close_gracefully(&mut self, wid: &str) {
-        let _ = Command::new("i3-msg").arg(format!("[id={wid}] kill")).output();
+        let _ = Command::new("i3-msg")
+            .arg(format!("[id={wid}] kill"))
+            .output();
         let end = Instant::now() + Duration::from_secs(5);
         while Instant::now() < end {
             if self.child.try_wait().unwrap().is_some() {
@@ -148,7 +172,11 @@ impl App {
     }
 
     fn no_csp_violation(&self) {
-        let bad: Vec<_> = self.all_lines().into_iter().filter(|l| l.contains("csp-violation")).collect();
+        let bad: Vec<_> = self
+            .all_lines()
+            .into_iter()
+            .filter(|l| l.contains("csp-violation"))
+            .collect();
         assert!(bad.is_empty(), "CSP violations: {bad:?}");
     }
 }
@@ -178,7 +206,10 @@ fn shot(name: &str) {
 }
 
 fn float(wid: &str) {
-    let o = Command::new("i3-msg").arg(format!("[id={wid}] floating enable")).output().unwrap();
+    let o = Command::new("i3-msg")
+        .arg(format!("[id={wid}] floating enable"))
+        .output()
+        .unwrap();
     assert!(o.status.success(), "i3-msg floating enable");
     sleep(Duration::from_millis(300));
 }
@@ -190,7 +221,9 @@ fn geometry(wid: &str) -> ((i32, i32), (i32, i32)) {
     for line in g.lines() {
         let line = line.trim();
         let parse = |s: &str| {
-            let mut it = s.split([',', 'x']).map(|n| n.trim().parse::<i32>().unwrap_or(0));
+            let mut it = s
+                .split([',', 'x'])
+                .map(|n| n.trim().parse::<i32>().unwrap_or(0));
             (it.next().unwrap_or(0), it.next().unwrap_or(0))
         };
         if let Some(r) = line.strip_prefix("Position:") {
@@ -204,7 +237,10 @@ fn geometry(wid: &str) -> ((i32, i32), (i32, i32)) {
 
 fn field(line: &str, name: &str) -> String {
     let pre = format!("{name}=");
-    line.split_whitespace().find_map(|w| w.strip_prefix(&pre)).unwrap_or("").to_string()
+    line.split_whitespace()
+        .find_map(|w| w.strip_prefix(&pre))
+        .unwrap_or("")
+        .to_string()
 }
 
 fn settle() {
@@ -223,21 +259,38 @@ fn starts_dark_with_version() {
     assert_eq!(field(&ready, "theme"), "dark", "{ready}");
     let version = out(BIN, &["--version"]);
     assert!(!field(&ready, "version").is_empty());
-    assert!(version.contains(&field(&ready, "version")), "ready={ready} version={version}");
-    assert_eq!(field(&ready, "version"), version.split_whitespace().last().unwrap());
+    assert!(
+        version.contains(&field(&ready, "version")),
+        "ready={ready} version={version}"
+    );
+    assert_eq!(
+        field(&ready, "version"),
+        version.split_whitespace().last().unwrap()
+    );
     app.wid();
     // First start: the default root is created and the Library shows the empty state.
     let end = Instant::now() + Duration::from_secs(15);
     let lib = loop {
-        if let Some(l) = app.all_lines().into_iter().find(|l| l.contains("library root=")) {
+        if let Some(l) = app
+            .all_lines()
+            .into_iter()
+            .find(|l| l.contains("library root="))
+        {
             break l;
         }
-        assert!(Instant::now() < end, "no library line; got: {:?}", app.all_lines());
+        assert!(
+            Instant::now() < end,
+            "no library line; got: {:?}",
+            app.all_lines()
+        );
         sleep(Duration::from_millis(50));
     };
     assert!(lib.contains("tracks=0"), "{lib}");
     let repo = dirs.0.join("data/calliope");
-    assert!(repo.join("calliope-repository.json").is_file(), "marker missing in {repo:?}");
+    assert!(
+        repo.join("calliope-repository.json").is_file(),
+        "marker missing in {repo:?}"
+    );
     assert!(repo.join("tracks").is_dir());
     settle();
     shot("start-dark");
@@ -283,9 +336,13 @@ fn theme_switch_persists() {
         app.wait_view("settings");
         app.key(&wid, "Tab");
         app.key(&wid, "Right");
-        app.wait_line(|l| l.trim_end().ends_with("theme=light"), Duration::from_secs(10));
+        app.wait_line(
+            |l| l.trim_end().ends_with("theme=light"),
+            Duration::from_secs(10),
+        );
         settle();
-        let s = std::fs::read_to_string(dirs.app_config().join("settings.json")).expect("settings.json");
+        let s = std::fs::read_to_string(dirs.app_config().join("settings.json"))
+            .expect("settings.json");
         assert!(s.contains("\"light\""), "{s}");
         shot("settings-light");
         app.no_csp_violation();
@@ -327,7 +384,9 @@ fn window_state_and_min_size() {
         let wid = app.wid();
         float(&wid);
         let size = |w: &str, a: &str, b: &str| {
-            let _ = Command::new("xdotool").args(["windowsize", w, a, b]).status();
+            let _ = Command::new("xdotool")
+                .args(["windowsize", w, a, b])
+                .status();
             sleep(Duration::from_millis(500));
         };
         size(&wid, "800", "500");
@@ -343,7 +402,9 @@ fn window_state_and_min_size() {
             shot(&format!("min-{id}"));
         }
         size(&wid, "1180", "720");
-        let _ = Command::new("xdotool").args(["windowmove", &wid, "150", "120"]).status();
+        let _ = Command::new("xdotool")
+            .args(["windowmove", &wid, "150", "120"])
+            .status();
         sleep(Duration::from_millis(500));
         let before = geometry(&wid);
         println!("before close: {before:?}");
@@ -376,7 +437,12 @@ fn offline_start() {
     if !have_display() {
         return;
     }
-    if !Command::new("unshare").args(["-rn", "true"]).status().map(|s| s.success()).unwrap_or(false) {
+    if !Command::new("unshare")
+        .args(["-rn", "true"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
         println!("skipping: unshare -rn unavailable");
         return;
     }

@@ -24,9 +24,14 @@ pub fn mix_peaks(
         return Some(out);
     }
     let per = ((total_frames / buckets as u64).max(1)) as usize;
-    let active: Vec<usize> = (0..stems.len().min(gains.len())).filter(|&k| gains[k] != 0.0).collect();
+    let active: Vec<usize> = (0..stems.len().min(gains.len()))
+        .filter(|&k| gains[k] != 0.0)
+        .collect();
     let active_gains: Vec<f32> = active.iter().map(|&k| gains[k]).collect();
-    let mut scratch: Vec<Vec<f32>> = active.iter().map(|_| vec![0f32; CHUNK_FRAMES * 2]).collect();
+    let mut scratch: Vec<Vec<f32>> = active
+        .iter()
+        .map(|_| vec![0f32; CHUNK_FRAMES * 2])
+        .collect();
     let mut mixed = vec![0f32; CHUNK_FRAMES * 2];
     let mut done: u64 = 0;
     while done < total_frames {

@@ -3,28 +3,33 @@
 //! The crate is a binary, so the modules are compiled into this test crate with `#[path]`.
 //! Audio only ever goes to `ManualBackend` / `NullBackend` (never a real device). Every test
 //! works on a temp copy of `tests/fixtures/library-editor`.
-#![allow(dead_code, unused_imports, unused_variables, clippy::type_complexity, clippy::all)]
+#![allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    clippy::type_complexity,
+    clippy::all
+)]
 
-use calliope_gui::fsutil;
-use calliope_gui::track_meta;
-use calliope_gui::repository;
-use calliope_gui::settings;
-use calliope_gui::picker;
-#[allow(dead_code)]
-use calliope_gui::local_source;
-use calliope_gui::import_tmp;
-use calliope_gui::media;
-use calliope_gui::download;
-use calliope_gui::tools;
-use calliope_gui::import_job;
-use calliope_gui::transport;
-use calliope_gui::mixer;
-use calliope_gui::stem_audio;
 use calliope_gui::audio_out;
 use calliope_gui::backing_render;
+use calliope_gui::download;
 use calliope_gui::editor;
+use calliope_gui::fsutil;
+use calliope_gui::import_job;
+use calliope_gui::import_tmp;
 use calliope_gui::ipc;
-
+#[allow(dead_code)]
+use calliope_gui::local_source;
+use calliope_gui::media;
+use calliope_gui::mixer;
+use calliope_gui::picker;
+use calliope_gui::repository;
+use calliope_gui::settings;
+use calliope_gui::stem_audio;
+use calliope_gui::tools;
+use calliope_gui::track_meta;
+use calliope_gui::transport;
 
 use audio_out::{backend_kind, BackendKind, ManualBackend};
 use editor::{EditorEvent, EditorManager, EventSink, OpenSpec};
@@ -90,7 +95,11 @@ fn manager() -> (EditorManager, ManualBackend, Events) {
     let events: Events = Arc::new(Mutex::new(Vec::new()));
     let ev = events.clone();
     let sink: EventSink = Arc::new(move |e| ev.lock().unwrap().push(e));
-    (EditorManager::new(Arc::new(backend.clone()), sink), backend, events)
+    (
+        EditorManager::new(Arc::new(backend.clone()), sink),
+        backend,
+        events,
+    )
 }
 
 fn no_lock() -> Arc<dyn RepoLock> {
@@ -104,7 +113,14 @@ fn final_event(events: &Events) -> EditorEvent {
             .lock()
             .unwrap()
             .iter()
-            .find(|e| matches!(e, EditorEvent::Saved { .. } | EditorEvent::SaveFailed { .. } | EditorEvent::SaveCancelled { .. }))
+            .find(|e| {
+                matches!(
+                    e,
+                    EditorEvent::Saved { .. }
+                        | EditorEvent::SaveFailed { .. }
+                        | EditorEvent::SaveCancelled { .. }
+                )
+            })
             .cloned();
         if let Some(e) = found {
             return e;
@@ -139,9 +155,13 @@ fn read_flac(path: &Path) -> (claxon::metadata::StreamInfo, Vec<i32>) {
 
 fn trash_backing_files(repo: &Repository) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let Ok(rd) = fs::read_dir(repo.root.join("trash")) else { return out };
+    let Ok(rd) = fs::read_dir(repo.root.join("trash")) else {
+        return out;
+    };
     for d in rd.flatten() {
-        if d.file_name().to_string_lossy().ends_with("-backing") || d.file_name().to_string_lossy().contains("-backing") {
+        if d.file_name().to_string_lossy().ends_with("-backing")
+            || d.file_name().to_string_lossy().contains("-backing")
+        {
             for f in fs::read_dir(d.path()).unwrap().flatten() {
                 out.push(f.path());
             }
@@ -155,7 +175,12 @@ fn peak(v: &[f32]) -> f32 {
 }
 
 fn decode(dir: &Path, stem: &str) -> stem_audio::StemPcm {
-    stem_audio::decode_i16(&dir.join(format!("stems/{stem}.flac")), &std::sync::atomic::AtomicBool::new(false), &mut |_, _| {}).unwrap()
+    stem_audio::decode_i16(
+        &dir.join(format!("stems/{stem}.flac")),
+        &std::sync::atomic::AtomicBool::new(false),
+        &mut |_, _| {},
+    )
+    .unwrap()
 }
 
 fn stereo(pcm: &stem_audio::StemPcm, start: usize, frames: usize) -> Vec<f32> {
@@ -183,12 +208,20 @@ fn write_flac(path: &Path, samples: &[i32], channels: usize, bits: usize, rate: 
 }
 
 /// Opens FOUR in a fresh repo with vocals checked, ready for `start_save`.
-fn ready_to_save() -> (tempfile::TempDir, Repository, OpenSpec, EditorManager, ManualBackend, Events) {
+fn ready_to_save() -> (
+    tempfile::TempDir,
+    Repository,
+    OpenSpec,
+    EditorManager,
+    ManualBackend,
+    Events,
+) {
     let (tmp, repo) = fixture_repo();
     let sp = spec(&repo, FOUR);
     let (mut m, b, ev) = manager();
     m.open(&sp).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     (tmp, repo, sp, m, b, ev)
 }
 
@@ -214,17 +247,39 @@ fn ac2_track_with_stems_opens_with_one_lane_per_stem_and_original_is_hidden() {
     let mut v = json_of(&dir);
     v["original"] = json!("original.flac");
     fs::copy(dir.join("stems/vocals.flac"), dir.join("original.flac")).unwrap();
-    fs::write(dir.join("track.json"), serde_json::to_vec_pretty(&v).unwrap()).unwrap();
+    fs::write(
+        dir.join("track.json"),
+        serde_json::to_vec_pretty(&v).unwrap(),
+    )
+    .unwrap();
 
     let st = ipc::EditorState::new(Arc::new(ManualBackend::new()));
-    let repo_state = ipc::RepoState::new(repo.root.clone(), Box::new(picker::ScriptedPicker::new(repo.root.join("none"))));
-    let snap = ipc::do_open_editor(&st, &repo_state, &calliope_gui::tempo_store::FileTempoStore, FOUR, Arc::new(|_| {})).unwrap();
+    let repo_state = ipc::RepoState::new(
+        repo.root.clone(),
+        Box::new(picker::ScriptedPicker::new(repo.root.join("none"))),
+    );
+    let snap = ipc::do_open_editor(
+        &st,
+        &repo_state,
+        &calliope_gui::tempo_store::FileTempoStore,
+        FOUR,
+        Arc::new(|_| {}),
+    )
+    .unwrap();
     let names: Vec<_> = snap.stems.iter().map(|l| l.name.as_str()).collect();
-    assert_eq!(names, ["vocals", "drums", "bass", "guitar"], "original must not be a lane");
+    assert_eq!(
+        names,
+        ["vocals", "drums", "bass", "guitar"],
+        "original must not be a lane"
+    );
     assert_eq!(snap.duration_ms, 12000);
 
     let (mut m, _b, _e) = manager();
-    assert_eq!(m.open(&spec(&repo, SIX)).unwrap().stems.len(), 6, "as many lanes as stems");
+    assert_eq!(
+        m.open(&spec(&repo, SIX)).unwrap().stems.len(),
+        6,
+        "as many lanes as stems"
+    );
 }
 
 // ========================================== owner: never-saved starts unchecked; Play gating
@@ -234,11 +289,21 @@ fn ac4_never_saved_track_starts_unchecked_and_play_needs_a_checked_stem() {
     let (_t, repo) = fixture_repo();
     let (mut m, b, _e) = manager();
     let snap = m.open(&spec(&repo, FOUR)).unwrap();
-    assert!(snap.stems.iter().all(|l| !l.unmuted && l.gain_db == Some(0.0)));
+    assert!(snap
+        .stems
+        .iter()
+        .all(|l| !l.unmuted && l.gain_db == Some(0.0)));
     assert_eq!(m.play(FOUR).unwrap_err(), "Check a stem first");
-    assert!(!b.is_open(), "no output stream may be opened by a refused Play");
-    assert_eq!(m.start_save(FOUR, repo.clone(), no_lock()).unwrap_err(), "Check a stem first");
-    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now()).unwrap();
+    assert!(
+        !b.is_open(),
+        "no output stream may be opened by a refused Play"
+    );
+    assert_eq!(
+        m.start_save(FOUR, repo.clone(), no_lock()).unwrap_err(),
+        "Check a stem first"
+    );
+    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now())
+        .unwrap();
     assert!(m.play(FOUR).unwrap().playing);
 }
 
@@ -261,11 +326,18 @@ fn ac3_lane_play_checks_its_unmute_plays_only_that_stem_then_mix_play_returns_to
     let sp = spec(&repo, FOUR);
     let (mut m, b, _e) = manager();
     m.open(&sp).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     let st = m.lane_play(FOUR, "guitar").unwrap();
     assert!(st.playing);
     assert_eq!(st.solo.as_deref(), Some("guitar"));
-    let un: Vec<bool> = m.snapshot(FOUR).unwrap().stems.iter().map(|l| l.unmuted).collect();
+    let un: Vec<bool> = m
+        .snapshot(FOUR)
+        .unwrap()
+        .stems
+        .iter()
+        .map(|l| l.unmuted)
+        .collect();
     assert_eq!(un, [true, false, false, true]);
     let gui = decode(&sp.dir, "guitar");
     assert_close(&b.pull(400), &stereo(&gui, 0, 400));
@@ -273,10 +345,19 @@ fn ac3_lane_play_checks_its_unmute_plays_only_that_stem_then_mix_play_returns_to
     let st = m.play(FOUR).unwrap();
     assert_eq!(st.solo, None);
     let voc = decode(&sp.dir, "vocals");
-    let want: Vec<f32> = stereo(&gui, 400, 300).iter().zip(stereo(&voc, 400, 300)).map(|(a, b)| (a + b).clamp(-1.0, 1.0)).collect();
+    let want: Vec<f32> = stereo(&gui, 400, 300)
+        .iter()
+        .zip(stereo(&voc, 400, 300))
+        .map(|(a, b)| (a + b).clamp(-1.0, 1.0))
+        .collect();
     assert_close(&b.pull(300), &want);
     // solo never touches volumes
-    assert!(m.snapshot(FOUR).unwrap().stems.iter().all(|l| l.gain_db == Some(0.0)));
+    assert!(m
+        .snapshot(FOUR)
+        .unwrap()
+        .stems
+        .iter()
+        .all(|l| l.gain_db == Some(0.0)));
 }
 
 #[test]
@@ -285,14 +366,22 @@ fn ac5_play_mixes_exactly_the_checked_stems_with_db_gains_and_off() {
     let sp = spec(&repo, FOUR);
     let (mut m, b, _e) = manager();
     m.open(&sp).unwrap();
-    m.set_stem(FOUR, "vocals", Some(-6.0), true, Instant::now()).unwrap();
-    m.set_stem(FOUR, "drums", Some(3.0), true, Instant::now()).unwrap();
-    m.set_stem(FOUR, "bass", None, true, Instant::now()).unwrap(); // Off: silent even if checked
-    m.set_stem(FOUR, "guitar", Some(0.0), false, Instant::now()).unwrap(); // unchecked: silent
+    m.set_stem(FOUR, "vocals", Some(-6.0), true, Instant::now())
+        .unwrap();
+    m.set_stem(FOUR, "drums", Some(3.0), true, Instant::now())
+        .unwrap();
+    m.set_stem(FOUR, "bass", None, true, Instant::now())
+        .unwrap(); // Off: silent even if checked
+    m.set_stem(FOUR, "guitar", Some(0.0), false, Instant::now())
+        .unwrap(); // unchecked: silent
     m.play(FOUR).unwrap();
     let (v, d) = (decode(&sp.dir, "vocals"), decode(&sp.dir, "drums"));
     let (gv, gd) = (10f32.powf(-6.0 / 20.0), 10f32.powf(3.0 / 20.0));
-    let want: Vec<f32> = stereo(&v, 0, 2000).iter().zip(stereo(&d, 0, 2000)).map(|(a, b)| (a * gv + b * gd).clamp(-1.0, 1.0)).collect();
+    let want: Vec<f32> = stereo(&v, 0, 2000)
+        .iter()
+        .zip(stereo(&d, 0, 2000))
+        .map(|(a, b)| (a * gv + b * gd).clamp(-1.0, 1.0))
+        .collect();
     assert_close(&b.pull(2000), &want);
 }
 
@@ -302,14 +391,22 @@ fn ac9_ac10_pause_holds_position_and_resume_continues() {
     let sp = spec(&repo, FOUR);
     let (mut m, b, _e) = manager();
     m.open(&sp).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     m.play(FOUR).unwrap();
     b.pull(RATE); // 1 s
     let st = m.pause(FOUR).unwrap();
     assert!(!st.playing);
-    assert!((st.position_ms as i64 - 1000).abs() <= 25, "{}", st.position_ms);
+    assert!(
+        (st.position_ms as i64 - 1000).abs() <= 25,
+        "{}",
+        st.position_ms
+    );
     assert_eq!(peak(&b.pull(5000)), 0.0);
-    assert_eq!(m.snapshot(FOUR).unwrap().transport.position_ms, st.position_ms);
+    assert_eq!(
+        m.snapshot(FOUR).unwrap().transport.position_ms,
+        st.position_ms
+    );
     m.play(FOUR).unwrap();
     let voc = decode(&sp.dir, "vocals");
     assert_close(&b.pull(100), &stereo(&voc, RATE, 100));
@@ -320,7 +417,8 @@ fn ac8_stop_returns_to_zero() {
     let (_t, repo) = fixture_repo();
     let (mut m, b, _e) = manager();
     m.open(&spec(&repo, FOUR)).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     m.play(FOUR).unwrap();
     b.pull(5000);
     let st = m.stop(FOUR).unwrap();
@@ -351,18 +449,26 @@ fn ac14_ac15_resume_exactly_300ms_after_the_last_adjustment() {
     let sp = spec(&repo, FOUR);
     let (mut m, b, _e) = manager();
     m.open(&sp).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     m.play(FOUR).unwrap();
     b.pull(100);
     let t0 = Instant::now();
     let st = m.seek(FOUR, 5000, t0).unwrap();
-    assert!(st.playing && st.resume_pending, "button stays Pause during the delay");
+    assert!(
+        st.playing && st.resume_pending,
+        "button stays Pause during the delay"
+    );
     assert_eq!(peak(&b.pull(300)), 0.0, "silent right after the adjustment");
     // second adjustment inside the window resets it to 300 ms from *now*
     let st = m.nudge(FOUR, 100, t0 + Duration::from_millis(200)).unwrap();
     assert_eq!(st.position_ms, 5100);
     m.tick(t0 + Duration::from_millis(499));
-    assert_eq!(peak(&b.pull(300)), 0.0, "t0+299 after the second change is still silent");
+    assert_eq!(
+        peak(&b.pull(300)),
+        0.0,
+        "t0+299 after the second change is still silent"
+    );
     assert!(m.snapshot(FOUR).unwrap().transport.resume_pending);
     m.tick(t0 + Duration::from_millis(500));
     assert!(!m.snapshot(FOUR).unwrap().transport.resume_pending);
@@ -376,7 +482,8 @@ fn adjusting_while_paused_does_not_start_playback() {
     let (_t, repo) = fixture_repo();
     let (mut m, b, _e) = manager();
     m.open(&spec(&repo, FOUR)).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     let t0 = Instant::now();
     m.seek(FOUR, 3000, t0).unwrap();
     m.tick(t0 + Duration::from_secs(5));
@@ -393,11 +500,15 @@ fn owner_hard_clip_and_clip_indicator_hold() {
     let (mut m, b, _e) = manager();
     m.open(&spec(&repo, FOUR)).unwrap();
     for n in ["vocals", "drums", "bass", "guitar"] {
-        m.set_stem(FOUR, n, Some(12.0), true, Instant::now()).unwrap();
+        m.set_stem(FOUR, n, Some(12.0), true, Instant::now())
+            .unwrap();
     }
     m.play(FOUR).unwrap();
     let out = b.pull(4000);
-    assert!(out.iter().all(|x| (-1.0..=1.0).contains(x)), "hard clipped to full scale");
+    assert!(
+        out.iter().all(|x| (-1.0..=1.0).contains(x)),
+        "hard clipped to full scale"
+    );
     let t = Instant::now();
     m.tick(t);
     assert!(m.snapshot(FOUR).unwrap().transport.clipping);
@@ -428,15 +539,20 @@ fn owner_track_change_and_close_stop_playback() {
     let (_t, repo) = fixture_repo();
     let (mut m, b, _e) = manager();
     m.open(&spec(&repo, FOUR)).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     m.play(FOUR).unwrap();
     assert!(b.is_open());
     m.open(&spec(&repo, SIX)).unwrap(); // select another track
     assert!(!b.is_open(), "the old track's output is closed");
     assert_eq!(peak(&b.pull(1000)), 0.0);
-    assert_eq!(m.play(FOUR).unwrap_err(), "no editor session for 0199c0a0-0000-7000-8000-000000000201");
+    assert_eq!(
+        m.play(FOUR).unwrap_err(),
+        "no editor session for 0199c0a0-0000-7000-8000-000000000201"
+    );
     // closing (a track without stems selected) stops too
-    m.set_stem(SIX, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(SIX, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     m.play(SIX).unwrap();
     m.close();
     assert!(!b.is_open());
@@ -447,19 +563,37 @@ fn owner_track_change_and_close_stop_playback() {
 #[test]
 fn ac16_ac17_save_writes_one_backing_variant_with_volumes_applied() {
     let (_t, repo, sp, mut m, _b, ev) = ready_to_save();
-    m.set_stem(FOUR, "vocals", Some(-6.0), true, Instant::now()).unwrap();
-    m.set_stem(FOUR, "bass", Some(3.5), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(-6.0), true, Instant::now())
+        .unwrap();
+    m.set_stem(FOUR, "bass", Some(3.5), true, Instant::now())
+        .unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
-    let EditorEvent::Saved { file, clipped_samples, track, .. } = final_event(&ev) else { panic!("{:?}", ev.lock().unwrap()) };
+    let EditorEvent::Saved {
+        file,
+        clipped_samples,
+        track,
+        ..
+    } = final_event(&ev)
+    else {
+        panic!("{:?}", ev.lock().unwrap())
+    };
     assert_eq!(file, "backings/backing.flac");
     assert_eq!(track.backings.len(), 1);
     let (v, b) = (decode(&sp.dir, "vocals"), decode(&sp.dir, "bass"));
-    let (gv, gb) = (mixer::gain_factor(Some(-6.0), true), mixer::gain_factor(Some(3.5), true));
+    let (gv, gb) = (
+        mixer::gain_factor(Some(-6.0), true),
+        mixer::gain_factor(Some(3.5), true),
+    );
     let frames = v.frames.max(b.frames) as usize;
     let (sv, sb) = (stereo(&v, 0, frames), stereo(&b, 0, frames));
-    let want: Vec<i32> = (0..frames * 2).map(|i| mixer::quantise((sv[i] * gv + sb[i] * gb).clamp(-1.0, 1.0), 16)).collect();
+    let want: Vec<i32> = (0..frames * 2)
+        .map(|i| mixer::quantise((sv[i] * gv + sb[i] * gb).clamp(-1.0, 1.0), 16))
+        .collect();
     let (info, got) = read_flac(&sp.dir.join(&file));
-    assert_eq!((info.channels, info.sample_rate, info.bits_per_sample), (2, 22050, 16));
+    assert_eq!(
+        (info.channels, info.sample_rate, info.bits_per_sample),
+        (2, 22050, 16)
+    );
     assert_eq!(info.samples, Some(frames as u64));
     assert!(got == want, "saved samples differ from the configured mix");
     // unchecked stems are not in the file: only vocals+bass contribute (checked above exactly)
@@ -470,7 +604,10 @@ fn ac16_ac17_save_writes_one_backing_variant_with_volumes_applied() {
     assert_eq!(meta["backings"][0]["id"], "backing");
     assert_eq!(meta["backings"][0]["name"], "Backing");
     assert_eq!(meta["backings"][0]["file"], "backings/backing.flac");
-    assert_eq!(meta["backings"][0]["mix"]["stems"][2], json!({"name": "bass", "gain_db": 3.5, "unmuted": true}));
+    assert_eq!(
+        meta["backings"][0]["mix"]["stems"][2],
+        json!({"name": "bass", "gain_db": 3.5, "unmuted": true})
+    );
     assert!(stray_parts(&sp.dir).is_empty());
     // the stems were not touched
     assert!(sp.dir.join("stems/vocals.flac").is_file());
@@ -486,25 +623,38 @@ fn owner_resave_replaces_the_one_variant_and_trashes_the_old_file() {
     let first = fs::read(sp.dir.join("backings/backing.flac")).unwrap();
     clear(&ev);
     m.tick(Instant::now()); // reap
-    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now())
+        .unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
     assert!(matches!(final_event(&ev), EditorEvent::Saved { .. }));
     let second = fs::read(sp.dir.join("backings/backing.flac")).unwrap();
     assert_ne!(first, second);
     let meta = json_of(&sp.dir);
-    assert_eq!(meta["backings"].as_array().unwrap().len(), 1, "one Backing variant only");
-    let files: Vec<_> = fs::read_dir(sp.dir.join("backings")).unwrap().flatten().collect();
+    assert_eq!(
+        meta["backings"].as_array().unwrap().len(),
+        1,
+        "one Backing variant only"
+    );
+    let files: Vec<_> = fs::read_dir(sp.dir.join("backings"))
+        .unwrap()
+        .flatten()
+        .collect();
     assert_eq!(files.len(), 1);
     let trashed = trash_backing_files(&repo);
     assert_eq!(trashed.len(), 1, "{trashed:?}");
-    assert_eq!(fs::read(&trashed[0]).unwrap(), first, "the old backing is in the trash, intact");
+    assert_eq!(
+        fs::read(&trashed[0]).unwrap(),
+        first,
+        "the old backing is in the trash, intact"
+    );
     assert!(trashed[0].to_string_lossy().contains("-backing"));
 }
 
 #[test]
 fn owner_reopen_restores_saved_mix_and_remembers_across_track_changes() {
     let (_t, repo, sp, mut m, _b, ev) = ready_to_save();
-    m.set_stem(FOUR, "vocals", Some(-12.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(-12.0), true, Instant::now())
+        .unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
     assert!(matches!(final_event(&ev), EditorEvent::Saved { .. }));
     // fresh manager = app restart
@@ -545,18 +695,29 @@ fn safety_preexisting_user_file_named_backing_flac_is_never_overwritten() {
     fs::create_dir(sp.dir.join("backings")).unwrap();
     fs::write(sp.dir.join("backings/backing.flac"), b"MY OWN FILE").unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
-    let EditorEvent::Saved { file, .. } = final_event(&ev) else { panic!("{:?}", ev.lock().unwrap()) };
+    let EditorEvent::Saved { file, .. } = final_event(&ev) else {
+        panic!("{:?}", ev.lock().unwrap())
+    };
     assert_ne!(file, "backings/backing.flac");
-    assert_eq!(fs::read(sp.dir.join("backings/backing.flac")).unwrap(), b"MY OWN FILE");
+    assert_eq!(
+        fs::read(sp.dir.join("backings/backing.flac")).unwrap(),
+        b"MY OWN FILE"
+    );
     assert!(read_flac(&sp.dir.join(&file)).1.len() > 0);
     // the user file is not in the trash either, and a re-save replaces our file, not theirs
     clear(&ev);
     m.tick(Instant::now());
-    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now())
+        .unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
-    let EditorEvent::Saved { file: file2, .. } = final_event(&ev) else { panic!() };
+    let EditorEvent::Saved { file: file2, .. } = final_event(&ev) else {
+        panic!()
+    };
     assert_eq!(file2, file);
-    assert_eq!(fs::read(sp.dir.join("backings/backing.flac")).unwrap(), b"MY OWN FILE");
+    assert_eq!(
+        fs::read(sp.dir.join("backings/backing.flac")).unwrap(),
+        b"MY OWN FILE"
+    );
     assert_eq!(json_of(&sp.dir)["backings"].as_array().unwrap().len(), 1);
 }
 
@@ -569,10 +730,18 @@ fn safety_user_files_with_case_variants_and_dangling_symlink_are_not_clobbered()
     std::os::unix::fs::symlink(&outside, sp.dir.join("backings/backing.flac")).unwrap();
     fs::write(sp.dir.join("backings/Backing-2.FLAC"), b"CASE").unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
-    let EditorEvent::Saved { file, .. } = final_event(&ev) else { panic!("{:?}", ev.lock().unwrap()) };
+    let EditorEvent::Saved { file, .. } = final_event(&ev) else {
+        panic!("{:?}", ev.lock().unwrap())
+    };
     assert_eq!(fs::read(&outside).unwrap(), b"OUTSIDE");
-    assert!(fs::symlink_metadata(sp.dir.join("backings/backing.flac")).unwrap().file_type().is_symlink());
-    assert_eq!(fs::read(sp.dir.join("backings/Backing-2.FLAC")).unwrap(), b"CASE");
+    assert!(fs::symlink_metadata(sp.dir.join("backings/backing.flac"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        fs::read(sp.dir.join("backings/Backing-2.FLAC")).unwrap(),
+        b"CASE"
+    );
     assert_ne!(file, "backings/backing.flac");
 }
 
@@ -585,9 +754,15 @@ fn safety_symlinked_backings_folder_is_refused_and_nothing_is_written_outside() 
     std::os::unix::fs::symlink(&outside, sp.dir.join("backings")).unwrap();
     let before = fs::read(sp.dir.join("track.json")).unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
-    let EditorEvent::SaveFailed { message, .. } = final_event(&ev) else { panic!("{:?}", ev.lock().unwrap()) };
+    let EditorEvent::SaveFailed { message, .. } = final_event(&ev) else {
+        panic!("{:?}", ev.lock().unwrap())
+    };
     assert!(message.contains("backings"), "{message}");
-    let names: Vec<_> = fs::read_dir(&outside).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let names: Vec<_> = fs::read_dir(&outside)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
     assert_eq!(names, ["keep.txt"]);
     assert_eq!(fs::read(sp.dir.join("track.json")).unwrap(), before);
     assert!(stray_parts(&sp.dir).is_empty());
@@ -602,12 +777,16 @@ fn safety_stems_renamed_on_disk_during_save_is_a_conflict_and_leaves_nothing() {
     let path = sp.dir.join("track.json");
     let p2 = path.clone();
     let lock: Arc<dyn RepoLock> = Arc::new(move |f: &mut dyn FnMut()| {
-        let t = fs::read_to_string(&p2).unwrap().replace("\"name\": \"guitar\"", "\"name\": \"lead\"");
+        let t = fs::read_to_string(&p2)
+            .unwrap()
+            .replace("\"name\": \"guitar\"", "\"name\": \"lead\"");
         fs::write(&p2, t).unwrap();
         f();
     });
     m.start_save(FOUR, repo.clone(), lock).unwrap();
-    let EditorEvent::SaveFailed { message, .. } = final_event(&ev) else { panic!("{:?}", ev.lock().unwrap()) };
+    let EditorEvent::SaveFailed { message, .. } = final_event(&ev) else {
+        panic!("{:?}", ev.lock().unwrap())
+    };
     assert!(message.starts_with("conflict:"), "{message}");
     assert!(!sp.dir.join("backings").exists());
     assert!(stray_parts(&sp.dir).is_empty());
@@ -623,8 +802,13 @@ fn safety_track_deleted_during_save_fails_cleanly() {
         f();
     });
     m.start_save(FOUR, repo.clone(), lock).unwrap();
-    let EditorEvent::SaveFailed { .. } = final_event(&ev) else { panic!("{:?}", ev.lock().unwrap()) };
-    assert!(!sp.dir.exists(), "a recreated track folder would be a defect");
+    let EditorEvent::SaveFailed { .. } = final_event(&ev) else {
+        panic!("{:?}", ev.lock().unwrap())
+    };
+    assert!(
+        !sp.dir.exists(),
+        "a recreated track folder would be a defect"
+    );
     assert!(!repo.tracks_dir().join(FOUR).exists());
 }
 
@@ -635,7 +819,9 @@ fn safety_stem_file_removed_during_save_does_not_corrupt_anything() {
     fs::remove_file(sp.dir.join("stems/vocals.flac")).unwrap();
     let before = fs::read(sp.dir.join("track.json")).unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
-    let EditorEvent::SaveFailed { message, .. } = final_event(&ev) else { panic!("{:?}", ev.lock().unwrap()) };
+    let EditorEvent::SaveFailed { message, .. } = final_event(&ev) else {
+        panic!("{:?}", ev.lock().unwrap())
+    };
     assert!(message.contains("vocals"), "{message}");
     assert_eq!(fs::read(sp.dir.join("track.json")).unwrap(), before);
     assert!(!sp.dir.join("backings").exists());
@@ -647,7 +833,13 @@ fn safety_stem_replaced_by_other_sample_rate_during_session_must_not_save_a_misl
     // The stems keep their names/files, so the "same stems" check passes; the render must
     // still not label audio of another rate with the session's rate.
     let (_t, repo, sp, mut m, _b, ev) = ready_to_save();
-    write_flac(&sp.dir.join("stems/vocals.flac"), &vec![1000; 44100 * 2], 2, 16, 44100);
+    write_flac(
+        &sp.dir.join("stems/vocals.flac"),
+        &vec![1000; 44100 * 2],
+        2,
+        16,
+        44100,
+    );
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
     match final_event(&ev) {
         EditorEvent::SaveFailed { .. } => {}
@@ -686,7 +878,10 @@ fn safety_cancel_mid_save_keeps_the_existing_backing_and_track_json() {
         dir: sp.dir.clone(),
         stems: sp.stems.clone(),
         input: backing_render::RenderInput {
-            stems: vec![backing_render::RenderStem { path: sp.dir.join("stems/drums.flac"), gain: 1.0 }],
+            stems: vec![backing_render::RenderStem {
+                path: sp.dir.join("stems/drums.flac"),
+                gain: 1.0,
+            }],
             sample_rate: 22050,
             bits: 16,
             frames: 12 * 22050,
@@ -696,11 +891,20 @@ fn safety_cancel_mid_save_keeps_the_existing_backing_and_track_json() {
         lock: no_lock(),
     };
     backing_render::spawn(params, shared, sink).join().unwrap();
-    assert!(matches!(final_event(&ev2), EditorEvent::SaveCancelled { .. }));
-    assert_eq!(fs::read(sp.dir.join("backings/backing.flac")).unwrap(), old_file);
+    assert!(matches!(
+        final_event(&ev2),
+        EditorEvent::SaveCancelled { .. }
+    ));
+    assert_eq!(
+        fs::read(sp.dir.join("backings/backing.flac")).unwrap(),
+        old_file
+    );
     assert_eq!(fs::read(sp.dir.join("track.json")).unwrap(), old_json);
     assert!(stray_parts(&sp.dir).is_empty());
-    assert!(trash_backing_files(&repo).is_empty(), "a cancelled save must not trash the old backing");
+    assert!(
+        trash_backing_files(&repo).is_empty(),
+        "a cancelled save must not trash the old backing"
+    );
 }
 
 #[test]
@@ -712,7 +916,9 @@ fn safety_read_only_track_folder_fails_with_a_message_and_changes_nothing() {
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
     let r = final_event(&ev);
     fs::set_permissions(&sp.dir, fs::Permissions::from_mode(0o755)).unwrap();
-    let EditorEvent::SaveFailed { message, .. } = r else { panic!("{r:?}") };
+    let EditorEvent::SaveFailed { message, .. } = r else {
+        panic!("{r:?}")
+    };
     assert!(!message.is_empty());
     assert_eq!(fs::read(sp.dir.join("track.json")).unwrap(), before);
     assert!(!sp.dir.join("backings").exists());
@@ -734,12 +940,17 @@ fn safety_read_only_backings_folder_restores_the_old_backing() {
     let old = fs::read(sp.dir.join("backings/backing.flac")).unwrap();
     let json_before = fs::read(sp.dir.join("track.json")).unwrap();
     fs::set_permissions(sp.dir.join("backings"), fs::Permissions::from_mode(0o555)).unwrap();
-    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now())
+        .unwrap();
     m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
     let r = final_event(&ev);
     fs::set_permissions(sp.dir.join("backings"), fs::Permissions::from_mode(0o755)).unwrap();
     assert!(matches!(r, EditorEvent::SaveFailed { .. }), "{r:?}");
-    assert_eq!(fs::read(sp.dir.join("backings/backing.flac")).unwrap(), old, "old backing still in place");
+    assert_eq!(
+        fs::read(sp.dir.join("backings/backing.flac")).unwrap(),
+        old,
+        "old backing still in place"
+    );
     assert_eq!(fs::read(sp.dir.join("track.json")).unwrap(), json_before);
     assert!(stray_parts(&sp.dir).is_empty());
 }
@@ -754,7 +965,10 @@ fn safety_two_saves_at_once_are_refused_and_other_tracks_stay_untouched() {
     if let Err(e) = second {
         assert_eq!(e, "A save is already running");
     }
-    assert_eq!(fs::read(dir_of(&repo, SIX).join("track.json")).unwrap(), other);
+    assert_eq!(
+        fs::read(dir_of(&repo, SIX).join("track.json")).unwrap(),
+        other
+    );
     assert!(!dir_of(&repo, SIX).join("backings").exists());
 }
 
@@ -762,11 +976,25 @@ fn safety_two_saves_at_once_are_refused_and_other_tracks_stay_untouched() {
 
 #[test]
 fn nodevice_e2e_hooks_builds_never_choose_the_real_device() {
-    for env in [None, Some(""), Some("cpal"), Some("capture:relative.wav"), Some("capture:/tmp/x.wav"), Some("null")] {
+    for env in [
+        None,
+        Some(""),
+        Some("cpal"),
+        Some("capture:relative.wav"),
+        Some("capture:/tmp/x.wav"),
+        Some("null"),
+    ] {
         assert_ne!(backend_kind(true, env), BackendKind::Cpal, "env {env:?}");
     }
-    assert_eq!(backend_kind(true, Some("capture:/tmp/x.wav")), BackendKind::Capture("/tmp/x.wav".into()));
-    assert_eq!(backend_kind(false, None), BackendKind::Cpal, "release builds use the device");
+    assert_eq!(
+        backend_kind(true, Some("capture:/tmp/x.wav")),
+        BackendKind::Capture("/tmp/x.wav".into())
+    );
+    assert_eq!(
+        backend_kind(false, None),
+        BackendKind::Cpal,
+        "release builds use the device"
+    );
 }
 
 #[test]
@@ -779,21 +1007,30 @@ fn nodevice_only_gui_rs_selects_a_backend_and_tests_never_do() {
             for e in fs::read_dir(&d).unwrap().flatten() {
                 let p = e.path();
                 if p.is_dir() {
-                    if p.file_name().is_some_and(|n| n == "node_modules" || n == "fixtures") {
+                    if p.file_name()
+                        .is_some_and(|n| n == "node_modules" || n == "fixtures")
+                    {
                         continue;
                     }
                     stack.push(p);
                 } else if p.extension().is_some_and(|x| x == "rs") {
                     let text = fs::read_to_string(&p).unwrap();
                     let name = p.file_name().unwrap().to_string_lossy().into_owned();
-                    if text.contains("select_backend()") && name != "audio_out.rs" && name != "acceptance_backing_editor.rs" {
+                    if text.contains("select_backend()")
+                        && name != "audio_out.rs"
+                        && name != "acceptance_backing_editor.rs"
+                    {
                         users.push(name);
                     }
                 }
             }
         }
     }
-    assert_eq!(users, ["gui.rs"], "only the app start-up may call select_backend");
+    assert_eq!(
+        users,
+        ["gui.rs"],
+        "only the app start-up may call select_backend"
+    );
 }
 
 #[test]
@@ -804,7 +1041,8 @@ fn nodevice_null_backend_capture_plays_into_a_file_not_a_device() {
     let sink: EventSink = Arc::new(|_| {});
     let mut m = EditorManager::new(Arc::new(backend), sink);
     m.open(&spec(&repo, FOUR)).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     m.play(FOUR).unwrap();
     std::thread::sleep(Duration::from_millis(300));
     m.close();
@@ -816,18 +1054,28 @@ fn nodevice_null_backend_capture_plays_into_a_file_not_a_device() {
 fn nodevice_play_on_a_failing_backend_is_a_message_not_a_panic() {
     struct Broken;
     impl audio_out::OutputBackend for Broken {
-        fn name(&self) -> &'static str { "broken" }
-        fn open(&self, _r: u32, _f: Box<dyn FnMut(&mut [f32]) + Send>) -> Result<Box<dyn audio_out::OutputHandle>, String> {
+        fn name(&self) -> &'static str {
+            "broken"
+        }
+        fn open(
+            &self,
+            _r: u32,
+            _f: Box<dyn FnMut(&mut [f32]) + Send>,
+        ) -> Result<Box<dyn audio_out::OutputHandle>, String> {
             Err("The audio output cannot be opened: no device".into())
         }
     }
     let (_t, repo) = fixture_repo();
     let mut m = EditorManager::new(Arc::new(Broken), Arc::new(|_| {}));
     m.open(&spec(&repo, FOUR)).unwrap();
-    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
     let e = m.play(FOUR).unwrap_err();
     assert!(e.contains("cannot be opened"), "{e}");
-    assert!(!m.snapshot(FOUR).unwrap().transport.playing, "a failed Play must not show Pause");
+    assert!(
+        !m.snapshot(FOUR).unwrap().transport.playing,
+        "a failed Play must not show Pause"
+    );
 }
 
 // ============================================================ fix round 1 probes
@@ -840,7 +1088,11 @@ impl audio_out::OutputBackend for FlakyBackend {
     fn name(&self) -> &'static str {
         "flaky"
     }
-    fn open(&self, rate: u32, render: audio_out::RenderFn) -> Result<Box<dyn audio_out::OutputHandle>, String> {
+    fn open(
+        &self,
+        rate: u32,
+        render: audio_out::RenderFn,
+    ) -> Result<Box<dyn audio_out::OutputHandle>, String> {
         if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
             return Err("no device".into());
         }
@@ -856,14 +1108,24 @@ fn fix_play_after_a_failed_device_open_leaves_lanes_and_transport_unchanged() {
     let fail = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let inner = ManualBackend::new();
     let sink: EventSink = Arc::new(|_| {});
-    let mut m = EditorManager::new(Arc::new(FlakyBackend { inner: inner.clone(), fail: fail.clone() }), sink);
+    let mut m = EditorManager::new(
+        Arc::new(FlakyBackend {
+            inner: inner.clone(),
+            fail: fail.clone(),
+        }),
+        sink,
+    );
     m.open(&sp).unwrap();
-    m.set_stem(FOUR, "vocals", Some(-3.0), true, Instant::now()).unwrap();
+    m.set_stem(FOUR, "vocals", Some(-3.0), true, Instant::now())
+        .unwrap();
     let before = m.snapshot(FOUR).unwrap();
     assert!(m.play(FOUR).is_err());
     assert!(m.lane_play(FOUR, "drums").is_err());
     let after = m.snapshot(FOUR).unwrap();
-    assert_eq!(serde_json::to_value(&before.stems).unwrap(), serde_json::to_value(&after.stems).unwrap());
+    assert_eq!(
+        serde_json::to_value(&before.stems).unwrap(),
+        serde_json::to_value(&after.stems).unwrap()
+    );
     assert!(!after.transport.playing);
     assert!(after.transport.solo.is_none());
     // The device comes back: Play now works and plays the checked stem only.

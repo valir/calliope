@@ -32,8 +32,11 @@ fn is_url_name(name: &str) -> bool {
 
 /// `file-[0-9a-z-]{36}`
 fn is_file_name(name: &str) -> bool {
-    name.strip_prefix("file-")
-        .is_some_and(|k| k.len() == 36 && k.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'z' | b'-')))
+    name.strip_prefix("file-").is_some_and(|k| {
+        k.len() == 36
+            && k.bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'z' | b'-'))
+    })
 }
 
 fn is_real_dir(p: &Path) -> bool {
@@ -41,7 +44,9 @@ fn is_real_dir(p: &Path) -> bool {
 }
 
 fn is_real_file(p: &Path) -> bool {
-    fs::symlink_metadata(p).map(|m| m.is_file()).unwrap_or(false)
+    fs::symlink_metadata(p)
+        .map(|m| m.is_file())
+        .unwrap_or(false)
 }
 
 /// What a URL's folder holds (decides whether the UI offers "Resume").
@@ -75,13 +80,23 @@ pub fn url_key(normalised_url: &str) -> String {
 /// True for yt-dlp's finished `download.<ext>`; false for `.part` / `.ytdl` / `.temp` and the
 /// per-format fragments of a merge (`download.f251.webm`).
 pub fn is_finished_download(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix("download.") else { return false };
-    if [".part", ".ytdl", ".temp"].iter().any(|x| name.ends_with(x)) || name.contains(".part-Frag") {
+    let Some(rest) = name.strip_prefix("download.") else {
+        return false;
+    };
+    if [".part", ".ytdl", ".temp"]
+        .iter()
+        .any(|x| name.ends_with(x))
+        || name.contains(".part-Frag")
+    {
         return false;
     }
-    let fragment = rest
-        .split_once('.')
-        .is_some_and(|(f, _)| f.len() > 1 && f.starts_with('f') && f[1..].chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+    let fragment = rest.split_once('.').is_some_and(|(f, _)| {
+        f.len() > 1
+            && f.starts_with('f')
+            && f[1..]
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    });
     !fragment && !rest.is_empty()
 }
 
@@ -90,12 +105,19 @@ impl ImportTmp {
     /// folder; a symlinked or non-folder `import-tmp` is refused.
     pub fn open(root: &Path) -> Result<Self, String> {
         if !root.is_dir() {
-            return Err("The track repository folder is missing. Check Settings > Track repository.".into());
+            return Err(
+                "The track repository folder is missing. Check Settings > Track repository.".into(),
+            );
         }
         let dir = root.join(DIR_NAME);
         match fs::symlink_metadata(&dir) {
             Ok(m) if m.is_dir() => {}
-            Ok(_) => return Err(format!("{} is not a real folder (a symlink or file); import is refused", dir.display())),
+            Ok(_) => {
+                return Err(format!(
+                    "{} is not a real folder (a symlink or file); import is refused",
+                    dir.display()
+                ))
+            }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 fs::create_dir(&dir).map_err(|e| io_err("cannot create the import folder", e))?
             }
@@ -156,7 +178,10 @@ impl ImportTmp {
                 if self.url_dir_matches(&dir, normalised_url) {
                     Ok(dir)
                 } else {
-                    Err(format!("{} exists but is not this import's folder; left alone", dir.display()))
+                    Err(format!(
+                        "{} exists but is not this import's folder; left alone",
+                        dir.display()
+                    ))
                 }
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -179,7 +204,12 @@ impl ImportTmp {
         if !self.url_dir_matches(&dir, normalised_url) {
             return None;
         }
-        let mut p = Partial { dir: dir.clone(), has_part: false, has_download: false, has_audio: false };
+        let mut p = Partial {
+            dir: dir.clone(),
+            has_part: false,
+            has_download: false,
+            has_audio: false,
+        };
         for e in fs::read_dir(&dir).ok()?.flatten() {
             if !e.file_type().map(|t| t.is_file()).unwrap_or(false) {
                 continue;
@@ -198,7 +228,11 @@ impl ImportTmp {
 
     /// "Start Over": removes everything inside the URL's folder (not the folder), then writes
     /// a fresh `job.json`. Requires the folder to be ours (see `find_partial`).
-    pub fn clear_for_start_over(&self, normalised_url: &str, created: &str) -> Result<PathBuf, String> {
+    pub fn clear_for_start_over(
+        &self,
+        normalised_url: &str,
+        created: &str,
+    ) -> Result<PathBuf, String> {
         let dir = self.url_dir(normalised_url);
         if !self.url_dir_matches(&dir, normalised_url) {
             return Err("there is no import folder of this URL to clear".into());
@@ -215,7 +249,8 @@ impl ImportTmp {
             r.map_err(|e| io_err("cannot clear the import folder", e))?;
         }
         let job = Self::job_json("url", ("url", normalised_url), created);
-        fsutil::write_atomic(&dir.join(JOB_FILE), job.as_bytes()).map_err(|e| io_err("cannot write job.json", e))?;
+        fsutil::write_atomic(&dir.join(JOB_FILE), job.as_bytes())
+            .map_err(|e| io_err("cannot write job.json", e))?;
         Ok(dir)
     }
 
@@ -225,7 +260,10 @@ impl ImportTmp {
         if kind != "audio-file" && kind != "video-file" {
             return Err(format!("unknown import kind \"{kind}\""));
         }
-        let name = Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let name = Path::new(name)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
         let dir = self.dir.join(format!("file-{}", track_meta::new_id()));
         fs::create_dir(&dir).map_err(|e| io_err("cannot create the import folder", e))?;
         let job = Self::job_json(kind, ("name", name), created);
@@ -239,7 +277,9 @@ impl ImportTmp {
     /// Is `dir` one of our job folders: a direct child of `import-tmp/` with a name matching
     /// the patterns, a real folder, holding `job.json`?
     fn is_job_dir(&self, dir: &Path) -> bool {
-        let Some(name) = dir.file_name().and_then(|n| n.to_str()) else { return false };
+        let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
+            return false;
+        };
         dir.parent() == Some(self.dir.as_path())
             && (is_url_name(name) || is_file_name(name))
             && is_real_dir(dir)
@@ -249,7 +289,10 @@ impl ImportTmp {
     /// Removes a finished/discarded job folder. Refuses anything that isn't provably ours.
     pub fn remove_job_dir(&self, dir: &Path) -> Result<(), String> {
         if !self.is_job_dir(dir) {
-            return Err(format!("{} is not one of Calliope's import folders; left alone", dir.display()));
+            return Err(format!(
+                "{} is not one of Calliope's import folders; left alone",
+                dir.display()
+            ));
         }
         // remove_dir_all does not follow symlinks inside
         fs::remove_dir_all(dir).map_err(|e| io_err("cannot remove the import folder", e))
@@ -261,7 +304,9 @@ impl ImportTmp {
     /// Returns the number removed.
     pub fn clean_stale(&self, now: u64, keep: Option<&Path>) -> usize {
         let keep_name = keep.and_then(|k| k.file_name()).map(|n| n.to_os_string());
-        let Ok(rd) = fs::read_dir(&self.dir) else { return 0 };
+        let Ok(rd) = fs::read_dir(&self.dir) else {
+            return 0;
+        };
         let mut removed = 0;
         for e in rd.flatten() {
             let path = e.path();
@@ -276,7 +321,10 @@ impl ImportTmp {
                 true
             } else {
                 Self::read_job(&path)
-                    .and_then(|j| j.get("created").and_then(|c| c.as_str().and_then(parse_rfc3339_utc)))
+                    .and_then(|j| {
+                        j.get("created")
+                            .and_then(|c| c.as_str().and_then(parse_rfc3339_utc))
+                    })
                     .is_some_and(|created| now.saturating_sub(created) > URL_KEEP_SECS)
             };
             if stale && fs::remove_dir_all(&path).is_ok() {
@@ -290,16 +338,32 @@ impl ImportTmp {
 /// Parses `YYYY-MM-DDTHH:MM:SSZ` to Unix seconds (years 1970..9999).
 pub fn parse_rfc3339_utc(s: &str) -> Option<u64> {
     let b = s.as_bytes();
-    if b.len() != 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' || b[16] != b':' || b[19] != b'Z' {
+    if b.len() != 20
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || b[10] != b'T'
+        || b[13] != b':'
+        || b[16] != b':'
+        || b[19] != b'Z'
+    {
         return None;
     }
     let num = |r: std::ops::Range<usize>| -> Option<i64> {
         let t = &s[r];
-        t.bytes().all(|c| c.is_ascii_digit()).then(|| t.parse().ok()).flatten()
+        t.bytes()
+            .all(|c| c.is_ascii_digit())
+            .then(|| t.parse().ok())
+            .flatten()
     };
     let (y, m, d) = (num(0..4)?, num(5..7)?, num(8..10)?);
     let (hh, mm, ss) = (num(11..13)?, num(14..16)?, num(17..19)?);
-    if !(1970..=9999).contains(&y) || !(1..=12).contains(&m) || !(1..=31).contains(&d) || hh > 23 || mm > 59 || ss > 60 {
+    if !(1970..=9999).contains(&y)
+        || !(1..=12).contains(&m)
+        || !(1..=31).contains(&d)
+        || hh > 23
+        || mm > 59
+        || ss > 60
+    {
         return None;
     }
     // days from civil (Howard Hinnant)
@@ -329,7 +393,10 @@ mod tests {
     #[test]
     fn rfc3339_round_trip() {
         for secs in [0u64, 86_399, 1_700_000_000, 1_791_000_000, 4_102_444_800] {
-            assert_eq!(parse_rfc3339_utc(&track_meta::rfc3339_utc(secs)), Some(secs));
+            assert_eq!(
+                parse_rfc3339_utc(&track_meta::rfc3339_utc(secs)),
+                Some(secs)
+            );
         }
         assert_eq!(parse_rfc3339_utc("garbage"), None);
         assert_eq!(parse_rfc3339_utc("2020-13-01T00:00:00Z"), None);
@@ -340,7 +407,9 @@ mod tests {
         let (tmp, t) = setup();
         assert!(tmp.path().join("import-tmp").is_dir());
         assert_eq!(t.path(), tmp.path().join("import-tmp"));
-        assert!(ImportTmp::open(&tmp.path().join("nope")).unwrap_err().contains("missing"));
+        assert!(ImportTmp::open(&tmp.path().join("nope"))
+            .unwrap_err()
+            .contains("missing"));
     }
 
     #[cfg(unix)]
@@ -352,7 +421,9 @@ mod tests {
         let root = tmp.path().join("root");
         fs::create_dir(&root).unwrap();
         std::os::unix::fs::symlink(&elsewhere, root.join("import-tmp")).unwrap();
-        assert!(ImportTmp::open(&root).unwrap_err().contains("not a real folder"));
+        assert!(ImportTmp::open(&root)
+            .unwrap_err()
+            .contains("not a real folder"));
         assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
     }
 
@@ -360,15 +431,23 @@ mod tests {
     fn url_dir_is_keyed_and_job_json_checked() {
         let (_tmp, t) = setup();
         let dir = t.prepare_url_dir(URL, OLD).unwrap();
-        assert_eq!(dir.file_name().unwrap().to_str().unwrap(), format!("url-{}", url_key(URL)));
-        let job: serde_json::Value = serde_json::from_slice(&fs::read(dir.join("job.json")).unwrap()).unwrap();
+        assert_eq!(
+            dir.file_name().unwrap().to_str().unwrap(),
+            format!("url-{}", url_key(URL))
+        );
+        let job: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("job.json")).unwrap()).unwrap();
         assert_eq!(job["kind"], "url");
         assert_eq!(job["url"], URL);
         assert_eq!(job["created"], OLD);
         // same URL again reuses it
         assert_eq!(t.prepare_url_dir(URL, "2026-01-01T00:00:00Z").unwrap(), dir);
         // a job.json with another URL (hash clash or tampering) is not ours to reuse
-        fs::write(dir.join("job.json"), r#"{"kind":"url","url":"https://other.example/","created":"x"}"#).unwrap();
+        fs::write(
+            dir.join("job.json"),
+            r#"{"kind":"url","url":"https://other.example/","created":"x"}"#,
+        )
+        .unwrap();
         assert!(t.prepare_url_dir(URL, OLD).is_err());
         assert!(t.find_partial(URL).is_none());
         assert!(t.clear_for_start_over(URL, OLD).is_err());
@@ -405,9 +484,15 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&outside, dir.join("link")).unwrap();
         t.clear_for_start_over(URL, "2026-10-06T10:00:00Z").unwrap();
-        let names: Vec<_> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().into_string().unwrap()).collect();
+        let names: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().into_string().unwrap())
+            .collect();
         assert_eq!(names, ["job.json"]);
-        assert!(fs::read_to_string(dir.join("job.json")).unwrap().contains("2026-10-06T10:00:00Z"));
+        assert!(fs::read_to_string(dir.join("job.json"))
+            .unwrap()
+            .contains("2026-10-06T10:00:00Z"));
         assert_eq!(fs::read_to_string(&outside).unwrap(), "keep");
         assert!(!t.find_partial(URL).unwrap().is_resumable());
     }
@@ -416,10 +501,13 @@ mod tests {
     fn file_dirs_are_unique_and_named_by_pattern() {
         let (_tmp, t) = setup();
         let a = t.new_file_dir("audio-file", "song.mp3", OLD).unwrap();
-        let b = t.new_file_dir("video-file", "/home/u/secret/clip.mp4", OLD).unwrap();
+        let b = t
+            .new_file_dir("video-file", "/home/u/secret/clip.mp4", OLD)
+            .unwrap();
         assert_ne!(a, b);
         assert!(is_file_name(a.file_name().unwrap().to_str().unwrap()));
-        let job: serde_json::Value = serde_json::from_slice(&fs::read(b.join("job.json")).unwrap()).unwrap();
+        let job: serde_json::Value =
+            serde_json::from_slice(&fs::read(b.join("job.json")).unwrap()).unwrap();
         assert_eq!(job["kind"], "video-file");
         assert_eq!(job["name"], "clip.mp4", "only the bare name is recorded");
         assert!(t.new_file_dir("other", "x", OLD).is_err());
@@ -448,7 +536,10 @@ mod tests {
         assert!(nojob.join("precious").exists());
 
         // not a direct child, the import-tmp folder itself, the repo root
-        let nested = t.path().join("my-stuff").join(format!("url-{}", "1".repeat(16)));
+        let nested = t
+            .path()
+            .join("my-stuff")
+            .join(format!("url-{}", "1".repeat(16)));
         fs::create_dir(&nested).unwrap();
         fs::write(nested.join("job.json"), "{}").unwrap();
         assert!(t.remove_job_dir(&nested).is_err());
@@ -484,16 +575,26 @@ mod tests {
         let now = parse_rfc3339_utc("2026-10-06T12:00:00Z").unwrap();
         let running = t.new_file_dir("audio-file", "run.mp3", OLD).unwrap();
         let leftover = t.new_file_dir("audio-file", "old.mp3", OLD).unwrap();
-        let fresh = t.prepare_url_dir("https://a.example/1", "2026-10-01T00:00:00Z").unwrap();
-        let old = t.prepare_url_dir("https://a.example/2", "2026-09-01T00:00:00Z").unwrap();
-        let undated = t.prepare_url_dir("https://a.example/3", "not a date").unwrap();
+        let fresh = t
+            .prepare_url_dir("https://a.example/1", "2026-10-01T00:00:00Z")
+            .unwrap();
+        let old = t
+            .prepare_url_dir("https://a.example/2", "2026-09-01T00:00:00Z")
+            .unwrap();
+        let undated = t
+            .prepare_url_dir("https://a.example/3", "not a date")
+            .unwrap();
         let removed = t.clean_stale(now, Some(&running));
         assert_eq!(removed, 2);
         assert!(running.exists() && fresh.exists() && undated.exists());
         assert!(!leftover.exists() && !old.exists());
         // an old url folder that is the running job survives too
         let old_running = t.prepare_url_dir("https://a.example/4", OLD).unwrap();
-        assert_eq!(t.clean_stale(now, Some(&old_running)), 1, "only the file folder, which is no longer running");
+        assert_eq!(
+            t.clean_stale(now, Some(&old_running)),
+            1,
+            "only the file folder, which is no longer running"
+        );
         assert!(old_running.exists());
     }
 

@@ -120,27 +120,52 @@ const MAX_SEGMENT_MS: f64 = 1.0e9;
 
 fn parse_tempo(v: Option<&Value>) -> TempoMap {
     let mut map = TempoMap::default();
-    let Some(o) = v.and_then(Value::as_object) else { return map };
-    if let Some(n) = o.get("beats_per_bar").and_then(Value::as_u64).filter(|n| (1..=MAX_BEATS_PER_BAR).contains(n)) {
+    let Some(o) = v.and_then(Value::as_object) else {
+        return map;
+    };
+    if let Some(n) = o
+        .get("beats_per_bar")
+        .and_then(Value::as_u64)
+        .filter(|n| (1..=MAX_BEATS_PER_BAR).contains(n))
+    {
         map.beats_per_bar = n as u32;
     }
     if let Some(a) = o.get("segments").and_then(Value::as_array) {
         for s in a {
-            let start_ms = s.get("start_ms").and_then(Value::as_f64).filter(|m| m.abs() <= MAX_SEGMENT_MS);
-            let bpm = s.get("bpm").and_then(Value::as_f64).filter(|b| (MIN_BPM..=MAX_BPM).contains(b));
-            let detected_ms = s.get("detected_ms").and_then(Value::as_f64).filter(|m| m.is_finite() && m.abs() <= MAX_SEGMENT_MS);
+            let start_ms = s
+                .get("start_ms")
+                .and_then(Value::as_f64)
+                .filter(|m| m.abs() <= MAX_SEGMENT_MS);
+            let bpm = s
+                .get("bpm")
+                .and_then(Value::as_f64)
+                .filter(|b| (MIN_BPM..=MAX_BPM).contains(b));
+            let detected_ms = s
+                .get("detected_ms")
+                .and_then(Value::as_f64)
+                .filter(|m| m.is_finite() && m.abs() <= MAX_SEGMENT_MS);
             if let (Some(start_ms), Some(bpm)) = (start_ms, bpm) {
                 let on_beat = s.get("on_beat") == Some(&Value::Bool(true));
-                let name = s.get("name").and_then(Value::as_str).map_or_else(String::new, clean_name);
+                let name = s
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map_or_else(String::new, clean_name);
                 let meta = SectionMeta {
                     name,
                     metronome: s.get("metronome") != Some(&Value::Bool(false)),
                     count_in: s.get("count_in") == Some(&Value::Bool(true)),
                 };
-                map.segments.push(Segment { start_ms, bpm, detected_ms, on_beat, meta });
+                map.segments.push(Segment {
+                    start_ms,
+                    bpm,
+                    detected_ms,
+                    on_beat,
+                    meta,
+                });
             }
         }
-        map.segments.sort_by(|a, b| a.start_ms.total_cmp(&b.start_ms));
+        map.segments
+            .sort_by(|a, b| a.start_ms.total_cmp(&b.start_ms));
         map.segments.dedup_by(|b, a| a.start_ms == b.start_ms);
         if let Some(first) = map.segments.first_mut() {
             first.detected_ms = None;
@@ -153,7 +178,12 @@ fn parse_tempo(v: Option<&Value>) -> TempoMap {
 /// Schema 1-4 had a master metronome (plan 18.3). A missing object or key counts as Off. Master Off
 /// silences every section (Click and Count In off); then the master's Count In becomes section 1's.
 fn migrate_master(tempo: &mut TempoMap, master: Option<&Value>) {
-    let flag = |k: &str| master.and_then(|m| m.get(k)).and_then(Value::as_bool).unwrap_or(false);
+    let flag = |k: &str| {
+        master
+            .and_then(|m| m.get(k))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    };
     if !flag("on") {
         for s in &mut tempo.segments {
             s.meta.metronome = false;
@@ -170,7 +200,13 @@ fn migrate_master(tempo: &mut TempoMap, master: Option<&Value>) {
 /// A stored section name: control characters removed, trimmed, cut to `MAX_SECTION_NAME` characters.
 fn clean_name(s: &str) -> String {
     let no_ctl: String = s.chars().filter(|c| !c.is_control()).collect();
-    no_ctl.trim().chars().take(tempo_map::MAX_SECTION_NAME).collect::<String>().trim().to_string()
+    no_ctl
+        .trim()
+        .chars()
+        .take(tempo_map::MAX_SECTION_NAME)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 /// Builds a state from a parsed value, dropping bad parts. Never fails.
@@ -188,8 +224,13 @@ fn from_value(v: &Value) -> PlayerState {
         .get("speed")
         .and_then(Value::as_f64)
         .filter(|s| s.is_finite())
-        .map_or(1.0, |s| f64::from(speed::pct_of_factor(s.clamp(MIN_SPEED, MAX_SPEED))) / 100.0);
-    if o.get("schema_version").and_then(Value::as_u64).is_some_and(|n| n <= 4) {
+        .map_or(1.0, |s| {
+            f64::from(speed::pct_of_factor(s.clamp(MIN_SPEED, MAX_SPEED))) / 100.0
+        });
+    if o.get("schema_version")
+        .and_then(Value::as_u64)
+        .is_some_and(|n| n <= 4)
+    {
         migrate_master(&mut st.tempo, o.get("metronome"));
     }
     if let Some(a) = o.get("loops").and_then(Value::as_array) {
@@ -205,9 +246,16 @@ fn from_value(v: &Value) -> PlayerState {
         .filter(|id| st.loops.iter().any(|l| l.id == *id))
         .map(str::to_string);
     st.extra = o.clone();
-    for k in
-        ["schema_version", "source", "position_ms", "tempo", "speed", "metronome", "loops", "current_loop"]
-    {
+    for k in [
+        "schema_version",
+        "source",
+        "position_ms",
+        "tempo",
+        "speed",
+        "metronome",
+        "loops",
+        "current_loop",
+    ] {
         st.extra.remove(k);
     }
     st.sort_loops();
@@ -223,7 +271,9 @@ fn from_value(v: &Value) -> PlayerState {
 pub(crate) fn load(dir: &Path) -> (PlayerState, Option<String>, bool) {
     let bytes = match std::fs::read(dir.join(PLAYER_FILE)) {
         Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (PlayerState::default(), None, true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return (PlayerState::default(), None, true)
+        }
         Err(_) => return (PlayerState::default(), Some(NOTE_UNREADABLE.into()), true),
     };
     let Ok(v) = serde_json::from_slice::<Value>(&bytes) else {
@@ -234,7 +284,10 @@ pub(crate) fn load(dir: &Path) -> (PlayerState, Option<String>, bool) {
     }
     match v.get("schema_version").and_then(Value::as_u64) {
         Some(n) if n > u64::from(SCHEMA) => {
-            let st = PlayerState { read_only: true, ..PlayerState::default() };
+            let st = PlayerState {
+                read_only: true,
+                ..PlayerState::default()
+            };
             return (st, Some(NOTE_NEWER.into()), false);
         }
         Some(_) => {}
@@ -266,7 +319,11 @@ pub fn choose_source<S: AsRef<str>>(saved: Option<&str>, keys: &[S]) -> Option<S
     if let Some(s) = saved.filter(|s| has(s)) {
         return Some(s.to_string());
     }
-    let first = |prefix: &str| keys.iter().map(AsRef::as_ref).find(|k| k.starts_with(prefix));
+    let first = |prefix: &str| {
+        keys.iter()
+            .map(AsRef::as_ref)
+            .find(|k| k.starts_with(prefix))
+    };
     first("backing:")
         .or_else(|| keys.iter().map(AsRef::as_ref).find(|k| *k == "audio"))
         .or_else(|| first("stem:"))
@@ -280,7 +337,9 @@ impl PlayerState {
         if self.tempo.is_empty() {
             Boundary::Ms { ms: position_ms }
         } else {
-            Boundary::Tick { tick: self.tempo.tick_near(position_ms) }
+            Boundary::Tick {
+                tick: self.tempo.tick_near(position_ms),
+            }
         }
     }
 
@@ -300,7 +359,11 @@ impl PlayerState {
     }
 
     fn sort_loops(&mut self) {
-        let keys: Vec<(String, f64)> = self.loops.iter().map(|l| (l.id.clone(), self.ms_of(l.start))).collect();
+        let keys: Vec<(String, f64)> = self
+            .loops
+            .iter()
+            .map(|l| (l.id.clone(), self.ms_of(l.start)))
+            .collect();
         self.loops.sort_by(|a, b| {
             let ka = keys.iter().find(|k| k.0 == a.id).map_or(0.0, |k| k.1);
             let kb = keys.iter().find(|k| k.0 == b.id).map_or(0.0, |k| k.1);
@@ -314,8 +377,14 @@ impl PlayerState {
     }
 
     fn current_mut(&mut self) -> Result<&mut LoopRec, String> {
-        let id = self.current_loop.clone().ok_or("There is no loop selected")?;
-        self.loops.iter_mut().find(|l| l.id == id).ok_or_else(|| "There is no loop selected".to_string())
+        let id = self
+            .current_loop
+            .clone()
+            .ok_or("There is no loop selected")?;
+        self.loops
+            .iter_mut()
+            .find(|l| l.id == id)
+            .ok_or_else(|| "There is no loop selected".to_string())
     }
 
     /// The end of a new loop starting at `start` (plan 18.5): the start of the next tempo section,
@@ -324,7 +393,9 @@ impl PlayerState {
         let end = match start {
             Boundary::Ms { .. } => Boundary::Ms { ms: track_end_ms },
             Boundary::Tick { tick } => match self.tempo.next_section_tick(tick) {
-                Some(next) if self.tempo.ms_at(next) <= track_end_ms => Boundary::Tick { tick: next },
+                Some(next) if self.tempo.ms_at(next) <= track_end_ms => {
+                    Boundary::Tick { tick: next }
+                }
                 _ => {
                     let mut t = self.tempo.tick_near(track_end_ms);
                     if self.tempo.ms_at(t) > track_end_ms {
@@ -346,7 +417,10 @@ impl PlayerState {
         let n = self
             .loops
             .iter()
-            .filter_map(|l| l.id.strip_prefix("loop-").and_then(|n| n.parse::<u64>().ok()))
+            .filter_map(|l| {
+                l.id.strip_prefix("loop-")
+                    .and_then(|n| n.parse::<u64>().ok())
+            })
             .max()
             .unwrap_or(0)
             + 1;
@@ -369,10 +443,20 @@ impl PlayerState {
 
     /// Removes the current loop; the next one (or the previous, if it was last) becomes current.
     pub fn remove(&mut self) -> Result<(), String> {
-        let id = self.current_loop.clone().ok_or("There is no loop selected")?;
-        let i = self.loops.iter().position(|l| l.id == id).ok_or("There is no loop selected")?;
+        let id = self
+            .current_loop
+            .clone()
+            .ok_or("There is no loop selected")?;
+        let i = self
+            .loops
+            .iter()
+            .position(|l| l.id == id)
+            .ok_or("There is no loop selected")?;
         self.loops.remove(i);
-        self.current_loop = self.loops.get(i.min(self.loops.len().saturating_sub(1))).map(|l| l.id.clone());
+        self.current_loop = self
+            .loops
+            .get(i.min(self.loops.len().saturating_sub(1)))
+            .map(|l| l.id.clone());
         Ok(())
     }
 
@@ -524,8 +608,20 @@ mod tests {
     }
 
     fn bpm_state() -> PlayerState {
-        let tempo = TempoMap { beats_per_bar: 4, segments: vec![Segment { start_ms: 500.0, bpm: 120.0, detected_ms: None, on_beat: false, meta: SectionMeta::default() }] };
-        PlayerState { tempo, ..PlayerState::default() }
+        let tempo = TempoMap {
+            beats_per_bar: 4,
+            segments: vec![Segment {
+                start_ms: 500.0,
+                bpm: 120.0,
+                detected_ms: None,
+                on_beat: false,
+                meta: SectionMeta::default(),
+            }],
+        };
+        PlayerState {
+            tempo,
+            ..PlayerState::default()
+        }
     }
 
     #[test]
@@ -542,7 +638,8 @@ mod tests {
         assert_eq!(st.loops[2].end, None);
         assert_eq!(st.current_loop.as_deref(), Some("loop-1"));
         save(d.path(), &st).unwrap();
-        let back: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        let back: Value =
+            serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
         // the v1 fixture reads with the same map and loops and is written back as schema 6
         assert_eq!(back["schema_version"], 6);
         v["schema_version"] = json!(6);
@@ -574,7 +671,8 @@ mod tests {
         save(d.path(), &st).unwrap();
         let (back, _, _) = load(d.path());
         assert_eq!(back.tempo, st.tempo);
-        let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        let v: Value =
+            serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
         assert_eq!(v["tempo"]["segments"][1]["detected_ms"], 6500.0);
         assert!(v["tempo"]["segments"][0].get("detected_ms").is_none());
     }
@@ -589,9 +687,19 @@ mod tests {
         );
         let (st, note, w) = load(d.path());
         assert!(note.is_none() && w);
-        assert_eq!(st.tempo.segments[1], Segment { start_ms: 6500.0, bpm: 90.0, detected_ms: Some(6400.0), on_beat: false, meta: SectionMeta::default() });
+        assert_eq!(
+            st.tempo.segments[1],
+            Segment {
+                start_ms: 6500.0,
+                bpm: 90.0,
+                detected_ms: Some(6400.0),
+                on_beat: false,
+                meta: SectionMeta::default()
+            }
+        );
         save(d.path(), &st).unwrap();
-        let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        let v: Value =
+            serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
         assert_eq!(v["schema_version"], 6);
         assert_eq!(v["tempo"]["segments"][1]["detected_ms"], 6400.0);
         assert!(v["tempo"]["segments"][1].get("on_beat").is_none());
@@ -612,7 +720,8 @@ mod tests {
         save(d.path(), &st).unwrap();
         let (back, _, _) = load(d.path());
         assert_eq!(back.tempo, st.tempo);
-        let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        let v: Value =
+            serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
         assert_eq!(v["tempo"]["segments"][1]["on_beat"], true);
         assert!(v["tempo"]["segments"][0].get("on_beat").is_none());
     }
@@ -628,9 +737,14 @@ mod tests {
         );
         let (st, note, _) = load(d.path());
         assert!(note.is_none());
-        assert!(st.tempo.segments.iter().all(|s| s.meta == SectionMeta::default()));
+        assert!(st
+            .tempo
+            .segments
+            .iter()
+            .all(|s| s.meta == SectionMeta::default()));
         save(d.path(), &st).unwrap();
-        let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        let v: Value =
+            serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
         assert_eq!(v["schema_version"], 6);
         assert_eq!(
             v["tempo"]["segments"],
@@ -645,12 +759,18 @@ mod tests {
             .to_string(),
         );
         let (st, _, _) = load(d.path());
-        let m: Vec<_> = st.tempo.segments.iter().map(|s| (s.meta.name.as_str(), s.meta.metronome, s.meta.count_in)).collect();
+        let m: Vec<_> = st
+            .tempo
+            .segments
+            .iter()
+            .map(|s| (s.meta.name.as_str(), s.meta.metronome, s.meta.count_in))
+            .collect();
         assert_eq!(m, [("Intro", false, true), ("Verse", false, true)]);
         save(d.path(), &st).unwrap();
         let (back, _, _) = load(d.path());
         assert_eq!(back.tempo, st.tempo);
-        let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        let v: Value =
+            serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
         assert_eq!(v["tempo"]["segments"][1]["name"], "Verse");
         assert_eq!(v["tempo"]["segments"][1]["metronome"], false);
         assert_eq!(v["tempo"]["segments"][1]["count_in"], true);
@@ -705,7 +825,16 @@ mod tests {
         assert!(note.is_none());
         assert_eq!(st.speed, MAX_SPEED);
         assert_eq!(st.position_ms, 0);
-        assert_eq!(st.tempo.segments, vec![Segment { start_ms: 10.0, bpm: 100.0, detected_ms: None, on_beat: false, meta: SectionMeta::default() }]);
+        assert_eq!(
+            st.tempo.segments,
+            vec![Segment {
+                start_ms: 10.0,
+                bpm: 100.0,
+                detected_ms: None,
+                on_beat: false,
+                meta: SectionMeta::default()
+            }]
+        );
         assert_eq!(st.tempo.beats_per_bar, 3);
         let ids: Vec<_> = st.loops.iter().map(|l| l.id.as_str()).collect();
         assert_eq!(ids, ["c", "a"]);
@@ -713,8 +842,17 @@ mod tests {
         assert_eq!(st.current_loop.as_deref(), Some("c")); // stale id: the first loop
 
         // the speed range is 25..=200 %; a non-number is 100 %
-        for (raw, want) in [(json!(9.0), 2.0), (json!(-1), 0.25), (json!("fast"), 1.0), (json!(0.73), 0.73)] {
-            assert_eq!(migrated(json!({"schema_version": 6, "speed": raw})).speed, want, "{raw}");
+        for (raw, want) in [
+            (json!(9.0), 2.0),
+            (json!(-1), 0.25),
+            (json!("fast"), 1.0),
+            (json!(0.73), 0.73),
+        ] {
+            assert_eq!(
+                migrated(json!({"schema_version": 6, "speed": raw})).speed,
+                want,
+                "{raw}"
+            );
         }
         // a schema-5 file keeps its speed as a percentage
         let st = migrated(json!({"schema_version": 5, "speed": 1.0}));
@@ -722,7 +860,11 @@ mod tests {
         let st = migrated(json!({"schema_version": 5, "speed": 0.73}));
         assert_eq!(st.speed_pct(), 73);
         // damaged or out-of-range training settings are dropped with the loop kept
-        for t in [json!({"start": 10}), json!(3), json!({"on": true, "start": 10, "end": 100, "step": 5, "repeats": 0})] {
+        for t in [
+            json!({"start": 10}),
+            json!(3),
+            json!({"on": true, "start": 10, "end": 100, "step": 5, "repeats": 0}),
+        ] {
             let st = migrated(json!({"schema_version": 6, "loops": [
                 {"id": "a", "start": {"tick": 1}, "end": {"tick": 9}, "training": t}]}));
             assert_eq!(st.loops.len(), 1);
@@ -732,7 +874,13 @@ mod tests {
     }
 
     fn training() -> Training {
-        Training { on: true, start: 60, end: 80, step: 10, repeats: 2 }
+        Training {
+            on: true,
+            start: 60,
+            end: 80,
+            step: 10,
+            repeats: 2,
+        }
     }
 
     #[test]
@@ -745,12 +893,21 @@ mod tests {
         assert_eq!(st.speed, 0.85);
         st.set_training(training()).unwrap();
         save(d.path(), &st).unwrap();
-        let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        let v: Value =
+            serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
         assert_eq!(v["schema_version"], 6);
         assert_eq!(v["speed"], 0.85);
-        let with: Vec<_> = v["loops"].as_array().unwrap().iter().filter(|l| l.get("training").is_some()).collect();
+        let with: Vec<_> = v["loops"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|l| l.get("training").is_some())
+            .collect();
         assert_eq!(with.len(), 1, "a loop without training writes no key");
-        assert_eq!(with[0]["training"], json!({"on": true, "start": 60, "end": 80, "step": 10, "repeats": 2}));
+        assert_eq!(
+            with[0]["training"],
+            json!({"on": true, "start": 60, "end": 80, "step": 10, "repeats": 2})
+        );
         let (back, _, _) = load(d.path());
         assert_eq!(back, st);
         assert_eq!(back.speed_pct(), 85);
@@ -762,13 +919,21 @@ mod tests {
         st.add(1000.0, 10000.0).unwrap();
         st.loops[0].end = None;
         let before = st.clone();
-        assert_eq!(st.set_training(training()).unwrap_err(), "Set the loop end first");
+        assert_eq!(
+            st.set_training(training()).unwrap_err(),
+            "Set the loop end first"
+        );
         assert_eq!(st, before);
 
         let mut st = bpm_state();
         st.add(1000.0, 10000.0).unwrap();
         let before = st.clone();
-        assert!(st.set_training(Training { repeats: 0, ..training() }).is_err());
+        assert!(st
+            .set_training(Training {
+                repeats: 0,
+                ..training()
+            })
+            .is_err());
         assert_eq!(st, before);
 
         // on switches Loop On on; Loop On off switches training off
@@ -777,9 +942,19 @@ mod tests {
         assert!(st.loops[0].repeat);
         st.flags(Some(false), None).unwrap();
         assert!(!st.loops[0].repeat);
-        assert_eq!(st.loops[0].training, Some(Training { on: false, ..training() }));
+        assert_eq!(
+            st.loops[0].training,
+            Some(Training {
+                on: false,
+                ..training()
+            })
+        );
         // off settings do not touch Loop On
-        st.set_training(Training { on: false, ..training() }).unwrap();
+        st.set_training(Training {
+            on: false,
+            ..training()
+        })
+        .unwrap();
         assert!(!st.loops[0].repeat);
     }
 
@@ -790,7 +965,10 @@ mod tests {
         let (st, note, w) = load(d.path());
         assert!(!w && note.is_some() && st.read_only);
         assert!(save(d.path(), &st).is_err());
-        assert_eq!(std::fs::read_to_string(d.path().join(PLAYER_FILE)).unwrap(), text);
+        assert_eq!(
+            std::fs::read_to_string(d.path().join(PLAYER_FILE)).unwrap(),
+            text
+        );
 
         let gone = tempfile::tempdir().unwrap().path().join("deleted");
         assert!(save(&gone, &PlayerState::default()).is_err());
@@ -807,7 +985,10 @@ mod tests {
         assert_eq!(s.loops[0].end, Some(Boundary::Tick { tick: 272 }));
 
         let before = s.clone();
-        assert_eq!(s.mark(Mark::End, 2000.0).unwrap_err(), "The end must be after the start");
+        assert_eq!(
+            s.mark(Mark::End, 2000.0).unwrap_err(),
+            "The end must be after the start"
+        );
         assert_eq!(s, before);
 
         s.mark(Mark::Start, 4000.0).unwrap();
@@ -881,7 +1062,11 @@ mod tests {
     }
 
     fn flags_of(st: &PlayerState) -> Vec<(bool, bool)> {
-        st.tempo.segments.iter().map(|s| (s.meta.metronome, s.meta.count_in)).collect()
+        st.tempo
+            .segments
+            .iter()
+            .map(|s| (s.meta.metronome, s.meta.count_in))
+            .collect()
     }
 
     fn v4(master: Value) -> Value {
@@ -919,7 +1104,8 @@ mod tests {
         let d = dir_with(&v4(json!({"on": true, "count_in": true})).to_string());
         let (st, _, _) = load(d.path());
         save(d.path(), &st).unwrap();
-        let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        let v: Value =
+            serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
         assert_eq!(v["schema_version"], 6);
         assert!(v.get("metronome").is_none());
         assert_eq!(v["tempo"]["segments"][0]["count_in"], true);
@@ -933,7 +1119,8 @@ mod tests {
         let (st, _, _) = load(d.path());
         assert_eq!(flags_of(&st), [(true, false), (true, true)]);
         save(d.path(), &st).unwrap();
-        let v: Value = serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        let v: Value =
+            serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
         assert!(v.get("metronome").is_none());
     }
 
@@ -949,17 +1136,26 @@ mod tests {
     fn add_ends_at_the_next_section_or_the_track_end() {
         let mut s = detected_state();
         s.add(2000.0, 20000.0).unwrap();
-        let Some(Boundary::Tick { tick }) = s.loops[0].end else { panic!("tick end") };
+        let Some(Boundary::Tick { tick }) = s.loops[0].end else {
+            panic!("tick end")
+        };
         assert_eq!(s.tempo.ms_at(tick), 8500.0);
         // the last section: the track end, never past it
         s.add(12000.0, 20000.0).unwrap();
-        let Some(Boundary::Tick { tick }) = s.loops[1].end else { panic!("tick end") };
+        let Some(Boundary::Tick { tick }) = s.loops[1].end else {
+            panic!("tick end")
+        };
         let ms = s.tempo.ms_at(tick);
-        assert!(ms <= 20000.0 && 20000.0 - ms < 2.0 * tempo_map::tick_ms(93.0), "{ms}");
+        assert!(
+            ms <= 20000.0 && 20000.0 - ms < 2.0 * tempo_map::tick_ms(93.0),
+            "{ms}"
+        );
         // a next section past the track end: the track end
         let mut s = detected_state();
         s.add(2000.0, 6000.0).unwrap();
-        let Some(Boundary::Tick { tick }) = s.loops[0].end else { panic!("tick end") };
+        let Some(Boundary::Tick { tick }) = s.loops[0].end else {
+            panic!("tick end")
+        };
         assert!(s.tempo.ms_at(tick) <= 6000.0);
         // at the track end: no end
         let mut s = detected_state();
@@ -986,12 +1182,30 @@ mod tests {
 
     #[test]
     fn source_choice() {
-        let k = ["original", "stem:guitar", "backing:backing", "audio", "stem:vocals"];
+        let k = [
+            "original",
+            "stem:guitar",
+            "backing:backing",
+            "audio",
+            "stem:vocals",
+        ];
         assert_eq!(choose_source(None, &k).as_deref(), Some("backing:backing"));
-        assert_eq!(choose_source(Some("stem:vocals"), &k).as_deref(), Some("stem:vocals"));
-        assert_eq!(choose_source(Some("stem:gone"), &k).as_deref(), Some("backing:backing"));
-        assert_eq!(choose_source(None, &["original", "audio", "stem:a"]).as_deref(), Some("audio"));
-        assert_eq!(choose_source(None, &["original", "stem:a", "stem:b"]).as_deref(), Some("stem:a"));
+        assert_eq!(
+            choose_source(Some("stem:vocals"), &k).as_deref(),
+            Some("stem:vocals")
+        );
+        assert_eq!(
+            choose_source(Some("stem:gone"), &k).as_deref(),
+            Some("backing:backing")
+        );
+        assert_eq!(
+            choose_source(None, &["original", "audio", "stem:a"]).as_deref(),
+            Some("audio")
+        );
+        assert_eq!(
+            choose_source(None, &["original", "stem:a", "stem:b"]).as_deref(),
+            Some("stem:a")
+        );
         assert_eq!(choose_source(None, &["original"]), None);
     }
 }

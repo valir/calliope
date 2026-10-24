@@ -10,7 +10,8 @@ use crate::repository::{cut_bytes, sanitize_component, TrackRecord};
 use crate::track_meta::TrackType;
 
 /// Shown (and returned by Rust) when the track has no tempo map: the count-in needs one.
-pub const NO_TEMPO_REASON: &str = "Set a tempo in the Player first: the export starts with a count-in";
+pub const NO_TEMPO_REASON: &str =
+    "Set a tempo in the Player first: the export starts with a count-in";
 
 /// Where an export goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,21 +55,30 @@ pub fn export_source(t: &TrackRecord) -> Result<ExportSource, String> {
     let is_missing = |f: &str| t.missing.iter().any(|m| m == f);
     match t.track_type {
         TrackType::Stem => {
-            let first = t.backings.first().ok_or("No mix saved yet: save one in the Editor")?;
+            let first = t
+                .backings
+                .first()
+                .ok_or("No mix saved yet: save one in the Editor")?;
             if is_missing(&first.file) {
                 return Err(format!(
                     "The saved mix ({}) is missing: save it again in the Editor",
                     first.file
                 ));
             }
-            Ok(ExportSource { kind: SourceKind::Mix, file: first.file.clone() })
+            Ok(ExportSource {
+                kind: SourceKind::Mix,
+                file: first.file.clone(),
+            })
         }
         TrackType::Backing => {
             let audio = t.audio.as_ref().ok_or("This track has no audio file")?;
             if is_missing(audio) {
                 return Err(format!("The audio file ({audio}) is missing"));
             }
-            Ok(ExportSource { kind: SourceKind::Audio, file: audio.clone() })
+            Ok(ExportSource {
+                kind: SourceKind::Audio,
+                file: audio.clone(),
+            })
         }
     }
 }
@@ -97,7 +107,10 @@ pub fn rc5_folder_name(n: u8) -> String {
 /// `<base>/ROLAND/WAVE/007_1/007_1.WAV`
 pub fn rc5_target(base: &Path, n: u8) -> PathBuf {
     let f = rc5_folder_name(n);
-    base.join("ROLAND").join("WAVE").join(&f).join(format!("{f}.WAV"))
+    base.join("ROLAND")
+        .join("WAVE")
+        .join(&f)
+        .join(format!("{f}.WAV"))
 }
 
 /// The suggested memory: 1 at first, then the last one plus one (at most 99).
@@ -120,8 +133,11 @@ pub fn memory_for(recorded: Option<u8>, last: Option<u8>) -> u8 {
 /// Library's folder export (`/ \ < > : " | ? *` and control characters become `_`); the stem
 /// is cut to 240 bytes on a UTF-8 boundary; `fallback` (the track id) is used when nothing is left.
 pub fn file_name(band: &str, title: &str, ext: &str, fallback: &str) -> String {
-    let parts: Vec<String> =
-        [band, title].iter().map(|p| sanitize_component(p)).filter(|p| !p.is_empty()).collect();
+    let parts: Vec<String> = [band, title]
+        .iter()
+        .map(|p| sanitize_component(p))
+        .filter(|p| !p.is_empty())
+        .collect();
     let joined = parts.join(" - ");
     let stem = cut_bytes(&joined, 240).trim();
     let stem = if stem.is_empty() { fallback } else { stem };
@@ -155,7 +171,11 @@ pub fn parse_stream_info(json: &str) -> Option<StreamInfo> {
     let channels = positive(number(stream.get("channels")))? as u32;
     let duration_s = positive(number(stream.get("duration")))
         .or_else(|| positive(number(v.get("format").and_then(|f| f.get("duration")))))?;
-    (rate > 0 && channels > 0).then_some(StreamInfo { rate, channels, duration_s })
+    (rate > 0 && channels > 0).then_some(StreamInfo {
+        rate,
+        channels,
+        duration_s,
+    })
 }
 
 /// Sample rates libmp3lame accepts.
@@ -183,7 +203,11 @@ pub fn output_format(kind: ExportKind, src: &StreamInfo) -> (u32, u32) {
 }
 
 fn clean(s: &str) -> String {
-    s.chars().filter(|c| !c.is_control()).collect::<String>().trim().to_string()
+    s.chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 /// The metadata names (ffmpeg `-metadata` keys) and values written to MP3/OGG files: `title`
@@ -211,7 +235,9 @@ pub fn tags(t: &TrackRecord) -> Vec<(&'static str, String)> {
 /// True when the `ffmpeg -encoders` listing has an encoder called `name` (the second
 /// whitespace-separated field of a line).
 pub fn has_encoder(listing: &str, name: &str) -> bool {
-    listing.lines().any(|l| l.split_whitespace().nth(1) == Some(name))
+    listing
+        .lines()
+        .any(|l| l.split_whitespace().nth(1) == Some(name))
 }
 
 // ---- 2.7: dialog start folder ----
@@ -219,7 +245,10 @@ pub fn has_encoder(listing: &str, name: &str) -> bool {
 /// The folder a dialog starts in: the remembered folder when it is a folder (`"last"`), else
 /// home (`"home"`), else none. A missing remembered folder is not forgotten (an unplugged RC-5
 /// is normal).
-pub fn start_dir(remembered: Option<&Path>, home: Option<&Path>) -> (&'static str, Option<PathBuf>) {
+pub fn start_dir(
+    remembered: Option<&Path>,
+    home: Option<&Path>,
+) -> (&'static str, Option<PathBuf>) {
     if let Some(r) = remembered.filter(|r| r.is_dir()) {
         return ("last", Some(r.to_path_buf()));
     }
@@ -290,14 +319,27 @@ mod tests {
     #[test]
     fn export_source_table() {
         let mut t = rec(TrackType::Stem);
-        assert_eq!(export_source(&t).unwrap_err(), "No mix saved yet: save one in the Editor");
-        t.backings = vec![variant("backings/backing.flac"), variant("backings/other.flac")];
+        assert_eq!(
+            export_source(&t).unwrap_err(),
+            "No mix saved yet: save one in the Editor"
+        );
+        t.backings = vec![
+            variant("backings/backing.flac"),
+            variant("backings/other.flac"),
+        ];
         assert_eq!(
             export_source(&t).unwrap(),
-            ExportSource { kind: SourceKind::Mix, file: "backings/backing.flac".into() }
+            ExportSource {
+                kind: SourceKind::Mix,
+                file: "backings/backing.flac".into()
+            }
         );
         t.missing = vec!["backings/other.flac".into()];
-        assert_eq!(export_source(&t).unwrap().file, "backings/backing.flac", "only the first variant counts");
+        assert_eq!(
+            export_source(&t).unwrap().file,
+            "backings/backing.flac",
+            "only the first variant counts"
+        );
         t.missing = vec!["backings/backing.flac".into()];
         assert_eq!(
             export_source(&t).unwrap_err(),
@@ -309,12 +351,24 @@ mod tests {
         assert!(export_source(&t).is_err());
 
         let mut b = rec(TrackType::Backing);
-        assert_eq!(export_source(&b).unwrap_err(), "This track has no audio file");
+        assert_eq!(
+            export_source(&b).unwrap_err(),
+            "This track has no audio file"
+        );
         b.audio = Some("backing.mp3".into());
-        assert_eq!(export_source(&b).unwrap(), ExportSource { kind: SourceKind::Audio, file: "backing.mp3".into() });
+        assert_eq!(
+            export_source(&b).unwrap(),
+            ExportSource {
+                kind: SourceKind::Audio,
+                file: "backing.mp3".into()
+            }
+        );
         b.audio = Some("gone.flac".into());
         b.missing = vec!["gone.flac".into()];
-        assert_eq!(export_source(&b).unwrap_err(), "The audio file (gone.flac) is missing");
+        assert_eq!(
+            export_source(&b).unwrap_err(),
+            "The audio file (gone.flac) is missing"
+        );
     }
 
     #[test]
@@ -323,7 +377,11 @@ mod tests {
             assert_eq!(parse_memory(text), Ok(n), "{text:?}");
         }
         for text in ["0", "100", "abc", "", "7.5", "-3", "1000", "00", "+5", "٣"] {
-            assert_eq!(parse_memory(text).unwrap_err(), "Enter a memory number from 1 to 99", "{text:?}");
+            assert_eq!(
+                parse_memory(text).unwrap_err(),
+                "Enter a memory number from 1 to 99",
+                "{text:?}"
+            );
         }
         assert_eq!(suggest_memory(None), 1);
         assert_eq!(suggest_memory(Some(7)), 8);
@@ -338,21 +396,37 @@ mod tests {
     #[test]
     fn rc5_paths() {
         assert_eq!(rc5_folder_name(7), "007_1");
-        assert_eq!(rc5_target(Path::new("/b"), 7), PathBuf::from("/b/ROLAND/WAVE/007_1/007_1.WAV"));
-        assert_eq!(rc5_target(Path::new("/b"), 99), PathBuf::from("/b/ROLAND/WAVE/099_1/099_1.WAV"));
+        assert_eq!(
+            rc5_target(Path::new("/b"), 7),
+            PathBuf::from("/b/ROLAND/WAVE/007_1/007_1.WAV")
+        );
+        assert_eq!(
+            rc5_target(Path::new("/b"), 99),
+            PathBuf::from("/b/ROLAND/WAVE/099_1/099_1.WAV")
+        );
     }
 
     #[test]
     fn file_names() {
-        assert_eq!(file_name("AC/DC*", "Live: A/B?", "mp3", "id"), "AC_DC_ - Live_ A_B_.mp3");
+        assert_eq!(
+            file_name("AC/DC*", "Live: A/B?", "mp3", "id"),
+            "AC_DC_ - Live_ A_B_.mp3"
+        );
         assert_eq!(file_name("", "T", "ogg", "id"), "T.ogg");
-        assert_eq!(file_name("The Example Band", "Stem Mix", "mp3", "id"), "The Example Band - Stem Mix.mp3");
+        assert_eq!(
+            file_name("The Example Band", "Stem Mix", "mp3", "id"),
+            "The Example Band - Stem Mix.mp3"
+        );
         assert_eq!(file_name("", "", "mp3", "0199-id"), "0199-id.mp3");
         assert_eq!(file_name("  ", "...", "ogg", "0199-id"), "0199-id.ogg");
         assert_eq!(file_name("Band", "", "ogg", "id"), "Band.ogg");
         let long = file_name("", &"é".repeat(150), "mp3", "id"); // 300 bytes
         let stem = long.strip_suffix(".mp3").unwrap();
-        assert!(stem.len() <= 240 && !stem.is_empty() && stem.chars().all(|c| c == 'é'), "{}", stem.len());
+        assert!(
+            stem.len() <= 240 && !stem.is_empty() && stem.chars().all(|c| c == 'é'),
+            "{}",
+            stem.len()
+        );
         let long = file_name(&"é".repeat(120), &"ü".repeat(120), "mp3", "id");
         assert!(long.strip_suffix(".mp3").unwrap().len() <= 240);
     }
@@ -360,11 +434,29 @@ mod tests {
     #[test]
     fn stream_info_from_ffprobe_json() {
         let flac = r#"{"programs": [], "stream_groups": [], "streams": [{"sample_rate": "48000", "channels": 1, "duration": "4.000000"}], "format": {"duration": "4.000000"}}"#;
-        assert_eq!(parse_stream_info(flac), Some(StreamInfo { rate: 48000, channels: 1, duration_s: 4.0 }));
+        assert_eq!(
+            parse_stream_info(flac),
+            Some(StreamInfo {
+                rate: 48000,
+                channels: 1,
+                duration_s: 4.0
+            })
+        );
         let mp3 = r#"{"streams": [{"sample_rate": "44100", "channels": 2}], "format": {"duration": "4.023129"}}"#;
-        assert_eq!(parse_stream_info(mp3), Some(StreamInfo { rate: 44100, channels: 2, duration_s: 4.023129 }));
+        assert_eq!(
+            parse_stream_info(mp3),
+            Some(StreamInfo {
+                rate: 44100,
+                channels: 2,
+                duration_s: 4.023129
+            })
+        );
         let both = r#"{"streams": [{"sample_rate": "44100", "channels": 2, "duration": "3.5"}], "format": {"duration": "4.0"}}"#;
-        assert_eq!(parse_stream_info(both).unwrap().duration_s, 3.5, "the stream duration wins");
+        assert_eq!(
+            parse_stream_info(both).unwrap().duration_s,
+            3.5,
+            "the stream duration wins"
+        );
         let na = r#"{"streams": [{"sample_rate": "44100", "channels": 2, "duration": "N/A"}], "format": {"duration": "2.0"}}"#;
         assert_eq!(parse_stream_info(na).unwrap().duration_s, 2.0);
         for bad in [
@@ -382,7 +474,11 @@ mod tests {
 
     #[test]
     fn output_formats() {
-        let si = |rate, channels| StreamInfo { rate, channels, duration_s: 1.0 };
+        let si = |rate, channels| StreamInfo {
+            rate,
+            channels,
+            duration_s: 1.0,
+        };
         use ExportKind::*;
         // (source, rc5, mp3, ogg)
         let rows = [
@@ -407,15 +503,29 @@ mod tests {
         let mut t = rec(TrackType::Stem);
         t.position = Some(3);
         t.year = Some(2021);
-        let s = |v: Vec<(&str, String)>| v.into_iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>();
+        let s = |v: Vec<(&str, String)>| {
+            v.into_iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+        };
         assert_eq!(
             s(tags(&t)),
-            ["title=Stem Mix", "artist=The Example Band", "album=Export Tests", "track=3", "date=2021"]
+            [
+                "title=Stem Mix",
+                "artist=The Example Band",
+                "album=Export Tests",
+                "track=3",
+                "date=2021"
+            ]
         );
         t.album = String::new();
         t.band = "  ".into();
         t.year = None;
-        assert_eq!(s(tags(&t)), ["title=Stem Mix"], "no album: no track tag even with a position");
+        assert_eq!(
+            s(tags(&t)),
+            ["title=Stem Mix"],
+            "no album: no track tag even with a position"
+        );
         t.album = "A".into();
         t.position = None;
         t.title = " Tab\tbed\u{7}\n title ".into();
@@ -428,7 +538,10 @@ mod tests {
                        A....D libvorbis            libvorbis (codec vorbis)\n A....D aac                 AAC (Advanced Audio Coding), like libopus\n";
         assert!(has_encoder(listing, "libmp3lame"));
         assert!(has_encoder(listing, "libvorbis"));
-        assert!(!has_encoder(listing, "libopus"), "only as a word of a description");
+        assert!(
+            !has_encoder(listing, "libopus"),
+            "only as a word of a description"
+        );
         assert!(!has_encoder(listing, "mp3"));
         assert!(!has_encoder("", "libmp3lame"));
     }
@@ -440,9 +553,15 @@ mod tests {
         std::fs::create_dir(&home).unwrap();
         let rc5 = d.path().join("rc5");
         std::fs::create_dir(&rc5).unwrap();
-        assert_eq!(start_dir(Some(&rc5), Some(&home)), ("last", Some(rc5.clone())));
+        assert_eq!(
+            start_dir(Some(&rc5), Some(&home)),
+            ("last", Some(rc5.clone()))
+        );
         let gone = d.path().join("unplugged");
-        assert_eq!(start_dir(Some(&gone), Some(&home)), ("home", Some(home.clone())));
+        assert_eq!(
+            start_dir(Some(&gone), Some(&home)),
+            ("home", Some(home.clone()))
+        );
         assert_eq!(start_dir(None, Some(&home)), ("home", Some(home.clone())));
         assert_eq!(start_dir(Some(&gone), None), ("none", None));
         assert_eq!(start_dir(None, None), ("none", None));
@@ -468,9 +587,15 @@ mod tests {
             "the file itself need not exist"
         );
         let gone = d.path().join("gone").join("a.mp3");
-        assert_eq!(file_start_dir(Some(&gone), Some(&last), Some(&home)), ("last", Some(last.clone())));
+        assert_eq!(
+            file_start_dir(Some(&gone), Some(&last), Some(&home)),
+            ("last", Some(last.clone()))
+        );
         let nolast = d.path().join("nolast");
-        assert_eq!(file_start_dir(Some(&gone), Some(&nolast), Some(&home)), ("home", Some(home.clone())));
+        assert_eq!(
+            file_start_dir(Some(&gone), Some(&nolast), Some(&home)),
+            ("home", Some(home.clone()))
+        );
         assert_eq!(file_start_dir(None, Some(&last), Some(&home)).0, "last");
         assert_eq!(file_start_dir(Some(&gone), None, None), ("none", None));
     }
@@ -478,7 +603,10 @@ mod tests {
     #[test]
     fn export_kind_serde() {
         assert_eq!(serde_json::to_string(&ExportKind::Rc5).unwrap(), "\"rc5\"");
-        assert_eq!(serde_json::from_str::<ExportKind>("\"ogg\"").unwrap(), ExportKind::Ogg);
+        assert_eq!(
+            serde_json::from_str::<ExportKind>("\"ogg\"").unwrap(),
+            ExportKind::Ogg
+        );
         assert_eq!(ExportKind::Mp3.as_str(), "mp3");
     }
 }

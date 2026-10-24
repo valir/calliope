@@ -47,16 +47,32 @@ pub fn sources(track: &TrackRecord) -> Vec<Source> {
     let present = |f: &str| !track.missing.iter().any(|m| m == f);
     let mut out = Vec::new();
     for b in track.backings.iter().filter(|b| present(&b.file)) {
-        out.push(Source { key: format!("backing:{}", b.id), label: b.name.clone(), file: b.file.clone() });
+        out.push(Source {
+            key: format!("backing:{}", b.id),
+            label: b.name.clone(),
+            file: b.file.clone(),
+        });
     }
     if let Some(a) = track.audio.as_ref().filter(|a| present(a)) {
-        out.push(Source { key: "audio".into(), label: "Backing track".into(), file: a.clone() });
+        out.push(Source {
+            key: "audio".into(),
+            label: "Backing track".into(),
+            file: a.clone(),
+        });
     }
     if let Some(o) = track.original.as_ref().filter(|o| present(o)) {
-        out.push(Source { key: "original".into(), label: "Original mix".into(), file: o.clone() });
+        out.push(Source {
+            key: "original".into(),
+            label: "Original mix".into(),
+            file: o.clone(),
+        });
     }
     for s in track.stems.iter().filter(|s| present(&s.file)) {
-        out.push(Source { key: format!("stem:{}", s.name), label: capitalized(&s.name), file: s.file.clone() });
+        out.push(Source {
+            key: format!("stem:{}", s.name),
+            label: capitalized(&s.name),
+            file: s.file.clone(),
+        });
     }
     out
 }
@@ -68,7 +84,8 @@ fn file_label(path: &Path) -> String {
 }
 
 fn is_flac(path: &Path) -> bool {
-    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("flac"))
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("flac"))
 }
 
 /// Decodes `file` (absolute) to 16-bit PCM. `progress(done, total)`; `total` is 0 when unknown.
@@ -87,9 +104,17 @@ pub fn decode(
         }
         let pcm = stem_audio::decode_i16(file, cancel, progress)?;
         if pcm.frames == 0 || pcm.samples.is_empty() {
-            return Err(format!("Cannot decode {}: no audio found", file_label(file)));
+            return Err(format!(
+                "Cannot decode {}: no audio found",
+                file_label(file)
+            ));
         }
-        return Ok(Pcm { rate: info.sample_rate, channels: pcm.channels, frames: pcm.frames, samples: pcm.samples });
+        return Ok(Pcm {
+            rate: info.sample_rate,
+            channels: pcm.channels,
+            frames: pcm.frames,
+            samples: pcm.samples,
+        });
     }
     let label = file_label(file);
     let Some(ffmpeg) = ffmpeg else {
@@ -107,14 +132,32 @@ fn decode_ffmpeg(
 ) -> Result<Pcm, String> {
     let abs = std::path::absolute(file).map_err(|e| format!("Cannot decode {label}: {e}"))?;
     let args: Vec<std::ffi::OsString> = [
-        "-nostdin", "-hide_banner", "-loglevel", "error", "-protocol_whitelist", "file,pipe", "-i",
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-protocol_whitelist",
+        "file,pipe",
+        "-i",
     ]
     .iter()
     .map(Into::into)
     .chain([
-        { let mut s = std::ffi::OsString::from("file:"); s.push(abs.as_os_str()); s },
-        "-map".into(), "0:a:0".into(), "-f".into(), "s16le".into(), "-acodec".into(), "pcm_s16le".into(),
-        "-ac".into(), FFMPEG_CHANNELS.to_string().into(), "-ar".into(), FFMPEG_RATE.to_string().into(),
+        {
+            let mut s = std::ffi::OsString::from("file:");
+            s.push(abs.as_os_str());
+            s
+        },
+        "-map".into(),
+        "0:a:0".into(),
+        "-f".into(),
+        "s16le".into(),
+        "-acodec".into(),
+        "pcm_s16le".into(),
+        "-ac".into(),
+        FFMPEG_CHANNELS.to_string().into(),
+        "-ar".into(),
+        FFMPEG_RATE.to_string().into(),
         "pipe:1".into(),
     ])
     .collect();
@@ -174,18 +217,34 @@ fn decode_ffmpeg(
     }
     let last = err_last.lock().map(|s| s.clone()).unwrap_or_default();
     if !status.success() {
-        let why = if last.is_empty() { String::new() } else { format!(": {last}") };
+        let why = if last.is_empty() {
+            String::new()
+        } else {
+            format!(": {last}")
+        };
         return Err(format!("Cannot decode {label}{why}"));
     }
-    let raw = std::mem::take(&mut *bytes.lock().map_err(|_| "decode buffer poisoned".to_string())?);
+    let raw = std::mem::take(
+        &mut *bytes
+            .lock()
+            .map_err(|_| "decode buffer poisoned".to_string())?,
+    );
     let frame_bytes = 2 * FFMPEG_CHANNELS as usize;
     if raw.len() < frame_bytes {
         return Err(format!("Cannot decode {label}: no audio found"));
     }
-    let samples: Vec<i16> = raw.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+    let samples: Vec<i16> = raw
+        .chunks_exact(2)
+        .map(|c| i16::from_le_bytes([c[0], c[1]]))
+        .collect();
     let frames = (samples.len() / FFMPEG_CHANNELS as usize) as u64;
     progress(frames, frames);
-    Ok(Pcm { rate: FFMPEG_RATE, channels: FFMPEG_CHANNELS, frames, samples })
+    Ok(Pcm {
+        rate: FFMPEG_RATE,
+        channels: FFMPEG_CHANNELS,
+        frames,
+        samples,
+    })
 }
 
 /// Maximum `|sample|/32768` over all channels in each of `buckets` equal slices of the track
@@ -288,7 +347,13 @@ mod tests {
         let (_d, root) = fixture_copy();
         let (t, dir) = track(&root, "MP3 Backing");
         let file = dir.join(&sources(&t)[0].file);
-        let pcm = decode(&file, Some(Path::new("ffmpeg")), &AtomicBool::new(false), &mut no_progress()).unwrap();
+        let pcm = decode(
+            &file,
+            Some(Path::new("ffmpeg")),
+            &AtomicBool::new(false),
+            &mut no_progress(),
+        )
+        .unwrap();
         assert_eq!((pcm.rate, pcm.channels), (44100, 2));
         let secs = pcm.frames as f64 / 44100.0;
         assert!((secs - 20.0).abs() <= 0.1, "{secs}");
@@ -304,7 +369,13 @@ mod tests {
         assert_eq!(e, "Install ffmpeg to play backing.mp3.");
         let bad = dir.join("broken.mp3");
         std::fs::write(&bad, b"this is not audio").unwrap();
-        let e = decode(&bad, Some(Path::new("ffmpeg")), &AtomicBool::new(false), &mut no_progress()).unwrap_err();
+        let e = decode(
+            &bad,
+            Some(Path::new("ffmpeg")),
+            &AtomicBool::new(false),
+            &mut no_progress(),
+        )
+        .unwrap_err();
         assert!(e.contains("broken.mp3"), "{e}");
     }
 
@@ -336,13 +407,19 @@ mod tests {
 
     #[test]
     fn peaks_remainder_and_channels() {
-        let pcm = Pcm { rate: 1, channels: 2, frames: 5, samples: vec![0, 0, 0, 0, 0, 0, 0, 0, 0, -16384] };
+        let pcm = Pcm {
+            rate: 1,
+            channels: 2,
+            frames: 5,
+            samples: vec![0, 0, 0, 0, 0, 0, 0, 0, 0, -16384],
+        };
         assert_eq!(peaks(&pcm, 2), [0.0, 0.5]);
     }
 
     fn alive(pid: u32) -> bool {
         Path::new(&format!("/proc/{pid}")).exists()
-            && !std::fs::read_to_string(format!("/proc/{pid}/stat")).map_or(true, |s| s.contains(") Z"))
+            && !std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .map_or(true, |s| s.contains(") Z"))
     }
 
     #[test]
@@ -351,7 +428,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let pidfile = dir.path().join("pid");
         let script = dir.path().join("ffmpeg");
-        std::fs::write(&script, format!("#!/bin/sh\necho $$ > {}\nexec sleep 60\n", pidfile.display())).unwrap();
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\necho $$ > {}\nexec sleep 60\n",
+                pidfile.display()
+            ),
+        )
+        .unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -361,11 +445,21 @@ mod tests {
             c2.store(true, Ordering::SeqCst);
         });
         let t0 = Instant::now();
-        let e = decode(Path::new("/x/song.mp3"), Some(&script), &cancel, &mut no_progress()).unwrap_err();
+        let e = decode(
+            Path::new("/x/song.mp3"),
+            Some(&script),
+            &cancel,
+            &mut no_progress(),
+        )
+        .unwrap_err();
         canceller.join().unwrap();
         assert!(t0.elapsed() < Duration::from_secs(2), "{:?}", t0.elapsed());
         assert!(e.contains("cancelled"), "{e}");
-        let pid: u32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+        let pid: u32 = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         assert!(!alive(pid));
     }
 }

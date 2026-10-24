@@ -82,7 +82,10 @@ mod tests {
         assert_eq!(u16_at(34), 32);
         assert_eq!(&b[36..40], b"data");
         assert_eq!(u32_at(40), 24);
-        let got: Vec<f32> = b[44..].chunks(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect();
+        let got: Vec<f32> = b[44..]
+            .chunks(4)
+            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
         assert_eq!(got, samples);
     }
 
@@ -90,7 +93,11 @@ mod tests {
     fn from_file_writes_into_the_given_file() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("b.wav");
-        let f = std::fs::OpenOptions::new().write(true).create_new(true).open(&p).unwrap();
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&p)
+            .unwrap();
         WavWriter::from_file(f, 48000).unwrap().finish().unwrap();
         let b = std::fs::read(&p).unwrap();
         assert_eq!(b.len(), 44);

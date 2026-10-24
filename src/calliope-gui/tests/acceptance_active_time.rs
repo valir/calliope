@@ -8,26 +8,32 @@
 //! `#[path]`; imports run against the REAL `calliope-stems` binary with the stub separator
 //! (`sparse` / `silent` modes) or a scripted loopback server whose stem bodies are FLAC files
 //! built here with `flacenc`. Loopback only, no audio device (ManualBackend), no real model.
-#![allow(dead_code, unused_imports, unused_variables, clippy::type_complexity, clippy::all)]
+#![allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    clippy::type_complexity,
+    clippy::all
+)]
 
-use calliope_gui::fsutil;
-use calliope_gui::track_meta;
-use calliope_gui::repository;
-use calliope_gui::settings;
-use calliope_gui::picker;
-#[allow(dead_code)]
-use calliope_gui::local_source;
-use calliope_gui::import_tmp;
-use calliope_gui::media;
-use calliope_gui::download;
-use calliope_gui::tools;
-use calliope_gui::import_job;
-use calliope_gui::transport;
-use calliope_gui::mixer;
-use calliope_gui::stem_audio;
 use calliope_gui::audio_out;
 use calliope_gui::backing_render;
+use calliope_gui::download;
 use calliope_gui::editor;
+use calliope_gui::fsutil;
+use calliope_gui::import_job;
+use calliope_gui::import_tmp;
+#[allow(dead_code)]
+use calliope_gui::local_source;
+use calliope_gui::media;
+use calliope_gui::mixer;
+use calliope_gui::picker;
+use calliope_gui::repository;
+use calliope_gui::settings;
+use calliope_gui::stem_audio;
+use calliope_gui::tools;
+use calliope_gui::track_meta;
+use calliope_gui::transport;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -58,12 +64,22 @@ fn fixture(name: &str) -> PathBuf {
     project().join("tests/fixtures/import").join(name)
 }
 fn tool(name: &str) -> PathBuf {
-    tools::find_in_path(name, &std::env::var_os("PATH").unwrap_or_default()).unwrap_or_else(|| panic!("{name} is needed"))
+    tools::find_in_path(name, &std::env::var_os("PATH").unwrap_or_default())
+        .unwrap_or_else(|| panic!("{name} is needed"))
 }
 fn stems_binary() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
-    let bin = exe.parent().unwrap().parent().unwrap().join("calliope-stems");
-    assert!(bin.is_file(), "{} is missing: cargo build -p calliope-stems", bin.display());
+    let bin = exe
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("calliope-stems");
+    assert!(
+        bin.is_file(),
+        "{} is missing: cargo build -p calliope-stems",
+        bin.display()
+    );
     bin
 }
 
@@ -88,7 +104,11 @@ fn fingerprint(dir: &Path) -> BTreeMap<String, String> {
             let p = e.path();
             let rel = p.strip_prefix(base).unwrap().to_string_lossy().to_string();
             let md = fs::symlink_metadata(&p).unwrap();
-            let mt = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+            let mt = md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
             if md.file_type().is_symlink() {
                 out.insert(rel, format!("link -> {:?}", fs::read_link(&p).unwrap()));
             } else if md.is_dir() {
@@ -100,7 +120,14 @@ fn fingerprint(dir: &Path) -> BTreeMap<String, String> {
                 for b in &bytes {
                     h = (h ^ *b as u64).wrapping_mul(0x100000001b3);
                 }
-                out.insert(rel, format!("file {} {mt} {h:x} mode={:o}", bytes.len(), md.permissions().mode()));
+                out.insert(
+                    rel,
+                    format!(
+                        "file {} {mt} {h:x} mode={:o}",
+                        bytes.len(),
+                        md.permissions().mode()
+                    ),
+                );
             }
         }
     }
@@ -114,7 +141,9 @@ fn procs_mentioning(needle: &str) -> Vec<(u32, String)> {
     let me = std::process::id();
     let mut v = Vec::new();
     for e in fs::read_dir("/proc").unwrap().flatten() {
-        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
+            continue;
+        };
         if pid == me {
             continue;
         }
@@ -154,11 +183,16 @@ fn until(what: &str, secs: u64, mut f: impl FnMut() -> bool) {
 }
 
 fn names_in(dir: &Path) -> Vec<String> {
-    let mut v: Vec<String> = fs::read_dir(dir).map(|r| r.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+    let mut v: Vec<String> = fs::read_dir(dir)
+        .map(|r| {
+            r.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
     v.sort();
     v
 }
-
 
 // ------------------------------------------------------------------ servers
 
@@ -198,7 +232,10 @@ impl RealServer {
         let mut line = String::new();
         let addr: SocketAddr = loop {
             line.clear();
-            assert!(lines.read_line(&mut line).unwrap() > 0, "server exited before listening");
+            assert!(
+                lines.read_line(&mut line).unwrap() > 0,
+                "server exited before listening"
+            );
             if let Some(rest) = line.split("listening addr=").nth(1) {
                 break rest.split_whitespace().next().unwrap().parse().unwrap();
             }
@@ -213,13 +250,24 @@ impl RealServer {
                 s.clear();
             }
         });
-        RealServer { child, url: format!("http://{addr}"), work, log, _outer: outer }
+        RealServer {
+            child,
+            url: format!("http://{addr}"),
+            work,
+            log,
+            _outer: outer,
+        }
     }
     fn saw(&self, needle: &str) -> bool {
         self.log.lock().unwrap().iter().any(|l| l.contains(needle))
     }
     fn count(&self, needle: &str) -> usize {
-        self.log.lock().unwrap().iter().filter(|l| l.contains(needle)).count()
+        self.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.contains(needle))
+            .count()
     }
     fn job_dirs(&self) -> Vec<String> {
         names_in(&self.work.join("jobs"))
@@ -249,8 +297,14 @@ impl AiConfig {
     fn good() -> AiConfig {
         AiConfig {
             job_id: "0190b1c2-3d4e-4f50-8a6b-7c8d9e0f1a2b".into(),
-            stems: ["vocals", "drums", "bass", "guitar", "piano", "other"].iter().map(|s| s.to_string()).collect(),
-            body: Arc::new(|n| fs::read(fixture(&format!("stems/{n}.flac"))).unwrap_or_else(|_| b"fLaC-generic-body".to_vec())),
+            stems: ["vocals", "drums", "bass", "guitar", "piano", "other"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            body: Arc::new(|n| {
+                fs::read(fixture(&format!("stems/{n}.flac")))
+                    .unwrap_or_else(|_| b"fLaC-generic-body".to_vec())
+            }),
             slow_stem_ms: 0,
             max_upload: 300 << 20,
             final_state: "done",
@@ -284,7 +338,21 @@ impl FakeAi {
     }
     /// names of the stems fetched, in request order
     fn fetched(&self) -> Vec<String> {
-        self.hits.lock().unwrap().iter().filter(|l| l.starts_with("GET") && l.contains("/stems/")).map(|l| l.split("/stems/").nth(1).unwrap().split(' ').next().unwrap().to_string()).collect()
+        self.hits
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.starts_with("GET") && l.contains("/stems/"))
+            .map(|l| {
+                l.split("/stems/")
+                    .nth(1)
+                    .unwrap()
+                    .split(' ')
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect()
     }
 }
 
@@ -317,17 +385,27 @@ fn fake_ai(cfg: AiConfig) -> FakeAi {
                 hits.lock().unwrap().push(line.clone());
                 let clen: usize = text
                     .lines()
-                    .find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0)))
+                    .find_map(|l| {
+                        l.to_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|v| v.trim().parse().unwrap_or(0))
+                    })
                     .unwrap_or(0);
                 let send = |s: &mut TcpStream, status: &str, ctype: &str, body: &[u8]| {
                     let h = format!("HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
                     let _ = s.write_all(h.as_bytes());
                     let _ = s.write_all(body);
                 };
-                let json = |s: &mut TcpStream, status: &str, v: serde_json::Value| send(s, status, "application/json", v.to_string().as_bytes());
+                let json = |s: &mut TcpStream, status: &str, v: serde_json::Value| {
+                    send(s, status, "application/json", v.to_string().as_bytes())
+                };
                 if line.starts_with("GET /v1/health") {
-                    json(&mut s, "200 OK", serde_json::json!({"service":"calliope-stems","api":1,"version":"x","models":["htdemucs_6s"],
-                        "default_model":"htdemucs_6s","busy":false,"max_duration_s":900,"max_upload_bytes":cfg.max_upload}));
+                    json(
+                        &mut s,
+                        "200 OK",
+                        serde_json::json!({"service":"calliope-stems","api":1,"version":"x","models":["htdemucs_6s"],
+                        "default_model":"htdemucs_6s","busy":false,"max_duration_s":900,"max_upload_bytes":cfg.max_upload}),
+                    );
                 } else if line.starts_with("POST /v1/jobs") {
                     let mut left = clen;
                     let mut buf = vec![0u8; 65536];
@@ -337,11 +415,19 @@ fn fake_ai(cfg: AiConfig) -> FakeAi {
                             Ok(n) => left -= n,
                         }
                     }
-                    json(&mut s, "202 Accepted", serde_json::json!({"job": cfg.job_id, "state": "queued"}));
+                    json(
+                        &mut s,
+                        "202 Accepted",
+                        serde_json::json!({"job": cfg.job_id, "state": "queued"}),
+                    );
                 } else if line.starts_with("DELETE") {
                     let _ = s.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
                 } else if line.contains("/stems/") {
-                    let name = line.split("/stems/").nth(1).and_then(|r| r.split(' ').next()).unwrap_or("");
+                    let name = line
+                        .split("/stems/")
+                        .nth(1)
+                        .and_then(|r| r.split(' ').next())
+                        .unwrap_or("");
                     let body = (cfg.body)(name);
                     let h = format!("HTTP/1.1 200 OK\r\nContent-Type: audio/flac\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
                     let _ = s.write_all(h.as_bytes());
@@ -404,7 +490,15 @@ impl Rig {
             Repository::new(&root).ensure_layout().unwrap();
         }
         fs::write(outside.join("precious.txt"), "do not touch").unwrap();
-        for f in ["tagged.mp3", "tagged.ogg", "with-audio.mp4", "no-audio.mp4", "long.flac", "untagged.flac", "not-audio.mp3"] {
+        for f in [
+            "tagged.mp3",
+            "tagged.ogg",
+            "with-audio.mp4",
+            "no-audio.mp4",
+            "long.flac",
+            "untagged.flac",
+            "not-audio.mp3",
+        ] {
             fs::copy(fixture(f), sources.join(f)).unwrap();
         }
         // wrapper so that each rig has its own fake-yt-dlp log
@@ -412,11 +506,19 @@ impl Rig {
         let wrapper = dir.path().join("yt-dlp");
         fs::write(
             &wrapper,
-            format!("#!/bin/sh\nexport FAKE_YTDLP_LOG='{}'\nexec python3 '{}' \"$@\"\n", ytlog.display(), project().join("tests/support/bin/yt-dlp").display()),
+            format!(
+                "#!/bin/sh\nexport FAKE_YTDLP_LOG='{}'\nexec python3 '{}' \"$@\"\n",
+                ytlog.display(),
+                project().join("tests/support/bin/yt-dlp").display()
+            ),
         )
         .unwrap();
         fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
-        let tools = Tools { yt_dlp: Some(wrapper), ffmpeg: Some(tool("ffmpeg")), ffprobe: Some(tool("ffprobe")) };
+        let tools = Tools {
+            yt_dlp: Some(wrapper),
+            ffmpeg: Some(tool("ffmpeg")),
+            ffprobe: Some(tool("ffprobe")),
+        };
         let repo_lock = Arc::new(Mutex::new(()));
         let lock: Arc<dyn RepoLock> = Arc::new(move |f: &mut dyn FnMut()| {
             let _g = repo_lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -426,7 +528,17 @@ impl Rig {
         let e2 = events.clone();
         let sink: Sink = Arc::new(move |ev| e2.lock().unwrap().push(ev));
         let state = ImportState::new(tools.clone(), lock, Duration::from_millis(40));
-        Rig { dir, root, outside, sources, state, tools, events, sink, ytlog }
+        Rig {
+            dir,
+            root,
+            outside,
+            sources,
+            state,
+            tools,
+            events,
+            sink,
+            ytlog,
+        }
     }
 
     fn needle(&self) -> String {
@@ -434,11 +546,17 @@ impl Rig {
     }
 
     fn url(&self, url: &str, resume: bool) -> Result<JobSnapshot, String> {
-        self.state.start_url(&self.root, url, resume, self.sink.clone())
+        self.state
+            .start_url(&self.root, url, resume, self.sink.clone())
     }
     fn file_at(&self, path: &Path) -> Result<JobSnapshot, String> {
-        let kind = if path.extension().is_some_and(|e| e == "mp4") { FileKind::Video } else { FileKind::Audio };
-        self.state.start_file(&self.root, kind, path, self.sink.clone())
+        let kind = if path.extension().is_some_and(|e| e == "mp4") {
+            FileKind::Video
+        } else {
+            FileKind::Audio
+        };
+        self.state
+            .start_file(&self.root, kind, path, self.sink.clone())
     }
     fn file(&self, name: &str) -> Result<JobSnapshot, String> {
         self.file_at(&self.sources.join(name))
@@ -452,7 +570,11 @@ impl Rig {
                     return s;
                 }
             }
-            assert!(Instant::now() < end, "timed out waiting for {what}; at {:?}", self.state.snapshot().map(|s| (s.phase, s.error)));
+            assert!(
+                Instant::now() < end,
+                "timed out waiting for {what}; at {:?}",
+                self.state.snapshot().map(|s| (s.phase, s.error))
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
     }
@@ -475,14 +597,23 @@ impl Rig {
         assert_eq!(s.phase, Phase::Ready, "{:?}", s.error);
         s
     }
-    fn extract(&self, s: &JobSnapshot, server_url: &str, keep: bool) -> Result<JobSnapshot, String> {
-        self.state.start_extraction(&s.job, s.metadata.clone().unwrap(), Some(server_url), keep)
+    fn extract(
+        &self,
+        s: &JobSnapshot,
+        server_url: &str,
+        keep: bool,
+    ) -> Result<JobSnapshot, String> {
+        self.state
+            .start_extraction(&s.job, s.metadata.clone().unwrap(), Some(server_url), keep)
     }
     fn tracks(&self) -> Vec<String> {
         names_in(&self.root.join("tracks"))
     }
     fn staging(&self) -> Vec<String> {
-        self.tracks().into_iter().filter(|n| n.starts_with(".staging")).collect()
+        self.tracks()
+            .into_iter()
+            .filter(|n| n.starts_with(".staging"))
+            .collect()
     }
     fn import_tmp(&self) -> Vec<String> {
         names_in(&self.root.join("import-tmp"))
@@ -495,16 +626,20 @@ impl Rig {
             .collect()
     }
     fn outside_ok(&self) {
-        assert_eq!(fs::read_to_string(self.outside.join("precious.txt")).unwrap(), "do not touch");
+        assert_eq!(
+            fs::read_to_string(self.outside.join("precious.txt")).unwrap(),
+            "do not touch"
+        );
         assert_eq!(names_in(&self.outside), ["precious.txt"]);
     }
     fn no_stray_processes(&self) {
         until("no process mentioning the rig remains", 10, || {
-            procs_mentioning(&self.needle()).iter().all(|(_, c)| c.contains("calliope-stems") && false)
+            procs_mentioning(&self.needle())
+                .iter()
+                .all(|(_, c)| c.contains("calliope-stems") && false)
         });
     }
 }
-
 
 // ====================================================================== FLAC builders
 
@@ -546,7 +681,10 @@ fn start_custom(separator: &Path, extra: &[&str]) -> RealServer {
     let mut line = String::new();
     let addr: SocketAddr = loop {
         line.clear();
-        assert!(lines.read_line(&mut line).unwrap() > 0, "server exited before listening");
+        assert!(
+            lines.read_line(&mut line).unwrap() > 0,
+            "server exited before listening"
+        );
         if let Some(rest) = line.split("listening addr=").nth(1) {
             break rest.split_whitespace().next().unwrap().parse().unwrap();
         }
@@ -560,7 +698,13 @@ fn start_custom(separator: &Path, extra: &[&str]) -> RealServer {
             s.clear();
         }
     });
-    RealServer { child, url: format!("http://{addr}"), work, log, _outer: outer }
+    RealServer {
+        child,
+        url: format!("http://{addr}"),
+        work,
+        log,
+        _outer: outer,
+    }
 }
 
 fn start_real(mode: &str, extra: &[&str]) -> RealServer {
@@ -576,8 +720,18 @@ impl RealServer {
             .lock()
             .unwrap()
             .iter()
-            .filter(|l| l.contains("method=GET") && l.contains("/stems/") && l.contains("status=200"))
-            .map(|l| l.split("/stems/").nth(1).unwrap().split_whitespace().next().unwrap().to_string())
+            .filter(|l| {
+                l.contains("method=GET") && l.contains("/stems/") && l.contains("status=200")
+            })
+            .map(|l| {
+                l.split("/stems/")
+                    .nth(1)
+                    .unwrap()
+                    .split_whitespace()
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
             .collect()
     }
 }
@@ -594,7 +748,10 @@ fn rep(ms: u64) -> Option<Report> {
 fn scripted(items: Vec<(&str, Vec<u8>, Option<Report>)>, report: bool) -> FakeAi {
     let mut cfg = AiConfig::good();
     cfg.stems = items.iter().map(|i| i.0.to_string()).collect();
-    let bodies: BTreeMap<String, Vec<u8>> = items.iter().map(|i| (i.0.to_string(), i.1.clone())).collect();
+    let bodies: BTreeMap<String, Vec<u8>> = items
+        .iter()
+        .map(|i| (i.0.to_string(), i.1.clone()))
+        .collect();
     cfg.body = Arc::new(move |n| bodies.get(n).cloned().unwrap_or_default());
     if report {
         let list: Vec<serde_json::Value> = items
@@ -611,7 +768,10 @@ fn scripted(items: Vec<(&str, Vec<u8>, Option<Report>)>, report: bool) -> FakeAi
 fn outcome(done: &JobSnapshot) -> (Vec<String>, Vec<(String, u64)>) {
     (
         done.track.as_ref().map(kept_names).unwrap_or_default(),
-        done.dropped.iter().map(|d| (d.name.clone(), d.audible_ms)).collect(),
+        done.dropped
+            .iter()
+            .map(|d| (d.name.clone(), d.audible_ms))
+            .collect(),
     )
 }
 fn kept_names(t: &repository::TrackRecord) -> Vec<String> {
@@ -621,7 +781,9 @@ fn import_with(rig: &Rig, url: &str) -> JobSnapshot {
     rig.file("untagged.flac").unwrap();
     let ready = rig.ready();
     rig.extract(&ready, url, false).unwrap();
-    rig.wait("saved or failed", |s| matches!(s.phase, Phase::Saved | Phase::Failed) && !rig.state.is_running())
+    rig.wait("saved or failed", |s| {
+        matches!(s.phase, Phase::Saved | Phase::Failed) && !rig.state.is_running()
+    })
 }
 fn assert_nothing_left(rig: &Rig) {
     assert!(rig.staging().is_empty(), "{:?}", rig.staging());
@@ -637,7 +799,6 @@ fn zeros() -> Vec<u8> {
 fn activity(name: &str) -> Vec<u8> {
     fs::read(fixture(&format!("stems-activity/{name}"))).unwrap()
 }
-
 
 // ====================================================================== independent stems
 
@@ -677,7 +838,10 @@ fn fake(flavour: Flavour) -> FakeAi {
     let items = six();
     let mut cfg = AiConfig::good();
     cfg.stems = items.iter().map(|i| i.0.to_string()).collect();
-    let bodies: BTreeMap<String, Vec<u8>> = items.iter().map(|i| (i.0.to_string(), i.1.clone())).collect();
+    let bodies: BTreeMap<String, Vec<u8>> = items
+        .iter()
+        .map(|i| (i.0.to_string(), i.1.clone()))
+        .collect();
     cfg.body = Arc::new(move |n| bodies.get(n).cloned().unwrap_or_default());
     let list = |level: i32, window: u32| {
         // times are multiples of the window so check_stem_levels accepts them
@@ -688,7 +852,10 @@ fn fake(flavour: Flavour) -> FakeAi {
         Flavour::NoKey => {}
         Flavour::PeaksEra => {
             // what the server-peaks build sent: peaks that would have KEPT the loud bursts
-            cfg.peaks = Some(serde_json::json!(items.iter().map(|(n, ..)| serde_json::json!({"name": n, "peak_dbfs": -3.0})).collect::<Vec<_>>()));
+            cfg.peaks = Some(serde_json::json!(items
+                .iter()
+                .map(|(n, ..)| serde_json::json!({"name": n, "peak_dbfs": -3.0}))
+                .collect::<Vec<_>>()));
         }
         Flavour::OtherLevel => cfg.levels = Some(list(-50, 100)),
         Flavour::OtherWindow => cfg.levels = Some(list(-40, 50)),
@@ -722,8 +889,15 @@ fn local_check_agrees_with_the_known_audible_times() {
         let p = d.path().join(format!("{n}.flac"));
         fs::write(&p, body).unwrap();
         match check_stem(&p).unwrap() {
-            StemCheck::Audible { audible_ms } => assert!(ms >= EMPTY_STEM_MIN_AUDIBLE_MS && audible_ms >= EMPTY_STEM_MIN_AUDIBLE_MS, "{n}"),
-            StemCheck::Empty { audible_ms, .. } => assert_eq!((ms < EMPTY_STEM_MIN_AUDIBLE_MS, audible_ms), (true, ms), "{n}"),
+            StemCheck::Audible { audible_ms } => assert!(
+                ms >= EMPTY_STEM_MIN_AUDIBLE_MS && audible_ms >= EMPTY_STEM_MIN_AUDIBLE_MS,
+                "{n}"
+            ),
+            StemCheck::Empty { audible_ms, .. } => assert_eq!(
+                (ms < EMPTY_STEM_MIN_AUDIBLE_MS, audible_ms),
+                (true, ms),
+                "{n}"
+            ),
         }
     }
     assert_eq!(EMPTY_STEM_MIN_AUDIBLE_MS, 15_000);
@@ -732,21 +906,57 @@ fn local_check_agrees_with_the_known_audible_times() {
 #[test]
 fn boundary_14_9_vs_15_0_via_the_local_check_and_via_a_server_report() {
     let d = tempfile::tempdir().unwrap();
-    for (f, empty) in [("audible-14900ms.flac", true), ("audible-15000ms.flac", false)] {
-        assert_eq!(matches!(check_stem(&fixture(&format!("stems-activity/{f}"))).unwrap(), StemCheck::Empty { .. }), empty, "{f}");
+    for (f, empty) in [
+        ("audible-14900ms.flac", true),
+        ("audible-15000ms.flac", false),
+    ] {
+        assert_eq!(
+            matches!(
+                check_stem(&fixture(&format!("stems-activity/{f}"))).unwrap(),
+                StemCheck::Empty { .. }
+            ),
+            empty,
+            "{f}"
+        );
     }
-    let lv = |ms| calliope_lib::stems_api::StemLevel { name: "x".into(), audible_ms: ms, level_dbfs: -40, window_ms: 100, peak_dbfs: None };
-    assert!(matches!(check_reported(&lv(14_900)), Some(StemCheck::Empty { .. })));
-    assert!(matches!(check_reported(&lv(15_000)), Some(StemCheck::Audible { .. })));
-    assert!(check_reported(&calliope_lib::stems_api::StemLevel { level_dbfs: -50, ..lv(0) }).is_none());
-    assert!(check_reported(&calliope_lib::stems_api::StemLevel { window_ms: 50, ..lv(0) }).is_none());
+    let lv = |ms| calliope_lib::stems_api::StemLevel {
+        name: "x".into(),
+        audible_ms: ms,
+        level_dbfs: -40,
+        window_ms: 100,
+        peak_dbfs: None,
+    };
+    assert!(matches!(
+        check_reported(&lv(14_900)),
+        Some(StemCheck::Empty { .. })
+    ));
+    assert!(matches!(
+        check_reported(&lv(15_000)),
+        Some(StemCheck::Audible { .. })
+    ));
+    assert!(check_reported(&calliope_lib::stems_api::StemLevel {
+        level_dbfs: -50,
+        ..lv(0)
+    })
+    .is_none());
+    assert!(check_reported(&calliope_lib::stems_api::StemLevel {
+        window_ms: 50,
+        ..lv(0)
+    })
+    .is_none());
     let _ = d;
 }
 
 #[test]
 fn identical_verdict_for_every_kind_of_server_only_the_download_list_differs() {
     let mut outcomes = Vec::new();
-    for fl in [Flavour::WithLevels, Flavour::NoKey, Flavour::PeaksEra, Flavour::OtherLevel, Flavour::OtherWindow] {
+    for fl in [
+        Flavour::WithLevels,
+        Flavour::NoKey,
+        Flavour::PeaksEra,
+        Flavour::OtherLevel,
+        Flavour::OtherWindow,
+    ] {
         let ai = fake(fl);
         let rig = Rig::new(false);
         let done = import_with(&rig, &ai.url());
@@ -755,10 +965,21 @@ fn identical_verdict_for_every_kind_of_server_only_the_download_list_differs() {
         assert_eq!(kept, KEPT, "{fl:?}");
         assert_eq!(dropped, dropped_pairs(), "{fl:?}");
         match fl {
-            Flavour::WithLevels => assert_eq!(ai.fetched(), KEPT, "reported-empty stems must never be requested"),
-            _ => assert_eq!(ai.fetched(), ["vocals", "drums", "bass", "guitar", "piano", "other"], "{fl:?}: everything downloaded"),
+            Flavour::WithLevels => assert_eq!(
+                ai.fetched(),
+                KEPT,
+                "reported-empty stems must never be requested"
+            ),
+            _ => assert_eq!(
+                ai.fetched(),
+                ["vocals", "drums", "bass", "guitar", "piano", "other"],
+                "{fl:?}: everything downloaded"
+            ),
         }
-        assert!(rig.staging().is_empty() && rig.import_tmp().is_empty(), "{fl:?}");
+        assert!(
+            rig.staging().is_empty() && rig.import_tmp().is_empty(),
+            "{fl:?}"
+        );
         outcomes.push(outcome(&done));
     }
     assert!(outcomes.windows(2).all(|w| w[0] == w[1]));
@@ -775,8 +996,19 @@ fn real_server_with_and_without_levels_gives_the_same_track_and_the_same_numbers
         let done = import_with(&rig, &server.url);
         assert_eq!(done.phase, Phase::Saved, "{extra:?}: {:?}", done.error);
         if extra.is_empty() {
-            assert_eq!(server.stem_gets(), KEPT, "never downloaded: the request log must not list the dropped stems");
-            assert!(!server.log.lock().unwrap().iter().any(|l| l.contains("/stems/bass") || l.contains("/stems/guitar") || l.contains("/stems/other")));
+            assert_eq!(
+                server.stem_gets(),
+                KEPT,
+                "never downloaded: the request log must not list the dropped stems"
+            );
+            assert!(!server
+                .log
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|l| l.contains("/stems/bass")
+                    || l.contains("/stems/guitar")
+                    || l.contains("/stems/other")));
             // the server's own numbers are exactly the ones the app reports as dropped
             for (n, ms) in DROPPED {
                 assert!(server.saw(&format!("stem={n} audible_ms={ms} ")), "{n}");
@@ -786,7 +1018,10 @@ fn real_server_with_and_without_levels_gives_the_same_track_and_the_same_numbers
         }
         res.push(outcome(&done));
     }
-    assert_eq!(res[0], res[1], "server-measured and app-measured verdicts (and audible_ms) must agree bit for bit");
+    assert_eq!(
+        res[0], res[1],
+        "server-measured and app-measured verdicts (and audible_ms) must agree bit for bit"
+    );
 }
 
 #[test]
@@ -794,7 +1029,20 @@ fn all_empty_fails_with_the_exact_message_for_every_kind_of_server_and_keeps_aud
     let zero = || spike(0, 16, 8000, 0);
     let names = ["vocals", "drums", "bass", "guitar", "piano", "other"];
     // quiet-but-not-silent (-45 dBFS-ish tone) and loud bursts are empty too
-    let bodies: Vec<(&str, Vec<u8>)> = names.iter().enumerate().map(|(i, n)| (*n, if i % 2 == 0 { zero() } else { activity("bursts.flac") })).collect();
+    let bodies: Vec<(&str, Vec<u8>)> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| {
+            (
+                *n,
+                if i % 2 == 0 {
+                    zero()
+                } else {
+                    activity("bursts.flac")
+                },
+            )
+        })
+        .collect();
     let (sep, _keep) = separator_with(&bodies);
     let msg = "Every stem is empty (less than 15 s above -40 dBFS), so no track was saved";
     for extra in [&[][..], &["--no-stem-levels"][..]] {
@@ -803,7 +1051,11 @@ fn all_empty_fails_with_the_exact_message_for_every_kind_of_server_and_keeps_aud
         let done = import_with(&rig, &server.url);
         assert_eq!(done.phase, Phase::Failed, "{extra:?}");
         let e = done.error.unwrap();
-        assert_eq!((e.stage, e.message.as_str()), (Stage::Server, msg), "{extra:?}");
+        assert_eq!(
+            (e.stage, e.message.as_str()),
+            (Stage::Server, msg),
+            "{extra:?}"
+        );
         if extra.is_empty() {
             assert!(server.stem_gets().is_empty(), "{:?}", server.stem_gets());
         } else {
@@ -833,14 +1085,23 @@ fn an_empty_stem_is_dropped_even_when_the_server_calls_it_audible_with_a_loud_pe
     let mut cfg = AiConfig::good();
     let items = six();
     cfg.stems = items.iter().map(|i| i.0.to_string()).collect();
-    let bodies: BTreeMap<String, Vec<u8>> = items.iter().map(|i| (i.0.to_string(), i.1.clone())).collect();
+    let bodies: BTreeMap<String, Vec<u8>> = items
+        .iter()
+        .map(|i| (i.0.to_string(), i.1.clone()))
+        .collect();
     cfg.body = Arc::new(move |n| bodies.get(n).cloned().unwrap_or_default());
     cfg.levels = Some(serde_json::json!(items.iter().map(|(n, ..)| serde_json::json!({"name": n, "audible_ms": 20_000, "level_dbfs": -40, "window_ms": 100, "peak_dbfs": -1.0})).collect::<Vec<_>>()));
     let ai = fake_ai(cfg);
     let rig = Rig::new(false);
     let done = import_with(&rig, &ai.url());
     assert_eq!(done.phase, Phase::Saved, "{:?}", done.error);
-    assert_eq!(outcome(&done), (KEPT.iter().map(|s| s.to_string()).collect(), dropped_pairs()));
+    assert_eq!(
+        outcome(&done),
+        (
+            KEPT.iter().map(|s| s.to_string()).collect(),
+            dropped_pairs()
+        )
+    );
     assert_eq!(ai.fetched().len(), 6);
 }
 
@@ -863,12 +1124,34 @@ fn snapshot_is_final_before_the_saved_event_is_delivered_so_pollers_must_wait_fo
         }
         e2.lock().unwrap().push(ev);
     });
-    rig.state.start_file(&rig.root, FileKind::Audio, &rig.sources.join("untagged.flac"), slow_sink).unwrap();
+    rig.state
+        .start_file(
+            &rig.root,
+            FileKind::Audio,
+            &rig.sources.join("untagged.flac"),
+            slow_sink,
+        )
+        .unwrap();
     let ready = rig.ready();
     rig.extract(&ready, &ai.url(), false).unwrap();
-    let snap = rig.wait("saved and stopped", |s| s.phase == Phase::Saved && !rig.state.is_running());
+    let snap = rig.wait("saved and stopped", |s| {
+        s.phase == Phase::Saved && !rig.state.is_running()
+    });
     assert_eq!(snap.phase, Phase::Saved);
-    let seen_saved_event_at_that_moment = slow_events.lock().unwrap().iter().any(|e| matches!(e, ImportEvent::Saved { .. }));
-    assert!(!seen_saved_event_at_that_moment, "the race window is real: state final, event still pending");
-    until("the Saved event arrives", 10, || slow_events.lock().unwrap().iter().any(|e| matches!(e, ImportEvent::Saved { .. })));
+    let seen_saved_event_at_that_moment = slow_events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| matches!(e, ImportEvent::Saved { .. }));
+    assert!(
+        !seen_saved_event_at_that_moment,
+        "the race window is real: state final, event still pending"
+    );
+    until("the Saved event arrives", 10, || {
+        slow_events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, ImportEvent::Saved { .. }))
+    });
 }

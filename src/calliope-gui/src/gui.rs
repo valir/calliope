@@ -32,7 +32,11 @@ fn choose_picker(app: &tauri::AppHandle) -> Box<dyn Picker> {
 fn new_export_state(discover: impl Fn() -> Tools + Send + Sync + 'static) -> ExportState {
     let state = ExportState::new(Box::new(discover));
     #[cfg(feature = "e2e-hooks")]
-    if let Some(f) = std::env::var("CALLIOPE_E2E_EXPORT_PACE").ok().and_then(|v| v.parse::<f64>().ok()).filter(|f| *f > 0.0) {
+    if let Some(f) = std::env::var("CALLIOPE_E2E_EXPORT_PACE")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|f| *f > 0.0)
+    {
         return state.with_pace(f);
     }
     state
@@ -45,22 +49,26 @@ pub fn run() {
         .setup(|app| {
             let path = app.path().app_config_dir()?.join("settings.json");
             let store = SettingsStore::open(path);
-            let root = store
-                .get()
-                .repository_root
-                .unwrap_or_else(|| settings::default_repository_root(&app.path().data_dir().expect("data dir")));
+            let root = store.get().repository_root.unwrap_or_else(|| {
+                settings::default_repository_root(&app.path().data_dir().expect("data dir"))
+            });
             let url = store.get().edge_ai_url;
             app.manage(store);
             let repo = RepoState::new(root, choose_picker(app.handle()));
             let discover = || Tools::discover(&std::env::var_os("PATH").unwrap_or_default());
-            app.manage(ImportState::new(discover(), repo.repo_lock(), ipc::IMPORT_POLL).with_rediscovery(discover));
+            app.manage(
+                ImportState::new(discover(), repo.repo_lock(), ipc::IMPORT_POLL)
+                    .with_rediscovery(discover),
+            );
             app.manage(repo);
             app.manage(new_export_state(discover));
             let backend = crate::audio_out::select_backend();
             // One backend for both engines: only one of them sounds at a time.
             let editor = ipc::EditorState::new(backend.clone());
             let h = app.handle().clone();
-            editor.set_before_play(std::sync::Arc::new(move || h.state::<Arc<PlayerHost>>().pause_current()));
+            editor.set_before_play(std::sync::Arc::new(move || {
+                h.state::<Arc<PlayerHost>>().pause_current()
+            }));
             app.manage(editor);
             let host = Arc::new(PlayerHost::new(backend, discover().ffmpeg));
             // Editor tempo writes go through the Player: flush on read, release on write.

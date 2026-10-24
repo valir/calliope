@@ -51,7 +51,9 @@ fn help_flag() {
     );
     assert_eq!(s, expected);
     let first = s.lines().next().unwrap();
-    assert!(is_version(first.strip_prefix("calliope-gui, version ").unwrap()));
+    assert!(is_version(
+        first.strip_prefix("calliope-gui, version ").unwrap()
+    ));
 }
 
 #[test]

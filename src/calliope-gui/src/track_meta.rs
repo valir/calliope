@@ -61,11 +61,19 @@ pub struct TrackMeta {
     pub album: String,
     /// The album's place among the band's albums (1-based). Every track of an album carries it; the
     /// tree uses the smallest value found among the album's tracks. `None` = not ordered.
-    #[serde(default, deserialize_with = "lenient_position", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_position",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub album_position: Option<u32>,
     pub title: String,
     /// The track's place in its album (1-based). `None` = not ordered.
-    #[serde(default, deserialize_with = "lenient_position", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_position",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub position: Option<u32>,
     #[serde(default)]
     pub composers: Vec<String>,
@@ -146,8 +154,10 @@ pub fn new_id() -> String {
 pub fn migrate(mut value: Value, from: u32) -> Value {
     if from < 2 {
         if let Some(obj) = value.as_object_mut() {
-            obj.entry("type").or_insert_with(|| Value::String("backing".into()));
-            obj.entry("stems").or_insert_with(|| Value::Array(Vec::new()));
+            obj.entry("type")
+                .or_insert_with(|| Value::String("backing".into()));
+            obj.entry("stems")
+                .or_insert_with(|| Value::Array(Vec::new()));
             obj.insert("schema_version".into(), Value::from(2));
         }
     }
@@ -178,7 +188,10 @@ pub fn parse(bytes: &[u8], dir_name: &str) -> Result<TrackMeta, String> {
     let meta: TrackMeta = serde_json::from_value(value).map_err(|e| e.to_string())?;
     validate_for_read(&meta)?;
     if meta.id != dir_name {
-        return Err(format!("id \"{}\" does not match folder \"{dir_name}\"", meta.id));
+        return Err(format!(
+            "id \"{}\" does not match folder \"{dir_name}\"",
+            meta.id
+        ));
     }
     Ok(meta)
 }
@@ -230,7 +243,9 @@ fn check_timestamp(label: &str, s: &str) -> Result<(), String> {
     if ok {
         Ok(())
     } else {
-        Err(format!("{label} \"{s}\" is not an RFC 3339 UTC time (YYYY-MM-DDTHH:MM:SSZ)"))
+        Err(format!(
+            "{label} \"{s}\" is not an RFC 3339 UTC time (YYYY-MM-DDTHH:MM:SSZ)"
+        ))
     }
 }
 
@@ -240,7 +255,10 @@ fn check_timestamp(label: &str, s: &str) -> Result<(), String> {
 /// never rewritten because of them.
 pub fn validate_for_read(meta: &TrackMeta) -> Result<(), String> {
     if meta.schema_version != CURRENT_SCHEMA {
-        return Err(format!("unsupported schema_version {}", meta.schema_version));
+        return Err(format!(
+            "unsupported schema_version {}",
+            meta.schema_version
+        ));
     }
     if !is_valid_id(&meta.id) {
         return Err(format!("invalid id \"{}\"", meta.id));
@@ -252,7 +270,9 @@ pub fn validate_for_read(meta: &TrackMeta) -> Result<(), String> {
     let mut claim = |label: &str, name: &str| -> Result<(), String> {
         let lower = name.to_lowercase();
         if seen.contains(&lower) {
-            return Err(format!("{label} \"{name}\" clashes with another file of the track"));
+            return Err(format!(
+                "{label} \"{name}\" clashes with another file of the track"
+            ));
         }
         seen.push(lower);
         Ok(())
@@ -303,7 +323,10 @@ pub fn validate_for_read(meta: &TrackMeta) -> Result<(), String> {
         ids.push(&b.id);
         let n = b.name.chars().count();
         if n == 0 || n > MAX_BACKING_NAME {
-            return Err(format!("backing \"{}\" has a name of {n} characters (1 to {MAX_BACKING_NAME})", b.id));
+            return Err(format!(
+                "backing \"{}\" has a name of {n} characters (1 to {MAX_BACKING_NAME})",
+                b.id
+            ));
         }
         let plain = b
             .file
@@ -322,7 +345,8 @@ pub fn is_valid_stem_name(name: &str) -> bool {
         Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit() => {}
         _ => return false,
     }
-    name.len() <= 32 && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+    name.len() <= 32
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
 /// Strict rules for the user-editable fields (applied when writing).
@@ -353,10 +377,16 @@ fn validate_edit_fields(meta: &TrackMeta) -> Result<(), String> {
     if let Some(c) = &meta.copyright {
         check_text("copyright", c, MAX_COPYRIGHT)?;
     }
-    if meta.position.is_some_and(|p| !(1..=MAX_POSITION).contains(&p)) {
+    if meta
+        .position
+        .is_some_and(|p| !(1..=MAX_POSITION).contains(&p))
+    {
         return Err(format!("position must be from 1 to {MAX_POSITION}"));
     }
-    if meta.album_position.is_some_and(|p| !(1..=MAX_POSITION).contains(&p)) {
+    if meta
+        .album_position
+        .is_some_and(|p| !(1..=MAX_POSITION).contains(&p))
+    {
         return Err(format!("album position must be from 1 to {MAX_POSITION}"));
     }
     if meta.stems.len() > MAX_STEMS {
@@ -389,7 +419,11 @@ pub fn apply_edits(meta: &mut TrackMeta, edits: TrackEdits) -> Result<(), String
     next.band = edits.band.trim().to_string();
     next.album = edits.album.trim().to_string();
     next.title = edits.title.trim().to_string();
-    next.composers = edits.composers.iter().map(|c| c.trim().to_string()).collect();
+    next.composers = edits
+        .composers
+        .iter()
+        .map(|c| c.trim().to_string())
+        .collect();
     next.year = edits.year;
     next.source_url = opt_trim(edits.source_url);
     next.copyright = opt_trim(edits.copyright);
@@ -433,10 +467,16 @@ pub fn apply_patch(
     }
     // Only what the patch changes is held to the strict rules; the rest of a hand-edited track
     // only has to be readable.
-    if next.position.is_some_and(|p| !(1..=MAX_POSITION).contains(&p)) {
+    if next
+        .position
+        .is_some_and(|p| !(1..=MAX_POSITION).contains(&p))
+    {
         return Err(format!("position must be from 1 to {MAX_POSITION}"));
     }
-    if next.album_position.is_some_and(|p| !(1..=MAX_POSITION).contains(&p)) {
+    if next
+        .album_position
+        .is_some_and(|p| !(1..=MAX_POSITION).contains(&p))
+    {
         return Err(format!("album position must be from 1 to {MAX_POSITION}"));
     }
     validate_for_read(&next)?;
@@ -575,7 +615,10 @@ mod tests {
             "written by a newer Calliope (schema 3)"
         );
         let missing = EXAMPLE.replace("\"schema_version\": 1,", "");
-        assert_eq!(parse(missing.as_bytes(), ID).unwrap_err(), "missing schema_version");
+        assert_eq!(
+            parse(missing.as_bytes(), ID).unwrap_err(),
+            "missing schema_version"
+        );
         assert!(parse(b"[]", ID).is_err());
         assert!(parse(b"{nope", ID).is_err());
     }
@@ -613,7 +656,10 @@ mod tests {
     #[test]
     fn v1_with_a_type_key() {
         let ok = EXAMPLE.replace("\"band\"", "\"type\": \"backing\",\n  \"band\"");
-        assert_eq!(parse(ok.as_bytes(), ID).unwrap().track_type, TrackType::Backing);
+        assert_eq!(
+            parse(ok.as_bytes(), ID).unwrap().track_type,
+            TrackType::Backing
+        );
         for t in ["\"stem\"", "\"video\"", "7"] {
             let bad = EXAMPLE.replace("\"band\"", &format!("\"type\": {t},\n  \"band\""));
             assert!(parse(bad.as_bytes(), ID).is_err(), "{t}");
@@ -627,7 +673,13 @@ mod tests {
         assert_eq!(m.audio, None);
         assert_eq!(m.original.as_deref(), Some("original.flac"));
         assert_eq!(m.stems.len(), 2);
-        assert_eq!(m.stems[1], StemEntry { name: "drums".into(), file: "stems/drums.flac".into() });
+        assert_eq!(
+            m.stems[1],
+            StemEntry {
+                name: "drums".into(),
+                file: "stems/drums.flac".into()
+            }
+        );
         assert_eq!(m.stem_model.as_deref(), Some("htdemucs_6s"));
         assert!(validate_for_write(&m).is_ok());
         let a: Value = serde_json::from_str(STEM).unwrap();
@@ -642,7 +694,10 @@ mod tests {
         let no_type = EXAMPLE_V2.replace("  \"type\": \"backing\",\n", "");
         assert_eq!(parse(no_type.as_bytes(), ID).unwrap_err(), "missing type");
         let odd = EXAMPLE_V2.replace("\"backing\",", "\"video\",");
-        assert_eq!(parse(odd.as_bytes(), ID).unwrap_err(), "unknown track type \"video\"");
+        assert_eq!(
+            parse(odd.as_bytes(), ID).unwrap_err(),
+            "unknown track type \"video\""
+        );
         let no_audio = EXAMPLE_V2.replace("\"audio\": \"backing.mp3\"", "\"audio\": null");
         assert!(parse(no_audio.as_bytes(), ID).is_err());
     }
@@ -671,7 +726,10 @@ mod tests {
         // write-only limits
         let mut m = parse(STEM.as_bytes(), ID).unwrap();
         m.stems = (0..17)
-            .map(|i| StemEntry { name: format!("s{i}"), file: format!("stems/s{i}.flac") })
+            .map(|i| StemEntry {
+                name: format!("s{i}"),
+                file: format!("stems/s{i}.flac"),
+            })
             .collect();
         assert!(validate_for_read(&m).is_ok());
         assert!(validate_for_write(&m).is_err());
@@ -750,7 +808,10 @@ mod tests {
             ("\"backing.mp3\"", "\"../backing.mp3\""),
             ("\"slow-burn.gp5\"", "\"a/b.gp5\""),
         ] {
-            assert!(parse(EXAMPLE.replace(from, to).as_bytes(), ID).is_err(), "{to}");
+            assert!(
+                parse(EXAMPLE.replace(from, to).as_bytes(), ID).is_err(),
+                "{to}"
+            );
         }
     }
 
@@ -806,12 +867,18 @@ mod tests {
             let back: Value = serde_json::from_str(&to_json_pretty(&m)).unwrap();
             assert!(back.get("position").is_none() && back.get("album_position").is_none());
         }
-        let text = EXAMPLE.replace("\"year\"", "\"position\": 3, \"album_position\": 2,\n  \"year\"");
+        let text = EXAMPLE.replace(
+            "\"year\"",
+            "\"position\": 3, \"album_position\": 2,\n  \"year\"",
+        );
         let m = parse(text.as_bytes(), ID).unwrap();
         assert_eq!((m.position, m.album_position), (Some(3), Some(2)));
         assert!(m.extra.is_empty());
         let back: Value = serde_json::from_str(&to_json_pretty(&m)).unwrap();
-        assert_eq!((back["position"].clone(), back["album_position"].clone()), (3.into(), 2.into()));
+        assert_eq!(
+            (back["position"].clone(), back["album_position"].clone()),
+            (3.into(), 2.into())
+        );
         assert_eq!(parse(to_json_pretty(&m).as_bytes(), ID).unwrap(), m);
         // unknown fields still survive next to the positions
         let with_future = text.replace("\"year\"", "\"future\": 1, \"year\"");
@@ -876,7 +943,10 @@ mod tests {
     #[test]
     fn bad_positions_read_as_none() {
         for bad in ["0", "-1", "\"3\"", "3.5", "null", "10000"] {
-            let text = EXAMPLE.replace("\"year\"", &format!("\"position\": {bad}, \"album_position\": {bad}, \"year\""));
+            let text = EXAMPLE.replace(
+                "\"year\"",
+                &format!("\"position\": {bad}, \"album_position\": {bad}, \"year\""),
+            );
             let m = parse(text.as_bytes(), ID).unwrap_or_else(|e| panic!("{bad}: {e}"));
             assert_eq!((m.position, m.album_position), (None, None), "{bad}");
             assert!(!to_json_pretty(&m).contains("position"), "{bad}");
@@ -885,7 +955,12 @@ mod tests {
 
     #[test]
     fn write_rejects_bad_positions() {
-        for (p, a) in [(Some(0), None), (Some(10000), None), (None, Some(0)), (None, Some(10000))] {
+        for (p, a) in [
+            (Some(0), None),
+            (Some(10000), None),
+            (None, Some(0)),
+            (None, Some(10000)),
+        ] {
             let mut m = example();
             m.position = p;
             m.album_position = a;
@@ -900,14 +975,30 @@ mod tests {
     #[test]
     fn apply_patch_sets_trims_and_keeps_meta_on_error() {
         let mut m = example();
-        apply_patch(&mut m, Some(" New Band "), Some(" New Album "), Some(Some(4)), Some(Some(2))).unwrap();
-        assert_eq!((m.band.as_str(), m.album.as_str()), ("New Band", "New Album"));
+        apply_patch(
+            &mut m,
+            Some(" New Band "),
+            Some(" New Album "),
+            Some(Some(4)),
+            Some(Some(2)),
+        )
+        .unwrap();
+        assert_eq!(
+            (m.band.as_str(), m.album.as_str()),
+            ("New Band", "New Album")
+        );
         assert_eq!((m.position, m.album_position), (Some(4), Some(2)));
         apply_patch(&mut m, None, None, None, None).unwrap();
         assert_eq!((m.position, m.album_position), (Some(4), Some(2)));
         let before = m.clone();
-        assert_eq!(apply_patch(&mut m, Some("  "), None, None, None).unwrap_err(), "a band name cannot be cleared");
-        assert_eq!(apply_patch(&mut m, None, Some(""), None, None).unwrap_err(), "an album name cannot be cleared");
+        assert_eq!(
+            apply_patch(&mut m, Some("  "), None, None, None).unwrap_err(),
+            "a band name cannot be cleared"
+        );
+        assert_eq!(
+            apply_patch(&mut m, None, Some(""), None, None).unwrap_err(),
+            "an album name cannot be cleared"
+        );
         assert!(apply_patch(&mut m, None, None, Some(Some(0)), None).is_err());
         assert!(apply_patch(&mut m, Some("X"), None, Some(Some(10000)), None).is_err());
         assert!(apply_patch(&mut m, None, None, None, Some(Some(0))).is_err());
@@ -934,7 +1025,10 @@ mod tests {
         m.band = "Band ".into();
         m.album = " Album".into();
         apply_patch(&mut m, None, None, Some(Some(3)), None).unwrap();
-        assert_eq!((m.band.as_str(), m.album.as_str(), m.position), ("Band ", " Album", Some(3)));
+        assert_eq!(
+            (m.band.as_str(), m.album.as_str(), m.position),
+            ("Band ", " Album", Some(3))
+        );
     }
 
     #[test]
@@ -976,7 +1070,10 @@ mod tests {
 
     #[test]
     fn backings_parse_and_round_trip_and_are_absent_when_empty() {
-        let json = stem_with_backings(&format!("[{}]", variant("backing", "Backing", "backings/backing.flac")));
+        let json = stem_with_backings(&format!(
+            "[{}]",
+            variant("backing", "Backing", "backings/backing.flac")
+        ));
         let m = parse(json.as_bytes(), ID).unwrap();
         assert_eq!(m.backings.len(), 1);
         assert_eq!(m.backings[0].sample_rate, 44100);
@@ -995,27 +1092,51 @@ mod tests {
             ("outside backings/", one("backing", "stems/x.flac")),
             ("nested", one("backing", "backings/sub/x.flac")),
             ("traversal", one("backing", "backings/../x.flac")),
-            ("clash with a stem", one("backing", "backings/../stems/vocals.flac")),
+            (
+                "clash with a stem",
+                one("backing", "backings/../stems/vocals.flac"),
+            ),
             (
                 "duplicate id",
-                format!("[{},{}]", variant("a", "A", "backings/a.flac"), variant("a", "A", "backings/b.flac")),
+                format!(
+                    "[{},{}]",
+                    variant("a", "A", "backings/a.flac"),
+                    variant("a", "A", "backings/b.flac")
+                ),
             ),
             (
                 "duplicate file",
-                format!("[{},{}]", variant("a", "A", "backings/a.flac"), variant("b", "B", "backings/A.flac")),
+                format!(
+                    "[{},{}]",
+                    variant("a", "A", "backings/a.flac"),
+                    variant("b", "B", "backings/A.flac")
+                ),
             ),
-            ("empty name", format!("[{}]", variant("a", "", "backings/a.flac"))),
-            ("long name", format!("[{}]", variant("a", &"x".repeat(101), "backings/a.flac"))),
+            (
+                "empty name",
+                format!("[{}]", variant("a", "", "backings/a.flac")),
+            ),
+            (
+                "long name",
+                format!("[{}]", variant("a", &"x".repeat(101), "backings/a.flac")),
+            ),
         ] {
-            assert!(parse(stem_with_backings(&b).as_bytes(), ID).is_err(), "{what}");
+            assert!(
+                parse(stem_with_backings(&b).as_bytes(), ID).is_err(),
+                "{what}"
+            );
         }
     }
 
     #[test]
     fn a_malformed_mix_is_not_a_problem() {
         for mix in ["null", "42", "\"x\"", "{\"stems\": 3}", "[1]"] {
-            let v = variant("backing", "Backing", "backings/backing.flac").replace("{\"stems\":[]}", mix);
-            assert!(parse(stem_with_backings(&format!("[{v}]")).as_bytes(), ID).is_ok(), "{mix}");
+            let v = variant("backing", "Backing", "backings/backing.flac")
+                .replace("{\"stems\":[]}", mix);
+            assert!(
+                parse(stem_with_backings(&format!("[{v}]")).as_bytes(), ID).is_ok(),
+                "{mix}"
+            );
         }
     }
 }

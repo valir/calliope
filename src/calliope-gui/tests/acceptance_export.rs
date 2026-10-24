@@ -13,7 +13,9 @@ use std::time::{Duration, Instant};
 use calliope_gui::export_ipc::{
     do_export_info, do_prepare_export, do_start_export, remember_memory, ExportInfo,
 };
-use calliope_gui::export_job::{ExportPhase, ExportPlan, ExportSnapshot, ExportState, Sink, TargetReq};
+use calliope_gui::export_job::{
+    ExportPhase, ExportPlan, ExportSnapshot, ExportState, Sink, TargetReq,
+};
 use calliope_gui::export_rules::NO_TEMPO_REASON;
 use calliope_gui::ipc::RepoState;
 use calliope_gui::picker::ScriptedPicker;
@@ -85,7 +87,10 @@ impl Env {
     fn with(export: ExportState) -> Self {
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("repo");
-        copy_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-export"), &repo);
+        copy_dir(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library-export"),
+            &repo,
+        );
         let home = tmp.path().join("home");
         std::fs::create_dir(&home).unwrap();
         let answers = tmp.path().join("answers");
@@ -94,7 +99,17 @@ impl Env {
         let st = RepoState::new(repo.clone(), Box::new(picker.clone()));
         let settings_file = tmp.path().join("settings.json");
         let before = tree(&repo);
-        Env { _tmp: tmp, repo, home, answers, settings_file, before, st, picker, export }
+        Env {
+            _tmp: tmp,
+            repo,
+            home,
+            answers,
+            settings_file,
+            before,
+            st,
+            picker,
+            export,
+        }
     }
 
     /// The settings as the file holds them: a restart before every call.
@@ -125,7 +140,11 @@ impl Env {
 
     /// Scripts the folder dialog of `target` to answer `base`.
     fn answer(&self, target: &TargetReq, base: &Path) {
-        let kind = if matches!(target, TargetReq::Rc5 { .. }) { "export-rc5" } else { "export-audio" };
+        let kind = if matches!(target, TargetReq::Rc5 { .. }) {
+            "export-rc5"
+        } else {
+            "export-audio"
+        };
         let old = std::fs::read_to_string(&self.answers).unwrap();
         std::fs::write(&self.answers, format!("{old}{kind} {}\n", base.display())).unwrap();
     }
@@ -194,15 +213,30 @@ fn read_wav(p: &Path) -> (u32, Vec<f32>, Vec<f32>) {
     assert_eq!(u32::from_le_bytes(b[4..8].try_into().unwrap()), 36 + n);
     assert_eq!(&b[8..16], b"WAVEfmt ");
     assert_eq!(u32::from_le_bytes(b[16..20].try_into().unwrap()), 16);
-    assert_eq!(u16::from_le_bytes(b[20..22].try_into().unwrap()), 3, "IEEE float");
-    assert_eq!(u16::from_le_bytes(b[22..24].try_into().unwrap()), 2, "stereo");
+    assert_eq!(
+        u16::from_le_bytes(b[20..22].try_into().unwrap()),
+        3,
+        "IEEE float"
+    );
+    assert_eq!(
+        u16::from_le_bytes(b[22..24].try_into().unwrap()),
+        2,
+        "stereo"
+    );
     let rate = u32::from_le_bytes(b[24..28].try_into().unwrap());
     assert_eq!(u32::from_le_bytes(b[28..32].try_into().unwrap()), rate * 8);
     assert_eq!(u16::from_le_bytes(b[32..34].try_into().unwrap()), 8);
     assert_eq!(u16::from_le_bytes(b[34..36].try_into().unwrap()), 32);
     assert_eq!(&b[36..40], b"data");
-    assert_eq!(u32::from_le_bytes(b[40..44].try_into().unwrap()), n, "no chunk after the samples");
-    let s: Vec<f32> = b[44..].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+    assert_eq!(
+        u32::from_le_bytes(b[40..44].try_into().unwrap()),
+        n,
+        "no chunk after the samples"
+    );
+    let s: Vec<f32> = b[44..]
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
     let l = s.chunks_exact(2).map(|f| f[0]).collect();
     let r = s.chunks_exact(2).map(|f| f[1]).collect();
     (rate, l, r)
@@ -213,17 +247,47 @@ fn decode(p: &Path) -> (Vec<f32>, Vec<f32>) {
     let out = Command::new("ffmpeg")
         .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-i"])
         .arg(p)
-        .args(["-map", "0:a:0", "-f", "f32le", "-acodec", "pcm_f32le", "-ac", "2", "-ar", "44100", "pipe:1"])
+        .args([
+            "-map",
+            "0:a:0",
+            "-f",
+            "f32le",
+            "-acodec",
+            "pcm_f32le",
+            "-ac",
+            "2",
+            "-ar",
+            "44100",
+            "pipe:1",
+        ])
         .output()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let s: Vec<f32> = out.stdout.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
-    (s.chunks_exact(2).map(|f| f[0]).collect(), s.chunks_exact(2).map(|f| f[1]).collect())
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s: Vec<f32> = out
+        .stdout
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    (
+        s.chunks_exact(2).map(|f| f[0]).collect(),
+        s.chunks_exact(2).map(|f| f[1]).collect(),
+    )
 }
 
 fn probe(p: &Path) -> serde_json::Value {
     let out = Command::new("ffprobe")
-        .args(["-v", "error", "-show_entries", "format_tags:stream_tags:stream=codec_name", "-of", "json"])
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format_tags:stream_tags:stream=codec_name",
+            "-of",
+            "json",
+        ])
         .arg(p)
         .output()
         .unwrap();
@@ -231,12 +295,14 @@ fn probe(p: &Path) -> serde_json::Value {
 }
 
 fn tag(v: &serde_json::Value, key: &str) -> Option<String> {
-    [&v["format"]["tags"], &v["streams"][0]["tags"]].iter().find_map(|t| {
-        t.as_object()?
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(key))
-            .map(|(_, v)| v.as_str().unwrap().to_string())
-    })
+    [&v["format"]["tags"], &v["streams"][0]["tags"]]
+        .iter()
+        .find_map(|t| {
+            t.as_object()?
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(key))
+                .map(|(_, v)| v.as_str().unwrap().to_string())
+        })
 }
 
 fn goertzel(x: &[f32], hz: f32) -> f32 {
@@ -280,7 +346,10 @@ fn ac_stem_track_without_mix_is_not_exportable() {
     let e = Env::new();
     for (n, why) in [
         (402, "No mix saved yet: save one in the Editor"),
-        (408, "The saved mix (backings/backing.flac) is missing: save it again in the Editor"),
+        (
+            408,
+            "The saved mix (backings/backing.flac) is missing: save it again in the Editor",
+        ),
     ] {
         let i = e.info(n);
         assert!(!i.available);
@@ -289,7 +358,10 @@ fn ac_stem_track_without_mix_is_not_exportable() {
             assert_eq!(e.prepare(n, t).unwrap_err(), why);
         }
     }
-    assert!(e.picker.starts().is_empty(), "no dialog for a track that cannot be exported");
+    assert!(
+        e.picker.starts().is_empty(),
+        "no dialog for a track that cannot be exported"
+    );
     e.repo_unchanged();
 }
 
@@ -336,12 +408,25 @@ fn ac_rc5_memory_7() {
     assert_eq!(rate, 44100);
     // 5 beats at 120 BPM (2.5 s) + the 4 s original.
     assert_eq!(l.len(), 110250 + 176400);
-    let (ol, or) = decode(&e.repo.join("tracks").join(id(401)).join("backings/backing.flac"));
+    let (ol, or) = decode(
+        &e.repo
+            .join("tracks")
+            .join(id(401))
+            .join("backings/backing.flac"),
+    );
     assert_eq!(ol.len(), 176400);
     // The original is unchanged after the lead; the ticks are all inside the lead.
-    assert!(l[110250..] == ol[..] && r[110250..] == or[..], "the original differs");
+    assert!(
+        l[110250..] == ol[..] && r[110250..] == or[..],
+        "the original differs"
+    );
     assert!(l[..110250].iter().any(|&v| v != 0.0), "no ticks");
-    assert_eq!(std::fs::read_dir(wav_path(&base, 7).parent().unwrap()).unwrap().count(), 1);
+    assert_eq!(
+        std::fs::read_dir(wav_path(&base, 7).parent().unwrap())
+            .unwrap()
+            .count(),
+        1
+    );
     e.repo_unchanged();
 }
 
@@ -352,9 +437,19 @@ fn ac_rc5_without_roland() {
     let before = tree(&base);
     e.answer(&rc5("7"), &base);
     let err = e.prepare(401, rc5("7")).unwrap_err();
-    assert_eq!(err, format!("No ROLAND folder in {}: is the RC-5 mounted?", base.display()));
+    assert_eq!(
+        err,
+        format!(
+            "No ROLAND folder in {}: is the RC-5 mounted?",
+            base.display()
+        )
+    );
     assert!(tree(&base) == before && before.is_empty());
-    assert_eq!(e.settings().get().rc5_dir, None, "a refused folder is not remembered");
+    assert_eq!(
+        e.settings().get().rc5_dir,
+        None,
+        "a refused folder is not remembered"
+    );
     e.repo_unchanged();
 }
 
@@ -370,7 +465,10 @@ fn ac_rc5_overwrite_confirmed() {
     let plan = e.prepare(401, rc5("7")).unwrap().unwrap();
     assert!(plan.exists, "the confirmation can name {}", plan.path);
     // Without the confirmation nothing is replaced.
-    assert!(e.start(&plan.token, false).unwrap_err().contains("already exists"));
+    assert!(e
+        .start(&plan.token, false)
+        .unwrap_err()
+        .contains("already exists"));
     assert_eq!(std::fs::read(wav_path(&base, 7)).unwrap(), b"old");
     e.answer(&rc5("7"), &base);
     let plan = e.prepare(401, rc5("7")).unwrap().unwrap();
@@ -420,7 +518,11 @@ fn ac_rc5_bad_memory_numbers() {
     let before = tree(&base);
     e.answer(&rc5("7"), &base);
     for bad in ["0", "100", "abc", "", "7.5", "-3"] {
-        assert_eq!(e.prepare(401, rc5(bad)).unwrap_err(), "Enter a memory number from 1 to 99", "{bad:?}");
+        assert_eq!(
+            e.prepare(401, rc5(bad)).unwrap_err(),
+            "Enter a memory number from 1 to 99",
+            "{bad:?}"
+        );
     }
     assert!(e.picker.starts().is_empty(), "refused before any dialog");
     assert!(tree(&base) == before);
@@ -467,7 +569,11 @@ fn ac_mp3_export() {
     let odd = out.join("AC_DC_ - Live_ A_B_.mp3");
     assert!(odd.is_file());
     assert_eq!(tag(&probe(&odd), "track"), None);
-    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 2, "no part file is left");
+    assert_eq!(
+        std::fs::read_dir(&out).unwrap().count(),
+        2,
+        "no part file is left"
+    );
     e.repo_unchanged();
 }
 
@@ -500,7 +606,10 @@ fn ac_cancel_leaves_nothing() {
     let snap = e.start(&plan.token, false).unwrap();
     assert_eq!(snap.phase, ExportPhase::Writing);
     std::thread::sleep(Duration::from_millis(200));
-    assert!(wav_path(&base, 7).parent().unwrap().exists(), "the export is under way");
+    assert!(
+        wav_path(&base, 7).parent().unwrap().exists(),
+        "the export is under way"
+    );
     assert!(e.export.cancel(&snap.job).is_some());
     let s = e.wait();
     assert_eq!(s.phase, ExportPhase::Cancelled);
@@ -525,7 +634,10 @@ fn ac_unwritable_destination() {
     let plan = e.prepare(401, TargetReq::Mp3).unwrap().unwrap();
     let err = e.start(&plan.token, false).unwrap_err();
     std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(err.starts_with("Cannot write to ") && err.contains("Permission denied"), "{err}");
+    assert!(
+        err.starts_with("Cannot write to ") && err.contains("Permission denied"),
+        "{err}"
+    );
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
     e.repo_unchanged();
 }
@@ -547,27 +659,58 @@ fn ac_remembered_after_restart() {
     assert_eq!(settings.get().rc5_dir, Some(rc5_a.clone()));
     assert_eq!(settings.get().export_dir, Some(out.clone()));
     assert_eq!(settings.get().rc5_memory, Some(7));
-    assert_eq!(do_export_info(&e.st, &settings, &FileTempoStore, &id(401)).unwrap().memory, 8);
+    assert_eq!(
+        do_export_info(&e.st, &settings, &FileTempoStore, &id(401))
+            .unwrap()
+            .memory,
+        8
+    );
 
     let answers = e.home.join("answers2");
-    std::fs::write(&answers, format!("export-rc5 {}\nexport-audio {}\n", rc5_a.display(), out.display())).unwrap();
+    std::fs::write(
+        &answers,
+        format!(
+            "export-rc5 {}\nexport-audio {}\n",
+            rc5_a.display(),
+            out.display()
+        ),
+    )
+    .unwrap();
     let picker = Arc::new(ScriptedPicker::new(answers));
     let st = RepoState::new(e.repo.clone(), Box::new(picker.clone()));
     let export = ExportState::new(Box::new(real_tools));
     let prep = |n, t| {
-        do_prepare_export(&st, &settings, &export, &FileTempoStore, Some(e.home.clone()), &id(n), t).unwrap().unwrap()
+        do_prepare_export(
+            &st,
+            &settings,
+            &export,
+            &FileTempoStore,
+            Some(e.home.clone()),
+            &id(n),
+            t,
+        )
+        .unwrap()
+        .unwrap()
     };
     prep(401, rc5("8"));
     prep(403, TargetReq::Ogg);
     use calliope_gui::picker::DialogKind;
     assert_eq!(
         picker.starts(),
-        [(DialogKind::ExportRc5, Some(rc5_a.clone())), (DialogKind::ExportAudio, Some(out.clone()))]
+        [
+            (DialogKind::ExportRc5, Some(rc5_a.clone())),
+            (DialogKind::ExportAudio, Some(out.clone()))
+        ]
     );
 
     // 99 stays 99.
     settings.set_rc5_memory(Some(99)).unwrap();
-    assert_eq!(do_export_info(&e.st, &e.settings(), &FileTempoStore, &id(401)).unwrap().memory, 99);
+    assert_eq!(
+        do_export_info(&e.st, &e.settings(), &FileTempoStore, &id(401))
+            .unwrap()
+            .memory,
+        99
+    );
     e.repo_unchanged();
 }
 
@@ -585,22 +728,44 @@ fn ac_count_in_before_the_first_beat() {
         let (_, wl, wr) = read_wav(&wav_path(&wav_base, 7));
         let (_, s) = e.export(n, TargetReq::Mp3, &out);
         assert_eq!(s.phase, ExportPhase::Done, "{n} {s:?}");
-        let mp3 = std::fs::read_dir(&out).unwrap().next().unwrap().unwrap().path();
+        let mp3 = std::fs::read_dir(&out)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
         let (ml, _) = decode(&mp3);
 
         let original = e.repo.join("tracks").join(id(n));
-        let src = if n == 406 { original.join("backings/backing.flac") } else { original.join("intro.flac") };
+        let src = if n == 406 {
+            original.join("backings/backing.flac")
+        } else {
+            original.join("intro.flac")
+        };
         let (ol, or) = decode(&src);
         // Length: the original + 5 beats.
         assert_eq!(wl.len(), lead + ol.len(), "{n}");
         assert_seconds(ml.len(), (lead + ol.len()) as f64 / 44100.0, 0.03);
         // The ticks sit at first + {0, 1, 2, 2.5, 3, 3.5} beats; the last tick is at first + 3.5 beats, the first beat at the end of the 5-beat lead.
         let beat = lead / 5;
-        let ticks: Vec<usize> =
-            [0.0, 1.0, 2.0, 2.5, 3.0, 3.5].iter().map(|o| first + (o * beat as f64).round() as usize).collect();
-        assert_eq!(ticks[5], first + (3.5 * beat as f64).round() as usize, "the last tick");
-        assert!(ticks[5] + 1400 < lead + first, "the 5th beat of the lead is silent before the first beat");
-        assert_eq!(first + 5 * beat, lead + first, "the first beat is 5 beats after the start");
+        let ticks: Vec<usize> = [0.0, 1.0, 2.0, 2.5, 3.0, 3.5]
+            .iter()
+            .map(|o| first + (o * beat as f64).round() as usize)
+            .collect();
+        assert_eq!(
+            ticks[5],
+            first + (3.5 * beat as f64).round() as usize,
+            "the last tick"
+        );
+        assert!(
+            ticks[5] + 1400 < lead + first,
+            "the 5th beat of the lead is silent before the first beat"
+        );
+        assert_eq!(
+            first + 5 * beat,
+            lead + first,
+            "the first beat is 5 beats after the start"
+        );
         // WAV: silence + exactly six ticks until the original starts; the original after the lead
         // is bit-exact except under a tick that overlaps it.
         for (k, v) in wl[..lead].iter().enumerate() {
@@ -609,7 +774,10 @@ fn ac_count_in_before_the_first_beat() {
             }
         }
         for &t in &ticks {
-            assert!(goertzel(&wl[t..t + 1300], 1500.0) > 0.05, "{n}: no tick at {t}");
+            assert!(
+                goertzel(&wl[t..t + 1300], 1500.0) > 0.05,
+                "{n}: no tick at {t}"
+            );
         }
         let untouched = |k: usize| !ticks.iter().any(|&t| k >= t && k < t + 1400);
         for k in (lead..wl.len()).step_by(7) {
@@ -621,7 +789,10 @@ fn ac_count_in_before_the_first_beat() {
         // MP3: the same ticks in the lossy copy (only those in the digital silence are checked).
         for &t in ticks.iter().filter(|&&t| t + 3000 < lead.max(first)) {
             let quiet = &ml[t + 3000..t + 4300];
-            assert!(goertzel(&ml[t + 50..t + 1350], 1500.0) > 10.0 * goertzel(quiet, 1500.0).max(1e-6), "{n}: mp3 tick at {t}");
+            assert!(
+                goertzel(&ml[t + 50..t + 1350], 1500.0) > 10.0 * goertzel(quiet, 1500.0).max(1e-6),
+                "{n}: mp3 tick at {t}"
+            );
         }
         e.repo_unchanged();
     }
@@ -648,7 +819,14 @@ fn tick_onset(out: &[f32], orig: &[f32], lead: usize, from: usize, to: usize) ->
 
 fn probe_stream(p: &Path) -> serde_json::Value {
     let out = Command::new("ffprobe")
-        .args(["-v", "error", "-show_entries", "stream=codec_name,sample_rate,channels:format=duration", "-of", "json"])
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_name,sample_rate,channels:format=duration",
+            "-of",
+            "json",
+        ])
         .arg(p)
         .output()
         .unwrap();
@@ -665,7 +843,10 @@ fn real_ffmpeg() -> PathBuf {
 }
 
 fn ticks_for(first: usize, beat: usize) -> Vec<usize> {
-    [0.0, 1.0, 2.0, 2.5, 3.0, 3.5].iter().map(|o| first + (o * beat as f64).round() as usize).collect()
+    [0.0, 1.0, 2.0, 2.5, 3.0, 3.5]
+        .iter()
+        .map(|o| first + (o * beat as f64).round() as usize)
+        .collect()
 }
 
 #[test]
@@ -676,12 +857,22 @@ fn ac_count_in_odd_beat_length_rounds_once_and_ticks_are_exact() {
     let (_, s) = e.export(401, rc5("7"), &base);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     let (_, l, _) = read_wav(&wav_path(&base, 7));
-    let (ol, _) = decode(&e.repo.join("tracks").join(id(401)).join("backings/backing.flac"));
+    let (ol, _) = decode(
+        &e.repo
+            .join("tracks")
+            .join(id(401))
+            .join("backings/backing.flac"),
+    );
     let beat = (44100.0f64 * 60.0 / 120.7).round() as usize;
     let first = (333.0f64 * 44.1).round() as usize;
-    assert_eq!(l.len(), 5 * beat + 176400, "original + exactly 5 beats, the beat rounded once");
+    assert_eq!(
+        l.len(),
+        5 * beat + 176400,
+        "original + exactly 5 beats, the beat rounded once"
+    );
     for &t in &ticks_for(first, beat) {
-        let o = tick_onset(&l, &ol, 5 * beat, t.saturating_sub(200), t + 400).unwrap_or_else(|| panic!("no tick near {t}"));
+        let o = tick_onset(&l, &ol, 5 * beat, t.saturating_sub(200), t + 400)
+            .unwrap_or_else(|| panic!("no tick near {t}"));
         assert!(o >= t && o <= t + 3, "tick at {t} starts at {o}");
     }
     e.repo_unchanged();
@@ -697,7 +888,11 @@ fn ac_count_in_ignores_speed_and_bar_length() {
     let (_, s) = e.export(401, rc5("7"), &base);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     let (_, l, _) = read_wav(&wav_path(&base, 7));
-    assert_eq!(l.len(), 110250 + 176400, "always 5 beats at the first section's BPM, speed 100 %");
+    assert_eq!(
+        l.len(),
+        110250 + 176400,
+        "always 5 beats at the first section's BPM, speed 100 %"
+    );
     let info = e.info(401);
     assert_eq!(info.count_in.unwrap().lead_ms, 2500.0);
     e.repo_unchanged();
@@ -706,8 +901,12 @@ fn ac_count_in_ignores_speed_and_bar_length() {
 #[test]
 fn ac_count_in_uses_the_first_section_only_and_the_map_as_it_is_at_start() {
     let mut e = Env::new();
-    write_tempo(&mut e, 401, serde_json::json!({"schema_version": 6, "tempo": {"beats_per_bar": 4,
-        "segments": [{"start_ms": 0, "bpm": 120.0}, {"start_ms": 1000, "bpm": 60.0}]}}));
+    write_tempo(
+        &mut e,
+        401,
+        serde_json::json!({"schema_version": 6, "tempo": {"beats_per_bar": 4,
+        "segments": [{"start_ms": 0, "bpm": 120.0}, {"start_ms": 1000, "bpm": 60.0}]}}),
+    );
     let base = e.rc5("rc5");
     let (_, s) = e.export(401, rc5("1"), &base);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
@@ -720,13 +919,22 @@ fn ac_count_in_uses_the_first_section_only_and_the_map_as_it_is_at_start() {
     e.start(&plan.token, plan.exists).unwrap();
     assert_eq!(e.wait().phase, ExportPhase::Done);
     let (_, l, _) = read_wav(&wav_path(&base, 2));
-    let (ol, _) = decode(&e.repo.join("tracks").join(id(401)).join("backings/backing.flac"));
+    let (ol, _) = decode(
+        &e.repo
+            .join("tracks")
+            .join(id(401))
+            .join("backings/backing.flac"),
+    );
     assert_eq!(l.len(), 110250 + 176400);
     for &t in &ticks_for(44100, 22050) {
-        let o = tick_onset(&l, &ol, 110250, t.saturating_sub(200), t + 400).unwrap_or_else(|| panic!("no tick near {t}"));
+        let o = tick_onset(&l, &ol, 110250, t.saturating_sub(200), t + 400)
+            .unwrap_or_else(|| panic!("no tick near {t}"));
         assert!(o >= t && o <= t + 3, "tick at {t} starts at {o}");
     }
-    assert!(tick_onset(&l, &ol, 110250, 0, 44100).is_none(), "nothing before the moved first tick");
+    assert!(
+        tick_onset(&l, &ol, 110250, 0, 44100).is_none(),
+        "nothing before the moved first tick"
+    );
 
     // The map is emptied between prepare and start: refused, nothing written.
     e.answer(&rc5("3"), &base);
@@ -742,7 +950,12 @@ fn ac_count_in_uses_the_first_section_only_and_the_map_as_it_is_at_start() {
 fn ac_rc5_memory_numbers_at_the_boundaries() {
     let e = Env::new();
     let base = e.rc5("rc5");
-    for (m, folder) in [("1", "001_1"), ("99", "099_1"), (" 7 ", "007_1"), ("007", "007_1")] {
+    for (m, folder) in [
+        ("1", "001_1"),
+        ("99", "099_1"),
+        (" 7 ", "007_1"),
+        ("007", "007_1"),
+    ] {
         let (plan, s) = e.export(409, rc5(m), &base);
         assert_eq!(s.phase, ExportPhase::Done, "{m} {s:?}");
         let want = base.join(format!("ROLAND/WAVE/{folder}/{}.WAV", folder));
@@ -768,8 +981,18 @@ fn ac_rc5_refusals_write_nothing() {
     let target_dir = e.rc5("td");
     std::fs::create_dir_all(wav_path(&target_dir, 7)).unwrap();
     let roland_itself = e.rc5("drive").join("ROLAND");
-    let cases = [&missing, &file, &roland_file, &wave_file, &target_dir, &roland_itself];
-    let before: Vec<Tree> = cases.iter().map(|b| if b.is_dir() { tree(b) } else { Tree::new() }).collect();
+    let cases = [
+        &missing,
+        &file,
+        &roland_file,
+        &wave_file,
+        &target_dir,
+        &roland_itself,
+    ];
+    let before: Vec<Tree> = cases
+        .iter()
+        .map(|b| if b.is_dir() { tree(b) } else { Tree::new() })
+        .collect();
     for b in cases {
         e.answer(&rc5("7"), b);
         assert!(e.prepare(401, rc5("7")).is_err(), "{}", b.display());
@@ -785,7 +1008,11 @@ fn ac_rc5_refusals_write_nothing() {
         e.prepare(401, rc5("7")).unwrap_err()
     };
     assert!(err.contains("is the RC-5 mounted?"), "{err}");
-    assert_eq!(e.settings().get().rc5_dir, None, "no refused folder is remembered");
+    assert_eq!(
+        e.settings().get().rc5_dir,
+        None,
+        "no refused folder is remembered"
+    );
     e.repo_unchanged();
 }
 
@@ -812,7 +1039,10 @@ fn ac_mp3_and_ogg_keep_the_source_rate_and_channels() {
     let e = Env::new();
     let out = e.folder("out");
     for (n, rate, ch, secs) in [(405u32, "48000", 2, 7.0), (404, "44100", 1, 6.5)] {
-        for (t, ext, codec) in [(TargetReq::Mp3, "mp3", "mp3"), (TargetReq::Ogg, "ogg", "vorbis")] {
+        for (t, ext, codec) in [
+            (TargetReq::Mp3, "mp3", "mp3"),
+            (TargetReq::Ogg, "ogg", "vorbis"),
+        ] {
             let (plan, s) = e.export(n, t, &out);
             assert_eq!(s.phase, ExportPhase::Done, "{n} {ext} {s:?}");
             let v = probe_stream(Path::new(&plan.path));
@@ -831,26 +1061,49 @@ fn ac_encoder_settings_and_tags_reach_ffmpeg() {
     let e = Env::new();
     let log = e.home.join("argv.log");
     let fake = e.home.join("ffmpeg");
-    script(&fake, &format!("echo \"$*\" >> {}\nexec {} \"$@\"", log.display(), real_ffmpeg().display()));
+    script(
+        &fake,
+        &format!(
+            "echo \"$*\" >> {}\nexec {} \"$@\"",
+            log.display(),
+            real_ffmpeg().display()
+        ),
+    );
     let f2 = fake.clone();
-    let e = Env { export: ExportState::new(Box::new(move || Tools { ffmpeg: Some(f2.clone()), ..real_tools() })), ..e };
+    let e = Env {
+        export: ExportState::new(Box::new(move || Tools {
+            ffmpeg: Some(f2.clone()),
+            ..real_tools()
+        })),
+        ..e
+    };
     let out = e.folder("out");
     for t in [TargetReq::Mp3, TargetReq::Ogg] {
         let (_, s) = e.export(401, t, &out);
         assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     }
     let log = std::fs::read_to_string(&log).unwrap();
-    let enc = |name: &str| log.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("no {name} in {log}")).to_string();
+    let enc = |name: &str| {
+        log.lines()
+            .find(|l| l.contains(name))
+            .unwrap_or_else(|| panic!("no {name} in {log}"))
+            .to_string()
+    };
     let mp3 = enc("libmp3lame");
     assert!(mp3.contains("-q:a 2"), "MP3 VBR quality 2: {mp3}");
     assert!(mp3.contains("-metadata title=Stem Mix") && mp3.contains("artist=The Example Band"));
-    assert!(mp3.contains("album=Export Tests") && mp3.contains("track=3") && mp3.contains("date=2021"));
+    assert!(
+        mp3.contains("album=Export Tests") && mp3.contains("track=3") && mp3.contains("date=2021")
+    );
     let ogg = enc("libvorbis");
     assert!(ogg.contains("-q:a 6"), "Ogg quality 6: {ogg}");
     assert!(ogg.contains("track=3") && ogg.contains("date=2021"));
     // The mp3 is VBR: it carries a Xing header.
     let b = std::fs::read(out.join(format!("{BAND} - Stem Mix.mp3"))).unwrap();
-    assert!(b.windows(4).take(2000).any(|w| w == b"Xing"), "no VBR (Xing) header");
+    assert!(
+        b.windows(4).take(2000).any(|w| w == b"Xing"),
+        "no VBR (Xing) header"
+    );
     e.repo_unchanged();
 }
 
@@ -872,11 +1125,19 @@ fn ac_file_names_with_invalid_characters_and_an_empty_band() {
     let (plan, s) = e.export(401, TargetReq::Ogg, &out);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     let f = Path::new(&plan.path);
-    assert_eq!(f.parent().unwrap(), out, "the file stays in the chosen folder");
+    assert_eq!(
+        f.parent().unwrap(),
+        out,
+        "the file stays in the chosen folder"
+    );
     let name = f.file_name().unwrap().to_str().unwrap();
     assert!(!name.chars().any(|c| "/\\<>:\"|?*".contains(c)), "{name}");
     assert!(name.ends_with(".ogg") && name.contains(" - "));
-    assert_eq!(tag(&probe(f), "title").as_deref(), Some("a/b\\c*?\"d:e"), "tags keep the real text");
+    assert_eq!(
+        tag(&probe(f), "title").as_deref(),
+        Some("a/b\\c*?\"d:e"),
+        "tags keep the real text"
+    );
     let (plan, s) = e.export(403, TargetReq::Mp3, &out);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     assert_eq!(Path::new(&plan.path).file_name().unwrap(), "Solo.mp3");
@@ -892,7 +1153,10 @@ fn ac_mp3_overwrite_needs_confirmation_and_replaces() {
     e.answer(&TargetReq::Mp3, &out);
     let plan = e.prepare(401, TargetReq::Mp3).unwrap().unwrap();
     assert!(plan.exists && plan.path == f.display().to_string());
-    assert!(e.start(&plan.token, false).unwrap_err().contains("already exists"));
+    assert!(e
+        .start(&plan.token, false)
+        .unwrap_err()
+        .contains("already exists"));
     assert_eq!(std::fs::read(&f).unwrap(), b"old");
     // The refused token is spent or still valid; either way a fresh plan then Yes replaces it.
     e.answer(&TargetReq::Mp3, &out);
@@ -912,8 +1176,15 @@ fn ac_missing_tools_and_encoders_are_refused_before_the_dialog() {
     let out = e.folder("out");
     let base = e.rc5("rc5");
     // No ffmpeg at all.
-    let none = Env { export: ExportState::new(Box::new(Tools::default)), ..e };
-    for (t, d) in [(rc5("7"), &base), (TargetReq::Mp3, &out), (TargetReq::Ogg, &out)] {
+    let none = Env {
+        export: ExportState::new(Box::new(Tools::default)),
+        ..e
+    };
+    for (t, d) in [
+        (rc5("7"), &base),
+        (TargetReq::Mp3, &out),
+        (TargetReq::Ogg, &out),
+    ] {
         none.answer(&t, d);
         let err = none.prepare(401, t).unwrap_err();
         assert!(err.contains("Install ffmpeg"), "{err}");
@@ -921,14 +1192,32 @@ fn ac_missing_tools_and_encoders_are_refused_before_the_dialog() {
     assert!(none.picker.starts().is_empty());
     // An ffmpeg without the encoders.
     let fake = none.home.join("ffmpeg");
-    script(&fake, &format!("case \"$*\" in *-encoders*) echo ' A..... aac AAC';; *) exec {} \"$@\";; esac", real_ffmpeg().display()));
+    script(
+        &fake,
+        &format!(
+            "case \"$*\" in *-encoders*) echo ' A..... aac AAC';; *) exec {} \"$@\";; esac",
+            real_ffmpeg().display()
+        ),
+    );
     let f2 = fake.clone();
-    let e = Env { export: ExportState::new(Box::new(move || Tools { ffmpeg: Some(f2.clone()), ..real_tools() })), ..none };
+    let e = Env {
+        export: ExportState::new(Box::new(move || Tools {
+            ffmpeg: Some(f2.clone()),
+            ..real_tools()
+        })),
+        ..none
+    };
     let err = e.prepare(401, TargetReq::Mp3).unwrap_err();
-    assert!(err.contains("MP3 encoder") && err.contains("libmp3lame"), "{err}");
+    assert!(
+        err.contains("MP3 encoder") && err.contains("libmp3lame"),
+        "{err}"
+    );
     let err = e.prepare(401, TargetReq::Ogg).unwrap_err();
     assert!(err.contains("libvorbis"), "{err}");
-    assert!(e.picker.starts().is_empty(), "the user is not asked for a folder for nothing");
+    assert!(
+        e.picker.starts().is_empty(),
+        "the user is not asked for a folder for nothing"
+    );
     // The RC-5 export needs no encoder.
     let (_, s) = e.export(401, rc5("7"), &base);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
@@ -942,7 +1231,13 @@ fn ac_failing_encoder_fails_with_its_reason_and_leaves_nothing() {
     let fake = e.home.join("ffmpeg");
     script(&fake, &format!("case \"$*\" in *pipe:0*) head -c 200000 >/dev/null; echo 'disk is full' >&2; exit 1;; esac\nexec {} \"$@\"", real_ffmpeg().display()));
     let f2 = fake.clone();
-    let e = Env { export: ExportState::new(Box::new(move || Tools { ffmpeg: Some(f2.clone()), ..real_tools() })), ..e };
+    let e = Env {
+        export: ExportState::new(Box::new(move || Tools {
+            ffmpeg: Some(f2.clone()),
+            ..real_tools()
+        })),
+        ..e
+    };
     let out = e.folder("out");
     std::fs::write(out.join("keep.txt"), b"mine").unwrap();
     let before = tree(&out);
@@ -963,9 +1258,15 @@ fn ac_cancelled_mp3_leaves_nothing_and_a_second_export_is_refused_meanwhile() {
     let plan = e.prepare(401, TargetReq::Mp3).unwrap().unwrap();
     let snap = e.start(&plan.token, false).unwrap();
     std::thread::sleep(Duration::from_millis(300));
-    assert!(tree(&out) != before, "a part file exists while the export runs");
+    assert!(
+        tree(&out) != before,
+        "a part file exists while the export runs"
+    );
     e.answer(&TargetReq::Ogg, &out);
-    assert_eq!(e.prepare(403, TargetReq::Ogg).unwrap_err(), "An export is running");
+    assert_eq!(
+        e.prepare(403, TargetReq::Ogg).unwrap_err(),
+        "An export is running"
+    );
     assert!(e.export.cancel(&snap.job).is_some());
     assert_eq!(e.wait().phase, ExportPhase::Cancelled);
     assert!(tree(&out) == before, "nothing is left but what was there");
@@ -984,7 +1285,11 @@ fn ac_long_intro_is_kept_and_a_stem_or_other_files_are_never_exported() {
     // The original's 3 s of silence and its tone are where the original put them.
     let tone = |a: usize| goertzel(&l[a..a + 20000], 440.0);
     assert!(tone(lead + first + 5000) > 20.0 * tone(lead + first - 30000).max(1e-6));
-    assert!(tone(lead + first + 5000) > 0.02, "{}", tone(lead + first + 5000));
+    assert!(
+        tone(lead + first + 5000) > 0.02,
+        "{}",
+        tone(lead + first + 5000)
+    );
     // 401 holds a guitar stem; the export is the backing (330/550 Hz), not the stem.
     let (_, s) = e.export(401, rc5("8"), &base);
     assert_eq!(s.phase, ExportPhase::Done);

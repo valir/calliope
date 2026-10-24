@@ -57,8 +57,9 @@ impl DialogKind {
 }
 
 /// Extensions accepted for tablature files (lowercase, no dot).
-pub const TABLATURE_EXTENSIONS: &[&str] =
-    &["gp", "gp3", "gp4", "gp5", "gpx", "tg", "ptb", "musicxml", "mxl", "xml"];
+pub const TABLATURE_EXTENSIONS: &[&str] = &[
+    "gp", "gp3", "gp4", "gp5", "gpx", "tg", "ptb", "musicxml", "mxl", "xml",
+];
 
 /// True when the file name has a tablature extension (case-insensitive).
 pub fn is_tablature_name(name: &str) -> bool {
@@ -226,7 +227,10 @@ impl Picker for TauriPicker {
     }
 
     fn save_file(&self, req: &SaveReq) -> Option<PathBuf> {
-        let mut b = self.builder().set_title(&req.title).set_file_name(&req.default_name);
+        let mut b = self
+            .builder()
+            .set_title(&req.title)
+            .set_file_name(&req.default_name);
         if !req.extensions.is_empty() {
             let exts: Vec<&str> = req.extensions.iter().map(String::as_str).collect();
             b = b.add_filter(&req.filter_name, &exts);
@@ -251,7 +255,11 @@ pub struct ScriptedPicker {
 
 impl ScriptedPicker {
     pub fn new(answers: PathBuf) -> Self {
-        Self { answers, lock: Mutex::new(()), starts: Mutex::new(Vec::new()) }
+        Self {
+            answers,
+            lock: Mutex::new(()),
+            starts: Mutex::new(Vec::new()),
+        }
     }
 
     #[cfg(feature = "e2e-hooks")]
@@ -266,11 +274,17 @@ impl ScriptedPicker {
 
     /// The (kind, start folder) of every request so far, in order.
     pub fn starts(&self) -> Vec<(DialogKind, Option<PathBuf>)> {
-        self.starts.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.starts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn answer(&self, kind: DialogKind, start_dir: &Option<PathBuf>) -> Option<PathBuf> {
-        self.starts.lock().unwrap_or_else(|e| e.into_inner()).push((kind, start_dir.clone()));
+        self.starts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((kind, start_dir.clone()));
         let r = self.pop(kind);
         log_dialog(kind, r.is_some());
         r
@@ -279,7 +293,10 @@ impl ScriptedPicker {
     fn pop(&self, kind: DialogKind) -> Option<PathBuf> {
         let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         let mismatch = |why: &str| {
-            eprintln!("calliope: e2e dialog script mismatch kind={} ({why})", kind.as_str());
+            eprintln!(
+                "calliope: e2e dialog script mismatch kind={} ({why})",
+                kind.as_str()
+            );
             None
         };
         let Ok(text) = std::fs::read_to_string(&self.answers) else {
@@ -378,10 +395,20 @@ mod tests {
         let f = dir.path().join("answers");
         std::fs::write(&f, "import-audio /tmp/a.mp3\nimport-video CANCEL\nexport-rc5 /tmp/rc5\nexport-audio CANCEL\n").unwrap();
         let p = ScriptedPicker::new(f);
-        assert_eq!(p.pick_file(&file_req(DialogKind::ImportAudio)), Some("/tmp/a.mp3".into()));
+        assert_eq!(
+            p.pick_file(&file_req(DialogKind::ImportAudio)),
+            Some("/tmp/a.mp3".into())
+        );
         assert_eq!(p.pick_file(&file_req(DialogKind::ImportVideo)), None);
-        let folder = |kind| FolderReq { kind, title: "t".into(), start_dir: None };
-        assert_eq!(p.pick_folder(&folder(DialogKind::ExportRc5)), Some("/tmp/rc5".into()));
+        let folder = |kind| FolderReq {
+            kind,
+            title: "t".into(),
+            start_dir: None,
+        };
+        assert_eq!(
+            p.pick_folder(&folder(DialogKind::ExportRc5)),
+            Some("/tmp/rc5".into())
+        );
         assert_eq!(p.pick_folder(&folder(DialogKind::ExportAudio)), None);
     }
 
@@ -389,10 +416,16 @@ mod tests {
     fn scripted_records_start_dirs() {
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("answers");
-        std::fs::write(&f, "import-audio CANCEL\nimport-audio CANCEL\nimport-directory /m/album\n")
-            .unwrap();
+        std::fs::write(
+            &f,
+            "import-audio CANCEL\nimport-audio CANCEL\nimport-directory /m/album\n",
+        )
+        .unwrap();
         let p = std::sync::Arc::new(ScriptedPicker::new(f));
-        let with_start = FileReq { start_dir: Some("/m".into()), ..file_req(DialogKind::ImportAudio) };
+        let with_start = FileReq {
+            start_dir: Some("/m".into()),
+            ..file_req(DialogKind::ImportAudio)
+        };
         assert_eq!(p.pick_file(&with_start), None);
         let b: Box<dyn Picker> = Box::new(p.clone());
         assert_eq!(b.pick_file(&file_req(DialogKind::ImportAudio)), None);
@@ -432,12 +465,22 @@ mod tests {
         )
         .unwrap();
         let p = ScriptedPicker::new(f.clone());
-        assert_eq!(p.pick_file(&file_req(DialogKind::AddTablature)), Some("/tmp/a.gp5".into()));
-        let folder = |kind| FolderReq { kind, title: "t".into(), start_dir: None };
+        assert_eq!(
+            p.pick_file(&file_req(DialogKind::AddTablature)),
+            Some("/tmp/a.gp5".into())
+        );
+        let folder = |kind| FolderReq {
+            kind,
+            title: "t".into(),
+            start_dir: None,
+        };
         assert_eq!(p.pick_folder(&folder(DialogKind::RepositoryRoot)), None);
         // mismatch: the line is consumed, result is a cancel
         assert_eq!(p.pick_folder(&folder(DialogKind::RepositoryRoot)), None);
-        assert_eq!(p.pick_folder(&folder(DialogKind::ExportTrack)), Some("/tmp/x".into()));
+        assert_eq!(
+            p.pick_folder(&folder(DialogKind::ExportTrack)),
+            Some("/tmp/x".into())
+        );
         // empty file
         assert_eq!(p.pick_folder(&folder(DialogKind::ExportTrack)), None);
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "");

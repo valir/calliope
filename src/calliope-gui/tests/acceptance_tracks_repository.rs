@@ -2,28 +2,33 @@
 //!
 //! The crate is a binary, so the pure modules are compiled into this test crate with `#[path]`.
 //! Everything runs on temp repositories; a sibling "outside" folder must never change.
-#![allow(dead_code, unused_imports, unused_variables, clippy::type_complexity, clippy::all)]
+#![allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    clippy::type_complexity,
+    clippy::all
+)]
 
-use calliope_gui::fsutil;
-use calliope_gui::track_meta;
-use calliope_gui::repository;
-use calliope_gui::settings;
-use calliope_gui::picker;
-#[allow(dead_code)]
-use calliope_gui::local_source;
-use calliope_gui::import_tmp;
-use calliope_gui::media;
-use calliope_gui::download;
-use calliope_gui::tools;
-use calliope_gui::import_job;
-use calliope_gui::transport;
-use calliope_gui::mixer;
-use calliope_gui::stem_audio;
 use calliope_gui::audio_out;
 use calliope_gui::backing_render;
+use calliope_gui::download;
 use calliope_gui::editor;
+use calliope_gui::fsutil;
+use calliope_gui::import_job;
+use calliope_gui::import_tmp;
 use calliope_gui::ipc;
-
+#[allow(dead_code)]
+use calliope_gui::local_source;
+use calliope_gui::media;
+use calliope_gui::mixer;
+use calliope_gui::picker;
+use calliope_gui::repository;
+use calliope_gui::settings;
+use calliope_gui::stem_audio;
+use calliope_gui::tools;
+use calliope_gui::track_meta;
+use calliope_gui::transport;
 
 use repository::{NewTrack, Repository, SaveTrackRequest, TabEntry, TrackRecord};
 use std::fs;
@@ -56,7 +61,10 @@ fn snapshot(dir: &Path) -> Vec<String> {
                 out.push(format!("{rel}/"));
                 walk(base, &p, out);
             } else {
-                out.push(format!("{rel} {}", fs::read_to_string(&p).unwrap_or_else(|_| "<bin>".into())));
+                out.push(format!(
+                    "{rel} {}",
+                    fs::read_to_string(&p).unwrap_or_else(|_| "<bin>".into())
+                ));
             }
         }
     }
@@ -88,7 +96,14 @@ impl Env {
         let repo = Repository::new(&root);
         repo.ensure_layout().unwrap();
         let outside_before = snapshot(&outside);
-        Env { _tmp: tmp, base, outside, sources, repo, outside_before }
+        Env {
+            _tmp: tmp,
+            base,
+            outside,
+            sources,
+            repo,
+            outside_before,
+        }
     }
     fn src(&self, name: &str, content: &str) -> PathBuf {
         let p = self.sources.join(name);
@@ -96,7 +111,10 @@ impl Env {
         p
     }
     fn track(&self, id: &str, tabs: &[&str]) -> TrackRecord {
-        let tablatures = tabs.iter().map(|t| (t.to_string(), self.src(t, &format!("content of {t}")))).collect();
+        let tablatures = tabs
+            .iter()
+            .map(|t| (t.to_string(), self.src(t, &format!("content of {t}"))))
+            .collect();
         self.repo
             .create_track(
                 NewTrack {
@@ -127,10 +145,17 @@ impl Env {
         }
     }
     fn keep_all(&self, t: &TrackRecord) -> Vec<TabEntry> {
-        t.tablatures.iter().map(|n| TabEntry::Keep { name: n.clone() }).collect()
+        t.tablatures
+            .iter()
+            .map(|n| TabEntry::Keep { name: n.clone() })
+            .collect()
     }
     fn assert_outside_unchanged(&self) {
-        assert_eq!(snapshot(&self.outside), self.outside_before, "the outside folder changed");
+        assert_eq!(
+            snapshot(&self.outside),
+            self.outside_before,
+            "the outside folder changed"
+        );
     }
     fn trash_files(&self) -> Vec<String> {
         let t = self.repo.root.join("trash");
@@ -151,8 +176,23 @@ fn req1_metadata_has_all_fields_and_version() {
     e.track(ID1, &["a.gp5"]);
     let j = e.json(ID1);
     for k in [
-        "schema_version", "id", "band", "album", "title", "composers", "year", "source_url", "copyright",
-        "type", "audio", "original", "stems", "stem_model", "tablatures", "imported", "modified",
+        "schema_version",
+        "id",
+        "band",
+        "album",
+        "title",
+        "composers",
+        "year",
+        "source_url",
+        "copyright",
+        "type",
+        "audio",
+        "original",
+        "stems",
+        "stem_model",
+        "tablatures",
+        "imported",
+        "modified",
     ] {
         assert!(j.get(k).is_some(), "missing field {k}");
     }
@@ -220,7 +260,8 @@ fn ac10_save_writes_disk_modified_updated_imported_kept() {
     let t = e.track(ID1, &[]);
     // make timestamps old so "now" is distinguishable
     let p = e.dir(ID1).join("track.json");
-    let s = fs::read_to_string(&p).unwrap()
+    let s = fs::read_to_string(&p)
+        .unwrap()
         .replace(&t.modified, "2020-01-01T00:00:00Z")
         .replace(&t.imported, "2020-01-01T00:00:00Z");
     fs::write(&p, &s).unwrap();
@@ -252,7 +293,9 @@ fn save_without_changes_still_updates_modified() {
     let e = Env::new();
     let t = e.track(ID1, &[]);
     let p = e.dir(ID1).join("track.json");
-    let s = fs::read_to_string(&p).unwrap().replace(&t.modified, "2020-01-01T00:00:00Z");
+    let s = fs::read_to_string(&p)
+        .unwrap()
+        .replace(&t.modified, "2020-01-01T00:00:00Z");
     fs::write(&p, s).unwrap();
     let t = e.repo.scan().tracks.remove(0);
     let r = e.req(&t, vec![]);
@@ -275,9 +318,15 @@ fn ac16_add_copies_lists_and_updates_timestamp_source_kept() {
     tabs.push(TabEntry::Add { token: "p1".into() });
     let res = e.repo.save_track(e.req(&t, tabs), &lookup).unwrap();
     assert_eq!(res.track.tablatures, vec!["a.gp5", "riff.gp5"]);
-    assert_eq!(fs::read_to_string(e.dir(ID1).join("riff.gp5")).unwrap(), "RIFF");
+    assert_eq!(
+        fs::read_to_string(e.dir(ID1).join("riff.gp5")).unwrap(),
+        "RIFF"
+    );
     assert!(src.exists());
-    assert_eq!(e.json(ID1)["tablatures"], serde_json::json!(["a.gp5", "riff.gp5"]));
+    assert_eq!(
+        e.json(ID1)["tablatures"],
+        serde_json::json!(["a.gp5", "riff.gp5"])
+    );
     assert!(res.warnings.is_empty());
     e.assert_outside_unchanged();
 }
@@ -286,12 +335,19 @@ fn ac16_add_copies_lists_and_updates_timestamp_source_kept() {
 fn ac19_remove_goes_to_trash_not_deleted_metadata_updated() {
     let e = Env::new();
     let t = e.track(ID1, &["a.gp5", "b.gp5"]);
-    let tabs = vec![TabEntry::Keep { name: "b.gp5".into() }];
+    let tabs = vec![TabEntry::Keep {
+        name: "b.gp5".into(),
+    }];
     let res = e.repo.save_track(e.req(&t, tabs), &|_| None).unwrap();
     assert_eq!(res.track.tablatures, vec!["b.gp5"]);
     assert!(!e.dir(ID1).join("a.gp5").exists());
     let trash = e.trash_files();
-    assert!(trash.iter().any(|l| l.contains("a.gp5") && l.contains("content of a.gp5")), "{trash:?}");
+    assert!(
+        trash
+            .iter()
+            .any(|l| l.contains("a.gp5") && l.contains("content of a.gp5")),
+        "{trash:?}"
+    );
     assert_eq!(e.json(ID1)["tablatures"], serde_json::json!(["b.gp5"]));
 }
 
@@ -315,14 +371,32 @@ fn same_name_replace_old_in_trash_new_in_place() {
     fs::create_dir_all(&dir).unwrap();
     let pick = dir.join("a.gp5");
     fs::write(&pick, "NEW CONTENT").unwrap();
-    let lookup = { let p = pick.clone(); move |t: &str| (t == "p1").then(|| p.clone()) };
+    let lookup = {
+        let p = pick.clone();
+        move |t: &str| (t == "p1").then(|| p.clone())
+    };
     let res = e
         .repo
-        .save_track(e.req(&t, vec![TabEntry::Replace { name: "a.gp5".into(), token: "p1".into() }]), &lookup)
+        .save_track(
+            e.req(
+                &t,
+                vec![TabEntry::Replace {
+                    name: "a.gp5".into(),
+                    token: "p1".into(),
+                }],
+            ),
+            &lookup,
+        )
         .unwrap();
     assert!(res.warnings.is_empty(), "{:?}", res.warnings);
-    assert_eq!(fs::read_to_string(e.dir(ID1).join("a.gp5")).unwrap(), "NEW CONTENT");
-    assert!(e.trash_files().iter().any(|l| l.contains("content of a.gp5")));
+    assert_eq!(
+        fs::read_to_string(e.dir(ID1).join("a.gp5")).unwrap(),
+        "NEW CONTENT"
+    );
+    assert!(e
+        .trash_files()
+        .iter()
+        .any(|l| l.contains("content of a.gp5")));
     assert!(!e.dir(ID1).join(".a.gp5.part").exists());
     assert!(pick.exists());
 }
@@ -332,12 +406,29 @@ fn replace_with_file_picked_from_inside_the_track_folder_itself() {
     let e = Env::new();
     let t = e.track(ID1, &["a.gp5"]);
     let pick = e.dir(ID1).join("a.gp5");
-    let lookup = { let p = pick.clone(); move |t: &str| (t == "p1").then(|| p.clone()) };
+    let lookup = {
+        let p = pick.clone();
+        move |t: &str| (t == "p1").then(|| p.clone())
+    };
     let res = e
         .repo
-        .save_track(e.req(&t, vec![TabEntry::Replace { name: "a.gp5".into(), token: "p1".into() }]), &lookup)
+        .save_track(
+            e.req(
+                &t,
+                vec![TabEntry::Replace {
+                    name: "a.gp5".into(),
+                    token: "p1".into(),
+                }],
+            ),
+            &lookup,
+        )
         .unwrap();
-    assert_eq!(fs::read_to_string(e.dir(ID1).join("a.gp5")).unwrap(), "content of a.gp5", "{:?}", res.warnings);
+    assert_eq!(
+        fs::read_to_string(e.dir(ID1).join("a.gp5")).unwrap(),
+        "content of a.gp5",
+        "{:?}",
+        res.warnings
+    );
 }
 
 // ---------- data safety: name clashes ----------
@@ -348,11 +439,20 @@ fn untracked_file_with_same_name_is_never_overwritten() {
     let t = e.track(ID1, &[]);
     fs::write(e.dir(ID1).join("riff.gp5"), "USER FILE").unwrap();
     let src = e.src("riff.gp5", "NEW");
-    let lookup = { let p = src.clone(); move |t: &str| (t == "p1").then(|| p.clone()) };
+    let lookup = {
+        let p = src.clone();
+        move |t: &str| (t == "p1").then(|| p.clone())
+    };
     let before = fs::read(e.dir(ID1).join("track.json")).unwrap();
-    let r = e.repo.save_track(e.req(&t, vec![TabEntry::Add { token: "p1".into() }]), &lookup);
+    let r = e.repo.save_track(
+        e.req(&t, vec![TabEntry::Add { token: "p1".into() }]),
+        &lookup,
+    );
     assert!(r.is_err());
-    assert_eq!(fs::read_to_string(e.dir(ID1).join("riff.gp5")).unwrap(), "USER FILE");
+    assert_eq!(
+        fs::read_to_string(e.dir(ID1).join("riff.gp5")).unwrap(),
+        "USER FILE"
+    );
     assert_eq!(fs::read(e.dir(ID1).join("track.json")).unwrap(), before);
 }
 
@@ -364,8 +464,14 @@ fn untracked_dangling_symlink_with_same_name_is_not_followed() {
     std::os::unix::fs::symlink(&victim, e.dir(ID1).join("riff.gp5")).unwrap();
     let before_outside = snapshot(&e.outside);
     let src = e.src("riff.gp5", "NEW");
-    let lookup = { let p = src.clone(); move |t: &str| (t == "p1").then(|| p.clone()) };
-    let r = e.repo.save_track(e.req(&t, vec![TabEntry::Add { token: "p1".into() }]), &lookup);
+    let lookup = {
+        let p = src.clone();
+        move |t: &str| (t == "p1").then(|| p.clone())
+    };
+    let r = e.repo.save_track(
+        e.req(&t, vec![TabEntry::Add { token: "p1".into() }]),
+        &lookup,
+    );
     assert!(r.is_err());
     assert!(!victim.exists(), "wrote through a dangling symlink");
     assert_eq!(snapshot(&e.outside), before_outside);
@@ -377,8 +483,17 @@ fn untracked_symlink_to_outside_file_not_overwritten() {
     let t = e.track(ID1, &[]);
     std::os::unix::fs::symlink(e.outside.join("secret.gp5"), e.dir(ID1).join("riff.gp5")).unwrap();
     let src = e.src("riff.gp5", "NEW");
-    let lookup = { let p = src.clone(); move |t: &str| (t == "p1").then(|| p.clone()) };
-    assert!(e.repo.save_track(e.req(&t, vec![TabEntry::Add { token: "p1".into() }]), &lookup).is_err());
+    let lookup = {
+        let p = src.clone();
+        move |t: &str| (t == "p1").then(|| p.clone())
+    };
+    assert!(e
+        .repo
+        .save_track(
+            e.req(&t, vec![TabEntry::Add { token: "p1".into() }]),
+            &lookup
+        )
+        .is_err());
     e.assert_outside_unchanged();
 }
 
@@ -387,11 +502,17 @@ fn case_insensitive_duplicate_names_rejected() {
     let e = Env::new();
     let t = e.track(ID1, &["A.gp5"]);
     let src = e.src("a.gp5", "NEW");
-    let lookup = { let p = src.clone(); move |t: &str| (t == "p1").then(|| p.clone()) };
+    let lookup = {
+        let p = src.clone();
+        move |t: &str| (t == "p1").then(|| p.clone())
+    };
     let mut tabs = e.keep_all(&t);
     tabs.push(TabEntry::Add { token: "p1".into() });
     assert!(e.repo.save_track(e.req(&t, tabs), &lookup).is_err());
-    assert_eq!(fs::read_to_string(e.dir(ID1).join("A.gp5")).unwrap(), "content of A.gp5");
+    assert_eq!(
+        fs::read_to_string(e.dir(ID1).join("A.gp5")).unwrap(),
+        "content of A.gp5"
+    );
 }
 
 #[test]
@@ -403,11 +524,25 @@ fn adding_audio_name_or_track_json_rejected() {
         fs::create_dir_all(&d).unwrap();
         let p = d.join(name);
         fs::write(&p, "EVIL").unwrap();
-        let lookup = { let p = p.clone(); move |t: &str| (t == "p1").then(|| p.clone()) };
+        let lookup = {
+            let p = p.clone();
+            move |t: &str| (t == "p1").then(|| p.clone())
+        };
         let before = fs::read(e.dir(ID1).join("track.json")).unwrap();
-        assert!(e.repo.save_track(e.req(&t, vec![TabEntry::Add { token: "p1".into() }]), &lookup).is_err(), "{name}");
+        assert!(
+            e.repo
+                .save_track(
+                    e.req(&t, vec![TabEntry::Add { token: "p1".into() }]),
+                    &lookup
+                )
+                .is_err(),
+            "{name}"
+        );
         assert_eq!(fs::read(e.dir(ID1).join("track.json")).unwrap(), before);
-        assert_eq!(fs::read_to_string(e.dir(ID1).join("backing.mp3")).unwrap(), "AUDIO");
+        assert_eq!(
+            fs::read_to_string(e.dir(ID1).join("backing.mp3")).unwrap(),
+            "AUDIO"
+        );
     }
 }
 
@@ -418,18 +553,48 @@ fn stale_part_file_is_not_overwritten_and_save_fails_cleanly() {
     fs::write(e.dir(ID1).join(".a.gp5.part"), "STALE").unwrap();
     let pick = e.base.join("a.gp5");
     fs::write(&pick, "NEW").unwrap();
-    let lookup = { let p = pick.clone(); move |t: &str| (t == "p1").then(|| p.clone()) };
+    let lookup = {
+        let p = pick.clone();
+        move |t: &str| (t == "p1").then(|| p.clone())
+    };
     let before = fs::read(e.dir(ID1).join("track.json")).unwrap();
-    let r = e.repo.save_track(e.req(&t, vec![TabEntry::Replace { name: "a.gp5".into(), token: "p1".into() }]), &lookup);
+    let r = e.repo.save_track(
+        e.req(
+            &t,
+            vec![TabEntry::Replace {
+                name: "a.gp5".into(),
+                token: "p1".into(),
+            }],
+        ),
+        &lookup,
+    );
     assert!(r.is_err());
-    assert_eq!(fs::read_to_string(e.dir(ID1).join(".a.gp5.part")).unwrap(), "STALE");
-    assert_eq!(fs::read_to_string(e.dir(ID1).join("a.gp5")).unwrap(), "content of a.gp5");
+    assert_eq!(
+        fs::read_to_string(e.dir(ID1).join(".a.gp5.part")).unwrap(),
+        "STALE"
+    );
+    assert_eq!(
+        fs::read_to_string(e.dir(ID1).join("a.gp5")).unwrap(),
+        "content of a.gp5"
+    );
     assert_eq!(fs::read(e.dir(ID1).join("track.json")).unwrap(), before);
 }
 
 // ---------- data safety: path traversal ----------
 
-const BAD_IDS: &[&str] = &["../x", "..", ".", "a/b", ".hidden", "", "/etc", "a\\b", "x\0y", "trash/../tracks", "../repo/tracks/x"];
+const BAD_IDS: &[&str] = &[
+    "../x",
+    "..",
+    ".",
+    "a/b",
+    ".hidden",
+    "",
+    "/etc",
+    "a\\b",
+    "x\0y",
+    "trash/../tracks",
+    "../repo/tracks/x",
+];
 
 #[test]
 fn traversal_ids_rejected_everywhere_nothing_touched() {
@@ -444,9 +609,20 @@ fn traversal_ids_rejected_everywhere_nothing_touched() {
         let mut r = e.req(&t, vec![]);
         r.id = id.to_string();
         assert!(e.repo.save_track(r, &|_| None).is_err(), "save {id:?}");
-        assert!(e.repo.delete_track(id, &t.revision).is_err(), "delete {id:?}");
-        assert!(e.repo.export_track(id, &e.outside).is_err(), "export {id:?}");
-        assert!(e.repo.export_tablature(id, "a.gp5", &e.outside.join("o.gp5")).is_err(), "export tab {id:?}");
+        assert!(
+            e.repo.delete_track(id, &t.revision).is_err(),
+            "delete {id:?}"
+        );
+        assert!(
+            e.repo.export_track(id, &e.outside).is_err(),
+            "export {id:?}"
+        );
+        assert!(
+            e.repo
+                .export_tablature(id, "a.gp5", &e.outside.join("o.gp5"))
+                .is_err(),
+            "export tab {id:?}"
+        );
     }
     assert_eq!(snapshot(&e.repo.root), before_repo);
     assert_eq!(snapshot(&e.base.join("x")), before_base_x);
@@ -458,15 +634,38 @@ fn traversal_tab_names_rejected() {
     let e = Env::new();
     let t = e.track(ID1, &["a.gp5"]);
     let before = snapshot(&e.repo.root);
-    for name in ["../../outside/secret.gp5", "../a.gp5", "/etc/passwd", "sub/a.gp5", "..", ".hidden", "track.json", "a\\b.gp5"] {
-        let r = e.repo.save_track(e.req(&t, vec![TabEntry::Keep { name: name.into() }]), &|_| None);
+    for name in [
+        "../../outside/secret.gp5",
+        "../a.gp5",
+        "/etc/passwd",
+        "sub/a.gp5",
+        "..",
+        ".hidden",
+        "track.json",
+        "a\\b.gp5",
+    ] {
+        let r = e.repo.save_track(
+            e.req(&t, vec![TabEntry::Keep { name: name.into() }]),
+            &|_| None,
+        );
         assert!(r.is_err(), "keep {name}");
         let r = e.repo.save_track(
-            e.req(&t, vec![TabEntry::Replace { name: name.into(), token: "p".into() }]),
+            e.req(
+                &t,
+                vec![TabEntry::Replace {
+                    name: name.into(),
+                    token: "p".into(),
+                }],
+            ),
             &|_| Some(e.outside.join("secret.gp5")),
         );
         assert!(r.is_err(), "replace {name}");
-        assert!(e.repo.export_tablature(ID1, name, &e.outside.join("o.gp5")).is_err(), "export {name}");
+        assert!(
+            e.repo
+                .export_tablature(ID1, name, &e.outside.join("o.gp5"))
+                .is_err(),
+            "export {name}"
+        );
     }
     assert_eq!(snapshot(&e.repo.root), before);
     e.assert_outside_unchanged();
@@ -481,16 +680,56 @@ fn picked_files_with_unsafe_names_rejected() {
     for name in [".bashrc", "a:b.gp5", "x?.gp5"] {
         let p = d.join(name);
         fs::write(&p, "x").unwrap();
-        let lookup = { let p = p.clone(); move |_: &str| Some(p.clone()) };
-        assert!(e.repo.save_track(e.req(&t, vec![TabEntry::Add { token: "p1".into() }]), &lookup).is_err(), "{name}");
+        let lookup = {
+            let p = p.clone();
+            move |_: &str| Some(p.clone())
+        };
+        assert!(
+            e.repo
+                .save_track(
+                    e.req(&t, vec![TabEntry::Add { token: "p1".into() }]),
+                    &lookup
+                )
+                .is_err(),
+            "{name}"
+        );
     }
     // a directory token and a missing file
-    let lookup = { let p = d.clone(); move |_: &str| Some(p.clone()) };
-    assert!(e.repo.save_track(e.req(&t, vec![TabEntry::Add { token: "p1".into() }]), &lookup).is_err());
-    let lookup = { let p = d.join("gone.gp5"); move |_: &str| Some(p.clone()) };
-    assert!(e.repo.save_track(e.req(&t, vec![TabEntry::Add { token: "p1".into() }]), &lookup).is_err());
+    let lookup = {
+        let p = d.clone();
+        move |_: &str| Some(p.clone())
+    };
+    assert!(e
+        .repo
+        .save_track(
+            e.req(&t, vec![TabEntry::Add { token: "p1".into() }]),
+            &lookup
+        )
+        .is_err());
+    let lookup = {
+        let p = d.join("gone.gp5");
+        move |_: &str| Some(p.clone())
+    };
+    assert!(e
+        .repo
+        .save_track(
+            e.req(&t, vec![TabEntry::Add { token: "p1".into() }]),
+            &lookup
+        )
+        .is_err());
     let lookup = |_: &str| None;
-    assert!(e.repo.save_track(e.req(&t, vec![TabEntry::Add { token: "forged".into() }]), &lookup).is_err());
+    assert!(e
+        .repo
+        .save_track(
+            e.req(
+                &t,
+                vec![TabEntry::Add {
+                    token: "forged".into()
+                }]
+            ),
+            &lookup
+        )
+        .is_err());
     assert_eq!(e.repo.scan().tracks[0].tablatures.len(), 0);
 }
 
@@ -498,7 +737,10 @@ fn picked_files_with_unsafe_names_rejected() {
 fn hand_edited_metadata_with_traversal_names_is_a_problem_not_followed() {
     let e = Env::new();
     e.track(ID1, &[]);
-    for (n, bad) in ["../../outside/secret.gp5", "/etc/passwd", "a/b.gp5"].iter().enumerate() {
+    for (n, bad) in ["../../outside/secret.gp5", "/etc/passwd", "a/b.gp5"]
+        .iter()
+        .enumerate()
+    {
         let id = format!("hand{n}");
         e.track(&id, &[]);
         let p = e.dir(&id).join("track.json");
@@ -514,7 +756,10 @@ fn hand_edited_metadata_with_traversal_names_is_a_problem_not_followed() {
     for n in 0..3 {
         let id = format!("hand{n}");
         assert!(e.repo.export_track(&id, &e.base.join("outside")).is_err());
-        assert!(e.repo.export_tablature(&id, "../../outside/secret.gp5", &e.outside.join("o")).is_err());
+        assert!(e
+            .repo
+            .export_tablature(&id, "../../outside/secret.gp5", &e.outside.join("o"))
+            .is_err());
     }
     e.assert_outside_unchanged();
 }
@@ -526,7 +771,9 @@ fn hand_edit_after_load_causes_conflict_on_save_and_delete_edit_kept() {
     let e = Env::new();
     let t = e.track(ID1, &["a.gp5"]);
     let p = e.dir(ID1).join("track.json");
-    let s = fs::read_to_string(&p).unwrap().replace("Album", "HandAlbum");
+    let s = fs::read_to_string(&p)
+        .unwrap()
+        .replace("Album", "HandAlbum");
     fs::write(&p, &s).unwrap();
     let r = e.repo.save_track(e.req(&t, e.keep_all(&t)), &|_| None);
     assert!(r.unwrap_err().contains("conflict"));
@@ -542,7 +789,9 @@ fn same_length_hand_edit_is_detected() {
     let e = Env::new();
     let t = e.track(ID1, &[]);
     let p = e.dir(ID1).join("track.json");
-    let s = fs::read_to_string(&p).unwrap().replace("\"Album\"", "\"Albun\"");
+    let s = fs::read_to_string(&p)
+        .unwrap()
+        .replace("\"Album\"", "\"Albun\"");
     fs::write(&p, &s).unwrap();
     assert!(e.repo.save_track(e.req(&t, vec![]), &|_| None).is_err());
     assert_eq!(fs::read_to_string(&p).unwrap(), s);
@@ -577,9 +826,14 @@ fn hand_edit_that_adds_a_tab_while_editing_conflicts_not_trashed() {
     // user adds a new tab by hand + metadata
     fs::write(e.dir(ID1).join("hand.gp5"), "H").unwrap();
     let p = e.dir(ID1).join("track.json");
-    let s = fs::read_to_string(&p).unwrap().replace("\"a.gp5\"", "\"a.gp5\", \"hand.gp5\"");
+    let s = fs::read_to_string(&p)
+        .unwrap()
+        .replace("\"a.gp5\"", "\"a.gp5\", \"hand.gp5\"");
     fs::write(&p, s).unwrap();
-    assert!(e.repo.save_track(e.req(&t, e.keep_all(&t)), &|_| None).is_err());
+    assert!(e
+        .repo
+        .save_track(e.req(&t, e.keep_all(&t)), &|_| None)
+        .is_err());
     assert!(e.dir(ID1).join("hand.gp5").exists());
 }
 
@@ -639,13 +893,34 @@ fn newer_schema_track_is_a_problem_and_never_rewritten_or_deleted() {
     let lib = e.repo.scan();
     assert!(lib.tracks.is_empty());
     assert_eq!(lib.problems.len(), 1);
-    assert!(lib.problems[0].message.contains("newer"), "{}", lib.problems[0].message);
+    assert!(
+        lib.problems[0].message.contains("newer"),
+        "{}",
+        lib.problems[0].message
+    );
     let fake = TrackRecord {
-        id: ID1.into(), band: "".into(), album: "".into(), title: "T".into(), composers: vec![], year: None,
-        source_url: None, copyright: None, audio: Some("backing.mp3".into()), tablatures: vec![],
-        track_type: track_meta::TrackType::Backing, original: None, stems: vec![], stem_model: None, backings: vec![], imported: "".into(),
-        modified: "".into(), revision: fsutil::fnv1a64_hex(&bytes), exports: Default::default(), missing: vec![],
-        position: None, album_position: None,
+        id: ID1.into(),
+        band: "".into(),
+        album: "".into(),
+        title: "T".into(),
+        composers: vec![],
+        year: None,
+        source_url: None,
+        copyright: None,
+        audio: Some("backing.mp3".into()),
+        tablatures: vec![],
+        track_type: track_meta::TrackType::Backing,
+        original: None,
+        stems: vec![],
+        stem_model: None,
+        backings: vec![],
+        imported: "".into(),
+        modified: "".into(),
+        revision: fsutil::fnv1a64_hex(&bytes),
+        exports: Default::default(),
+        missing: vec![],
+        position: None,
+        album_position: None,
     };
     assert!(e.repo.save_track(e.req(&fake, vec![]), &|_| None).is_err());
     assert!(e.repo.delete_track(ID1, &fake.revision).is_err());
@@ -690,11 +965,18 @@ fn newer_repository_marker_refused_and_not_rewritten() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("r");
     fs::create_dir_all(&root).unwrap();
-    fs::write(root.join("calliope-repository.json"), "{\"schema_version\": 9, \"x\": 1}").unwrap();
+    fs::write(
+        root.join("calliope-repository.json"),
+        "{\"schema_version\": 9, \"x\": 1}",
+    )
+    .unwrap();
     let repo = Repository::new(&root);
     assert_eq!(repository::status(&root), repository::RepoStatus::Newer);
     assert!(repo.ensure_layout().is_err());
-    assert_eq!(fs::read_to_string(root.join("calliope-repository.json")).unwrap(), "{\"schema_version\": 9, \"x\": 1}");
+    assert_eq!(
+        fs::read_to_string(root.join("calliope-repository.json")).unwrap(),
+        "{\"schema_version\": 9, \"x\": 1}"
+    );
     assert!(!root.join("tracks").exists());
 }
 
@@ -707,9 +989,16 @@ fn ensure_layout_in_foreign_folder_adds_only_marker_and_tracks() {
     fs::write(root.join("notes.txt"), "n").unwrap();
     assert_eq!(repository::status(&root), repository::RepoStatus::Other);
     Repository::new(&root).ensure_layout().unwrap();
-    let mut names: Vec<_> = fs::read_dir(&root).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let mut names: Vec<_> = fs::read_dir(&root)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
     names.sort();
-    assert_eq!(names, vec!["Music", "calliope-repository.json", "notes.txt", "tracks"]);
+    assert_eq!(
+        names,
+        vec!["Music", "calliope-repository.json", "notes.txt", "tracks"]
+    );
     assert_eq!(fs::read_to_string(root.join("notes.txt")).unwrap(), "n");
     // idempotent, and the marker is not rewritten
     Repository::new(&root).ensure_layout().unwrap();
@@ -725,7 +1014,12 @@ fn delete_moves_whole_folder_to_trash_nothing_removed() {
     e.repo.delete_track(ID1, &t.revision).unwrap();
     assert!(!e.dir(ID1).exists());
     let trash = e.trash_files();
-    assert!(trash.iter().any(|l| l.contains("unlisted-user-file.txt mine")), "{trash:?}");
+    assert!(
+        trash
+            .iter()
+            .any(|l| l.contains("unlisted-user-file.txt mine")),
+        "{trash:?}"
+    );
     assert!(trash.iter().any(|l| l.contains("track.json")));
     assert!(trash.iter().any(|l| l.contains("a.gp5")));
     assert!(e.repo.scan().tracks.is_empty());
@@ -755,16 +1049,43 @@ fn stale_tab_trash_clash_names_get_suffix_not_overwritten() {
     let e = Env::new();
     // remove a.gp5 twice in quick succession (re-add by hand in between)
     let t = e.track(ID1, &["a.gp5", "b.gp5"]);
-    let t = e.repo.save_track(e.req(&t, vec![TabEntry::Keep { name: "b.gp5".into() }]), &|_| None).unwrap().track;
+    let t = e
+        .repo
+        .save_track(
+            e.req(
+                &t,
+                vec![TabEntry::Keep {
+                    name: "b.gp5".into(),
+                }],
+            ),
+            &|_| None,
+        )
+        .unwrap()
+        .track;
     fs::write(e.dir(ID1).join("a.gp5"), "second a").unwrap();
     let p = e.dir(ID1).join("track.json");
-    let s = fs::read_to_string(&p).unwrap().replace("\"b.gp5\"", "\"a.gp5\", \"b.gp5\"");
+    let s = fs::read_to_string(&p)
+        .unwrap()
+        .replace("\"b.gp5\"", "\"a.gp5\", \"b.gp5\"");
     fs::write(&p, s).unwrap();
     let t = e.repo.scan().tracks.remove(0);
     let _ = t.revision;
-    e.repo.save_track(e.req(&t, vec![TabEntry::Keep { name: "b.gp5".into() }]), &|_| None).unwrap();
+    e.repo
+        .save_track(
+            e.req(
+                &t,
+                vec![TabEntry::Keep {
+                    name: "b.gp5".into(),
+                }],
+            ),
+            &|_| None,
+        )
+        .unwrap();
     let all = e.trash_files().join("\n");
-    assert!(all.contains("content of a.gp5") && all.contains("second a"), "{all}");
+    assert!(
+        all.contains("content of a.gp5") && all.contains("second a"),
+        "{all}"
+    );
 }
 
 // ---------- symlinks ----------
@@ -794,7 +1115,9 @@ fn removing_a_tab_that_is_a_symlink_to_an_outside_file_leaves_outside_file_alone
     let t = e.track(ID1, &[]);
     std::os::unix::fs::symlink(e.outside.join("secret.gp5"), e.dir(ID1).join("link.gp5")).unwrap();
     let p = e.dir(ID1).join("track.json");
-    let s = fs::read_to_string(&p).unwrap().replace("\"tablatures\": []", "\"tablatures\": [\"link.gp5\"]");
+    let s = fs::read_to_string(&p)
+        .unwrap()
+        .replace("\"tablatures\": []", "\"tablatures\": [\"link.gp5\"]");
     fs::write(&p, s).unwrap();
     let t2 = e.repo.scan().tracks.remove(0);
     assert_eq!(t2.tablatures, vec!["link.gp5"]);
@@ -802,7 +1125,10 @@ fn removing_a_tab_that_is_a_symlink_to_an_outside_file_leaves_outside_file_alone
     let res = e.repo.save_track(e.req(&t2, vec![]), &|_| None);
     let _ = res;
     e.assert_outside_unchanged();
-    assert_eq!(fs::read_to_string(e.outside.join("secret.gp5")).unwrap(), "SECRET");
+    assert_eq!(
+        fs::read_to_string(e.outside.join("secret.gp5")).unwrap(),
+        "SECRET"
+    );
 }
 
 #[test]
@@ -812,10 +1138,17 @@ fn removing_a_tab_symlinked_to_another_tracks_file_does_not_trash_that_other_fil
     let _b = e.track("second", &[]);
     std::os::unix::fs::symlink(e.dir(ID1).join("a.gp5"), e.dir("second").join("link.gp5")).unwrap();
     let p = e.dir("second").join("track.json");
-    let s = fs::read_to_string(&p).unwrap().replace("\"tablatures\": []", "\"tablatures\": [\"link.gp5\"]");
+    let s = fs::read_to_string(&p)
+        .unwrap()
+        .replace("\"tablatures\": []", "\"tablatures\": [\"link.gp5\"]");
     fs::write(&p, s).unwrap();
     let lib = e.repo.scan();
-    let b = lib.tracks.iter().find(|t| t.id == "second").unwrap().clone();
+    let b = lib
+        .tracks
+        .iter()
+        .find(|t| t.id == "second")
+        .unwrap()
+        .clone();
     let _ = e.repo.save_track(e.req(&b, vec![]), &|_| None);
     assert!(
         e.dir(ID1).join("a.gp5").exists(),
@@ -851,7 +1184,11 @@ fn track_json_symlink_is_not_written_through() {
     let mut r = e.req(&t, vec![]);
     r.edits.album = "Changed".into();
     let _ = e.repo.save_track(r, &|_| None);
-    assert_eq!(fs::read(&target).unwrap(), before, "wrote through the symlink to an outside file");
+    assert_eq!(
+        fs::read(&target).unwrap(),
+        before,
+        "wrote through the symlink to an outside file"
+    );
 }
 
 #[test]
@@ -861,7 +1198,10 @@ fn export_does_not_follow_symlinked_destination_into_tracks() {
     let link = e.base.join("link-to-tracks");
     std::os::unix::fs::symlink(e.repo.root.join("tracks"), &link).unwrap();
     assert!(e.repo.export_track(ID1, &link).is_err());
-    assert!(e.repo.export_track(ID1, &e.repo.root.join("tracks")).is_err());
+    assert!(e
+        .repo
+        .export_track(ID1, &e.repo.root.join("tracks"))
+        .is_err());
     assert!(e.repo.export_track(ID1, &e.dir(ID1)).is_err());
     assert_eq!(e.repo.scan().tracks.len(), 1);
     assert!(e.repo.scan().problems.is_empty());
@@ -875,11 +1215,17 @@ fn read_only_track_folder_save_fails_nothing_left_behind() {
     let e = Env::new();
     let t = e.track(ID1, &[]);
     let src = e.src("riff.gp5", "RIFF");
-    let lookup = { let p = src.clone(); move |t: &str| (t == "p1").then(|| p.clone()) };
+    let lookup = {
+        let p = src.clone();
+        move |t: &str| (t == "p1").then(|| p.clone())
+    };
     let dir = e.dir(ID1);
     let before = snapshot(&dir);
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
-    let r = e.repo.save_track(e.req(&t, vec![TabEntry::Add { token: "p1".into() }]), &lookup);
+    let r = e.repo.save_track(
+        e.req(&t, vec![TabEntry::Add { token: "p1".into() }]),
+        &lookup,
+    );
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(r.is_err());
     assert_eq!(snapshot(&dir), before);
@@ -908,8 +1254,14 @@ fn read_only_root_remove_tab_keeps_file_on_disk_and_reports_warning() {
     fs::set_permissions(&e.repo.root, fs::Permissions::from_mode(0o755)).unwrap();
     let res = r.unwrap();
     assert!(!res.warnings.is_empty(), "expected a trash warning");
-    assert!(e.dir(ID1).join("a.gp5").exists(), "the removed tab content must not be lost");
-    assert_eq!(fs::read_to_string(e.dir(ID1).join("a.gp5")).unwrap(), "content of a.gp5");
+    assert!(
+        e.dir(ID1).join("a.gp5").exists(),
+        "the removed tab content must not be lost"
+    );
+    assert_eq!(
+        fs::read_to_string(e.dir(ID1).join("a.gp5")).unwrap(),
+        "content of a.gp5"
+    );
 }
 
 #[test]
@@ -921,7 +1273,11 @@ fn rollback_when_second_copy_fails_removes_first_copy_only() {
     let unreadable = e.src("two.gp5", "TWO");
     fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
     let (o, u) = (ok.clone(), unreadable.clone());
-    let lookup = move |t: &str| match t { "p1" => Some(o.clone()), "p2" => Some(u.clone()), _ => None };
+    let lookup = move |t: &str| match t {
+        "p1" => Some(o.clone()),
+        "p2" => Some(u.clone()),
+        _ => None,
+    };
     let before = snapshot(&e.dir(ID1));
     let mut tabs = e.keep_all(&t);
     tabs.push(TabEntry::Add { token: "p1".into() });
@@ -990,8 +1346,14 @@ fn export_with_missing_file_fails_before_copying_anything() {
 fn export_into_file_or_missing_destination_fails() {
     let e = Env::new();
     e.track(ID1, &[]);
-    assert!(e.repo.export_track(ID1, &e.outside.join("audio.mp3")).is_err());
-    assert!(e.repo.export_track(ID1, &e.base.join("nonexistent")).is_err());
+    assert!(e
+        .repo
+        .export_track(ID1, &e.outside.join("audio.mp3"))
+        .is_err());
+    assert!(e
+        .repo
+        .export_track(ID1, &e.base.join("nonexistent"))
+        .is_err());
     assert!(!e.base.join("nonexistent").exists());
 }
 
@@ -1042,14 +1404,26 @@ fn export_track_with_long_multibyte_names() {
 fn export_tablature_inside_tracks_refused_and_overwrite_only_target() {
     let e = Env::new();
     e.track(ID1, &["a.gp5"]);
-    assert!(e.repo.export_tablature(ID1, "a.gp5", &e.dir(ID1).join("copy.gp5")).is_err());
-    assert!(e.repo.export_tablature(ID1, "a.gp5", &e.dir(ID1).join("a.gp5")).is_err());
-    assert!(e.repo.export_tablature(ID1, "nope.gp5", &e.outside.join("x.gp5")).is_err());
+    assert!(e
+        .repo
+        .export_tablature(ID1, "a.gp5", &e.dir(ID1).join("copy.gp5"))
+        .is_err());
+    assert!(e
+        .repo
+        .export_tablature(ID1, "a.gp5", &e.dir(ID1).join("a.gp5"))
+        .is_err());
+    assert!(e
+        .repo
+        .export_tablature(ID1, "nope.gp5", &e.outside.join("x.gp5"))
+        .is_err());
     assert!(e.repo.export_tablature(ID1, "a.gp5", &e.outside).is_err());
     let out = e.outside.join("exported.gp5");
     e.repo.export_tablature(ID1, "a.gp5", &out).unwrap();
     assert_eq!(fs::read_to_string(&out).unwrap(), "content of a.gp5");
-    assert_eq!(fs::read_to_string(e.dir(ID1).join("a.gp5")).unwrap(), "content of a.gp5");
+    assert_eq!(
+        fs::read_to_string(e.dir(ID1).join("a.gp5")).unwrap(),
+        "content of a.gp5"
+    );
 }
 
 // ---------- scan: missing / hand-made ----------
@@ -1066,8 +1440,11 @@ fn missing_files_listed_and_scan_survives_junk() {
     fs::create_dir_all(e.repo.root.join("tracks/.hidden")).unwrap();
     fs::create_dir_all(e.repo.root.join("tracks/x.tmp")).unwrap();
     fs::create_dir_all(e.repo.root.join("tracks/mismatch")).unwrap();
-    fs::write(e.repo.root.join("tracks/mismatch/track.json"),
-        fs::read(e.dir(ID1).join("track.json")).unwrap()).unwrap();
+    fs::write(
+        e.repo.root.join("tracks/mismatch/track.json"),
+        fs::read(e.dir(ID1).join("track.json")).unwrap(),
+    )
+    .unwrap();
     let lib = e.repo.scan();
     assert_eq!(lib.tracks.len(), 1);
     let mut missing = lib.tracks[0].missing.clone();
@@ -1091,17 +1468,33 @@ mod ipc_layer {
         folders: Mutex<Vec<Option<PathBuf>>>,
     }
     impl Picker for Fake {
-        fn pick_file(&self, _: &FileReq) -> Option<PathBuf> { self.files.lock().unwrap().remove(0) }
-        fn pick_folder(&self, _: &FolderReq) -> Option<PathBuf> { self.folders.lock().unwrap().remove(0) }
-        fn save_file(&self, _: &SaveReq) -> Option<PathBuf> { None }
+        fn pick_file(&self, _: &FileReq) -> Option<PathBuf> {
+            self.files.lock().unwrap().remove(0)
+        }
+        fn pick_folder(&self, _: &FolderReq) -> Option<PathBuf> {
+            self.folders.lock().unwrap().remove(0)
+        }
+        fn save_file(&self, _: &SaveReq) -> Option<PathBuf> {
+            None
+        }
     }
 
     fn import_state(st: &RepoState) -> import_job::ImportState {
-        import_job::ImportState::new(tools::Tools::default(), st.repo_lock(), std::time::Duration::from_millis(10))
+        import_job::ImportState::new(
+            tools::Tools::default(),
+            st.repo_lock(),
+            std::time::Duration::from_millis(10),
+        )
     }
 
     fn state(root: &Path, files: Vec<Option<PathBuf>>, folders: Vec<Option<PathBuf>>) -> RepoState {
-        RepoState::new(root.to_path_buf(), Box::new(Fake { files: Mutex::new(files), folders: Mutex::new(folders) }))
+        RepoState::new(
+            root.to_path_buf(),
+            Box::new(Fake {
+                files: Mutex::new(files),
+                folders: Mutex::new(folders),
+            }),
+        )
     }
 
     #[test]
@@ -1113,10 +1506,15 @@ mod ipc_layer {
         let st = state(&e.repo.root, vec![], vec![Some(folder)]);
         let picked = do_choose_root(&st, None).unwrap();
         let req = SaveTrackRequest {
-            id: t.id.clone(), revision: t.revision.clone(),
+            id: t.id.clone(),
+            revision: t.revision.clone(),
             edits: edits("Band", "Album", "Title"),
-            tablatures: vec![TabEntry::Add { token: picked.token.clone() }],
-            position: None, album_position: None, group: vec![],
+            tablatures: vec![TabEntry::Add {
+                token: picked.token.clone(),
+            }],
+            position: None,
+            album_position: None,
+            group: vec![],
         };
         assert!(do_save_track(&st, req).is_err());
     }
@@ -1128,7 +1526,9 @@ mod ipc_layer {
         fs::write(&f, "x").unwrap();
         let st = state(&e.repo.root, vec![Some(f)], vec![]);
         let store = settings::SettingsStore::open(e.base.join("settings.json"));
-        let picked = do_pick_tablature(&st, PickPurpose::Add, None).unwrap().unwrap();
+        let picked = do_pick_tablature(&st, PickPurpose::Add, None)
+            .unwrap()
+            .unwrap();
         assert_eq!(picked.name, "riff.gp5");
         let default = e.base.join("default");
         assert!(do_set_root(&st, &store, &import_state(&st), &default, &picked.token).is_err());
@@ -1146,7 +1546,10 @@ mod ipc_layer {
             let f = d.join(n);
             fs::write(&f, "x").unwrap();
             let st = state(&e.repo.root, vec![Some(f)], vec![]);
-            assert!(do_pick_tablature(&st, PickPurpose::Add, None).is_err(), "{n}");
+            assert!(
+                do_pick_tablature(&st, PickPurpose::Add, None).is_err(),
+                "{n}"
+            );
         }
     }
 
@@ -1157,11 +1560,19 @@ mod ipc_layer {
         let f = e.base.join("riff.gp5");
         fs::write(&f, "x").unwrap();
         let st = state(&e.repo.root, vec![Some(f)], vec![]);
-        let picked = do_pick_tablature(&st, PickPurpose::Add, None).unwrap().unwrap();
+        let picked = do_pick_tablature(&st, PickPurpose::Add, None)
+            .unwrap()
+            .unwrap();
         let mk = |rev: &str| SaveTrackRequest {
-            id: t.id.clone(), revision: rev.into(), edits: edits("Band", "Album", "Title"),
-            tablatures: vec![TabEntry::Add { token: picked.token.clone() }],
-            position: None, album_position: None, group: vec![],
+            id: t.id.clone(),
+            revision: rev.into(),
+            edits: edits("Band", "Album", "Title"),
+            tablatures: vec![TabEntry::Add {
+                token: picked.token.clone(),
+            }],
+            position: None,
+            album_position: None,
+            group: vec![],
         };
         let r = do_save_track(&st, mk(&t.revision)).unwrap();
         // replay with the fresh revision: must not re-add (token consumed; also name would clash)
@@ -1173,12 +1584,23 @@ mod ipc_layer {
         let e = Env::new();
         let newer = e.base.join("newer");
         fs::create_dir_all(&newer).unwrap();
-        fs::write(newer.join("calliope-repository.json"), "{\"schema_version\":5}").unwrap();
+        fs::write(
+            newer.join("calliope-repository.json"),
+            "{\"schema_version\":5}",
+        )
+        .unwrap();
         let st = state(&e.repo.root, vec![], vec![Some(newer.clone())]);
         let store = settings::SettingsStore::open(e.base.join("settings.json"));
         let picked = do_choose_root(&st, None).unwrap();
         assert_eq!(picked.status, repository::RepoStatus::Newer);
-        assert!(do_set_root(&st, &store, &import_state(&st), &e.base.join("d"), &picked.token).is_err());
+        assert!(do_set_root(
+            &st,
+            &store,
+            &import_state(&st),
+            &e.base.join("d"),
+            &picked.token
+        )
+        .is_err());
         assert!(!newer.join("tracks").exists());
         assert_eq!(store.get().repository_root, None);
     }
@@ -1203,7 +1625,11 @@ fn crash_left_unique_tmp_files_do_not_break_scan_or_save() {
     // crash leftovers: inside a track folder, and as stray entries in tracks/
     fs::write(e.dir(ID1).join(".track.json.4242.0.tmp"), "{ half written").unwrap();
     fs::write(e.dir(ID1).join(".a.gp5.4242.1.tmp"), "junk").unwrap();
-    fs::write(e.repo.root.join("tracks").join(".track.json.4242.2.tmp"), "junk").unwrap();
+    fs::write(
+        e.repo.root.join("tracks").join(".track.json.4242.2.tmp"),
+        "junk",
+    )
+    .unwrap();
     fs::create_dir_all(e.repo.root.join("tracks").join(".track.json.4242.3.tmp")).unwrap();
     let lib = e.repo.scan();
     assert_eq!(lib.tracks.len(), 1, "{:?}", lib.problems);
@@ -1212,8 +1638,13 @@ fn crash_left_unique_tmp_files_do_not_break_scan_or_save() {
     // a save still works, and leaves the foreign leftovers alone
     let t2 = lib.tracks[0].clone();
     let _ = t;
-    e.repo.save_track(e.req(&t2, e.keep_all(&t2)), &|_| None).unwrap();
-    assert_eq!(fs::read_to_string(e.dir(ID1).join(".track.json.4242.0.tmp")).unwrap(), "{ half written");
+    e.repo
+        .save_track(e.req(&t2, e.keep_all(&t2)), &|_| None)
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(e.dir(ID1).join(".track.json.4242.0.tmp")).unwrap(),
+        "{ half written"
+    );
     assert_eq!(e.repo.scan().tracks.len(), 1);
     // delete moves the folder, leftovers included, nothing lost
     let t3 = e.repo.scan().tracks.remove(0);
@@ -1226,7 +1657,11 @@ fn tmp_named_track_folder_is_ignored_not_a_problem() {
     let e = Env::new();
     fs::create_dir_all(e.repo.root.join("tracks").join(format!("{ID1}.tmp"))).unwrap();
     let lib = e.repo.scan();
-    assert!(lib.tracks.is_empty() && lib.problems.is_empty(), "{:?}", lib.problems);
+    assert!(
+        lib.tracks.is_empty() && lib.problems.is_empty(),
+        "{:?}",
+        lib.problems
+    );
 }
 
 #[test]
@@ -1240,13 +1675,26 @@ fn export_into_root_trash_and_tracks_refused_nothing_written() {
     fs::create_dir_all(root.join("trash")).unwrap();
     let nested = root.join("tracks").join(ID1);
     let before = snapshot(&root);
-    for d in [root.clone(), root.join("trash"), root.join("tracks"), nested.clone(), root.join("tracks").join("..")] {
-        assert!(e.repo.export_track(ID1, &d).is_err(), "export into {} allowed", d.display());
+    for d in [
+        root.clone(),
+        root.join("trash"),
+        root.join("tracks"),
+        nested.clone(),
+        root.join("tracks").join(".."),
+    ] {
+        assert!(
+            e.repo.export_track(ID1, &d).is_err(),
+            "export into {} allowed",
+            d.display()
+        );
     }
     // via a symlink pointing into the root
     let link = e.base.join("lnk");
     std::os::unix::fs::symlink(root.join("trash"), &link).unwrap();
-    assert!(e.repo.export_track(ID1, &link).is_err(), "export through symlink into trash allowed");
+    assert!(
+        e.repo.export_track(ID1, &link).is_err(),
+        "export through symlink into trash allowed"
+    );
     assert_eq!(snapshot(&root), before);
 }
 
@@ -1257,17 +1705,29 @@ fn replacing_a_symlinked_tab_does_not_write_through_the_link() {
     let _ = t;
     std::os::unix::fs::symlink(e.outside.join("secret.gp5"), e.dir(ID1).join("link.gp5")).unwrap();
     let p = e.dir(ID1).join("track.json");
-    let s = fs::read_to_string(&p).unwrap().replace("\"tablatures\": []", "\"tablatures\": [\"link.gp5\"]");
+    let s = fs::read_to_string(&p)
+        .unwrap()
+        .replace("\"tablatures\": []", "\"tablatures\": [\"link.gp5\"]");
     fs::write(&p, s).unwrap();
     let t2 = e.repo.scan().tracks.remove(0);
     let newsrc = e.src("new.gp5", "NEW CONTENT");
     let tok = newsrc.to_string_lossy().into_owned();
     let res = e.repo.save_track(
-        e.req(&t2, vec![TabEntry::Replace { name: "link.gp5".into(), token: tok.clone() }]),
+        e.req(
+            &t2,
+            vec![TabEntry::Replace {
+                name: "link.gp5".into(),
+                token: tok.clone(),
+            }],
+        ),
         &|t| if t == tok { Some(newsrc.clone()) } else { None },
     );
     let _ = res;
-    assert_eq!(fs::read_to_string(e.outside.join("secret.gp5")).unwrap(), "SECRET", "wrote through symlink");
+    assert_eq!(
+        fs::read_to_string(e.outside.join("secret.gp5")).unwrap(),
+        "SECRET",
+        "wrote through symlink"
+    );
     e.assert_outside_unchanged();
 }
 
@@ -1292,7 +1752,12 @@ fn old_track_json_files_load_unchanged_with_no_position() {
     for fixture in ["library-sample", "library-v2"] {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("repo");
-        copy_tree(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(fixture), &root);
+        copy_tree(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(fixture),
+            &root,
+        );
         let before = snapshot(&root);
         let lib = Repository::new(&root).scan();
         assert!(!lib.tracks.is_empty(), "{fixture}");
@@ -1300,9 +1765,18 @@ fn old_track_json_files_load_unchanged_with_no_position() {
             assert_eq!(t.position, None, "{fixture} {}", t.id);
             assert_eq!(t.album_position, None, "{fixture} {}", t.id);
             let bytes = fs::read(root.join("tracks").join(&t.id).join("track.json")).unwrap();
-            assert_eq!(t.revision, track_meta::revision(&bytes), "{fixture} {}", t.id);
+            assert_eq!(
+                t.revision,
+                track_meta::revision(&bytes),
+                "{fixture} {}",
+                t.id
+            );
         }
-        assert_eq!(snapshot(&root), before, "{fixture}: the scan must not write");
+        assert_eq!(
+            snapshot(&root),
+            before,
+            "{fixture}: the scan must not write"
+        );
     }
 }
 
@@ -1321,24 +1795,45 @@ fn batch_update_and_partial_batch_delete() {
         position: Some(Some(pos)),
         album_position: Some(Some(1)),
     };
-    let res = e.repo.update_tracks(&[patch(&recs[2], 1), patch(&recs[0], 2), patch(&recs[1], 3)]).unwrap();
+    let res = e
+        .repo
+        .update_tracks(&[patch(&recs[2], 1), patch(&recs[0], 2), patch(&recs[1], 3)])
+        .unwrap();
     assert!(res.failed.is_empty());
-    assert_eq!(res.tracks.iter().map(|t| (t.id.as_str(), t.position)).collect::<Vec<_>>(), [("t-c", Some(1)), ("t-a", Some(2)), ("t-b", Some(3))]);
+    assert_eq!(
+        res.tracks
+            .iter()
+            .map(|t| (t.id.as_str(), t.position))
+            .collect::<Vec<_>>(),
+        [("t-c", Some(1)), ("t-a", Some(2)), ("t-b", Some(3))]
+    );
     assert_eq!(e.json("t-c")["position"], 1);
     assert_eq!(e.json("t-a")["album_position"], 1);
     // The untouched track keeps its bytes.
-    assert_eq!(e.repo.load_record("t-d").unwrap().revision, recs[3].revision);
+    assert_eq!(
+        e.repo.load_record("t-d").unwrap().revision,
+        recs[3].revision
+    );
 
     // A stale revision refuses the whole batch and writes nothing.
     let before = snapshot(&e.repo.root);
-    assert!(e.repo.update_tracks(&[patch(&res.tracks[0], 2), patch(&recs[1], 1)]).is_err());
+    assert!(e
+        .repo
+        .update_tracks(&[patch(&res.tracks[0], 2), patch(&recs[1], 1)])
+        .is_err());
     assert_eq!(snapshot(&e.repo.root), before);
 
     // Delete four: one folder cannot be moved (read-only), the others go to the trash.
     let cur: Vec<TrackRecord> = ids.iter().map(|i| e.repo.load_record(i).unwrap()).collect();
     fs::set_permissions(e.dir("t-b"), fs::Permissions::from_mode(0o555)).unwrap();
     let probe = fs::write(e.dir("t-b").join("probe"), "x").is_ok(); // root ignores the mode
-    let items: Vec<TrackRef> = cur.iter().map(|t| TrackRef { id: t.id.clone(), revision: t.revision.clone() }).collect();
+    let items: Vec<TrackRef> = cur
+        .iter()
+        .map(|t| TrackRef {
+            id: t.id.clone(),
+            revision: t.revision.clone(),
+        })
+        .collect();
     let del = e.repo.delete_tracks(&items);
     fs::set_permissions(e.dir("t-b"), fs::Permissions::from_mode(0o755)).unwrap();
     if probe {
@@ -1348,7 +1843,13 @@ fn batch_update_and_partial_batch_delete() {
     assert_eq!(del.failed.len(), 1);
     assert_eq!(del.failed[0].id, "t-b");
     assert_eq!(del.failed[0].title, "Title");
-    assert!(del.failed[0].message.contains("cannot move the track to the trash"), "{}", del.failed[0].message);
+    assert!(
+        del.failed[0]
+            .message
+            .contains("cannot move the track to the trash"),
+        "{}",
+        del.failed[0].message
+    );
     assert!(e.dir("t-b").join("track.json").exists());
     assert!(!e.dir("t-a").exists());
     assert_eq!(fs::read_dir(e.repo.root.join("trash")).unwrap().count(), 3);

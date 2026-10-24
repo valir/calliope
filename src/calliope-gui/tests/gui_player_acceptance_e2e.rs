@@ -42,8 +42,14 @@ fn pick(app: &mut App, wid: &str, query: &str, id: &str) -> String {
     app.typ(wid, query);
     settle();
     app.key(wid, "Down Down Down Return");
-    app.wait_line(|l| l.trim_end().ends_with(&format!("select id={id}")), secs(10));
-    let l = app.wait_line(|l| l.contains("player active") || l.contains("player inactive"), secs(20));
+    app.wait_line(
+        |l| l.trim_end().ends_with(&format!("select id={id}")),
+        secs(10),
+    );
+    let l = app.wait_line(
+        |l| l.contains("player active") || l.contains("player inactive"),
+        secs(20),
+    );
     app.key(wid, "ctrl+l");
     app.wait_contains("player tree collapsed=true");
     settle();
@@ -99,7 +105,10 @@ fn newer_schema_player_json_is_left_alone() {
     shot("qa-player-newer-schema");
     app.close_gracefully(&wid);
     app.wait_exit(secs(5));
-    assert_eq!(std::fs::read_to_string(dirs.player_json(PL_PRACTICE)).unwrap(), text);
+    assert_eq!(
+        std::fs::read_to_string(dirs.player_json(PL_PRACTICE)).unwrap(),
+        text
+    );
 }
 
 /// BPM 0: bad BPM texts are refused, the section Click and Count In buttons do nothing, and Play makes no click.
@@ -124,7 +133,11 @@ fn bpm_zero_has_no_clicks_and_bad_bpm_text_is_refused() {
     at(&app, &wid, SEC_CLICK);
     at(&app, &wid, SEC_COUNT_IN);
     ms(300);
-    assert_eq!(app.count("player section flags"), 0, "the disabled section buttons acted");
+    assert_eq!(
+        app.count("player section flags"),
+        0,
+        "the disabled section buttons acted"
+    );
     let start = (capture_len(&cap), app.count("audio backend=capture"));
     at(&app, &wid, BLANK);
     app.key(&wid, "space");
@@ -133,11 +146,22 @@ fn bpm_zero_has_no_clicks_and_bad_bpm_text_is_refused() {
     app.key(&wid, "space");
     app.wait_contains("player pause");
     let rate = rate_of(&app);
-    let from = if app.count("audio backend=capture") == start.1 { start.0 } else { 0 };
+    let from = if app.count("audio backend=capture") == start.1 {
+        start.0
+    } else {
+        0
+    };
     let heard = capture_from(&cap, from);
     // The backing is a 330 Hz tone: a click would put energy at 1.5 and 2 kHz.
-    let (tone, c15, c20) = (tone_power(&heard, rate, 330.0), tone_power(&heard, rate, 1500.0), tone_power(&heard, rate, 2000.0));
-    assert!(db(tone, c15) > 40.0 && db(tone, c20) > 40.0, "clicks at BPM 0: 330={tone} 1500={c15} 2000={c20}");
+    let (tone, c15, c20) = (
+        tone_power(&heard, rate, 330.0),
+        tone_power(&heard, rate, 1500.0),
+        tone_power(&heard, rate, 2000.0),
+    );
+    assert!(
+        db(tone, c15) > 40.0 && db(tone, c20) > 40.0,
+        "clicks at BPM 0: 330={tone} 1500={c15} 2000={c20}"
+    );
     assert_eq!(app.count("count-in"), 0);
     app.no_csp_violation();
     app.assert_no_real_audio();
@@ -171,7 +195,10 @@ fn loop_add_ends_at_the_next_section_and_a_bad_end_is_refused() {
     at(&app, &wid, MARK_END);
     let l = app.wait_contains("player loop mark-end");
     assert_eq!(field(&l, "complete"), "true", "{l}");
-    assert!((field(&l, "end").parse::<f64>().unwrap() - 8500.0).abs() <= 1.0, "the refused end changed the loop: {l}");
+    assert!(
+        (field(&l, "end").parse::<f64>().unwrap() - 8500.0).abs() <= 1.0,
+        "the refused end changed the loop: {l}"
+    );
     ms(300);
     shot("qa-player-loop-end-refused");
     app.skip_seen();

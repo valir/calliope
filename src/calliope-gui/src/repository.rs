@@ -219,7 +219,12 @@ fn link_no_clobber(src: &Path, dest: &Path) -> io::Result<()> {
             }
             Ok(())
         }
-        Err(e) if matches!(e.kind(), io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied) => {
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
+            ) =>
+        {
             fsutil::copy_no_clobber(src, dest)
         }
         Err(e) => Err(e),
@@ -331,11 +336,15 @@ impl Repository {
                 return Err("the repository was written by a newer Calliope".into());
             }
         }
-        fs::create_dir_all(self.tracks_dir()).map_err(|e| io_err("cannot create tracks folder", e))?;
+        fs::create_dir_all(self.tracks_dir())
+            .map_err(|e| io_err("cannot create tracks folder", e))?;
         let marker = self.root.join(MARKER);
         if !marker.exists() {
-            fsutil::write_atomic(&marker, format!("{{\n  \"schema_version\": {REPO_SCHEMA}\n}}\n").as_bytes())
-                .map_err(|e| io_err("cannot write repository marker", e))?;
+            fsutil::write_atomic(
+                &marker,
+                format!("{{\n  \"schema_version\": {REPO_SCHEMA}\n}}\n").as_bytes(),
+            )
+            .map_err(|e| io_err("cannot write repository marker", e))?;
         }
         Ok(())
     }
@@ -353,9 +362,16 @@ impl Repository {
 
     fn load(&self, id: &str) -> Result<(PathBuf, Loaded), String> {
         let dir = self.track_dir(id)?;
-        let bytes = fs::read(dir.join(TRACK_FILE)).map_err(|e| io_err("cannot read track.json", e))?;
+        let bytes =
+            fs::read(dir.join(TRACK_FILE)).map_err(|e| io_err("cannot read track.json", e))?;
         let meta = track_meta::parse(&bytes, id).map_err(|e| format!("track \"{id}\": {e}"))?;
-        Ok((dir, Loaded { meta, revision: track_meta::revision(&bytes) }))
+        Ok((
+            dir,
+            Loaded {
+                meta,
+                revision: track_meta::revision(&bytes),
+            },
+        ))
     }
 
     fn record(dir: &Path, l: Loaded) -> TrackRecord {
@@ -398,9 +414,13 @@ impl Repository {
 
     /// Reads `track.json` as a raw JSON object, only for a track `track_meta::parse` accepts
     /// (problem tracks and tracks from a newer build are never rewritten).
-    fn raw_meta(&self, id: &str) -> Result<(PathBuf, serde_json::Map<String, serde_json::Value>), String> {
+    fn raw_meta(
+        &self,
+        id: &str,
+    ) -> Result<(PathBuf, serde_json::Map<String, serde_json::Value>), String> {
         let dir = self.track_dir(id)?;
-        let bytes = fs::read(dir.join(TRACK_FILE)).map_err(|e| io_err("cannot read track.json", e))?;
+        let bytes =
+            fs::read(dir.join(TRACK_FILE)).map_err(|e| io_err("cannot read track.json", e))?;
         track_meta::parse(&bytes, id).map_err(|e| format!("track \"{id}\": {e}"))?;
         match serde_json::from_slice(&bytes) {
             Ok(serde_json::Value::Object(o)) => Ok((dir, o)),
@@ -408,15 +428,25 @@ impl Repository {
         }
     }
 
-    fn write_raw(dir: &Path, obj: serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
-        let mut text = serde_json::to_string_pretty(&serde_json::Value::Object(obj)).expect("JSON serialises");
+    fn write_raw(
+        dir: &Path,
+        obj: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(), String> {
+        let mut text =
+            serde_json::to_string_pretty(&serde_json::Value::Object(obj)).expect("JSON serialises");
         text.push('\n');
-        fsutil::write_atomic(&dir.join(TRACK_FILE), text.as_bytes()).map_err(|e| io_err("cannot write track.json", e))
+        fsutil::write_atomic(&dir.join(TRACK_FILE), text.as_bytes())
+            .map_err(|e| io_err("cannot write track.json", e))
     }
 
     /// Writes `exports.<kind>` of the track and nothing else (not even `modified`), working on
     /// the raw JSON so that every other byte of meaning stays. The caller holds the repository lock.
-    pub fn record_export(&self, id: &str, entry: &ExportEntry, at: &str) -> Result<TrackRecord, String> {
+    pub fn record_export(
+        &self,
+        id: &str,
+        entry: &ExportEntry,
+        at: &str,
+    ) -> Result<TrackRecord, String> {
         let (dir, mut obj) = self.raw_meta(id)?;
         export_record::set(&mut obj, entry, at);
         Self::write_raw(&dir, obj)?;
@@ -424,8 +454,12 @@ impl Repository {
             ExportEntry::Rc5 { memory } => {
                 eprintln!("calliope: export recorded id={id} target=rc5 memory={memory} at={at}")
             }
-            ExportEntry::Mp3 { path } => eprintln!("calliope: export recorded id={id} target=mp3 path={path} at={at}"),
-            ExportEntry::Ogg { path } => eprintln!("calliope: export recorded id={id} target=ogg path={path} at={at}"),
+            ExportEntry::Mp3 { path } => {
+                eprintln!("calliope: export recorded id={id} target=mp3 path={path} at={at}")
+            }
+            ExportEntry::Ogg { path } => {
+                eprintln!("calliope: export recorded id={id} target=ogg path={path} at={at}")
+            }
         }
         self.load_record(id)
     }
@@ -446,9 +480,15 @@ impl Repository {
             if is_dot_or_tmp(&id) || id == except || !track_meta::is_valid_id(&id) {
                 continue;
             }
-            let Ok(dir) = self.track_dir(&id) else { continue };
-            let Ok(bytes) = fs::read(dir.join(TRACK_FILE)) else { continue };
-            let Ok(serde_json::Value::Object(mut obj)) = serde_json::from_slice(&bytes) else { continue };
+            let Ok(dir) = self.track_dir(&id) else {
+                continue;
+            };
+            let Ok(bytes) = fs::read(dir.join(TRACK_FILE)) else {
+                continue;
+            };
+            let Ok(serde_json::Value::Object(mut obj)) = serde_json::from_slice(&bytes) else {
+                continue;
+            };
             if export_record::rc5_memory(&obj) != Some(memory) {
                 continue;
             }
@@ -465,8 +505,12 @@ impl Repository {
                     }
                 }
                 Err(message) => {
-                    eprintln!("calliope: export clear failed id={id} memory={memory} message={message}");
-                    let title = track_meta::parse(&bytes, &id).map(|m| m.title).unwrap_or_default();
+                    eprintln!(
+                        "calliope: export clear failed id={id} memory={memory} message={message}"
+                    );
+                    let title = track_meta::parse(&bytes, &id)
+                        .map(|m| m.title)
+                        .unwrap_or_default();
                     out.failed.push(BatchFailure { id, title, message });
                 }
             }
@@ -491,7 +535,10 @@ impl Repository {
             if !is_dir || is_dot_or_tmp(&name) {
                 continue;
             }
-            let problem = |message: String| Problem { dir: name.clone(), message };
+            let problem = |message: String| Problem {
+                dir: name.clone(),
+                message,
+            };
             if !track_meta::is_valid_id(&name) {
                 problems.push(problem("folder name is not a valid track id".into()));
                 continue;
@@ -501,7 +548,11 @@ impl Repository {
                 Err(m) => problems.push(problem(m)),
             }
         }
-        Library { root: self.root.to_string_lossy().into_owned(), tracks, problems }
+        Library {
+            root: self.root.to_string_lossy().into_owned(),
+            tracks,
+            problems,
+        }
     }
 
     /// Creates a new track folder (the id must not exist yet). On failure only what this call
@@ -523,8 +574,14 @@ impl Repository {
             position: None,
             composers: e.composers.iter().map(|c| c.trim().to_string()).collect(),
             year: e.year,
-            source_url: e.source_url.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-            copyright: e.copyright.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            source_url: e
+                .source_url
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            copyright: e
+                .copyright
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
             audio: Some(new.audio_name.clone()),
             original: None,
             stems: Vec::new(),
@@ -537,24 +594,34 @@ impl Repository {
         };
         track_meta::validate_for_write(&meta)?;
         let mut files: Vec<(&str, &Path)> = vec![(new.audio_name.as_str(), audio_src)];
-        files.extend(new.tablatures.iter().map(|(n, p)| (n.as_str(), p.as_path())));
+        files.extend(
+            new.tablatures
+                .iter()
+                .map(|(n, p)| (n.as_str(), p.as_path())),
+        );
         for (_, src) in &files {
             if !src.is_file() {
                 return Err(format!("{} is not a file", src.display()));
             }
         }
-        fs::create_dir_all(self.tracks_dir()).map_err(|e| io_err("cannot create tracks folder", e))?;
+        fs::create_dir_all(self.tracks_dir())
+            .map_err(|e| io_err("cannot create tracks folder", e))?;
         let dir = self.tracks_dir().join(&id);
-        fs::create_dir(&dir).map_err(|e| io_err(&format!("cannot create track folder \"{id}\""), e))?;
+        fs::create_dir(&dir)
+            .map_err(|e| io_err(&format!("cannot create track folder \"{id}\""), e))?;
         let mut created: Vec<PathBuf> = Vec::new();
         let result = (|| {
             for (name, src) in &files {
                 let dest = dir.join(name);
-                fsutil::copy_no_clobber(src, &dest).map_err(|e| io_err(&format!("cannot copy {name}"), e))?;
+                fsutil::copy_no_clobber(src, &dest)
+                    .map_err(|e| io_err(&format!("cannot copy {name}"), e))?;
                 created.push(dest);
             }
-            fsutil::write_atomic(&dir.join(TRACK_FILE), track_meta::to_json_pretty(&meta).as_bytes())
-                .map_err(|e| io_err("cannot write track.json", e))
+            fsutil::write_atomic(
+                &dir.join(TRACK_FILE),
+                track_meta::to_json_pretty(&meta).as_bytes(),
+            )
+            .map_err(|e| io_err("cannot write track.json", e))
         })();
         if let Err(e) = result {
             for f in created {
@@ -603,7 +670,8 @@ impl Repository {
             Ok(())
         };
         let resolve = |token: &str| -> Result<(String, PathBuf), String> {
-            let path = lookup(token).ok_or_else(|| format!("unknown or expired file pick \"{token}\""))?;
+            let path =
+                lookup(token).ok_or_else(|| format!("unknown or expired file pick \"{token}\""))?;
             let name = path
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -619,16 +687,31 @@ impl Repository {
             match entry {
                 TabEntry::Keep { name } => {
                     take_old(name)?;
-                    plan.push(Plan { name: name.clone(), src: None, replaces: None });
+                    plan.push(Plan {
+                        name: name.clone(),
+                        src: None,
+                        replaces: None,
+                    });
                 }
                 TabEntry::Add { token } => {
                     let (name, path) = resolve(token)?;
-                    plan.push(Plan { name, src: Some(path), replaces: None });
+                    plan.push(Plan {
+                        name,
+                        src: Some(path),
+                        replaces: None,
+                    });
                 }
-                TabEntry::Replace { name: old_name, token } => {
+                TabEntry::Replace {
+                    name: old_name,
+                    token,
+                } => {
                     take_old(old_name)?;
                     let (name, path) = resolve(token)?;
-                    plan.push(Plan { name, src: Some(path), replaces: Some(old_name.clone()) });
+                    plan.push(Plan {
+                        name,
+                        src: Some(path),
+                        replaces: Some(old_name.clone()),
+                    });
                 }
             }
         }
@@ -644,7 +727,10 @@ impl Repository {
             fsutil::validate_file_name(&p.name)?;
             let lower = p.name.to_lowercase();
             if seen.contains(&lower) {
-                return Err(format!("tablature name \"{}\" clashes with another file of the track", p.name));
+                return Err(format!(
+                    "tablature name \"{}\" clashes with another file of the track",
+                    p.name
+                ));
             }
             seen.push(lower);
         }
@@ -671,7 +757,9 @@ impl Repository {
             let r = if same_name {
                 let part = fsutil::part_path(&dest).map_err(|e| io_err("cannot stage file", e));
                 match part {
-                    Ok(part) => fsutil::copy_to_part(src, &part).map(|()| parts.push((part, dest.clone()))),
+                    Ok(part) => {
+                        fsutil::copy_to_part(src, &part).map(|()| parts.push((part, dest.clone())))
+                    }
                     Err(e) => {
                         rollback(&created, &parts);
                         return Err(e);
@@ -682,7 +770,10 @@ impl Repository {
             };
             if let Err(e) = r {
                 rollback(&created, &parts);
-                return Err(io_err(&format!("cannot copy \"{}\" into the track", p.name), e));
+                return Err(io_err(
+                    &format!("cannot copy \"{}\" into the track", p.name),
+                    e,
+                ));
             }
         }
 
@@ -696,7 +787,11 @@ impl Repository {
         // 5. old files to the trash; failures are warnings
         let mut warnings = Vec::new();
         let mut trash = fsutil::FileTrash::new(&self.root, &stamp_now(), &req.id, "tablatures");
-        let mut to_trash: Vec<&String> = old.tablatures.iter().filter(|t| !used_old.contains(t)).collect();
+        let mut to_trash: Vec<&String> = old
+            .tablatures
+            .iter()
+            .filter(|t| !used_old.contains(t))
+            .collect();
         to_trash.extend(plan.iter().filter_map(|p| p.replaces.as_ref()));
         for name in to_trash {
             let path = dir.join(name);
@@ -734,7 +829,12 @@ impl Repository {
 
         // 6. re-scan the record
         let track = self.load_record(&req.id)?;
-        Ok(SaveResult { track, warnings, updated: Vec::new(), failed: Vec::new() })
+        Ok(SaveResult {
+            track,
+            warnings,
+            updated: Vec::new(),
+            failed: Vec::new(),
+        })
     }
 
     /// The backing save transaction (plan 2.6). `save.part` is the finished render, a file of
@@ -746,9 +846,13 @@ impl Repository {
         let (dir, loaded) = self.load(save.id)?;
         let old = loaded.meta;
         if old.track_type != TrackType::Stem || old.stems != save.stems {
-            return Err("conflict: the stems of this track changed on disk; select it again".into());
+            return Err(
+                "conflict: the stems of this track changed on disk; select it again".into(),
+            );
         }
-        let part_ok = fs::symlink_metadata(save.part).map(|m| m.is_file()).unwrap_or(false);
+        let part_ok = fs::symlink_metadata(save.part)
+            .map(|m| m.is_file())
+            .unwrap_or(false);
         if !part_ok || save.part.parent() != Some(dir.as_path()) {
             return Err("the rendered backing file is missing".into());
         }
@@ -760,23 +864,37 @@ impl Repository {
         let backings_dir = dir.join("backings");
         match fs::symlink_metadata(&backings_dir) {
             Ok(m) if m.is_dir() => {}
-            Ok(_) => return Err("backings is not a real folder (a symlink or file); nothing was changed".into()),
+            Ok(_) => {
+                return Err(
+                    "backings is not a real folder (a symlink or file); nothing was changed".into(),
+                )
+            }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(io_err("cannot read the backings folder", e)),
         }
 
         // target variant: replace the existing one, or create with a free id and file name
-        let existing = save.variant.and_then(|v| old.backings.iter().position(|b| b.id == v));
+        let existing = save
+            .variant
+            .and_then(|v| old.backings.iter().position(|b| b.id == v));
         let now = track_meta::now_rfc3339();
         let mut meta = old.clone();
         let (index, rel_file) = match existing {
             Some(i) => (i, old.backings[i].file.clone()),
             None => {
                 let base = save.variant.unwrap_or(DEFAULT_ID);
-                let base_name = if base == DEFAULT_ID { "Backing".to_string() } else { base.to_string() };
+                let base_name = if base == DEFAULT_ID {
+                    "Backing".to_string()
+                } else {
+                    base.to_string()
+                };
                 let taken = |id: &str, file: &str| {
-                    old.backings.iter().any(|b| b.id == id || b.file.eq_ignore_ascii_case(file))
-                        || track_files(&old).iter().any(|f| f.to_lowercase() == file.to_lowercase())
+                    old.backings
+                        .iter()
+                        .any(|b| b.id == id || b.file.eq_ignore_ascii_case(file))
+                        || track_files(&old)
+                            .iter()
+                            .any(|f| f.to_lowercase() == file.to_lowercase())
                         || dir.join(file).symlink_metadata().is_ok()
                 };
                 let (mut id, mut name) = (base.to_string(), base_name.clone());
@@ -813,7 +931,8 @@ impl Repository {
         track_meta::validate_for_read(&meta)?;
 
         if !backings_dir.exists() {
-            fs::create_dir(&backings_dir).map_err(|e| io_err("cannot create the backings folder", e))?;
+            fs::create_dir(&backings_dir)
+                .map_err(|e| io_err("cannot create the backings folder", e))?;
         }
         let dest = dir.join(&rel_file);
         let mut warnings = Vec::new();
@@ -822,9 +941,12 @@ impl Repository {
         let mut trashed: Option<PathBuf> = None;
         if existing.is_some() && dest.symlink_metadata().is_ok() {
             let mut trash = fsutil::FileTrash::new(&self.root, &stamp_now(), save.id, "backing");
-            let moved = trash
-                .move_in(&dest)
-                .map_err(|e| io_err(&format!("could not move \"{rel_file}\" to the trash (nothing was changed)"), e))?;
+            let moved = trash.move_in(&dest).map_err(|e| {
+                io_err(
+                    &format!("could not move \"{rel_file}\" to the trash (nothing was changed)"),
+                    e,
+                )
+            })?;
             trashed = Some(moved);
         }
         let restore = |trashed: &Option<PathBuf>| {
@@ -838,20 +960,31 @@ impl Repository {
             restore(&trashed);
             return Err(io_err(&format!("cannot put \"{rel_file}\" in place"), e));
         }
-        if let Err(e) = fsutil::write_atomic(&dir.join(TRACK_FILE), track_meta::to_json_pretty(&meta).as_bytes()) {
+        if let Err(e) = fsutil::write_atomic(
+            &dir.join(TRACK_FILE),
+            track_meta::to_json_pretty(&meta).as_bytes(),
+        ) {
             // the linked file is ours (just created); undo
             let _ = fs::remove_file(&dest);
             restore(&trashed);
             return Err(io_err("cannot write track.json (nothing was changed)", e));
         }
         if let Err(e) = fs::remove_file(save.part) {
-            warnings.push(format!("could not remove the temporary file {}: {e}", save.part.display()));
+            warnings.push(format!(
+                "could not remove the temporary file {}: {e}",
+                save.part.display()
+            ));
         }
         for w in &warnings {
             eprintln!("calliope: repository warning: {w}");
         }
         let track = self.load_record(save.id)?;
-        Ok(SaveResult { track, warnings, updated: Vec::new(), failed: Vec::new() })
+        Ok(SaveResult {
+            track,
+            warnings,
+            updated: Vec::new(),
+            failed: Vec::new(),
+        })
     }
 
     /// Moves the whole track folder to `trash/`.
@@ -862,7 +995,10 @@ impl Repository {
         }
         let dest = fsutil::move_track_to_trash(&self.root, &dir, &stamp_now(), id)
             .map_err(|e| io_err("cannot move the track to the trash", e))?;
-        eprintln!("calliope: track deleted id={id} trash={}", trash_name(&dest));
+        eprintln!(
+            "calliope: track deleted id={id} trash={}",
+            trash_name(&dest)
+        );
         Ok(())
     }
 
@@ -882,10 +1018,21 @@ impl Repository {
                 return Err(conflict_text(&loaded.meta.title));
             }
             let mut meta = loaded.meta.clone();
-            track_meta::apply_patch(&mut meta, p.band.as_deref(), p.album.as_deref(), p.position, p.album_position)
-                .map_err(|e| format!("\"{}\": {e}", loaded.meta.title))?;
+            track_meta::apply_patch(
+                &mut meta,
+                p.band.as_deref(),
+                p.album.as_deref(),
+                p.position,
+                p.album_position,
+            )
+            .map_err(|e| format!("\"{}\": {e}", loaded.meta.title))?;
             let changed = meta != loaded.meta;
-            items.push(PreparedItem { id: p.id.clone(), dir, meta, changed });
+            items.push(PreparedItem {
+                id: p.id.clone(),
+                dir,
+                meta,
+                changed,
+            });
         }
         Ok(PreparedPatches { items })
     }
@@ -902,8 +1049,15 @@ impl Repository {
                 let json = track_meta::to_json_pretty(&item.meta);
                 if let Err(e) = fsutil::write_atomic(&item.dir.join(TRACK_FILE), json.as_bytes()) {
                     let message = io_err("cannot write track.json", e);
-                    eprintln!("calliope: track update failed id={} message={message}", item.id);
-                    out.failed.push(BatchFailure { id: item.id, title: item.meta.title, message });
+                    eprintln!(
+                        "calliope: track update failed id={} message={message}",
+                        item.id
+                    );
+                    out.failed.push(BatchFailure {
+                        id: item.id,
+                        title: item.meta.title,
+                        message,
+                    });
                     continue;
                 }
                 written += 1;
@@ -913,8 +1067,15 @@ impl Repository {
             match self.load_record(&item.id) {
                 Ok(r) => out.tracks.push(r),
                 Err(message) => {
-                    eprintln!("calliope: track update failed id={} message={message}", item.id);
-                    out.failed.push(BatchFailure { id: item.id, title: item.meta.title, message });
+                    eprintln!(
+                        "calliope: track update failed id={} message={message}",
+                        item.id
+                    );
+                    out.failed.push(BatchFailure {
+                        id: item.id,
+                        title: item.meta.title,
+                        message,
+                    });
                 }
             }
         }
@@ -950,12 +1111,23 @@ impl Repository {
             })();
             match result {
                 Ok(dest) => {
-                    eprintln!("calliope: track deleted id={} trash={}", it.id, trash_name(&dest));
+                    eprintln!(
+                        "calliope: track deleted id={} trash={}",
+                        it.id,
+                        trash_name(&dest)
+                    );
                     out.deleted.push(it.id.clone());
                 }
                 Err(message) => {
-                    eprintln!("calliope: track delete failed id={} message={message}", it.id);
-                    out.failed.push(BatchFailure { id: it.id.clone(), title, message });
+                    eprintln!(
+                        "calliope: track delete failed id={} message={message}",
+                        it.id
+                    );
+                    out.failed.push(BatchFailure {
+                        id: it.id.clone(),
+                        title,
+                        message,
+                    });
                 }
             }
         }
@@ -986,7 +1158,11 @@ impl Repository {
         if !missing.is_empty() {
             return Err(format!(
                 "cannot export: missing file(s) {}",
-                missing.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")
+                missing
+                    .iter()
+                    .map(|n| format!("\"{n}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
         let parts: Vec<String> = [&m.band, &m.album, &m.title]
@@ -994,7 +1170,9 @@ impl Repository {
             .map(|s| sanitize_component(s))
             .filter(|s| !s.is_empty())
             .collect();
-        let mut folder = cut_bytes(&parts.join(" - "), MAX_FOLDER_BYTES).trim().to_string();
+        let mut folder = cut_bytes(&parts.join(" - "), MAX_FOLDER_BYTES)
+            .trim()
+            .to_string();
         if folder.is_empty() {
             folder = id.to_string();
         }
@@ -1004,7 +1182,9 @@ impl Repository {
         let mut made_dirs: Vec<PathBuf> = Vec::new();
         for n in &names {
             let target = dest.join(n);
-            let sub = ["stems", "backings"].into_iter().find(|d| n.starts_with(&format!("{d}/")));
+            let sub = ["stems", "backings"]
+                .into_iter()
+                .find(|d| n.starts_with(&format!("{d}/")));
             let r = match sub {
                 Some(d) if !made_dirs.contains(&dest.join(d)) => {
                     fs::create_dir(dest.join(d)).map(|()| made_dirs.push(dest.join(d)))
@@ -1037,7 +1217,10 @@ impl Repository {
         if !src.is_file() {
             return Err(format!("tablature \"{name}\" is missing on disk"));
         }
-        let parent = dest.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let parent = dest
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
         if inside_root(&self.root, parent) {
             return Err("cannot export into the repository folder".into());
         }
@@ -1053,7 +1236,9 @@ fn conflict_text(title: &str) -> String {
 }
 
 fn trash_name(dest: &Path) -> String {
-    dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    dest.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// Makes one part of an export folder name safe on every platform.
@@ -1103,7 +1288,9 @@ fn is_real_dir(p: &Path) -> bool {
 }
 
 fn is_real_file(p: &Path) -> bool {
-    fs::symlink_metadata(p).map(|m| m.is_file()).unwrap_or(false)
+    fs::symlink_metadata(p)
+        .map(|m| m.is_file())
+        .unwrap_or(false)
 }
 
 /// A new track being assembled in `tracks/.staging-<id>/`. It becomes visible in `tracks/`
@@ -1144,18 +1331,27 @@ impl Repository {
             let _ = fs::remove_dir(&dir);
             return Err(io_err("cannot prepare the staging folder", e));
         }
-        Ok(Staging { tracks, id: id.to_string(), dir, adopted_from: None })
+        Ok(Staging {
+            tracks,
+            id: id.to_string(),
+            dir,
+            adopted_from: None,
+        })
     }
 
     /// Removes leftover `tracks/.staging-*` folders, except the one for `keep_id`. Only real
     /// folders that contain the marker are removed; anything else stays. Returns how many.
     pub fn clean_stale_staging(&self, keep_id: Option<&str>) -> usize {
         let tracks = self.tracks_dir();
-        let Ok(rd) = fs::read_dir(&tracks) else { return 0 };
+        let Ok(rd) = fs::read_dir(&tracks) else {
+            return 0;
+        };
         let mut removed = 0;
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            let Some(id) = name.strip_prefix(STAGING_PREFIX) else { continue };
+            let Some(id) = name.strip_prefix(STAGING_PREFIX) else {
+                continue;
+            };
             if !track_meta::is_valid_id(id) || keep_id == Some(id) {
                 continue;
             }
@@ -1215,7 +1411,8 @@ impl Staging {
         if done.symlink_metadata().is_ok() {
             return Err(format!("stem \"{name}\" already exists"));
         }
-        fs::rename(&part, &done).map_err(|e| io_err(&format!("cannot finish stem \"{name}\""), e))?;
+        fs::rename(&part, &done)
+            .map_err(|e| io_err(&format!("cannot finish stem \"{name}\""), e))?;
         Ok(done)
     }
 
@@ -1256,8 +1453,11 @@ impl Staging {
         if final_dir.symlink_metadata().is_ok() {
             return Err(format!("track \"{}\" already exists", self.id));
         }
-        fsutil::write_atomic(&self.dir.join(TRACK_FILE), track_meta::to_json_pretty(meta).as_bytes())
-            .map_err(|e| io_err("cannot write track.json", e))?;
+        fsutil::write_atomic(
+            &self.dir.join(TRACK_FILE),
+            track_meta::to_json_pretty(meta).as_bytes(),
+        )
+        .map_err(|e| io_err("cannot write track.json", e))?;
         let marker = self.dir.join(STAGING_MARKER);
         fs::remove_file(&marker).map_err(|e| io_err("cannot finish the staging folder", e))?;
         if let Err(e) = fs::rename(&self.dir, &final_dir) {
@@ -1265,7 +1465,13 @@ impl Staging {
             let _ = fs::remove_file(self.dir.join(TRACK_FILE));
             return Err(io_err("cannot create the track folder", e));
         }
-        let repo = Repository { root: self.tracks.parent().map(Path::to_path_buf).unwrap_or_default() };
+        let repo = Repository {
+            root: self
+                .tracks
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_default(),
+        };
         repo.load_record(&self.id)
     }
 
@@ -1286,7 +1492,13 @@ impl Staging {
                     ));
                 }
                 fs::rename(&held, src).map_err(|e| {
-                    io_err(&format!("cannot move the original back; it stays in {}", self.dir.display()), e)
+                    io_err(
+                        &format!(
+                            "cannot move the original back; it stays in {}",
+                            self.dir.display()
+                        ),
+                        e,
+                    )
                 })?;
             }
         }

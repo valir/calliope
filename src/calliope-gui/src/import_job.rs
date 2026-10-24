@@ -30,16 +30,17 @@ use serde::Serialize;
 use crate::download::{self, DownloadError};
 use crate::import_tmp::{self, ImportTmp};
 use crate::media::{self, Cancel, MediaError, Probe};
-use crate::stem_audio::{self, StemCheck, EMPTY_STEM_MIN_AUDIBLE_MS};
-use calliope_lib::flac_level::AUDIBLE_LEVEL_DBFS;
 use crate::repository::{self, RepoStatus, Repository, Staging, TrackRecord, ORIGINAL_NAME};
+use crate::stem_audio::{self, StemCheck, EMPTY_STEM_MIN_AUDIBLE_MS};
 use crate::tools::{ToolName, Tools};
 use crate::track_meta::{self, StemEntry, TrackEdits, TrackMeta, TrackType};
+use calliope_lib::flac_level::AUDIBLE_LEVEL_DBFS;
 
 pub const BUSY_MESSAGE: &str = "An import is already running";
 pub const NOT_CONFIGURED_MESSAGE: &str =
     "The edge-AI server address is not set. Check Settings > Stem extraction.";
-const ROOT_MISSING_MESSAGE: &str = "The track repository folder is missing. Check Settings > Track repository.";
+const ROOT_MISSING_MESSAGE: &str =
+    "The track repository folder is missing. Check Settings > Track repository.";
 /// At most this many progress events per second reach the sink.
 pub const MAX_EVENTS_PER_SECOND: u32 = 10;
 const MAX_INFO_BYTES: u64 = 8 << 20;
@@ -165,30 +166,67 @@ pub struct BatchItem {
 #[serde(tag = "result", rename_all = "lowercase")]
 #[allow(clippy::large_enum_variant)] // short-lived values, serialised at once
 pub enum BatchOutcome {
-    Saved { track: TrackRecord, dropped: Vec<DroppedStem> },
-    Failed { stage: Stage, message: String },
+    Saved {
+        track: TrackRecord,
+        dropped: Vec<DroppedStem>,
+    },
+    Failed {
+        stage: Stage,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "phase", rename_all = "lowercase")]
 #[allow(clippy::large_enum_variant)] // short-lived values, serialised at once
 pub enum ImportEvent {
-    Downloading { downloaded: u64, total: Option<u64> },
+    Downloading {
+        downloaded: u64,
+        total: Option<u64>,
+    },
     Preparing,
-    Ready { metadata: TrackEdits, duration_s: Option<f64> },
-    Uploading { sent: u64, total: u64 },
+    Ready {
+        metadata: TrackEdits,
+        duration_s: Option<f64>,
+    },
+    Uploading {
+        sent: u64,
+        total: u64,
+    },
     Queued,
-    Working { progress: Option<f64> },
-    Receiving { done: u32, total: u32 },
+    Working {
+        progress: Option<f64>,
+    },
+    Receiving {
+        done: u32,
+        total: u32,
+    },
     Saving,
-    Saved { track: TrackRecord, dropped: Vec<DroppedStem> },
-    Failed { stage: Stage, message: String, http_status: Option<u16> },
-    Cancelled { back_to: BackTo },
+    Saved {
+        track: TrackRecord,
+        dropped: Vec<DroppedStem>,
+    },
+    Failed {
+        stage: Stage,
+        message: String,
+        http_status: Option<u16>,
+    },
+    Cancelled {
+        back_to: BackTo,
+    },
     #[serde(rename = "batch-file")]
-    BatchFile { index: usize, total: usize, name: String },
+    BatchFile {
+        index: usize,
+        total: usize,
+        name: String,
+    },
     #[serde(rename = "batch-item")]
-    BatchItem { item: BatchItem },
-    Finished { batch: BatchSnapshot },
+    BatchItem {
+        item: BatchItem,
+    },
+    Finished {
+        batch: BatchSnapshot,
+    },
 }
 
 impl ImportEvent {
@@ -316,7 +354,10 @@ pub struct ImportState {
 }
 
 fn now_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn check_tools(tools: &Tools, needed: &[ToolName]) -> Result<(), String> {
@@ -384,7 +425,13 @@ fn build_meta(
         copyright: None,
         audio: None,
         original: keep.then(|| ORIGINAL_NAME.to_string()),
-        stems: stems.iter().map(|n| StemEntry { name: n.clone(), file: format!("stems/{n}.flac") }).collect(),
+        stems: stems
+            .iter()
+            .map(|n| StemEntry {
+                name: n.clone(),
+                file: format!("stems/{n}.flac"),
+            })
+            .collect(),
         stem_model: Some(model.to_string()),
         tablatures: Vec::new(),
         imported: now.clone(),
@@ -417,7 +464,9 @@ impl ImportState {
 
     /// Makes every `tools()` call and every import start look the tools up again with `f`.
     pub fn with_rediscovery(mut self, f: impl Fn() -> Tools + Send + Sync + 'static) -> Self {
-        Arc::get_mut(&mut self.inner).expect("with_rediscovery before sharing").rediscover = Some(Box::new(f));
+        Arc::get_mut(&mut self.inner)
+            .expect("with_rediscovery before sharing")
+            .rediscover = Some(Box::new(f));
         self
     }
 
@@ -447,7 +496,11 @@ impl ImportState {
 
     /// The state of a URL for the resume prompt (nothing is created or changed).
     pub fn prepare_url(&self, root: &Path, input: &str) -> UrlPrep {
-        let prep = |status, message: &str, partial_bytes| UrlPrep { status, message: message.to_string(), partial_bytes };
+        let prep = |status, message: &str, partial_bytes| UrlPrep {
+            status,
+            message: message.to_string(),
+            partial_bytes,
+        };
         let url = match download::normalise(input) {
             Ok(u) => u,
             Err(m) => return prep(UrlPrepStatus::Invalid, &m, 0),
@@ -455,7 +508,9 @@ impl ImportState {
         if self.is_active() {
             return prep(UrlPrepStatus::Busy, BUSY_MESSAGE, 0);
         }
-        let partial = ImportTmp::peek(root).and_then(|t| t.find_partial(&url)).filter(|p| p.is_resumable());
+        let partial = ImportTmp::peek(root)
+            .and_then(|t| t.find_partial(&url))
+            .filter(|p| p.is_resumable());
         match partial {
             Some(p) => {
                 let bytes = std::fs::read_dir(&p.dir)
@@ -468,7 +523,11 @@ impl ImportState {
                             .unwrap_or(0)
                     })
                     .unwrap_or(0);
-                prep(UrlPrepStatus::Partial, "Incomplete download file from the same URL found", bytes)
+                prep(
+                    UrlPrepStatus::Partial,
+                    "Incomplete download file from the same URL found",
+                    bytes,
+                )
             }
             None => prep(UrlPrepStatus::Ready, "", 0),
         }
@@ -477,9 +536,18 @@ impl ImportState {
     /// Starts a URL import. `resume` continues an earlier partial download; otherwise the URL's
     /// folder is cleared first (Start Over). Errors that happen before anything starts (bad URL,
     /// missing tool, repository problems, a job already active) are returned as text.
-    pub fn start_url(&self, root: &Path, input: &str, resume: bool, sink: Sink) -> Result<JobSnapshot, String> {
+    pub fn start_url(
+        &self,
+        root: &Path,
+        input: &str,
+        resume: bool,
+        sink: Sink,
+    ) -> Result<JobSnapshot, String> {
         let url = download::normalise(input)?;
-        check_tools(&self.inner.current_tools(), &[ToolName::YtDlp, ToolName::Ffmpeg, ToolName::Ffprobe])?;
+        check_tools(
+            &self.inner.current_tools(),
+            &[ToolName::YtDlp, ToolName::Ffmpeg, ToolName::Ffprobe],
+        )?;
         let mut slot = guard(&self.inner.job);
         if slot.as_ref().is_some_and(|j| !j.over) {
             return Err(BUSY_MESSAGE.into());
@@ -489,28 +557,52 @@ impl ImportState {
         let created = track_meta::now_rfc3339();
         let dir = tmp.prepare_url_dir(&url, &created)?;
         tmp.clean_stale(now_secs(), Some(&dir));
-        locked(&*self.inner.lock, || Repository::new(root).clean_stale_staging(None));
+        locked(&*self.inner.lock, || {
+            Repository::new(root).clean_stale_staging(None)
+        });
         if !resume {
             tmp.clear_for_start_over(&url, &created)?;
         }
         let id = track_meta::new_id();
         let snap = new_snapshot(id.clone(), SourceKind::Url, url.clone(), Phase::Downloading);
-        self.launch(&mut slot, snap, SourceKind::Url, dir.clone(), root, tmp.clone(), sink, move |ctx| {
-            let r = run_url(&ctx, &dir, &url, resume);
-            finish_prepare(&ctx, r, false);
-        })
+        self.launch(
+            &mut slot,
+            snap,
+            SourceKind::Url,
+            dir.clone(),
+            root,
+            tmp.clone(),
+            sink,
+            move |ctx| {
+                let r = run_url(&ctx, &dir, &url, resume);
+                finish_prepare(&ctx, r, false);
+            },
+        )
     }
 
     /// Starts importing a local audio or video file picked by the user (read only).
-    pub fn start_file(&self, root: &Path, kind: FileKind, path: &Path, sink: Sink) -> Result<JobSnapshot, String> {
+    pub fn start_file(
+        &self,
+        root: &Path,
+        kind: FileKind,
+        path: &Path,
+        sink: Sink,
+    ) -> Result<JobSnapshot, String> {
         if !path.is_absolute() {
             return Err("the selected file path must be absolute".into());
         }
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
         if name.is_empty() {
             return Err("the selected file has no usable name".into());
         }
-        check_tools(&self.inner.current_tools(), &[ToolName::Ffmpeg, ToolName::Ffprobe])?;
+        check_tools(
+            &self.inner.current_tools(),
+            &[ToolName::Ffmpeg, ToolName::Ffprobe],
+        )?;
         let mut slot = guard(&self.inner.job);
         if slot.as_ref().is_some_and(|j| !j.over) {
             return Err(BUSY_MESSAGE.into());
@@ -518,7 +610,9 @@ impl ImportState {
         check_root(root, &*self.inner.lock)?;
         let tmp = ImportTmp::open(root)?;
         tmp.clean_stale(now_secs(), None);
-        locked(&*self.inner.lock, || Repository::new(root).clean_stale_staging(None));
+        locked(&*self.inner.lock, || {
+            Repository::new(root).clean_stale_staging(None)
+        });
         let (skind, kname) = match kind {
             FileKind::Audio => (SourceKind::AudioFile, "audio-file"),
             FileKind::Video => (SourceKind::VideoFile, "video-file"),
@@ -547,7 +641,13 @@ impl ImportState {
         body: impl FnOnce(Ctx) + Send + 'static,
     ) -> Result<JobSnapshot, String> {
         let cancel = Cancel::new();
-        let ctx = Ctx { inner: self.inner.clone(), id: snap.job.clone(), cancel: cancel.clone(), root: root.to_path_buf(), tmp };
+        let ctx = Ctx {
+            inner: self.inner.clone(),
+            id: snap.job.clone(),
+            cancel: cancel.clone(),
+            root: root.to_path_buf(),
+            tmp,
+        };
         *guard(&self.inner.sink) = Some(sink);
         let out = snap.clone();
         eprintln!("calliope: import job={} phase={:?}", snap.job, snap.phase);
@@ -579,16 +679,33 @@ impl ImportState {
         edge_ai_url: Option<&str>,
         keep_original: bool,
     ) -> Result<JobSnapshot, String> {
-        build_meta("validation", &edits, &["vocals".to_string()], "model", keep_original, None)?;
-        let url = edge_ai_url.map(str::trim).filter(|u| !u.is_empty()).ok_or_else(|| NOT_CONFIGURED_MESSAGE.to_string())?;
+        build_meta(
+            "validation",
+            &edits,
+            &["vocals".to_string()],
+            "model",
+            keep_original,
+            None,
+        )?;
+        let url = edge_ai_url
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .ok_or_else(|| NOT_CONFIGURED_MESSAGE.to_string())?;
         let url = url.to_string();
         let mut slot = guard(&self.inner.job);
-        let j = slot.as_mut().filter(|j| j.snap.job == job).ok_or("Unknown import job")?;
+        let j = slot
+            .as_mut()
+            .filter(|j| j.snap.job == job)
+            .ok_or("Unknown import job")?;
         let retriable = j.snap.phase == Phase::Failed && !j.over;
         if j.running || j.over || !(j.snap.phase == Phase::Ready || retriable) {
             return Err("This import is not ready for extraction".into());
         }
-        let audio = j.audio.clone().filter(|a| a.is_file()).ok_or("The prepared audio is missing; start the import again")?;
+        let audio = j
+            .audio
+            .clone()
+            .filter(|a| a.is_file())
+            .ok_or("The prepared audio is missing; start the import again")?;
         // all fallible work first: an early error must leave the job untouched
         let tmp = ImportTmp::open(&j.root)?;
         let cancel = Cancel::new();
@@ -604,15 +721,23 @@ impl ImportState {
         j.snap.stems_total = 0;
         j.snap.dropped.clear();
         let out = j.snap.clone();
-        let ctx = Ctx { inner: self.inner.clone(), id: j.snap.job.clone(), cancel, root: j.root.clone(), tmp };
+        let ctx = Ctx {
+            inner: self.inner.clone(),
+            id: j.snap.job.clone(),
+            cancel,
+            root: j.root.clone(),
+            tmp,
+        };
         let dir = j.dir.clone();
         let position = j.position;
         eprintln!("calliope: import job={} phase=uploading", job);
-        let spawned = std::thread::Builder::new().name("import-job".into()).spawn(move || {
-            ctx.emit(ImportEvent::Uploading { sent: 0, total: 0 });
-            let r = extract_cleaned(&ctx, &dir, &audio, &edits, &url, keep_original, position);
-            finish_extract(&ctx, r);
-        });
+        let spawned = std::thread::Builder::new()
+            .name("import-job".into())
+            .spawn(move || {
+                ctx.emit(ImportEvent::Uploading { sent: 0, total: 0 });
+                let r = extract_cleaned(&ctx, &dir, &audio, &edits, &url, keep_original, position);
+                finish_extract(&ctx, r);
+            });
         match spawned {
             Ok(h) => {
                 j.handle = Some(h);
@@ -629,7 +754,10 @@ impl ImportState {
     /// Asks the running job to stop; the outcome arrives as an event. Not running: no change.
     pub fn cancel(&self, job: &str) -> Result<JobSnapshot, String> {
         let slot = guard(&self.inner.job);
-        let j = slot.as_ref().filter(|j| j.snap.job == job).ok_or("Unknown import job")?;
+        let j = slot
+            .as_ref()
+            .filter(|j| j.snap.job == job)
+            .ok_or("Unknown import job")?;
         if j.running {
             if let Some(c) = &j.cancel {
                 c.cancel();
@@ -641,7 +769,10 @@ impl ImportState {
     /// Removes the job's temp folder and forgets the job (the edit pane's Cancel, "Discard").
     pub fn discard(&self, job: &str) -> Result<(), String> {
         let mut slot = guard(&self.inner.job);
-        let j = slot.as_ref().filter(|j| j.snap.job == job).ok_or("Unknown import job")?;
+        let j = slot
+            .as_ref()
+            .filter(|j| j.snap.job == job)
+            .ok_or("Unknown import job")?;
         if j.running {
             return Err("The import is still running; cancel it first".into());
         }
@@ -658,14 +789,18 @@ impl ImportState {
     pub fn shutdown(&self, timeout: Duration) -> bool {
         let handle = {
             let mut slot = guard(&self.inner.job);
-            let Some(j) = slot.as_mut().filter(|j| j.running) else { return true };
+            let Some(j) = slot.as_mut().filter(|j| j.running) else {
+                return true;
+            };
             if let Some(c) = &j.cancel {
                 c.cancel();
             }
             j.handle.take()
         };
         let deadline = Instant::now() + timeout;
-        let Some(handle) = handle else { return !self.is_running() };
+        let Some(handle) = handle else {
+            return !self.is_running();
+        };
         while !handle.is_finished() {
             if Instant::now() >= deadline {
                 return false;
@@ -696,12 +831,19 @@ enum Stop {
 type R<T> = Result<T, Stop>;
 
 fn fail<T>(stage: Stage, message: impl Into<String>) -> R<T> {
-    Err(Stop::Failed(JobError { stage, message: message.into(), http_status: None }))
+    Err(Stop::Failed(JobError {
+        stage,
+        message: message.into(),
+        http_status: None,
+    }))
 }
 
 impl Ctx {
     fn update(&self, f: impl FnOnce(&mut Job)) {
-        if let Some(j) = guard(&self.inner.job).as_mut().filter(|j| j.snap.job == self.id) {
+        if let Some(j) = guard(&self.inner.job)
+            .as_mut()
+            .filter(|j| j.snap.job == self.id)
+        {
             f(j);
         }
     }
@@ -746,10 +888,16 @@ fn media_stop(e: MediaError, rewrite: Option<&str>) -> Stop {
         MediaError::Cancelled => Stop::Cancelled,
         MediaError::Failed(m) => {
             let m = match rewrite {
-                Some(name) => m.replacen(&format!("Selected file {name}"), "The downloaded file", 1),
+                Some(name) => {
+                    m.replacen(&format!("Selected file {name}"), "The downloaded file", 1)
+                }
                 None => m,
             };
-            Stop::Failed(JobError { stage: Stage::Prepare, message: m, http_status: None })
+            Stop::Failed(JobError {
+                stage: Stage::Prepare,
+                message: m,
+                http_status: None,
+            })
         }
     }
 }
@@ -765,7 +913,11 @@ fn read_info(path: &Path) -> Option<String> {
 /// For URL imports the info values win and file tags fill the gaps.
 fn merge_url_edits(info: Option<TrackEdits>, probe: &Probe, url: &str) -> TrackEdits {
     let tags = media::edits_from_tags(probe, "");
-    let tag_title = probe.tags.get("title").map(|t| media::clean_text(t, 200)).filter(|t| !t.is_empty());
+    let tag_title = probe
+        .tags
+        .get("title")
+        .map(|t| media::clean_text(t, 200))
+        .filter(|t| !t.is_empty());
     match info {
         Some(mut e) => {
             if e.band.is_empty() {
@@ -789,7 +941,13 @@ fn merge_url_edits(info: Option<TrackEdits>, probe: &Probe, url: &str) -> TrackE
     }
 }
 
-fn set_ready(ctx: &Ctx, audio: PathBuf, metadata: TrackEdits, duration_s: Option<f64>, position: Option<u32>) {
+fn set_ready(
+    ctx: &Ctx,
+    audio: PathBuf,
+    metadata: TrackEdits,
+    duration_s: Option<f64>,
+    position: Option<u32>,
+) {
     ctx.update(|j| {
         j.audio = Some(audio);
         j.position = position;
@@ -800,7 +958,10 @@ fn set_ready(ctx: &Ctx, audio: PathBuf, metadata: TrackEdits, duration_s: Option
         j.cancel = None;
     });
     eprintln!("calliope: import job={} phase=Ready", ctx.id);
-    ctx.emit(ImportEvent::Ready { metadata, duration_s });
+    ctx.emit(ImportEvent::Ready {
+        metadata,
+        duration_s,
+    });
 }
 
 fn run_url(ctx: &Ctx, dir: &Path, url: &str, resume: bool) -> R<()> {
@@ -811,7 +972,10 @@ fn run_url(ctx: &Ctx, dir: &Path, url: &str, resume: bool) -> R<()> {
     let has_download = partial.as_ref().is_some_and(|p| p.has_download);
     ctx.check_cancel()?;
     let (download_file, info) = if has_audio || has_download {
-        (download::find_download(dir), Some(dir.join(download::INFO_JSON)).filter(|p| p.is_file()))
+        (
+            download::find_download(dir),
+            Some(dir.join(download::INFO_JSON)).filter(|p| p.is_file()),
+        )
     } else {
         let ytdlp = ctx.tool(ToolName::YtDlp)?;
         let c = ctx.clone();
@@ -820,13 +984,21 @@ fn run_url(ctx: &Ctx, dir: &Path, url: &str, resume: bool) -> R<()> {
                 j.snap.downloaded = d;
                 j.snap.total = t;
             });
-            c.progress(ImportEvent::Downloading { downloaded: d, total: t });
+            c.progress(ImportEvent::Downloading {
+                downloaded: d,
+                total: t,
+            });
         })
         .map_err(|e| match e {
             DownloadError::Cancelled => Stop::Cancelled,
-            DownloadError::Failed { message, http_status } => {
-                Stop::Failed(JobError { stage: Stage::Download, message, http_status })
-            }
+            DownloadError::Failed {
+                message,
+                http_status,
+            } => Stop::Failed(JobError {
+                stage: Stage::Download,
+                message,
+                http_status,
+            }),
         })?;
         (Some(dl.file), dl.info)
     };
@@ -834,16 +1006,31 @@ fn run_url(ctx: &Ctx, dir: &Path, url: &str, resume: bool) -> R<()> {
     ctx.phase(Phase::Preparing, ImportEvent::Preparing);
     let audio = dir.join(import_tmp::AUDIO_FLAC);
     let src = download_file.clone().unwrap_or_else(|| audio.clone());
-    let name = src.file_name().and_then(|n| n.to_str()).unwrap_or("download").to_string();
-    let probe = media::probe(&ffprobe, &src, &ctx.cancel).map_err(|e| media_stop(e, Some(&name)))?;
+    let name = src
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("download")
+        .to_string();
+    let probe =
+        media::probe(&ffprobe, &src, &ctx.cancel).map_err(|e| media_stop(e, Some(&name)))?;
     media::check_duration(&probe, &name).map_err(|e| media_stop(e, Some(&name)))?;
     if !has_audio {
-        media::to_flac(&ffmpeg, &src, &probe, dir, &ctx.cancel).map_err(|e| media_stop(e, Some(&name)))?;
+        media::to_flac(&ffmpeg, &src, &probe, dir, &ctx.cancel)
+            .map_err(|e| media_stop(e, Some(&name)))?;
     }
     ctx.check_cancel()?;
-    let info_edits = info.as_deref().and_then(read_info).and_then(|t| download::edits_from_info(&t, url));
+    let info_edits = info
+        .as_deref()
+        .and_then(read_info)
+        .and_then(|t| download::edits_from_info(&t, url));
     let edits = merge_url_edits(info_edits, &probe, url);
-    set_ready(ctx, audio, edits, probe.duration_s, media::position_from_tags(&probe));
+    set_ready(
+        ctx,
+        audio,
+        edits,
+        probe.duration_s,
+        media::position_from_tags(&probe),
+    );
     Ok(())
 }
 
@@ -863,7 +1050,8 @@ fn prepare_file(ctx: &Ctx, dir: &Path, path: &Path, name: &str) -> R<Prepared> {
     ctx.check_cancel()?;
     let probe = media::probe(&ffprobe, path, &ctx.cancel).map_err(|e| media_stop(e, None))?;
     media::check_duration(&probe, name).map_err(|e| media_stop(e, None))?;
-    let audio = media::to_flac(&ffmpeg, path, &probe, dir, &ctx.cancel).map_err(|e| media_stop(e, None))?;
+    let audio =
+        media::to_flac(&ffmpeg, path, &probe, dir, &ctx.cancel).map_err(|e| media_stop(e, None))?;
     ctx.check_cancel()?;
     Ok(Prepared {
         audio,
@@ -884,7 +1072,10 @@ fn run_file(ctx: &Ctx, dir: &Path, path: &Path, name: &str) -> R<()> {
 fn finish_prepare(ctx: &Ctx, r: R<()>, remove_dir: bool) {
     let Err(stop) = r else { return };
     if remove_dir {
-        let dir = guard(&ctx.inner.job).as_ref().filter(|j| j.snap.job == ctx.id).map(|j| j.dir.clone());
+        let dir = guard(&ctx.inner.job)
+            .as_ref()
+            .filter(|j| j.snap.job == ctx.id)
+            .map(|j| j.dir.clone());
         if let Some(d) = dir {
             if let Err(e) = ctx.tmp.remove_job_dir(&d) {
                 eprintln!("calliope: import cleanup: {e}");
@@ -900,7 +1091,9 @@ fn finish_prepare(ctx: &Ctx, r: R<()>, remove_dir: bool) {
                 j.cancel = None;
             });
             eprintln!("calliope: import job={} phase=Cancelled", ctx.id);
-            ctx.emit(ImportEvent::Cancelled { back_to: BackTo::Source });
+            ctx.emit(ImportEvent::Cancelled {
+                back_to: BackTo::Source,
+            });
         }
         Stop::Failed(e) => {
             ctx.update(|j| {
@@ -910,8 +1103,15 @@ fn finish_prepare(ctx: &Ctx, r: R<()>, remove_dir: bool) {
                 j.over = true;
                 j.cancel = None;
             });
-            eprintln!("calliope: import job={} phase=Failed stage={:?}", ctx.id, e.stage);
-            ctx.emit(ImportEvent::Failed { stage: e.stage, message: e.message, http_status: e.http_status });
+            eprintln!(
+                "calliope: import job={} phase=Failed stage={:?}",
+                ctx.id, e.stage
+            );
+            ctx.emit(ImportEvent::Failed {
+                stage: e.stage,
+                message: e.message,
+                http_status: e.http_status,
+            });
         }
     }
 }
@@ -919,10 +1119,19 @@ fn finish_prepare(ctx: &Ctx, r: R<()>, remove_dir: bool) {
 fn client_stop(e: ClientError) -> Stop {
     match e {
         ClientError::Cancelled => Stop::Cancelled,
-        ClientError::Rejected { status, ref message } => {
-            Stop::Failed(JobError { stage: Stage::Server, message: format!("The edge-AI server said {status}: {message}"), http_status: Some(status) })
-        }
-        other => Stop::Failed(JobError { stage: Stage::Server, message: other.to_string(), http_status: None }),
+        ClientError::Rejected {
+            status,
+            ref message,
+        } => Stop::Failed(JobError {
+            stage: Stage::Server,
+            message: format!("The edge-AI server said {status}: {message}"),
+            http_status: Some(status),
+        }),
+        other => Stop::Failed(JobError {
+            stage: Stage::Server,
+            message: other.to_string(),
+            http_status: None,
+        }),
     }
 }
 
@@ -959,23 +1168,40 @@ fn run_extract(
     let c = ctx.clone();
     let mut last: Option<JobState> = None;
     let st = client
-        .wait_final(&id, ctx.cancel.flag(), ctx.inner.poll, STALL_TIMEOUT, |st| {
-            if last != Some(st.state) {
-                last = Some(st.state);
-                if st.state == JobState::Running {
+        .wait_final(
+            &id,
+            ctx.cancel.flag(),
+            ctx.inner.poll,
+            STALL_TIMEOUT,
+            |st| {
+                if last != Some(st.state) {
+                    last = Some(st.state);
+                    if st.state == JobState::Running {
+                        c.update(|j| j.snap.progress = st.progress);
+                        c.phase(
+                            Phase::Working,
+                            ImportEvent::Working {
+                                progress: st.progress,
+                            },
+                        );
+                    }
+                } else if st.state == JobState::Running {
                     c.update(|j| j.snap.progress = st.progress);
-                    c.phase(Phase::Working, ImportEvent::Working { progress: st.progress });
+                    c.progress(ImportEvent::Working {
+                        progress: st.progress,
+                    });
                 }
-            } else if st.state == JobState::Running {
-                c.update(|j| j.snap.progress = st.progress);
-                c.progress(ImportEvent::Working { progress: st.progress });
-            }
-        })
+            },
+        )
         .map_err(client_stop)?;
     match st.state {
         JobState::Done => {}
         JobState::Failed => {
-            let m = st.error.map(|m| media::clean_text(&m, 300)).filter(|m| !m.is_empty()).unwrap_or_else(|| "The edge-AI server could not separate the track".into());
+            let m = st
+                .error
+                .map(|m| media::clean_text(&m, 300))
+                .filter(|m| !m.is_empty())
+                .unwrap_or_else(|| "The edge-AI server could not separate the track".into());
             return fail(Stage::Server, m);
         }
         _ => return fail(Stage::Server, "The job was cancelled on the edge-AI server"),
@@ -986,12 +1212,27 @@ fn run_extract(
         return fail(Stage::Server, "The edge-AI server returned no stems");
     }
     // validates the final metadata before any download
-    build_meta("validation", edits, &stems, &model, keep_original, position).map_err(|m| Stop::Failed(JobError { stage: Stage::Save, message: m, http_status: None }))?;
+    build_meta("validation", edits, &stems, &model, keep_original, position).map_err(|m| {
+        Stop::Failed(JobError {
+            stage: Stage::Save,
+            message: m,
+            http_status: None,
+        })
+    })?;
     let new_id = track_meta::new_id();
-    let save_err = |m: String| Stop::Failed(JobError { stage: Stage::Save, message: m, http_status: None });
+    let save_err = |m: String| {
+        Stop::Failed(JobError {
+            stage: Stage::Save,
+            message: m,
+            http_status: None,
+        })
+    };
     let root = ctx.root.clone();
     *staging = Some(
-        locked(&*ctx.inner.lock, || Repository::new(&root).begin_staged_track(&new_id)).map_err(save_err)?,
+        locked(&*ctx.inner.lock, || {
+            Repository::new(&root).begin_staged_track(&new_id)
+        })
+        .map_err(save_err)?,
     );
     let total = stems.len() as u32;
     ctx.update(|j| {
@@ -1021,25 +1262,56 @@ fn run_extract(
                 None => eprintln!("calliope: import job={} stem={name} server report not used level_dbfs={} window_ms={}", ctx.id, sl.level_dbfs, sl.window_ms),
             }
         }
-        let part = staging.as_ref().expect("staging").stem_part_path(name).map_err(save_err)?;
-        client.fetch_stem(&id, name, &part, ctx.cancel.flag()).map_err(client_stop)?;
+        let part = staging
+            .as_ref()
+            .expect("staging")
+            .stem_part_path(name)
+            .map_err(save_err)?;
+        client
+            .fetch_stem(&id, name, &part, ctx.cancel.flag())
+            .map_err(client_stop)?;
         // a stem is dropped only after it is proven empty; an unreadable one is kept
         match stem_audio::check_stem(&part) {
-            Ok(StemCheck::Empty { audible_ms, peak_dbfs }) => {
-                staging.as_ref().expect("staging").discard_stem_part(name).map_err(save_err)?;
+            Ok(StemCheck::Empty {
+                audible_ms,
+                peak_dbfs,
+            }) => {
+                staging
+                    .as_ref()
+                    .expect("staging")
+                    .discard_stem_part(name)
+                    .map_err(save_err)?;
                 let shown = peak_dbfs.map_or("-inf".to_string(), |p| format!("{p:.1}"));
                 eprintln!("calliope: import job={} stem={name} dropped audible_s={:.1} min_audible_s={:.1} level_dbfs={AUDIBLE_LEVEL_DBFS} peak_dbfs={shown} source=local", ctx.id, audible_ms as f64 / 1000.0, EMPTY_STEM_MIN_AUDIBLE_MS as f64 / 1000.0);
-                dropped.push(DroppedStem { name: name.clone(), audible_ms });
+                dropped.push(DroppedStem {
+                    name: name.clone(),
+                    audible_ms,
+                });
             }
             Ok(StemCheck::Audible { audible_ms }) => {
-                staging.as_ref().expect("staging").finish_stem(name).map_err(save_err)?;
+                staging
+                    .as_ref()
+                    .expect("staging")
+                    .finish_stem(name)
+                    .map_err(save_err)?;
                 kept.push(name.clone());
                 // the scan stops once the minimum is proven, so the time is a lower bound
-                eprintln!("calliope: import job={} stem={name} kept audible_s>={:.1} source=local", ctx.id, audible_ms as f64 / 1000.0);
+                eprintln!(
+                    "calliope: import job={} stem={name} kept audible_s>={:.1} source=local",
+                    ctx.id,
+                    audible_ms as f64 / 1000.0
+                );
             }
             Err(e) => {
-                eprintln!("calliope: import job={} stem={name} kept level=unknown ({e})", ctx.id);
-                staging.as_ref().expect("staging").finish_stem(name).map_err(save_err)?;
+                eprintln!(
+                    "calliope: import job={} stem={name} kept level=unknown ({e})",
+                    ctx.id
+                );
+                staging
+                    .as_ref()
+                    .expect("staging")
+                    .finish_stem(name)
+                    .map_err(save_err)?;
                 kept.push(name.clone());
             }
         }
@@ -1047,7 +1319,15 @@ fn run_extract(
         ctx.update(|j| j.snap.stems_done = done);
         ctx.progress(ImportEvent::Receiving { done, total });
     }
-    let dropped_names = if dropped.is_empty() { "none".to_string() } else { dropped.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(",") };
+    let dropped_names = if dropped.is_empty() {
+        "none".to_string()
+    } else {
+        dropped
+            .iter()
+            .map(|d| d.name.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
     eprintln!("calliope: import job={} stems kept={} dropped={dropped_names} server_levels={server_measured}/{total}", ctx.id, kept.join(","));
     if kept.is_empty() {
         return fail(Stage::Server, format!("Every stem is empty (less than {} s above {AUDIBLE_LEVEL_DBFS} dBFS), so no track was saved", EMPTY_STEM_MIN_AUDIBLE_MS / 1000));
@@ -1055,10 +1335,18 @@ fn run_extract(
     ctx.check_cancel()?;
     ctx.phase(Phase::Saving, ImportEvent::Saving);
     if keep_original {
-        staging.as_mut().expect("staging").adopt_original(audio).map_err(save_err)?;
+        staging
+            .as_mut()
+            .expect("staging")
+            .adopt_original(audio)
+            .map_err(save_err)?;
     }
-    let meta = build_meta(&new_id, edits, &kept, &model, keep_original, position).map_err(save_err)?;
-    let record = locked(&*ctx.inner.lock, || staging.as_ref().expect("staging").commit(&meta)).map_err(save_err)?;
+    let meta =
+        build_meta(&new_id, edits, &kept, &model, keep_original, position).map_err(save_err)?;
+    let record = locked(&*ctx.inner.lock, || {
+        staging.as_ref().expect("staging").commit(&meta)
+    })
+    .map_err(save_err)?;
     // the track exists now: nothing to abandon any more
     *staging = None;
     if let Some(sid) = server_job.take() {
@@ -1083,7 +1371,17 @@ fn extract_cleaned(
 ) -> R<(TrackRecord, Vec<DroppedStem>)> {
     let mut staging: Option<Staging> = None;
     let mut server_job: Option<String> = None;
-    let r = run_extract(ctx, dir, audio, edits, edge_url, keep_original, position, &mut staging, &mut server_job);
+    let r = run_extract(
+        ctx,
+        dir,
+        audio,
+        edits,
+        edge_url,
+        keep_original,
+        position,
+        &mut staging,
+        &mut server_job,
+    );
     if let Some(s) = staging.take() {
         if let Err(e) = s.abandon() {
             eprintln!("calliope: import cleanup: {e}");
@@ -1122,8 +1420,13 @@ fn finish_extract(ctx: &Ctx, r: R<(TrackRecord, Vec<DroppedStem>)>) {
                 j.running = false;
                 j.cancel = None;
             });
-            eprintln!("calliope: import job={} phase=Ready (extraction cancelled)", ctx.id);
-            ctx.emit(ImportEvent::Cancelled { back_to: BackTo::Edit });
+            eprintln!(
+                "calliope: import job={} phase=Ready (extraction cancelled)",
+                ctx.id
+            );
+            ctx.emit(ImportEvent::Cancelled {
+                back_to: BackTo::Edit,
+            });
         }
         Err(Stop::Failed(e)) => {
             ctx.update(|j| {
@@ -1132,12 +1435,18 @@ fn finish_extract(ctx: &Ctx, r: R<(TrackRecord, Vec<DroppedStem>)>) {
                 j.running = false;
                 j.cancel = None;
             });
-            eprintln!("calliope: import job={} phase=Failed stage={:?}", ctx.id, e.stage);
-            ctx.emit(ImportEvent::Failed { stage: e.stage, message: e.message, http_status: e.http_status });
+            eprintln!(
+                "calliope: import job={} phase=Failed stage={:?}",
+                ctx.id, e.stage
+            );
+            ctx.emit(ImportEvent::Failed {
+                stage: e.stage,
+                message: e.message,
+                http_status: e.http_status,
+            });
         }
     }
 }
-
 
 #[path = "import_batch.rs"]
 mod batch;

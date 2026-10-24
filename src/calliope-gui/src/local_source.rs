@@ -9,12 +9,14 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 /// Extensions offered for local audio files (lowercase, no dot).
-pub const AUDIO_EXTENSIONS: &[&str] =
-    &["mp3", "flac", "wav", "ogg", "oga", "opus", "m4a", "aac", "wma", "aiff", "aif"];
+pub const AUDIO_EXTENSIONS: &[&str] = &[
+    "mp3", "flac", "wav", "ogg", "oga", "opus", "m4a", "aac", "wma", "aiff", "aif",
+];
 
 /// Extensions offered for local video files (lowercase, no dot).
-pub const VIDEO_EXTENSIONS: &[&str] =
-    &["mp4", "mkv", "webm", "mov", "avi", "m4v", "flv", "wmv", "mpg", "mpeg", "ts"];
+pub const VIDEO_EXTENSIONS: &[&str] = &[
+    "mp4", "mkv", "webm", "mov", "avi", "m4v", "flv", "wmv", "mpg", "mpeg", "ts",
+];
 
 fn has_extension(name: &str, list: &[&str]) -> bool {
     match name.rsplit_once('.') {
@@ -48,7 +50,10 @@ pub const MAX_PATH_BYTES: usize = 4096;
 const EMPTY_MESSAGE: &str = "Enter the path of a file or choose one with Browse";
 
 fn problem(reason: &'static str, message: impl Into<String>) -> PathProblem {
-    PathProblem { reason, message: message.into() }
+    PathProblem {
+        reason,
+        message: message.into(),
+    }
 }
 
 fn relative() -> PathProblem {
@@ -115,13 +120,20 @@ pub fn resolve(input: &str, kind: LocalKind, home: Option<&Path>) -> Result<Path
     if let Err(e) = fs::File::open(&path) {
         return Err(unreadable(&p, &e));
     }
-    let name = path.file_name().and_then(|n| n.to_str()).map(str::to_string);
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string);
     let (ok, label) = match kind {
         LocalKind::Audio => (name.as_deref().is_some_and(is_audio_name), "an audio"),
         LocalKind::Video => (name.as_deref().is_some_and(is_video_name), "a video"),
     };
     if !ok {
-        let n = name.unwrap_or_else(|| path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+        let n = name.unwrap_or_else(|| {
+            path.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        });
         return Err(problem("extension", format!("\"{n}\" is not {label} file")));
     }
     Ok(path)
@@ -171,23 +183,41 @@ pub fn browse_start(typed: &str, last: Option<&Path>, home: Option<&Path>) -> Br
             let dir = if meta.is_dir() {
                 Some(path)
             } else {
-                path.parent().filter(|p| !p.as_os_str().is_empty()).map(Path::to_path_buf)
+                path.parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .map(Path::to_path_buf)
             };
             if dir.is_some() {
-                return BrowseStart { dir, from: StartFrom::Typed, forget_last: false };
+                return BrowseStart {
+                    dir,
+                    from: StartFrom::Typed,
+                    forget_last: false,
+                };
             }
         }
     }
     let mut forget_last = false;
     if let Some(p) = last {
         if fs::metadata(p).is_ok_and(|m| m.is_dir()) {
-            return BrowseStart { dir: Some(p.to_path_buf()), from: StartFrom::Last, forget_last };
+            return BrowseStart {
+                dir: Some(p.to_path_buf()),
+                from: StartFrom::Last,
+                forget_last,
+            };
         }
         forget_last = true;
     }
     match home {
-        Some(h) => BrowseStart { dir: Some(h.to_path_buf()), from: StartFrom::Home, forget_last },
-        None => BrowseStart { dir: None, from: StartFrom::None, forget_last },
+        Some(h) => BrowseStart {
+            dir: Some(h.to_path_buf()),
+            from: StartFrom::Home,
+            forget_last,
+        },
+        None => BrowseStart {
+            dir: None,
+            from: StartFrom::None,
+            forget_last,
+        },
     }
 }
 
@@ -195,7 +225,10 @@ pub fn browse_start(typed: &str, last: Option<&Path>, home: Option<&Path>) -> Br
 pub fn resolve_dir(input: &str, home: Option<&Path>) -> Result<PathBuf, PathProblem> {
     let path = normalise(input, home).map_err(|e| {
         if e.reason == "empty" {
-            problem("empty", "Enter the path of a folder or choose one with Browse")
+            problem(
+                "empty",
+                "Enter the path of a folder or choose one with Browse",
+            )
         } else {
             e
         }
@@ -252,7 +285,11 @@ mod tests {
     }
 
     fn is_root() -> bool {
-        Command::new("id").arg("-u").output().map(|o| o.stdout == b"0\n").unwrap_or(false)
+        Command::new("id")
+            .arg("-u")
+            .output()
+            .map(|o| o.stdout == b"0\n")
+            .unwrap_or(false)
     }
 
     #[test]
@@ -268,8 +305,14 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let a = touch(d.path(), "song.mp3");
         let v = touch(d.path(), "clip.MP4");
-        assert_eq!(resolve(a.to_str().unwrap(), LocalKind::Audio, None).unwrap(), a);
-        assert_eq!(resolve(v.to_str().unwrap(), LocalKind::Video, None).unwrap(), v);
+        assert_eq!(
+            resolve(a.to_str().unwrap(), LocalKind::Audio, None).unwrap(),
+            a
+        );
+        assert_eq!(
+            resolve(v.to_str().unwrap(), LocalKind::Video, None).unwrap(),
+            v
+        );
     }
 
     #[test]
@@ -280,7 +323,10 @@ mod tests {
                 assert_eq!(e.reason, "invalid", "{s:?}");
             } else {
                 assert_eq!(e.reason, "empty");
-                assert_eq!(e.message, "Enter the path of a file or choose one with Browse");
+                assert_eq!(
+                    e.message,
+                    "Enter the path of a file or choose one with Browse"
+                );
             }
         }
     }
@@ -294,7 +340,10 @@ mod tests {
         assert_eq!(e.message, format!("No file found at {}", p.display()));
         let l = d.path().join("dangling.mp3");
         symlink(d.path().join("target.mp3"), &l).unwrap();
-        assert_eq!(reason(resolve(l.to_str().unwrap(), LocalKind::Audio, None)), "missing");
+        assert_eq!(
+            reason(resolve(l.to_str().unwrap(), LocalKind::Audio, None)),
+            "missing"
+        );
     }
 
     #[test]
@@ -304,8 +353,14 @@ mod tests {
         fs::create_dir(&f).unwrap();
         let e = resolve(f.to_str().unwrap(), LocalKind::Audio, None).unwrap_err();
         assert_eq!(e.reason, "folder");
-        assert_eq!(e.message, format!("{} is a folder, not a file", f.display()));
-        assert_eq!(reason(resolve(d.path().to_str().unwrap(), LocalKind::Video, None)), "folder");
+        assert_eq!(
+            e.message,
+            format!("{} is a folder, not a file", f.display())
+        );
+        assert_eq!(
+            reason(resolve(d.path().to_str().unwrap(), LocalKind::Video, None)),
+            "folder"
+        );
     }
 
     #[test]
@@ -330,7 +385,10 @@ mod tests {
         fs::set_permissions(&f, fs::Permissions::from_mode(0o000)).unwrap();
         let e = resolve(f.to_str().unwrap(), LocalKind::Audio, None).unwrap_err();
         assert_eq!(e.reason, "unreadable");
-        assert_eq!(e.message, format!("Cannot read {} (permission denied)", f.display()));
+        assert_eq!(
+            e.message,
+            format!("Cannot read {} (permission denied)", f.display())
+        );
     }
 
     #[test]
@@ -338,7 +396,10 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let t = touch(d.path(), "notes.txt");
         let e = resolve(t.to_str().unwrap(), LocalKind::Audio, None).unwrap_err();
-        assert_eq!((e.reason, e.message.as_str()), ("extension", "\"notes.txt\" is not an audio file"));
+        assert_eq!(
+            (e.reason, e.message.as_str()),
+            ("extension", "\"notes.txt\" is not an audio file")
+        );
         let m4 = touch(d.path(), "song.mp4");
         let e = resolve(m4.to_str().unwrap(), LocalKind::Audio, None).unwrap_err();
         assert_eq!(e.message, "\"song.mp4\" is not an audio file");
@@ -351,7 +412,10 @@ mod tests {
     fn missing_is_reported_before_wrong_type() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("typo.txt");
-        assert_eq!(reason(resolve(p.to_str().unwrap(), LocalKind::Audio, None)), "missing");
+        assert_eq!(
+            reason(resolve(p.to_str().unwrap(), LocalKind::Audio, None)),
+            "missing"
+        );
     }
 
     #[test]
@@ -360,15 +424,30 @@ mod tests {
         let t = touch(d.path(), "real.mp3");
         let l = d.path().join("link.mp3");
         symlink(&t, &l).unwrap();
-        assert_eq!(resolve(l.to_str().unwrap(), LocalKind::Audio, None).unwrap(), l);
+        assert_eq!(
+            resolve(l.to_str().unwrap(), LocalKind::Audio, None).unwrap(),
+            l
+        );
     }
 
     #[test]
     fn normalise_whitespace_and_quotes() {
-        assert_eq!(normalise("  /a/b.mp3 \n", None).unwrap(), PathBuf::from("/a/b.mp3"));
-        assert_eq!(normalise("'/a/b c.mp3'", None).unwrap(), PathBuf::from("/a/b c.mp3"));
-        assert_eq!(normalise("\"/a/b c.mp3\"", None).unwrap(), PathBuf::from("/a/b c.mp3"));
-        assert_eq!(normalise(" ' /a/b.mp3 ' ", None).unwrap(), PathBuf::from("/a/b.mp3"));
+        assert_eq!(
+            normalise("  /a/b.mp3 \n", None).unwrap(),
+            PathBuf::from("/a/b.mp3")
+        );
+        assert_eq!(
+            normalise("'/a/b c.mp3'", None).unwrap(),
+            PathBuf::from("/a/b c.mp3")
+        );
+        assert_eq!(
+            normalise("\"/a/b c.mp3\"", None).unwrap(),
+            PathBuf::from("/a/b c.mp3")
+        );
+        assert_eq!(
+            normalise(" ' /a/b.mp3 ' ", None).unwrap(),
+            PathBuf::from("/a/b.mp3")
+        );
         // mismatched quotes are not stripped, so the path is relative
         assert_eq!(reason(normalise("\"/a/b.mp3'", None)), "relative");
     }
@@ -376,16 +455,28 @@ mod tests {
     #[test]
     fn normalise_tilde() {
         let home = Path::new("/home/me");
-        assert_eq!(normalise("~", Some(home)).unwrap(), PathBuf::from("/home/me"));
-        assert_eq!(normalise("~/a b.mp3", Some(home)).unwrap(), PathBuf::from("/home/me/a b.mp3"));
+        assert_eq!(
+            normalise("~", Some(home)).unwrap(),
+            PathBuf::from("/home/me")
+        );
+        assert_eq!(
+            normalise("~/a b.mp3", Some(home)).unwrap(),
+            PathBuf::from("/home/me/a b.mp3")
+        );
         assert_eq!(reason(normalise("~/a b.mp3", None)), "relative");
         assert_eq!(reason(normalise("~bob/x.mp3", Some(home))), "relative");
     }
 
     #[test]
     fn normalise_file_uri() {
-        assert_eq!(normalise("file:///tmp/a%20b.mp3", None).unwrap(), PathBuf::from("/tmp/a b.mp3"));
-        assert_eq!(normalise("file://localhost/tmp/x.mp3", None).unwrap(), PathBuf::from("/tmp/x.mp3"));
+        assert_eq!(
+            normalise("file:///tmp/a%20b.mp3", None).unwrap(),
+            PathBuf::from("/tmp/a b.mp3")
+        );
+        assert_eq!(
+            normalise("file://localhost/tmp/x.mp3", None).unwrap(),
+            PathBuf::from("/tmp/x.mp3")
+        );
         assert_eq!(reason(normalise("file://otherhost/x.mp3", None)), "invalid");
     }
 
@@ -394,7 +485,10 @@ mod tests {
         let e = normalise("a.mp3", None).unwrap_err();
         assert_eq!(e.reason, "relative");
         assert_eq!(e.message, "Enter the full path, starting with / or ~/");
-        assert_eq!(normalise("/a/b\n.mp3", None).unwrap_err().message, "The path is not valid");
+        assert_eq!(
+            normalise("/a/b\n.mp3", None).unwrap_err().message,
+            "The path is not valid"
+        );
         assert_eq!(reason(normalise("/a/b\0.mp3", None)), "invalid");
         assert_eq!(reason(normalise("/a/b\t.mp3", None)), "invalid");
         let ok = format!("/{}", "a".repeat(MAX_PATH_BYTES - 1));
@@ -416,7 +510,10 @@ mod tests {
 
     #[test]
     fn dotdot_is_kept_as_typed() {
-        assert_eq!(normalise("/a/../b.mp3", None).unwrap(), PathBuf::from("/a/../b.mp3"));
+        assert_eq!(
+            normalise("/a/../b.mp3", None).unwrap(),
+            PathBuf::from("/a/../b.mp3")
+        );
     }
 
     #[test]
@@ -430,13 +527,23 @@ mod tests {
         fs::create_dir(&home).unwrap();
         touch(&home, "x.mp3");
         let typed = |s: &str, last: Option<&Path>, h: Option<&Path>| browse_start(s, last, h);
-        let want = |dir: &Path, from| BrowseStart { dir: Some(dir.to_path_buf()), from, forget_last: false };
+        let want = |dir: &Path, from| BrowseStart {
+            dir: Some(dir.to_path_buf()),
+            from,
+            forget_last: false,
+        };
         // file -> its folder; folder -> itself; the typed path wins over a missing `last`
         let r = typed(f.to_str().unwrap(), Some(&gone), None);
         assert_eq!(r, want(d.path(), StartFrom::Typed));
-        assert_eq!(typed(sub.to_str().unwrap(), None, None), want(&sub, StartFrom::Typed));
+        assert_eq!(
+            typed(sub.to_str().unwrap(), None, None),
+            want(&sub, StartFrom::Typed)
+        );
         // tilde, quotes, file://
-        assert_eq!(typed("~/x.mp3", None, Some(&home)), want(&home, StartFrom::Typed));
+        assert_eq!(
+            typed("~/x.mp3", None, Some(&home)),
+            want(&home, StartFrom::Typed)
+        );
         let q = format!("'{}'", f.display());
         assert_eq!(typed(&q, None, None), want(d.path(), StartFrom::Typed));
         let u = format!("file://{}", f.display());
@@ -444,16 +551,47 @@ mod tests {
         // fall through to last: missing, relative, empty, blank, dangling symlink
         let dangling = d.path().join("dangling.mp3");
         symlink(&gone, &dangling).unwrap();
-        for s in [gone.to_str().unwrap(), "rel/x.mp3", "", "  ", dangling.to_str().unwrap()] {
-            assert_eq!(typed(s, Some(&sub), Some(&home)), want(&sub, StartFrom::Last), "{s:?}");
+        for s in [
+            gone.to_str().unwrap(),
+            "rel/x.mp3",
+            "",
+            "  ",
+            dangling.to_str().unwrap(),
+        ] {
+            assert_eq!(
+                typed(s, Some(&sub), Some(&home)),
+                want(&sub, StartFrom::Last),
+                "{s:?}"
+            );
         }
         // last missing: forget it and use home, or nothing
         let r = typed("", Some(&gone), Some(&home));
-        assert_eq!(r, BrowseStart { dir: Some(home.clone()), from: StartFrom::Home, forget_last: true });
+        assert_eq!(
+            r,
+            BrowseStart {
+                dir: Some(home.clone()),
+                from: StartFrom::Home,
+                forget_last: true
+            }
+        );
         let r = typed("", Some(&f), None);
-        assert_eq!(r, BrowseStart { dir: None, from: StartFrom::None, forget_last: true });
+        assert_eq!(
+            r,
+            BrowseStart {
+                dir: None,
+                from: StartFrom::None,
+                forget_last: true
+            }
+        );
         let r = typed("", None, None);
-        assert_eq!(r, BrowseStart { dir: None, from: StartFrom::None, forget_last: false });
+        assert_eq!(
+            r,
+            BrowseStart {
+                dir: None,
+                from: StartFrom::None,
+                forget_last: false
+            }
+        );
         assert_eq!(typed("", None, Some(&home)), want(&home, StartFrom::Home));
         assert_eq!(StartFrom::Typed.as_str(), "typed");
         assert_eq!(StartFrom::None.as_str(), "none");
@@ -465,15 +603,24 @@ mod tests {
         let e = resolve_dir("  ", None).unwrap_err();
         assert_eq!(
             (e.reason, e.message.as_str()),
-            ("empty", "Enter the path of a folder or choose one with Browse")
+            (
+                "empty",
+                "Enter the path of a folder or choose one with Browse"
+            )
         );
         assert_eq!(reason(resolve_dir("rel/dir", None)), "relative");
         let gone = d.path().join("gone");
         let e = resolve_dir(gone.to_str().unwrap(), None).unwrap_err();
-        assert_eq!((e.reason, e.message), ("missing", format!("No folder found at {}", gone.display())));
+        assert_eq!(
+            (e.reason, e.message),
+            ("missing", format!("No folder found at {}", gone.display()))
+        );
         let f = touch(d.path(), "a.mp3");
         let e = resolve_dir(f.to_str().unwrap(), None).unwrap_err();
-        assert_eq!((e.reason, e.message), ("not-folder", format!("{} is not a folder", f.display())));
+        assert_eq!(
+            (e.reason, e.message),
+            ("not-folder", format!("{} is not a folder", f.display()))
+        );
         // symlink to a folder, and ~
         let sub = d.path().join("sub");
         fs::create_dir(&sub).unwrap();
@@ -489,7 +636,10 @@ mod tests {
             let e = resolve_dir(inner.to_str().unwrap(), None).unwrap_err();
             fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
             assert_eq!(e.reason, "unreadable");
-            assert_eq!(e.message, format!("Cannot read {} (permission denied)", inner.display()));
+            assert_eq!(
+                e.message,
+                format!("Cannot read {} (permission denied)", inner.display())
+            );
         }
     }
 
@@ -497,13 +647,24 @@ mod tests {
     fn list_audio_files_filters_and_sorts() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path();
-        for n in ["b.mp3", "a.flac", "C.OGG", "cover.jpg", ".hidden.mp3", "clip.mp4"] {
+        for n in [
+            "b.mp3",
+            "a.flac",
+            "C.OGG",
+            "cover.jpg",
+            ".hidden.mp3",
+            "clip.mp4",
+        ] {
             touch(p, n);
         }
         fs::create_dir(p.join("sub")).unwrap();
         touch(&p.join("sub"), "c.mp3");
         fs::create_dir(p.join("x.mp3")).unwrap();
-        assert!(Command::new("mkfifo").arg(p.join("pipe.wav")).status().unwrap().success());
+        assert!(Command::new("mkfifo")
+            .arg(p.join("pipe.wav"))
+            .status()
+            .unwrap()
+            .success());
         symlink(p.join("b.mp3"), p.join("link.wav")).unwrap();
         symlink(p.join("nothing"), p.join("dead.mp3")).unwrap();
         let names: Vec<String> = list_audio_files(p)
@@ -520,6 +681,9 @@ mod tests {
             fs::set_permissions(e.path(), fs::Permissions::from_mode(0o755)).unwrap();
             assert_eq!(r.unwrap_err().reason, "unreadable");
         }
-        assert_eq!(no_audio_message(Path::new("/m/x")), "Directory /m/x has no audio files");
+        assert_eq!(
+            no_audio_message(Path::new("/m/x")),
+            "Directory /m/x has no audio files"
+        );
     }
 }

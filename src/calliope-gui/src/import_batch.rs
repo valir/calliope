@@ -24,9 +24,15 @@ impl ImportState {
         if files.iter().any(|f| !f.is_absolute()) {
             return Err("the selected file path must be absolute".into());
         }
-        let url = edge_ai_url.map(str::trim).filter(|u| !u.is_empty()).ok_or_else(|| NOT_CONFIGURED_MESSAGE.to_string())?;
+        let url = edge_ai_url
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .ok_or_else(|| NOT_CONFIGURED_MESSAGE.to_string())?;
         let url = url.to_string();
-        check_tools(&self.inner.current_tools(), &[ToolName::Ffmpeg, ToolName::Ffprobe])?;
+        check_tools(
+            &self.inner.current_tools(),
+            &[ToolName::Ffmpeg, ToolName::Ffprobe],
+        )?;
         let mut slot = guard(&self.inner.job);
         if slot.as_ref().is_some_and(|j| !j.over) {
             return Err(BUSY_MESSAGE.into());
@@ -34,21 +40,43 @@ impl ImportState {
         check_root(root, &*self.inner.lock)?;
         let tmp = ImportTmp::open(root)?;
         tmp.clean_stale(now_secs(), None);
-        locked(&*self.inner.lock, || Repository::new(root).clean_stale_staging(None));
+        locked(&*self.inner.lock, || {
+            Repository::new(root).clean_stale_staging(None)
+        });
         let names: Vec<String> = files.iter().map(|f| file_name_of(f)).collect();
-        let label = dir.file_name().map(|n| n.to_string_lossy().into_owned()).filter(|n| !n.is_empty()).unwrap_or_else(|| dir.display().to_string());
+        let label = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| dir.display().to_string());
         let id = track_meta::new_id();
         let mut snap = new_snapshot(id.clone(), SourceKind::Directory, label, Phase::Preparing);
-        snap.batch = Some(BatchSnapshot { dir: dir.display().to_string(), files: names.clone(), current: Some(0), items: Vec::new() });
+        snap.batch = Some(BatchSnapshot {
+            dir: dir.display().to_string(),
+            files: names.clone(),
+            current: Some(0),
+            items: Vec::new(),
+        });
         eprintln!("calliope: import batch job={id} files={}", files.len());
-        self.launch(&mut slot, snap, SourceKind::Directory, PathBuf::new(), root, tmp, sink, move |ctx| {
-            run_batch(&ctx, &files, &names, &url, keep_original);
-        })
+        self.launch(
+            &mut slot,
+            snap,
+            SourceKind::Directory,
+            PathBuf::new(),
+            root,
+            tmp,
+            sink,
+            move |ctx| {
+                run_batch(&ctx, &files, &names, &url, keep_original);
+            },
+        )
     }
 }
 
 fn file_name_of(path: &Path) -> String {
-    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn stage_name(stage: Stage) -> String {
@@ -56,8 +84,17 @@ fn stage_name(stage: Stage) -> String {
 }
 
 /// One file: its own temp folder (removed whatever happens), `prepare_file`, `extract_cleaned`.
-fn run_one(ctx: &Ctx, path: &Path, name: &str, url: &str, keep_original: bool) -> R<(TrackRecord, Vec<DroppedStem>)> {
-    let dir = match ctx.tmp.new_file_dir("audio-file", name, &track_meta::now_rfc3339()) {
+fn run_one(
+    ctx: &Ctx,
+    path: &Path,
+    name: &str,
+    url: &str,
+    keep_original: bool,
+) -> R<(TrackRecord, Vec<DroppedStem>)> {
+    let dir = match ctx
+        .tmp
+        .new_file_dir("audio-file", name, &track_meta::now_rfc3339())
+    {
         Ok(d) => d,
         Err(m) => return fail(Stage::Prepare, m),
     };
@@ -68,8 +105,19 @@ fn run_one(ctx: &Ctx, path: &Path, name: &str, url: &str, keep_original: bool) -
             j.snap.metadata = Some(p.edits.clone());
             j.snap.duration_s = p.duration_s;
         });
-        ctx.phase(Phase::Uploading, ImportEvent::Uploading { sent: 0, total: 0 });
-        extract_cleaned(ctx, &dir, &p.audio, &p.edits, url, keep_original, p.position)
+        ctx.phase(
+            Phase::Uploading,
+            ImportEvent::Uploading { sent: 0, total: 0 },
+        );
+        extract_cleaned(
+            ctx,
+            &dir,
+            &p.audio,
+            &p.edits,
+            url,
+            keep_original,
+            p.position,
+        )
     })();
     if r.is_err() && dir.exists() {
         if let Err(e) = ctx.tmp.remove_job_dir(&dir) {
@@ -104,12 +152,28 @@ fn run_batch(ctx: &Ctx, files: &[PathBuf], names: &[String], url: &str, keep_ori
                 b.current = Some(i);
             }
         });
-        eprintln!("calliope: import batch job={} file={}/{n} name={name} result=started", ctx.id, i + 1);
-        ctx.emit(ImportEvent::BatchFile { index: i, total: n, name: name.clone() });
+        eprintln!(
+            "calliope: import batch job={} file={}/{n} name={name} result=started",
+            ctx.id,
+            i + 1
+        );
+        ctx.emit(ImportEvent::BatchFile {
+            index: i,
+            total: n,
+            name: name.clone(),
+        });
         ctx.phase(Phase::Preparing, ImportEvent::Preparing);
         let outcome = match run_one(ctx, path, name, url, keep_original) {
             Ok((track, dropped)) => {
-                let d = if dropped.is_empty() { "none".to_string() } else { dropped.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(",") };
+                let d = if dropped.is_empty() {
+                    "none".to_string()
+                } else {
+                    dropped
+                        .iter()
+                        .map(|d| d.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
                 eprintln!("calliope: import batch job={} file={}/{n} name={name} result=saved id={} dropped={d}", ctx.id, i + 1, track.id);
                 BatchOutcome::Saved { track, dropped }
             }
@@ -121,15 +185,26 @@ fn run_batch(ctx: &Ctx, files: &[PathBuf], names: &[String], url: &str, keep_ori
                     stage_name(e.stage),
                     e.message
                 );
-                BatchOutcome::Failed { stage: e.stage, message: e.message }
+                BatchOutcome::Failed {
+                    stage: e.stage,
+                    message: e.message,
+                }
             }
             Err(Stop::Cancelled) => {
-                eprintln!("calliope: import batch job={} file={}/{n} name={name} result=cancelled", ctx.id, i + 1);
+                eprintln!(
+                    "calliope: import batch job={} file={}/{n} name={name} result=cancelled",
+                    ctx.id,
+                    i + 1
+                );
                 cancelled = true;
                 break;
             }
         };
-        let item = BatchItem { index: i, name: name.clone(), outcome };
+        let item = BatchItem {
+            index: i,
+            name: name.clone(),
+            outcome,
+        };
         ctx.update(|j| {
             if let Some(b) = j.snap.batch.as_mut() {
                 b.items.push(item.clone());
@@ -141,7 +216,11 @@ fn run_batch(ctx: &Ctx, files: &[PathBuf], names: &[String], url: &str, keep_ori
 }
 
 fn finish_batch(ctx: &Ctx, cancelled: bool) {
-    let phase = if cancelled { Phase::Cancelled } else { Phase::Finished };
+    let phase = if cancelled {
+        Phase::Cancelled
+    } else {
+        Phase::Finished
+    };
     let mut batch: Option<BatchSnapshot> = None;
     ctx.update(|j| {
         j.snap.phase = phase;
@@ -155,13 +234,27 @@ fn finish_batch(ctx: &Ctx, cancelled: bool) {
         j.audio = None;
     });
     let Some(batch) = batch else { return };
-    let saved = batch.items.iter().filter(|i| matches!(i.outcome, BatchOutcome::Saved { .. })).count();
+    let saved = batch
+        .items
+        .iter()
+        .filter(|i| matches!(i.outcome, BatchOutcome::Saved { .. }))
+        .count();
     eprintln!("calliope: import job={} phase={phase:?}", ctx.id);
     if cancelled {
-        eprintln!("calliope: import batch job={} cancelled saved={saved} skipped={}", ctx.id, batch.files.len() - batch.items.len());
-        ctx.emit(ImportEvent::Cancelled { back_to: BackTo::Source });
+        eprintln!(
+            "calliope: import batch job={} cancelled saved={saved} skipped={}",
+            ctx.id,
+            batch.files.len() - batch.items.len()
+        );
+        ctx.emit(ImportEvent::Cancelled {
+            back_to: BackTo::Source,
+        });
     } else {
-        eprintln!("calliope: import batch job={} finished saved={saved} failed={}", ctx.id, batch.items.len() - saved);
+        eprintln!(
+            "calliope: import batch job={} finished saved={saved} failed={}",
+            ctx.id,
+            batch.items.len() - saved
+        );
         ctx.emit(ImportEvent::Finished { batch });
     }
 }
