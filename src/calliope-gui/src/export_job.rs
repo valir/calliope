@@ -77,19 +77,61 @@ pub struct ExportSnapshot {
     pub progress: f32,
     pub message: Option<String>,
     pub clipped: u32,
+    /// Why the export info wasn't (fully) saved; `None` until done, and when all went well.
+    pub info_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "phase", rename_all = "lowercase")]
 pub enum ExportEvent {
-    Writing { progress: f32 },
+    Writing {
+        progress: f32,
+    },
     Finishing,
-    Done { path: String, clipped: u32 },
-    Failed { message: String },
+    Done {
+        path: String,
+        clipped: u32,
+        root: String,
+        records: Vec<TrackRecord>,
+        info_error: Option<String>,
+    },
+    Failed {
+        message: String,
+    },
     Cancelled,
 }
 
 pub type Sink = Arc<dyn Fn(ExportEvent) + Send + Sync>;
+
+/// What `on_done` is told about a finished export.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Finished {
+    pub id: String,
+    pub kind: ExportKind,
+    pub memory: Option<u8>,
+    pub path: PathBuf,
+}
+
+/// What `on_done` saved: the changed records (for the Library), and what went wrong.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Recorded {
+    pub root: String,
+    pub records: Vec<TrackRecord>,
+    pub info_error: Option<String>,
+}
+
+/// Runs on the export thread after the file is in place and before `done` is published.
+pub type OnDone = Box<dyn FnOnce(&Finished) -> Recorded + Send>;
+
+/// A pending plan, as `ExportState::planned` reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedRef {
+    pub id: String,
+    pub track_dir: PathBuf,
+    pub repo_root: PathBuf,
+    pub kind: ExportKind,
+    pub memory: Option<u8>,
+}
 
 pub struct PlanInput<'a> {
     pub track: &'a TrackRecord,
@@ -400,14 +442,20 @@ impl ExportState {
         lock(&self.inner).running()
     }
 
-    /// The track, its directory (as it was at prepare time), target and RC-5 memory of the
-    /// pending plan `token`, if it is still valid.
-    pub fn planned(&self, token: &str) -> Option<(String, PathBuf, ExportKind, Option<u8>)> {
+    /// The track, its directory and repository (as they were at prepare time), kind and RC-5
+    /// memory of the pending plan `token`, if it is still valid.
+    pub fn planned(&self, token: &str) -> Option<PlannedRef> {
         let g = lock(&self.inner);
         g.planned
             .as_ref()
             .filter(|p| p.token == token)
-            .map(|p| (p.id.clone(), p.track_dir.clone(), p.kind, p.memory))
+            .map(|p| PlannedRef {
+                id: p.id.clone(),
+                track_dir: p.track_dir.clone(),
+                repo_root: p.repo_root.clone(),
+                kind: p.kind,
+                memory: p.memory,
+            })
     }
 
     /// Starts the planned export. `overwrite` must be true when the target exists. `tempo` is the
@@ -418,7 +466,7 @@ impl ExportState {
         overwrite: bool,
         tempo: &TempoMap,
         sink: Sink,
-        on_done: Box<dyn FnOnce() + Send>,
+        on_done: OnDone,
     ) -> Result<ExportSnapshot, String> {
         let mut g = lock(&self.inner);
         let Some(pl) = g.planned.take().filter(|p| p.token == token) else {
@@ -509,6 +557,7 @@ impl ExportState {
             progress: 0.0,
             message: None,
             clipped: 0,
+            info_error: None,
         };
         eprintln!(
             "calliope: export start job={job_id} id={} target={} path={} rate={} channels={} count_in={} first_beat_ms={} lead_frames={} overwrite={overwrite}",
@@ -609,7 +658,7 @@ struct Work {
     file: File,
     overwrite: bool,
     pace: Option<f64>,
-    on_done: Box<dyn FnOnce() + Send>,
+    on_done: OnDone,
 }
 
 impl Work {
@@ -631,7 +680,7 @@ impl Work {
     }
 
     fn run(mut self) {
-        let on_done = std::mem::replace(&mut self.on_done, Box::new(|| {}));
+        let on_done = std::mem::replace(&mut self.on_done, Box::new(|_| Recorded::default()));
         let result = self.render();
         match result {
             Ok(stats) => {
@@ -642,16 +691,26 @@ impl Work {
                 );
                 // Before `done` is published, so that whoever reacts to it (the pane reloads the
                 // memory suggestion) sees what `on_done` saved.
-                on_done();
+                let rec = on_done(&Finished {
+                    id: self.pl.id.clone(),
+                    kind: self.pl.kind,
+                    memory: self.pl.memory,
+                    path: self.pl.target.clone(),
+                });
+                let info_error = rec.info_error.clone();
                 self.publish(
                     |s| {
                         s.phase = ExportPhase::Done;
                         s.progress = 1.0;
                         s.clipped = stats.clipped;
+                        s.info_error = info_error;
                     },
                     ExportEvent::Done {
                         path,
                         clipped: stats.clipped,
+                        root: rec.root,
+                        records: rec.records,
+                        info_error: rec.info_error,
                     },
                 );
             }

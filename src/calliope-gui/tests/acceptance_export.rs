@@ -19,6 +19,7 @@ use calliope_gui::export_job::{
 use calliope_gui::export_rules::NO_TEMPO_REASON;
 use calliope_gui::ipc::RepoState;
 use calliope_gui::picker::ScriptedPicker;
+use calliope_gui::repository::{Repository, SaveTrackRequest};
 use calliope_gui::settings::SettingsStore;
 use calliope_gui::tempo_store::FileTempoStore;
 use calliope_gui::tools::Tools;
@@ -119,6 +120,31 @@ impl Env {
 
     fn repo_unchanged(&self) {
         assert!(tree(&self.repo) == self.before, "the repository changed");
+    }
+
+    /// Like `repo_unchanged`, but `track.json` may differ in its `exports` (a successful export
+    /// records its info there); every other file is byte-identical and nothing is added or removed.
+    fn repo_unchanged_except_exports(&self) {
+        let now = tree(&self.repo);
+        assert_eq!(
+            now.keys().collect::<Vec<_>>(),
+            self.before.keys().collect::<Vec<_>>(),
+            "files were added or removed"
+        );
+        for (k, v) in &now {
+            let was = &self.before[k];
+            if k.ends_with("/track.json") {
+                let strip = |b: &Option<Vec<u8>>| {
+                    let mut j: serde_json::Value =
+                        serde_json::from_slice(b.as_ref().unwrap()).unwrap();
+                    j.as_object_mut().unwrap().remove("exports");
+                    j
+                };
+                assert_eq!(strip(v), strip(was), "{k} changed beyond its exports");
+            } else {
+                assert!(v == was, "{k} changed");
+            }
+        }
     }
 
     /// A folder with a `ROLAND` folder in it, like an RC-5 drive.
@@ -392,7 +418,7 @@ fn ac_plain_backing_is_exportable() {
     let (rate, l, _) = read_wav(&wav_path(&base, 3));
     assert_eq!(rate, 44100);
     assert_seconds(l.len(), 6.5, 0.03);
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 // ---- the RC-5 ----
@@ -427,7 +453,7 @@ fn ac_rc5_memory_7() {
             .count(),
         1
     );
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 #[test]
@@ -477,7 +503,7 @@ fn ac_rc5_overwrite_confirmed() {
     let (_, l, _) = read_wav(&wav_path(&base, 7));
     assert_eq!(l.len(), 110250 + 176400);
     assert_eq!(std::fs::read(dir.join("notes.txt")).unwrap(), b"mine");
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 #[test]
@@ -508,7 +534,7 @@ fn ac_rc5_mono_becomes_stereo() {
     assert!(l == r, "both channels carry the same signal");
     assert!(l.iter().any(|v| v.abs() > 0.1));
     assert_eq!(l.len(), 110250 + 176400);
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 #[test]
@@ -542,7 +568,7 @@ fn ac_rc5_resamples_48k() {
     assert!(l.len().abs_diff(want) <= 1, "{} vs {want}", l.len());
     let tone = &l[132300 + 20000..132300 + 40000];
     assert!(goertzel(tone, 1000.0) > 5.0 * goertzel(tone, 440.0));
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 // ---- MP3 and OGG ----
@@ -574,7 +600,7 @@ fn ac_mp3_export() {
         2,
         "no part file is left"
     );
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 #[test]
@@ -591,7 +617,7 @@ fn ac_ogg_export() {
     assert_eq!(tag(&v, "album").as_deref(), Some("Export Tests"));
     assert_seconds(decode(&file).0.len(), 6.5, 0.03);
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 1);
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 // ---- cancel and failure ----
@@ -659,12 +685,13 @@ fn ac_remembered_after_restart() {
     assert_eq!(settings.get().rc5_dir, Some(rc5_a.clone()));
     assert_eq!(settings.get().export_dir, Some(out.clone()));
     assert_eq!(settings.get().rc5_memory, Some(7));
-    assert_eq!(
-        do_export_info(&e.st, &settings, &FileTempoStore, &id(401))
+    // The exported track shows its recorded memory, any other one the suggestion after it.
+    let memory = |n| {
+        do_export_info(&e.st, &settings, &FileTempoStore, &id(n))
             .unwrap()
-            .memory,
-        8
-    );
+            .memory
+    };
+    assert_eq!((memory(401), memory(403)), (7, 8));
 
     let answers = e.home.join("answers2");
     std::fs::write(
@@ -703,15 +730,15 @@ fn ac_remembered_after_restart() {
         ]
     );
 
-    // 99 stays 99.
+    // 99 stays 99 (for a track without a recorded memory).
     settings.set_rc5_memory(Some(99)).unwrap();
     assert_eq!(
-        do_export_info(&e.st, &e.settings(), &FileTempoStore, &id(401))
+        do_export_info(&e.st, &e.settings(), &FileTempoStore, &id(403))
             .unwrap()
             .memory,
         99
     );
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 // ---- the count-in ----
@@ -794,7 +821,7 @@ fn ac_count_in_before_the_first_beat() {
                 "{n}: mp3 tick at {t}"
             );
         }
-        e.repo_unchanged();
+        e.repo_unchanged_except_exports();
     }
 }
 
@@ -875,7 +902,7 @@ fn ac_count_in_odd_beat_length_rounds_once_and_ticks_are_exact() {
             .unwrap_or_else(|| panic!("no tick near {t}"));
         assert!(o >= t && o <= t + 3, "tick at {t} starts at {o}");
     }
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 #[test]
@@ -895,7 +922,7 @@ fn ac_count_in_ignores_speed_and_bar_length() {
     );
     let info = e.info(401);
     assert_eq!(info.count_in.unwrap().lead_ms, 2500.0);
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 #[test]
@@ -964,7 +991,7 @@ fn ac_rc5_memory_numbers_at_the_boundaries() {
         read_wav(&want);
         // "007" after " 7 " asks for confirmation; e.export overwrites on exists.
     }
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 #[test]
@@ -1053,7 +1080,7 @@ fn ac_mp3_and_ogg_keep_the_source_rate_and_channels() {
             assert_seconds(decode(Path::new(&plan.path)).0.len(), secs, 0.04);
         }
     }
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 #[test]
@@ -1104,7 +1131,7 @@ fn ac_encoder_settings_and_tags_reach_ffmpeg() {
         b.windows(4).take(2000).any(|w| w == b"Xing"),
         "no VBR (Xing) header"
     );
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 #[test]
@@ -1141,7 +1168,7 @@ fn ac_file_names_with_invalid_characters_and_an_empty_band() {
     let (plan, s) = e.export(403, TargetReq::Mp3, &out);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     assert_eq!(Path::new(&plan.path).file_name().unwrap(), "Solo.mp3");
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 #[test]
@@ -1167,7 +1194,7 @@ fn ac_mp3_overwrite_needs_confirmation_and_replaces() {
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 1);
     // A used token cannot start a second export.
     assert!(e.start(&plan.token, true).is_err());
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 #[test]
@@ -1222,7 +1249,7 @@ fn ac_missing_tools_and_encoders_are_refused_before_the_dialog() {
     let (_, s) = e.export(401, rc5("7"), &base);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
-    e.repo_unchanged();
+    e.repo_unchanged_except_exports();
 }
 
 #[test]
@@ -1297,5 +1324,359 @@ fn ac_long_intro_is_kept_and_a_stem_or_other_files_are_never_exported() {
     let w = 110250 + 5000..110250 + 25000;
     assert!(goertzel(&l[w.clone()], 330.0) > 5.0 * goertzel(&l[w.clone()], 550.0));
     assert!(goertzel(&r[w.clone()], 550.0) > 5.0 * goertzel(&r[w], 330.0));
+    e.repo_unchanged_except_exports();
+}
+
+// ---- the export info (specs/gui-export-info.md) ----
+
+fn exports_of(e: &Env, n: u32) -> calliope_gui::export_record::TrackExports {
+    Repository::new(&e.repo)
+        .load_record(&id(n))
+        .unwrap()
+        .exports
+}
+
+fn track_json(e: &Env, n: u32) -> std::path::PathBuf {
+    e.repo.join("tracks").join(id(n)).join("track.json")
+}
+
+/// Writes `exports` into a track's `track.json` by hand and takes that as the new baseline.
+fn write_exports(e: &mut Env, n: u32, exports: serde_json::Value) {
+    let p = track_json(e, n);
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+    v["exports"] = exports;
+    std::fs::write(&p, serde_json::to_string_pretty(&v).unwrap() + "\n").unwrap();
+    e.before = tree(&e.repo);
+}
+
+fn is_root() -> bool {
+    std::fs::read_to_string("/proc/self/status")
+        .unwrap()
+        .lines()
+        .any(|l| l.starts_with("Uid:") && l.split_whitespace().nth(1) == Some("0"))
+}
+
+const STALE: &str = "2020-01-01T00:00:00Z";
+
+#[test]
+fn ac_info_never_exported_has_none() {
+    let e = Env::new();
+    for n in [401, 403, 404, 405] {
+        assert_eq!(exports_of(&e, n), Default::default(), "{n}");
+        assert_eq!(e.info(n).last, Default::default());
+    }
+    assert_eq!(e.info(401).memory, 1);
+}
+
+#[test]
+fn ac_info_rc5_recorded() {
+    let e = Env::new();
+    let base = e.rc5("rc5");
+    let (_, s) = e.export(401, rc5("7"), &base);
+    assert_eq!((s.phase, s.info_error), (ExportPhase::Done, None));
+    let x = exports_of(&e, 401);
+    let r = x.rc5.clone().unwrap();
+    assert_eq!(r.memory, 7);
+    assert!(
+        r.at.len() == 20 && r.at.ends_with('Z'),
+        "an RFC 3339 UTC time: {}",
+        r.at
+    );
+    assert!(x.mp3.is_none() && x.ogg.is_none());
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_info_memory_from_record() {
+    let e = Env::new();
+    let base = e.rc5("rc5");
+    e.export(401, rc5("7"), &base);
+    // The exported track shows its own memory, another one the next after the last used.
+    assert_eq!(e.info(401).memory, 7);
+    assert_eq!(e.info(401).last.rc5.unwrap().memory, 7);
+    assert_eq!(e.info(403).memory, 8);
+}
+
+#[test]
+fn ac_info_rc5_reexport_same_memory() {
+    let mut e = Env::new();
+    write_exports(
+        &mut e,
+        401,
+        serde_json::json!({"rc5": {"memory": 7, "at": STALE}}),
+    );
+    let base = e.rc5("rc5");
+    e.answer(&rc5("7"), &base);
+    let plan = e.prepare(401, rc5("7")).unwrap().unwrap();
+    assert!(plan.exists || !wav_path(&base, 7).exists());
+    assert!(plan.path.ends_with("ROLAND/WAVE/007_1/007_1.WAV"));
+    e.start(&plan.token, plan.exists).unwrap();
+    assert_eq!(e.wait().phase, ExportPhase::Done);
+    // The same export again: the file exists now, the confirmation names it, Yes replaces it.
+    e.answer(&rc5("7"), &base);
+    let plan = e.prepare(401, rc5("7")).unwrap().unwrap();
+    assert!(plan.exists && plan.path.ends_with("ROLAND/WAVE/007_1/007_1.WAV"));
+    write_exports(
+        &mut e,
+        401,
+        serde_json::json!({"rc5": {"memory": 7, "at": STALE}}),
+    );
+    e.start(&plan.token, true).unwrap();
+    assert_eq!(e.wait().phase, ExportPhase::Done);
+    let r = exports_of(&e, 401).rc5.unwrap();
+    assert_eq!(r.memory, 7);
+    assert_ne!(r.at, STALE, "the time was updated");
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_info_rc5_other_memory() {
+    let mut e = Env::new();
+    write_exports(
+        &mut e,
+        401,
+        serde_json::json!({"rc5": {"memory": 7, "at": STALE}}),
+    );
+    let base = e.rc5("rc5");
+    let (_, s) = e.export(401, rc5("12"), &base);
+    assert_eq!(s.phase, ExportPhase::Done);
+    let r = exports_of(&e, 401).rc5.unwrap();
+    assert_eq!(r.memory, 12);
+    assert_ne!(r.at, STALE);
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_info_rc5_clears_previous_holder() {
+    let mut e = Env::new();
+    write_exports(
+        &mut e,
+        401,
+        serde_json::json!({
+            "rc5": {"memory": 7, "at": STALE},
+            "mp3": {"path": "/music/a.mp3", "at": STALE},
+            "ogg": {"path": "/music/a.ogg", "at": STALE}
+        }),
+    );
+    let base = e.rc5("rc5");
+    let (_, s) = e.export(403, rc5("7"), &base);
+    assert_eq!((s.phase, s.info_error), (ExportPhase::Done, None));
+    assert_eq!(exports_of(&e, 403).rc5.unwrap().memory, 7);
+    let a = exports_of(&e, 401);
+    assert!(a.rc5.is_none(), "A lost its RC-5 entry");
+    assert_eq!(a.mp3.unwrap().path, "/music/a.mp3");
+    assert_eq!(a.ogg.unwrap().path, "/music/a.ogg");
+    // A's other fields are untouched, `modified` included.
+    let j: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(track_json(&e, 401)).unwrap()).unwrap();
+    assert_eq!(j["modified"], "2026-10-23T10:00:00Z");
+    assert!(j["exports"].get("rc5").is_none());
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_info_file_paths() {
+    let e = Env::new();
+    let d = e.folder("music");
+    let (_, s) = e.export(401, TargetReq::Mp3, &d);
+    assert_eq!((s.phase, s.info_error), (ExportPhase::Done, None));
+    let x = exports_of(&e, 401);
+    assert_eq!(
+        x.mp3.unwrap().path,
+        d.join(format!("{BAND} - Stem Mix.mp3"))
+            .display()
+            .to_string()
+    );
+    assert!(x.ogg.is_none() && x.rc5.is_none());
+    let d2 = e.folder("music2");
+    e.export(401, TargetReq::Ogg, &d2);
+    let x = exports_of(&e, 401);
+    assert_eq!(
+        x.ogg.clone().unwrap().path,
+        d2.join(format!("{BAND} - Stem Mix.ogg"))
+            .display()
+            .to_string()
+    );
+    assert!(x
+        .mp3
+        .clone()
+        .unwrap()
+        .path
+        .starts_with(&d.display().to_string()));
+    assert_eq!(e.info(401).last, x);
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_info_mp3_dialog_starts_in_recorded_folder() {
+    let e = Env::new();
+    let d = e.folder("music");
+    let other = e.folder("other");
+    e.export(401, TargetReq::Mp3, &d);
+    e.export(403, TargetReq::Mp3, &other); // the remembered folder is `other` now
+    let start_of = |n: u32, t: TargetReq, answer: &Path| {
+        e.answer(&t, answer);
+        e.prepare(n, t).unwrap().unwrap();
+        e.picker.starts().last().unwrap().1.clone()
+    };
+    assert_eq!(start_of(401, TargetReq::Mp3, &other), Some(d.clone()));
+    // OGG has no entry: it starts in the remembered folder (the last pick, `other`).
+    assert_eq!(start_of(401, TargetReq::Ogg, &d), Some(other.clone()));
+    // Both the recorded and the remembered folder are gone: home.
+    let gone = e.folder("gone");
+    e.export(404, TargetReq::Mp3, &gone);
+    std::fs::remove_dir_all(&gone).unwrap();
+    assert_eq!(start_of(404, TargetReq::Mp3, &other), Some(e.home.clone()));
+}
+
+#[test]
+fn ac_info_nothing_recorded_on_cancel_refusal_failure() {
+    let entry = serde_json::json!({
+        "rc5": {"memory": 7, "at": STALE},
+        "mp3": {"path": "/music/a.mp3", "at": STALE}
+    });
+    // Cancelled.
+    let mut e = Env::with(ExportState::new(Box::new(real_tools)).with_pace(5.0));
+    write_exports(&mut e, 401, entry.clone());
+    let base = e.rc5("rc5");
+    e.answer(&rc5("9"), &base);
+    let plan = e.prepare(401, rc5("9")).unwrap().unwrap();
+    let snap = e.start(&plan.token, false).unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    e.export.cancel(&snap.job);
+    assert_eq!(e.wait().phase, ExportPhase::Cancelled);
     e.repo_unchanged();
+    // Refused: no ROLAND folder, a bad memory.
+    let e2 = Env::new();
+    let plain = e2.folder("plain");
+    e2.answer(&rc5("9"), &plain);
+    assert!(e2.prepare(401, rc5("9")).is_err());
+    assert!(e2.prepare(401, rc5("100")).is_err());
+    e2.repo_unchanged();
+    // Overwrite declined: the plan is made, `start` is never called.
+    let mut e3 = Env::new();
+    write_exports(&mut e3, 401, entry.clone());
+    let b3 = e3.rc5("rc5");
+    std::fs::create_dir_all(wav_path(&b3, 9).parent().unwrap()).unwrap();
+    std::fs::write(wav_path(&b3, 9), b"old").unwrap();
+    e3.answer(&rc5("9"), &b3);
+    assert!(e3.prepare(401, rc5("9")).unwrap().unwrap().exists);
+    e3.repo_unchanged();
+    // Failed: the encoder dies.
+    let e4 = Env::new();
+    let fake = e4.home.join("ffmpeg");
+    script(
+        &fake,
+        &format!(
+            "case \"$*\" in *pipe:0*) head -c 200000 >/dev/null; echo 'disk is full' >&2; exit 1;; esac\nexec {} \"$@\"",
+            real_ffmpeg().display()
+        ),
+    );
+    let mut e4 = Env {
+        export: ExportState::new(Box::new(move || Tools {
+            ffmpeg: Some(fake.clone()),
+            ..real_tools()
+        })),
+        ..e4
+    };
+    write_exports(&mut e4, 401, entry);
+    let out = e4.folder("out");
+    let (_, s) = e4.export(401, TargetReq::Mp3, &out);
+    assert_eq!(s.phase, ExportPhase::Failed);
+    e4.repo_unchanged();
+}
+
+#[test]
+fn ac_info_kept_by_library_save() {
+    let e = Env::new();
+    let d = e.folder("music");
+    let repo = Repository::new(&e.repo);
+    let rev = repo.load_record(&id(401)).unwrap().revision;
+    e.export(401, TargetReq::Mp3, &d);
+    let rec = repo.load_record(&id(401)).unwrap();
+    assert_eq!(rec.revision, rev, "an export doesn't change the revision");
+    let before = rec.exports.clone();
+    let edits = calliope_gui::track_meta::TrackEdits {
+        band: rec.band.clone(),
+        album: rec.album.clone(),
+        title: rec.title.clone(),
+        composers: rec.composers.clone(),
+        year: Some(2024),
+        source_url: None,
+        copyright: None,
+    };
+    // A save made from the record loaded before the export still goes through.
+    let saved = repo
+        .save_track(
+            SaveTrackRequest {
+                id: id(401),
+                revision: rev,
+                edits,
+                tablatures: vec![],
+                position: None,
+                album_position: None,
+                group: vec![],
+            },
+            &|_| None,
+        )
+        .unwrap();
+    assert_eq!(saved.track.year, Some(2024));
+    assert_eq!(saved.track.exports, before);
+    assert_eq!(exports_of(&e, 401), before);
+}
+
+#[test]
+fn ac_info_not_saved_is_reported() {
+    if is_root() {
+        eprintln!("skipped: running as root");
+        return;
+    }
+    let mut e = Env::new();
+    write_exports(
+        &mut e,
+        403,
+        serde_json::json!({"rc5": {"memory": 7, "at": STALE}}),
+    );
+    let base = e.rc5("rc5");
+    e.answer(&rc5("7"), &base);
+    let plan = e.prepare(401, rc5("7")).unwrap().unwrap();
+    let dir = e.repo.join("tracks").join(id(401));
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    e.start(&plan.token, false).unwrap();
+    let s = e.wait();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    assert!(wav_path(&base, 7).is_file(), "the file is exported");
+    let m = s.info_error.expect("the problem is reported");
+    assert!(m.starts_with("The export info wasn't saved: "), "{m}");
+    assert!(exports_of(&e, 401).rc5.is_none());
+    // The other holder was still cleared.
+    assert!(exports_of(&e, 403).rc5.is_none());
+}
+
+#[test]
+fn ac_info_older_builds_keep_the_info() {
+    use calliope_gui::track_meta::{apply_edits, parse, to_json_pretty, TrackEdits};
+    let mut e = Env::new();
+    write_exports(
+        &mut e,
+        401,
+        serde_json::json!({"rc5": {"memory": 7, "at": STALE}, "future": [1, 2]}),
+    );
+    let bytes = std::fs::read(track_json(&e, 401)).unwrap();
+    let mut m = parse(&bytes, &id(401)).unwrap();
+    let edits = TrackEdits {
+        band: m.band.clone(),
+        album: m.album.clone(),
+        title: "Renamed".into(),
+        composers: m.composers.clone(),
+        year: m.year,
+        source_url: None,
+        copyright: None,
+    };
+    apply_edits(&mut m, edits).unwrap();
+    let back: serde_json::Value = serde_json::from_str(&to_json_pretty(&m)).unwrap();
+    let orig: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(back["exports"], orig["exports"]);
+    assert_eq!(back["title"], "Renamed");
 }

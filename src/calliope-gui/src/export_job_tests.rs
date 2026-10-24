@@ -65,6 +65,7 @@ struct Rig {
     dest: PathBuf,
     before: BTreeMap<String, Option<Vec<u8>>>,
     state: ExportState,
+    finished: Arc<Mutex<Vec<Finished>>>,
 }
 
 impl Rig {
@@ -88,6 +89,7 @@ impl Rig {
             dest,
             before,
             state,
+            finished: Arc::default(),
         }
     }
 
@@ -141,13 +143,20 @@ impl Rig {
         let e2 = events.clone();
         let done = Arc::new(AtomicUsize::new(0));
         let d2 = done.clone();
+        let fin = self.finished.clone();
         let r = self.state.start(
             token,
             overwrite,
             tempo,
             Arc::new(move |ev| e2.lock().unwrap().push(ev)),
-            Box::new(move || {
+            Box::new(move |f| {
                 d2.fetch_add(1, Ordering::SeqCst);
+                fin.lock().unwrap().push(f.clone());
+                Recorded {
+                    root: "the-root".into(),
+                    records: Vec::new(),
+                    info_error: Some("info trouble".into()),
+                }
             }),
         );
         (r, events, done)
@@ -270,10 +279,22 @@ fn rc5_writes_the_memory_file() {
         "{ev:?}"
     );
     assert!(ev.contains(&ExportEvent::Finishing), "{ev:?}");
+    // The hook got the target, kind and memory; what it returned is in the event and snapshot.
+    assert_eq!(
+        *rig.finished.lock().unwrap(),
+        vec![Finished {
+            id: Rig::id(401),
+            kind: ExportKind::Rc5,
+            memory: Some(7),
+            path: target.clone()
+        }]
+    );
     assert!(
-        matches!(ev.last(), Some(ExportEvent::Done { .. })),
+        matches!(ev.last(), Some(ExportEvent::Done { root, records, info_error, .. })
+            if root == "the-root" && records.is_empty() && info_error.as_deref() == Some("info trouble")),
         "{ev:?}"
     );
+    assert_eq!(s.info_error.as_deref(), Some("info trouble"));
     assert_eq!(s.progress, 1.0);
     rig.assert_repo_untouched();
 }
@@ -400,6 +421,7 @@ fn cancel_leaves_nothing() {
     assert!(base.join("ROLAND").is_dir());
     assert!(ev.lock().unwrap().contains(&ExportEvent::Cancelled));
     assert_eq!(done.load(Ordering::SeqCst), 0);
+    assert!(rig.finished.lock().unwrap().is_empty());
     // An existing WAVE stays.
     let base = rig.rc5("kept");
     std::fs::create_dir_all(base.join("ROLAND/WAVE")).unwrap();

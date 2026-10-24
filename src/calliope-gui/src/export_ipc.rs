@@ -2,7 +2,7 @@
 //! dialog, plan), `start_export`, `cancel_export`, `get_export` / `watch_export`. The `do_*`
 //! functions hold the logic and take the managed state as parameters, so tests can call them.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -10,15 +10,18 @@ use tauri::Manager;
 
 use crate::export_audio::LEAD_BEATS;
 use crate::export_job::{
-    ExportEvent, ExportPlan, ExportSnapshot, ExportState, PlanInput, Sink, TargetReq, BUSY_MESSAGE,
-    STALE_MESSAGE,
+    ExportEvent, ExportPlan, ExportSnapshot, ExportState, Finished, OnDone, PlanInput, Recorded,
+    Sink, TargetReq, BUSY_MESSAGE, STALE_MESSAGE,
 };
+use crate::export_record::{ExportEntry, TrackExports};
 use crate::export_rules::{self, ExportKind, NO_TEMPO_REASON};
+use crate::import_job::{locked, RepoLock};
 use crate::ipc::RepoState;
 use crate::picker::{DialogKind, FolderReq};
 use crate::repository::{Repository, TrackRecord};
 use crate::settings::SettingsStore;
 use crate::tempo_store::TempoStore;
+use crate::track_meta;
 
 /// The first section's count-in, as shown in the pane.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -39,8 +42,10 @@ pub struct ExportInfo {
     /// The file that would be exported, relative to the track folder.
     pub source: Option<String>,
     pub count_in: Option<CountInInfo>,
-    /// The suggested RC-5 memory.
+    /// The memory recorded for the track, else the suggested RC-5 memory.
     pub memory: u8,
+    /// The track's recorded exports, as read now.
+    pub last: TrackExports,
 }
 
 /// The record of `id` and its folder, read under the repository lock.
@@ -58,7 +63,10 @@ pub fn do_export_info(
     id: &str,
 ) -> Result<ExportInfo, String> {
     let (rec, dir) = load(repo, id)?;
-    let memory = export_rules::suggest_memory(settings.get().rc5_memory);
+    let memory = export_rules::memory_for(
+        rec.exports.rc5.as_ref().map(|e| e.memory),
+        settings.get().rc5_memory,
+    );
     let mut info = ExportInfo {
         id: id.to_string(),
         available: false,
@@ -66,6 +74,7 @@ pub fn do_export_info(
         source: None,
         count_in: None,
         memory,
+        last: rec.exports.clone(),
     };
     let src = match export_rules::export_source(&rec) {
         Ok(s) => s,
@@ -99,7 +108,7 @@ fn refused<T>(kind: ExportKind, reason: &str, message: impl Into<String>) -> Res
 }
 
 /// Everything that can be checked without a folder, then the folder dialog (starting in the
-/// remembered folder, else `home`), then `ExportState::plan`. `Ok(None)` = the dialog was
+/// recorded or remembered folder, else `home`), then `ExportState::plan`. `Ok(None)` = the dialog was
 /// cancelled. The picked folder is remembered once it passed the checks.
 pub fn do_prepare_export(
     repo: &RepoState,
@@ -148,7 +157,17 @@ pub fn do_prepare_export(
     } else {
         s.export_dir
     };
-    let (from, start_dir) = export_rules::start_dir(remembered.as_deref(), home.as_deref());
+    let (from, start_dir) = match kind {
+        ExportKind::Rc5 => export_rules::start_dir(remembered.as_deref(), home.as_deref()),
+        _ => {
+            let recorded = match kind {
+                ExportKind::Mp3 => rec.exports.mp3.as_ref(),
+                _ => rec.exports.ogg.as_ref(),
+            };
+            let recorded = recorded.map(|e| Path::new(&e.path));
+            export_rules::file_start_dir(recorded, remembered.as_deref(), home.as_deref())
+        }
+    };
     eprintln!(
         "calliope: dialog start kind={} from={from} dir={}",
         dialog.as_str(),
@@ -205,10 +224,57 @@ pub fn remember_memory(settings: &SettingsStore, n: u8) {
     }
 }
 
-/// Starts the planned export with the tempo map as it is now (read from the planned track's directory). `remember` runs with the RC-5
-/// memory when an RC-5 export is done (before the `done` event).
+/// Writes the export info of a finished export under the repository lock (plan 2.5): the
+/// track's entry, and for the RC-5 the clearing of every other holder of the memory.
+pub fn record_finished(lock: &dyn RepoLock, root: &Path, f: &Finished, at: &str) -> Recorded {
+    locked(lock, || {
+        let repo = Repository::new(root);
+        let mut out = Recorded {
+            root: root.to_string_lossy().into_owned(),
+            ..Recorded::default()
+        };
+        let mut errors: Vec<String> = Vec::new();
+        let entry = match (f.kind, f.memory, f.path.to_str()) {
+            (ExportKind::Rc5, Some(memory), _) => Some(ExportEntry::Rc5 { memory }),
+            (ExportKind::Rc5, None, _) => None,
+            (_, _, None) => {
+                errors.push(
+                    "The export info wasn't saved: the file's path is not valid UTF-8".into(),
+                );
+                None
+            }
+            (ExportKind::Mp3, _, Some(p)) => Some(ExportEntry::Mp3 { path: p.into() }),
+            (ExportKind::Ogg, _, Some(p)) => Some(ExportEntry::Ogg { path: p.into() }),
+        };
+        if let Some(entry) = entry {
+            match repo.record_export(&f.id, &entry, at) {
+                Ok(r) => out.records.push(r),
+                Err(m) => {
+                    eprintln!("calliope: export record failed id={} message={m}", f.id);
+                    errors.push(format!("The export info wasn't saved: {m}"));
+                }
+            }
+        }
+        if let (ExportKind::Rc5, Some(memory)) = (f.kind, f.memory) {
+            let cleared = repo.clear_rc5_holders(memory, &f.id);
+            out.records.extend(cleared.cleared);
+            for b in cleared.failed {
+                errors.push(format!(
+                    "The RC-5 info of \"{}\" (memory {memory}) wasn't cleared: {}",
+                    b.title, b.message
+                ));
+            }
+        }
+        out.info_error = (!errors.is_empty()).then(|| errors.join(" "));
+        out
+    })
+}
+
+/// Starts the planned export with the tempo map as it is now (read from the planned track's directory). When it is done, `remember`
+/// runs with the RC-5 memory (RC-5 only), then the export info is recorded in the plan's own
+/// repository; both before the `done` event.
 pub fn do_start_export(
-    _repo: &RepoState,
+    repo: &RepoState,
     export: &ExportState,
     store: &dyn TempoStore,
     token: &str,
@@ -216,16 +282,20 @@ pub fn do_start_export(
     sink: Sink,
     remember: Box<dyn FnOnce(u8) + Send>,
 ) -> Result<ExportSnapshot, String> {
-    let Some((id, dir, kind, memory)) = export.planned(token) else {
+    let Some(plan) = export.planned(token) else {
         eprintln!("calliope: export refused target=none reason=stale");
         return Err(STALE_MESSAGE.into());
     };
     // The track directory is the one the plan was made for, not the current repository root.
-    let tempo = store.load(&id, &dir)?;
-    let on_done: Box<dyn FnOnce() + Send> = match (kind, memory) {
-        (ExportKind::Rc5, Some(n)) => Box::new(move || remember(n)),
-        _ => Box::new(|| {}),
-    };
+    let tempo = store.load(&plan.id, &plan.track_dir)?;
+    let lock = repo.repo_lock();
+    let root = plan.repo_root.clone();
+    let on_done: OnDone = Box::new(move |f| {
+        if let (ExportKind::Rc5, Some(n)) = (f.kind, f.memory) {
+            remember(n);
+        }
+        record_finished(&*lock, &root, f, &track_meta::now_rfc3339())
+    });
     export.start(token, overwrite, &tempo, sink, on_done)
 }
 

@@ -4,6 +4,7 @@ use crate::metronome::Click;
 use crate::picker::ScriptedPicker;
 use crate::tempo_store::FileTempoStore;
 use crate::tools::Tools;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -381,8 +382,15 @@ fn memory_is_remembered_after_done() {
     // The settings file was written by the finished export (a second store reads it).
     let reopened = SettingsStore::open(rig.settings_path());
     assert_eq!(reopened.get().rc5_memory, Some(7));
+    // The exported track now shows its recorded memory, any other one the next suggestion.
     assert_eq!(
         do_export_info(&rig.st, &reopened, &FileTempoStore, &Rig::id(401))
+            .unwrap()
+            .memory,
+        7
+    );
+    assert_eq!(
+        do_export_info(&rig.st, &reopened, &FileTempoStore, &Rig::id(403))
             .unwrap()
             .memory,
         8
@@ -390,6 +398,12 @@ fn memory_is_remembered_after_done() {
     reopened.set_rc5_memory(Some(99)).unwrap();
     assert_eq!(
         do_export_info(&rig.st, &reopened, &FileTempoStore, &Rig::id(401))
+            .unwrap()
+            .memory,
+        7
+    );
+    assert_eq!(
+        do_export_info(&rig.st, &reopened, &FileTempoStore, &Rig::id(403))
             .unwrap()
             .memory,
         99
@@ -417,6 +431,18 @@ fn memory_is_remembered_after_done() {
     assert_eq!(rig.wait().phase, ExportPhase::Done);
     assert_eq!(ran.load(Ordering::SeqCst), 0);
     assert!(out.join("The Example Band - Plain MP3.mp3").is_file());
+    // Its info was still recorded (the MP3 entry only).
+    let ex = Repository::new(&rig.repo)
+        .load_record(&Rig::id(403))
+        .unwrap()
+        .exports;
+    assert!(ex.rc5.is_none() && ex.ogg.is_none());
+    assert_eq!(
+        ex.mp3.unwrap().path,
+        out.join("The Example Band - Plain MP3.mp3")
+            .display()
+            .to_string()
+    );
 }
 
 #[test]
@@ -432,4 +458,124 @@ fn start_uses_the_track_dir_of_the_plan_when_the_root_changed() {
     rig.start(&plan.token, false).unwrap();
     assert_eq!(rig.wait().phase, ExportPhase::Done);
     assert!(out.join("The Example Band - Plain MP3.mp3").is_file());
+    // The record went into the plan's repository, not the new root.
+    let ex = Repository::new(&rig.repo)
+        .load_record(&Rig::id(403))
+        .unwrap()
+        .exports;
+    assert!(ex.mp3.is_some());
+    assert!(!rig._tmp.path().join("other-root/tracks").exists());
+}
+
+impl Rig {
+    fn exports(&self, n: u32) -> TrackExports {
+        Repository::new(&self.repo)
+            .load_record(&Self::id(n))
+            .unwrap()
+            .exports
+    }
+
+    fn export_to(&self, n: u32, t: TargetReq, dialog: &str, dir: &Path) -> ExportSnapshot {
+        self.answer(&[format!("{dialog} {}", dir.display())]);
+        let plan = self.prepare(n, t).unwrap().unwrap();
+        self.start(&plan.token, plan.exists).unwrap();
+        self.wait()
+    }
+}
+
+#[test]
+fn start_records_all_kinds_and_clears_the_other_holder() {
+    let rig = Rig::new();
+    let base = rig.base("rc5");
+    let out = rig.home.join("out");
+    std::fs::create_dir(&out).unwrap();
+    assert_eq!(rig.info(401).last, TrackExports::default());
+    let s = rig.export_to(401, Rig::rc5("7"), "export-rc5", &base);
+    assert_eq!((s.phase, s.info_error), (ExportPhase::Done, None));
+    let s = rig.export_to(401, TargetReq::Mp3, "export-audio", &out);
+    assert_eq!(s.phase, ExportPhase::Done);
+    rig.export_to(401, TargetReq::Ogg, "export-audio", &out);
+    let ex = rig.exports(401);
+    assert_eq!(ex.rc5.as_ref().map(|e| e.memory), Some(7));
+    assert_eq!(
+        ex.mp3.unwrap().path,
+        out.join("The Example Band - Stem Mix.mp3")
+            .display()
+            .to_string()
+    );
+    assert_eq!(
+        ex.ogg.unwrap().path,
+        out.join("The Example Band - Stem Mix.ogg")
+            .display()
+            .to_string()
+    );
+    assert!(!ex.rc5.unwrap().at.is_empty());
+    assert_eq!(rig.info(401).last.rc5.unwrap().memory, 7);
+
+    // Another track to the same memory takes it over; the first keeps its MP3/OGG.
+    let s = rig.export_to(403, Rig::rc5("7"), "export-rc5", &base);
+    assert_eq!((s.phase, s.info_error), (ExportPhase::Done, None));
+    assert_eq!(rig.exports(403).rc5.map(|e| e.memory), Some(7));
+    let first = rig.exports(401);
+    assert!(first.rc5.is_none() && first.mp3.is_some() && first.ogg.is_some());
+}
+
+#[test]
+fn a_track_that_cannot_be_written_still_exports() {
+    use std::os::unix::fs::PermissionsExt;
+    let rig = Rig::new();
+    let base = rig.base("rc5");
+    rig.answer(&[format!("export-rc5 {}", base.display())]);
+    let plan = rig.prepare(401, Rig::rc5("7")).unwrap().unwrap();
+    let dir = rig.repo.join("tracks").join(Rig::id(401));
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::File::create(dir.join("probe")).is_ok() {
+        std::fs::remove_file(dir.join("probe")).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return; // running as root: nothing is unwritable
+    }
+    rig.start(&plan.token, false).unwrap();
+    let s = rig.wait();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(s.phase, ExportPhase::Done);
+    assert!(base.join("ROLAND/WAVE/007_1/007_1.WAV").is_file());
+    let m = s.info_error.unwrap();
+    assert!(m.starts_with("The export info wasn't saved: "), "{m}");
+    assert_eq!(rig.exports(401), TrackExports::default());
+}
+
+#[test]
+fn the_recorded_mp3_folder_is_the_dialog_start() {
+    let rig = Rig::new();
+    let first = rig.home.join("first");
+    let second = rig.home.join("second");
+    std::fs::create_dir(&first).unwrap();
+    std::fs::create_dir(&second).unwrap();
+    rig.export_to(403, TargetReq::Mp3, "export-audio", &first);
+    // The remembered folder is `first` too; move the remembered one elsewhere.
+    rig.export_to(404, TargetReq::Mp3, "export-audio", &second);
+    rig.answer(&[
+        "export-audio CANCEL".into(),
+        "export-audio CANCEL".into(),
+        "export-audio CANCEL".into(),
+    ]);
+    assert_eq!(rig.prepare(403, TargetReq::Mp3).unwrap(), None);
+    // OGG of the same track has no entry: the remembered folder.
+    assert_eq!(rig.prepare(403, TargetReq::Ogg).unwrap(), None);
+    // The recorded folder is gone: the remembered one, then.
+    std::fs::remove_dir_all(&first).unwrap();
+    assert_eq!(rig.prepare(403, TargetReq::Mp3).unwrap(), None);
+    let starts = rig.picker.starts();
+    assert_eq!(
+        starts[starts.len() - 3],
+        (DialogKind::ExportAudio, Some(first.clone()))
+    );
+    assert_eq!(
+        starts[starts.len() - 2],
+        (DialogKind::ExportAudio, Some(second.clone()))
+    );
+    assert_eq!(
+        starts[starts.len() - 1],
+        (DialogKind::ExportAudio, Some(second))
+    );
 }
