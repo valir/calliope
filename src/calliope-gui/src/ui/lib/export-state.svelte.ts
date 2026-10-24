@@ -13,6 +13,7 @@ import {
   type ExportTargetReq,
   type TrackRecord,
 } from './ipc';
+import { mergeTracks } from './library-state.svelte';
 
 export const ex = $state({
   info: null as ExportInfo | null,
@@ -28,6 +29,10 @@ export const ex = $state({
 });
 
 let infoSeq = 0;
+/** The track the Memory box was last filled for. */
+let filledFor: string | null = null;
+/** A refill asked for by a load that lost the `infoSeq` race. */
+let refillPending = false;
 /** Events that arrived before the command's snapshot did. */
 let pending: ExportEvent[] = [];
 
@@ -39,6 +44,8 @@ export function resetExport(): void {
   ex.preparing = false;
   ex.confirm = null;
   infoSeq = 0;
+  filledFor = null;
+  refillPending = false;
   pending = [];
 }
 
@@ -49,6 +56,7 @@ export function isRunning(): boolean {
 /** Loads the export info of a track (null clears it). `refill` replaces the Memory box text. */
 export async function loadInfo(id: string | null, refill = false): Promise<void> {
   const seq = ++infoSeq;
+  if (refill) refillPending = true;
   if (id === null) {
     ex.info = null;
     return;
@@ -58,7 +66,16 @@ export async function loadInfo(id: string | null, refill = false): Promise<void>
     const info = await exportInfo(id);
     if (seq !== infoSeq) return;
     ex.info = info;
-    if (refill || ex.memory === '') ex.memory = String(info.memory);
+    if (refillPending || ex.memory === '' || filledFor !== id) {
+      ex.memory = String(info.memory);
+      filledFor = id;
+    }
+    refillPending = false;
+    const l = info.last;
+    void frontendLog(
+      `export last id=${id} memory=${ex.memory} rc5=${l?.rc5 ? l.rc5.memory : 'none'} ` +
+        `mp3=${l?.mp3 ? l.mp3.path : 'none'} ogg=${l?.ogg ? l.ogg.path : 'none'}`,
+    );
   } catch (e) {
     if (seq !== infoSeq) return;
     ex.info = null;
@@ -79,12 +96,15 @@ export function applyEvent(e: ExportEvent): void {
     s.path = e.path;
     s.clipped = e.clipped;
     s.progress = 1;
+    s.info_error = e.info_error ?? null;
     void frontendLog(`export done path=${e.path}`);
+    mergeTracks(e.root, e.records ?? []);
     void loadInfo(s.id, true);
   } else if (e.phase === 'failed') {
     s.message = e.message;
     void frontendLog(`export failed message=${e.message}`);
   }
+  if (e.phase === 'done' && e.info_error) void frontendLog(`export info-error message=${e.info_error}`);
 }
 
 function takeSnapshot(snap: ExportSnapshot): void {

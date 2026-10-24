@@ -7,3 +7,6 @@ style | cargo fmt workspace (owner decision) | me | done
 task 4 | export job recording hook and done fields | implementer | done
 task 5 | export IPC record, info, start folder | implementer | done
 task 6 | headless acceptance tests | implementer | done
+task 7 | frontend types, helpers and state | implementer | done
+task 8 | export pane Last lines, info error, memory default | implementer | done
+task 9 | library track pane rows | implementer | done

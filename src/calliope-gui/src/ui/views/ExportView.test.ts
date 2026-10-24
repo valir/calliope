@@ -20,7 +20,7 @@ let lastTarget = 'mp3';
 
 const snapshot = (o: Partial<ExportSnapshot> = {}): ExportSnapshot => ({
   job: 'j1', id: TRACK.id, title: TRACK.title, target: 'mp3', path: '/out/a.mp3', phase: 'writing',
-  progress: 0, message: null, clipped: 0, ...o,
+  progress: 0, message: null, clipped: 0, info_error: null, ...o,
 });
 
 function send(message: unknown): void {
@@ -41,6 +41,7 @@ beforeEach(() => {
   info = {
     id: TRACK.id, available: true, reason: null, source: 'backings/backing.flac',
     count_in: { bpm: 120, first_beat_ms: 0, lead_ms: 2500 }, memory: 7,
+    last: { rc5: null, mp3: null, ogg: null },
   };
   mockIPC((cmd, args) => {
     const a = args as Record<string, unknown>;
@@ -188,7 +189,7 @@ describe('Export view', () => {
     await waitFor(() => expect(document.activeElement).toBe(btn('Cancel')));
     const infoCalls = names().filter((n) => n === 'export_info').length;
     info = { ...info, memory: 8 };
-    send({ phase: 'done', path: '/out/a.mp3', clipped: 0 });
+    send({ phase: 'done', path: '/out/a.mp3', clipped: 0, root: '/tmp/repo', records: [], info_error: null });
     await waitFor(() => expect(screen.getByTestId('export-result').textContent).toBe('Written to /out/a.mp3.'));
     await waitFor(() => expect(names().filter((n) => n === 'export_info').length).toBeGreaterThan(infoCalls));
     await waitFor(() => expect((screen.getByLabelText('Memory') as HTMLInputElement).value).toBe('8'));
@@ -260,8 +261,66 @@ describe('Export view', () => {
     await fireEvent.click(btn('to BOSS RC-5'));
     await fireEvent.click(await screen.findByRole('button', { name: 'Yes' }));
     await waitFor(() => expect(names()).toContain('start_export'));
-    send({ phase: 'done', path: plan.path, clipped: 0 });
+    send({ phase: 'done', path: plan.path, clipped: 0, root: '/tmp/repo', records: [], info_error: null });
     await waitFor(() => expect(screen.getByTestId('export-result').textContent)
       .toBe(`Written to ${plan!.path}. Eject the RC-5 before unplugging it.`));
+  });
+
+  it('shows the recorded memory per track, keeps typed text on a same-track reload', async () => {
+    const other = FIXTURE_TRACKS[5];
+    info = { ...info, memory: 7, last: { rc5: { memory: 7, at: '2026-10-24T18:30:00Z' }, mp3: null, ogg: null } };
+    await renderWithTrack();
+    const box = screen.getByLabelText('Memory') as HTMLInputElement;
+    expect(box.value).toBe('7');
+    await fireEvent.input(box, { target: { value: '12' } });
+    info = { ...info, memory: 3, last: { rc5: null, mp3: null, ogg: null } };
+    selectTrack(other.id);
+    lib.treeFocus = `t:${other.id}`;
+    await waitFor(() => expect(box.value).toBe('3'));
+    // Back to the first track: its recorded memory replaces the text of the other one.
+    info = { ...info, memory: 7 };
+    selectTrack(TRACK.id);
+    lib.treeFocus = `t:${TRACK.id}`;
+    await waitFor(() => expect(box.value).toBe('7'));
+    await fireEvent.input(box, { target: { value: '12' } });
+    const before = names().filter((n) => n === 'export_info').length;
+    const { loadInfo } = await import('$lib/export-state.svelte');
+    await loadInfo(TRACK.id);
+    expect(names().filter((n) => n === 'export_info').length).toBe(before + 1);
+    expect(box.value).toBe('12');
+  });
+
+  it('shows the Last: lines', async () => {
+    info = {
+      ...info,
+      last: {
+        rc5: { memory: 7, at: '2026-10-24T12:00:00Z' },
+        mp3: { path: '/m/A - B.mp3', at: '2026-10-24T12:00:00Z' },
+        ogg: null,
+      },
+    };
+    await renderWithTrack();
+    await waitFor(() => expect(screen.getByTestId('export-last-rc5').textContent).toMatch(/^Last: memory 7, 2026-10-2\d$/));
+    expect(screen.getByTestId('export-last-mp3').textContent).toMatch(/^Last: \/m\/A - B\.mp3, 2026-10-2\d$/);
+    expect(screen.getByTestId('export-last-ogg').textContent).toBe('');
+  });
+
+  it('a done event merges the records into the library and shows the info error', async () => {
+    await renderWithTrack();
+    await fireEvent.click(btn('MP3 file'));
+    await waitFor(() => expect(names()).toContain('start_export'));
+    const rec = {
+      ...structuredClone(TRACK),
+      exports: { rc5: null, mp3: { path: '/out/a.mp3', at: '2026-10-24T12:00:00Z' }, ogg: null },
+    };
+    lib.draft = null;
+    send({
+      phase: 'done', path: '/out/a.mp3', clipped: 0, root: '/tmp/repo', records: [rec],
+      info_error: 'The export info wasn\'t saved: disk full',
+    });
+    await waitFor(() => expect(screen.getByTestId('export-info-error').textContent)
+      .toBe('The export info wasn\'t saved: disk full'));
+    expect(screen.getByTestId('export-result').textContent).toBe('Written to /out/a.mp3.');
+    expect(lib.library!.tracks.find((t) => t.id === TRACK.id)!.exports!.mp3!.path).toBe('/out/a.mp3');
   });
 });

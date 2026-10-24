@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { tick } from 'svelte';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import LibraryView from './LibraryView.svelte';
-import { resetLibrary } from '$lib/library-state.svelte';
+import { lib, mergeTracks, resetLibrary } from '$lib/library-state.svelte';
 import { EDITOR_FIXTURE_TRACKS, FIXTURE_TRACKS } from '$lib/fixture-tracks';
 import type { Picked, SaveTrackRequest, TrackRecord } from '$lib/ipc';
 
@@ -513,5 +513,48 @@ describe('Tablature panel', () => {
     expect(list.className).toContain('overflow-y-auto');
     expect(list.className).toContain('max-h-32'); // 8rem = 4 rows of h-8
     expect(tabs()[0].className).toContain('h-8');
+  });
+});
+
+describe('Track pane: export rows', () => {
+  const withExports = (): TrackRecord => ({
+    ...structuredClone(FIXTURE_TRACKS[0]),
+    exports: {
+      rc5: { memory: 7, at: '2026-10-24T12:00:00Z' },
+      mp3: { path: '/m/A - B.mp3', at: '2026-10-24T12:00:00Z' },
+      ogg: null,
+    },
+  });
+  const exportIds = () => Array.from(document.querySelectorAll('[id^="track-export-"]')).map((e) => e.id);
+
+  it('a never-exported track shows no export rows', async () => {
+    await open(FIXTURE_TRACKS[0].title);
+    expect(exportIds()).toEqual([]);
+  });
+
+  it('shows the recorded kinds, read-only also in edit mode, and saves no exports', async () => {
+    tracks[0] = withExports();
+    await open(tracks[0].title);
+    expect(exportIds()).toEqual(['track-export-rc5', 'track-export-mp3']);
+    expect(field('RC-5').value).toMatch(/^memory 7 \(2026-10-2\d \d\d:\d\d\)$/);
+    expect(field('MP3').value).toContain('/m/A - B.mp3 (');
+    await clickBtn('Edit');
+    expect(field('RC-5').readOnly).toBe(true);
+    expect(field('MP3').readOnly).toBe(true);
+    await fireEvent.input(field('Title'), { target: { value: 'Changed' } });
+    await clickBtn('Save');
+    expect(saves).toHaveLength(1);
+    expect('exports' in saves[0]).toBe(false);
+  });
+
+  it('mergeTracks during edit mode updates the rows and keeps the draft', async () => {
+    await open(FIXTURE_TRACKS[0].title);
+    await clickBtn('Edit');
+    await fireEvent.input(field('Title'), { target: { value: 'Draft title' } });
+    mergeTracks('/tmp/repo', [withExports()]);
+    await tick();
+    expect(exportIds()).toEqual(['track-export-rc5', 'track-export-mp3']);
+    expect(field('Title').value).toBe('Draft title');
+    expect(lib.mode).toBe('edit');
   });
 });

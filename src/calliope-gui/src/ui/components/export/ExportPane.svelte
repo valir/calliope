@@ -10,7 +10,7 @@
     ex, answerConfirm, cancel, exportTo, isRunning, loadInfo,
   } from '$lib/export-state.svelte';
   import {
-    confirmText, countInText, disabledReason, exportTarget, progressText, resultText,
+    confirmText, countInText, disabledReason, exportTarget, lastText, progressText, resultText,
   } from '$lib/export-format';
 
   const target = $derived(exportTarget(lib.treeFocus, selectedTrack()));
@@ -28,8 +28,9 @@
   let pane = $state<HTMLElement | null>(null);
 
   // The export info follows the target track.
+  const targetId = $derived(track ? track.id : null);
   $effect(() => {
-    const id = track ? track.id : null;
+    const id = targetId;
     untrack(() => void loadInfo(id));
   });
 
@@ -116,12 +117,15 @@
           disabled={running || ex.preparing}
         />
       </div>
+      <p class="min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-rc5">{lastText('rc5', info?.last)}</p>
     </div>
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center gap-3">
       <Button class="h-[3.25rem] w-44" {disabled} onclick={() => void exportTo('mp3', track)}>MP3 file</Button>
+      <p class="min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-mp3">{lastText('mp3', info?.last)}</p>
     </div>
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center gap-3">
       <Button class="h-[3.25rem] w-44" {disabled} onclick={() => void exportTo('ogg', track)}>OGG file</Button>
+      <p class="min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-ogg">{lastText('ogg', info?.last)}</p>
     </div>
     <p role="status" class="min-h-5 text-sm text-muted-foreground" data-testid="export-reason">{reason ?? ''}</p>
   </fieldset>
@@ -139,6 +143,9 @@
         class="min-h-10 text-sm break-all {resultIsError ? 'text-amber-700 dark:text-primary' : ''}"
         data-testid="export-result"
       >{resultLine}</p>
+      {#if ex.snap?.phase === 'done' && ex.snap.info_error}
+        <p role="alert" class="text-sm break-all text-amber-700 dark:text-primary" data-testid="export-info-error">{ex.snap.info_error}</p>
+      {/if}
     {/if}
   </div>
 </div>

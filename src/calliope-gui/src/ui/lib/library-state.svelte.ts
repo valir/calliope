@@ -98,6 +98,16 @@ export async function load(): Promise<void> {
   }
 }
 
+/** Replaces the records of `records` in the library of `root`; no rescan, the draft is left alone. */
+export function mergeTracks(root: string, records: TrackRecord[]): void {
+  const l = lib.library;
+  if (!l || l.root !== root) return;
+  for (const r of records) {
+    const i = l.tracks.findIndex((t) => t.id === r.id);
+    if (i >= 0) l.tracks[i] = r;
+  }
+}
+
 export function fullTree(): BandNode[] {
   return buildTree(lib.library?.tracks ?? []);
 }

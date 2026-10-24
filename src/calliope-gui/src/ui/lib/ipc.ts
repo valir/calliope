@@ -32,6 +32,9 @@ export interface BackingVariant {
   bits: number;
   mix: unknown;
 }
+export interface Rc5Export { memory: number; at: string }
+export interface FileExport { path: string; at: string }
+export interface TrackExports { rc5: Rc5Export | null; mp3: FileExport | null; ogg: FileExport | null }
 export interface TrackRecord {
   id: string;
   type: TrackType;
@@ -57,6 +60,8 @@ export interface TrackRecord {
   position?: number | null;
   /** The album's place among the band's albums (1-based). */
   album_position?: number | null;
+  /** The last export to each destination. Rust always sends it; optional here so test literals stay valid. */
+  exports?: TrackExports;
 }
 export interface LibraryProblem { dir: string; message: string }
 export interface Library { root: string; tracks: TrackRecord[]; problems: LibraryProblem[] }
@@ -479,6 +484,7 @@ export interface ExportInfo {
   source: string | null;
   count_in: CountInInfo | null;
   memory: number;
+  last: TrackExports;
 }
 export interface ExportPlan { token: string; path: string; exists: boolean }
 export type ExportPhase = 'writing' | 'finishing' | 'done' | 'failed' | 'cancelled';
@@ -492,11 +498,15 @@ export interface ExportSnapshot {
   progress: number;
   message: string | null;
   clipped: number;
+  info_error: string | null;
 }
 export type ExportEvent =
   | { phase: 'writing'; progress: number }
   | { phase: 'finishing' }
-  | { phase: 'done'; path: string; clipped: number }
+  | {
+    phase: 'done'; path: string; clipped: number; root: string; records: TrackRecord[];
+    info_error: string | null;
+  }
   | { phase: 'failed'; message: string }
   | { phase: 'cancelled' };
 

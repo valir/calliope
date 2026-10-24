@@ -4,6 +4,8 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import TrackFields from '../TrackFields.svelte';
+  import { exportRows } from '$lib/export-format';
+  import { frontendLog } from '$lib/ipc';
   import {
     cancelRename,
     discardAfterConflict,
@@ -103,7 +105,19 @@
     ...(selected?.stem_model ? [{ id: 'track-stem-model', label: 'Stem model', value: selected.stem_model }] : []),
     { id: 'track-imported', label: 'Imported', value: selected?.imported ?? '' },
     { id: 'track-modified', label: 'Modified', value: selected?.modified ?? '' },
+    ...exportRows(selected?.exports),
   ]);
+
+  // One log line per change of the selected track or of its export rows.
+  let lastExportsLog = '';
+  $effect(() => {
+    if (!selected) return;
+    const rows = exportRows(selected.exports).map((r) => r.id.replace('track-export-', ''));
+    const line = `track exports id=${selected.id} rows=${rows.length ? rows.join(',') : 'none'}`;
+    if (line === lastExportsLog) return;
+    lastExportsLog = line;
+    void frontendLog(line);
+  });
 </script>
 
 <svelte:window onkeydown={onKeydown} />
