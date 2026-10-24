@@ -100,32 +100,35 @@
 
   <fieldset class="flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4">
     <legend class="px-2 text-sm font-medium">Export...</legend>
-    <div class="flex flex-wrap items-center gap-3">
-      <Button
-        class="h-[3.25rem] w-44"
-        {disabled}
-        onclick={() => void exportTo('rc5', track)}
-      >to BOSS RC-5</Button>
-      <div class="flex items-center gap-3">
-        <label for="export-memory" class="text-sm font-medium">Memory</label>
-        <Input
-          id="export-memory"
-          class="w-16"
-          inputmode="numeric"
-          autocomplete="off"
-          bind:value={ex.memory}
-          disabled={running || ex.preparing}
-        />
+    <!-- Each "Last:" line sits under its button, so the rows' heights do not depend on the text. -->
+    <div class="flex flex-col gap-1">
+      <div class="flex flex-wrap items-center gap-3">
+        <Button
+          class="h-[3.25rem] w-44"
+          {disabled}
+          onclick={() => void exportTo('rc5', track)}
+        >to BOSS RC-5</Button>
+        <div class="flex items-center gap-3">
+          <label for="export-memory" class="text-sm font-medium">Memory</label>
+          <Input
+            id="export-memory"
+            class="w-16"
+            inputmode="numeric"
+            autocomplete="off"
+            bind:value={ex.memory}
+            disabled={running || ex.preparing}
+          />
+        </div>
       </div>
-      <p class="min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-rc5">{lastText('rc5', info?.last)}</p>
+      <p class="min-h-5 min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-rc5">{lastText('rc5', info?.last)}</p>
     </div>
-    <div class="flex flex-wrap items-center gap-3">
+    <div class="flex flex-col gap-1">
       <Button class="h-[3.25rem] w-44" {disabled} onclick={() => void exportTo('mp3', track)}>MP3 file</Button>
-      <p class="min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-mp3">{lastText('mp3', info?.last)}</p>
+      <p class="min-h-10 min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-mp3">{lastText('mp3', info?.last)}</p>
     </div>
-    <div class="flex flex-wrap items-center gap-3">
+    <div class="flex flex-col gap-1">
       <Button class="h-[3.25rem] w-44" {disabled} onclick={() => void exportTo('ogg', track)}>OGG file</Button>
-      <p class="min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-ogg">{lastText('ogg', info?.last)}</p>
+      <p class="min-h-10 min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-ogg">{lastText('ogg', info?.last)}</p>
     </div>
     <p role="status" class="min-h-5 text-sm text-muted-foreground" data-testid="export-reason">{reason ?? ''}</p>
   </fieldset>

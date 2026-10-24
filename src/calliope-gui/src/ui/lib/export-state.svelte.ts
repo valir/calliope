@@ -33,6 +33,8 @@ let infoSeq = 0;
 let filledFor: string | null = null;
 /** A refill asked for by a load that lost the `infoSeq` race. */
 let refillPending = false;
+/** The track the pane currently shows (the last id given to `loadInfo`). */
+let targetId: string | null = null;
 /** Events that arrived before the command's snapshot did. */
 let pending: ExportEvent[] = [];
 
@@ -46,6 +48,7 @@ export function resetExport(): void {
   infoSeq = 0;
   filledFor = null;
   refillPending = false;
+  targetId = null;
   pending = [];
 }
 
@@ -56,7 +59,8 @@ export function isRunning(): boolean {
 /** Loads the export info of a track (null clears it). `refill` replaces the Memory box text. */
 export async function loadInfo(id: string | null, refill = false): Promise<void> {
   const seq = ++infoSeq;
-  if (refill) refillPending = true;
+  targetId = id;
+  if (refill && id !== null) refillPending = true;
   if (id === null) {
     ex.info = null;
     return;
@@ -99,7 +103,8 @@ export function applyEvent(e: ExportEvent): void {
     s.info_error = e.info_error ?? null;
     void frontendLog(`export done path=${e.path}`);
     mergeTracks(e.root, e.records ?? []);
-    void loadInfo(s.id, true);
+    // Only the track the pane shows needs its info reloaded; another one is loaded when selected.
+    if (targetId === s.id) void loadInfo(s.id, true);
   } else if (e.phase === 'failed') {
     s.message = e.message;
     void frontendLog(`export failed message=${e.message}`);

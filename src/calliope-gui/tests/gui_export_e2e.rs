@@ -68,8 +68,8 @@ fn target_line(app: &mut App, id: &str, kind: &str) -> String {
 // Buttons at 1280x800 (window coordinates).
 const BTN_RC5: (i32, i32) = (748, 290);
 const BTN_MP3: (i32, i32) = (748, 362);
-// The OGG button once the MP3 "Last:" line below the MP3 button wraps onto two lines (a temp path).
-const BTN_OGG_AFTER_MP3: (i32, i32) = (748, 492);
+// The OGG button: each "Last:" line has room for two lines under its button, so this is fixed.
+const BTN_OGG: (i32, i32) = (748, 512);
 const MEMORY_BOX: (i32, i32) = (971, 290);
 
 fn press(app: &App, wid: &str, at: (i32, i32)) {
@@ -513,7 +513,7 @@ fn export_mp3_and_ogg() {
     .unwrap();
     assert!((dur - 6.5).abs() < 0.2, "4 s + 2.5 s count-in, got {dur}");
 
-    press(&app, &wid, BTN_OGG_AFTER_MP3);
+    press(&app, &wid, BTN_OGG);
     let l = app.wait_line(|l| l.contains("dialog start kind=export-audio"), secs(10));
     assert!(l.contains("from=last"), "{l}");
     app.wait_line(|l| l.contains("export done path="), secs(30));

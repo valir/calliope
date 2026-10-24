@@ -861,8 +861,12 @@ fn probe_stream(p: &Path) -> serde_json::Value {
 }
 
 fn script(path: &Path, body: &str) {
-    std::fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Written under another name and renamed into place: opening a script that a process is
+    // still running for writing fails with "Text file busy", a rename does not.
+    let tmp = path.with_extension("tmp-script");
+    std::fs::write(&tmp, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::rename(&tmp, path).unwrap();
 }
 
 fn real_ffmpeg() -> PathBuf {

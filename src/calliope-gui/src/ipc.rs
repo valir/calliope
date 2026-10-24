@@ -1916,8 +1916,13 @@ mod tests {
             ),
         ] {
             let f = bin.join(n);
-            std::fs::write(&f, format!("#!/bin/sh\n{body}\n")).unwrap();
-            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+            // The test calls this twice for one Env, and the first job's `sleep 30` ffprobe may
+            // still be running the old script (cancel does not wait for it): opening a running
+            // script for writing fails with "Text file busy". Renaming a new file over it works.
+            let tmp = bin.join(format!(".{n}.tmp"));
+            std::fs::write(&tmp, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::rename(&tmp, &f).unwrap();
         }
         ImportState::new(
             Tools::discover(bin.as_os_str()),

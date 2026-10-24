@@ -305,6 +305,25 @@ describe('Export view', () => {
     expect(screen.getByTestId('export-last-ogg').textContent).toBe('');
   });
 
+  it('a done event for another track than the selected one leaves the shown info alone', async () => {
+    const other = FIXTURE_TRACKS[5];
+    await renderWithTrack();
+    await fireEvent.click(btn('MP3 file'));
+    await waitFor(() => expect(names()).toContain('start_export'));
+    info = { ...info, memory: 3 };
+    selectTrack(other.id);
+    lib.treeFocus = `t:${other.id}`;
+    await waitFor(() => expect((screen.getByLabelText('Memory') as HTMLInputElement).value).toBe('3'));
+    info = { ...info, memory: 9 };
+    send({ phase: 'done', path: '/out/a.mp3', clipped: 0, root: '/tmp/repo', records: [], info_error: null });
+    await waitFor(() => expect(screen.getByTestId('export-result').textContent).toBe('Written to /out/a.mp3.'));
+    await waitFor(() => expect(btn('MP3 file').disabled).toBe(false));
+    expect(btn('to BOSS RC-5').disabled).toBe(false);
+    expect(reason()).toBe('');
+    expect((screen.getByLabelText('Memory') as HTMLInputElement).value).toBe('3');
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(other.title);
+  });
+
   it('a done event merges the records into the library and shows the info error', async () => {
     await renderWithTrack();
     await fireEvent.click(btn('MP3 file'));

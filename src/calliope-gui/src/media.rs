@@ -740,8 +740,12 @@ mod tests {
     fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let p = dir.join(name);
-        fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
-        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        // Written under another name and renamed into place: opening a script that a process is
+        // still running for writing fails with "Text file busy", a rename does not.
+        let tmp = dir.join(format!(".{name}.tmp"));
+        fs::write(&tmp, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::rename(&tmp, &p).unwrap();
         p
     }
 

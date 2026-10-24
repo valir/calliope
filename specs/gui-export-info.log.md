@@ -15,3 +15,4 @@ task 11 | docs | implementer | done
 gui suite | me | all 9 binaries pass
 tester | tester | all criteria PASS; 4 tests added; no defects
 reviewer | reviewer | APPROVED (minors: loadInfo after done for another track, fragile OGG button y)
+fix round 1 | implementer | done-for-other-track reload, fixed Export pane rows, refill nit, ETXTBSY-safe fake scripts; npm test + GUI suite pass

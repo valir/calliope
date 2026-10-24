@@ -446,8 +446,12 @@ fn encodes_mp3_and_ogg_with_tags() {
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let p = dir.join(name);
-    std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Written under another name and renamed into place: opening a script that a process is
+    // still running for writing fails with "Text file busy", a rename does not.
+    let tmp = dir.join(format!(".{name}.tmp"));
+    std::fs::write(&tmp, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::rename(&tmp, &p).unwrap();
     p
 }
 
