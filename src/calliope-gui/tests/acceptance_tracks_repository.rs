@@ -644,7 +644,7 @@ fn newer_schema_track_is_a_problem_and_never_rewritten_or_deleted() {
         id: ID1.into(), band: "".into(), album: "".into(), title: "T".into(), composers: vec![], year: None,
         source_url: None, copyright: None, audio: Some("backing.mp3".into()), tablatures: vec![],
         track_type: track_meta::TrackType::Backing, original: None, stems: vec![], stem_model: None, backings: vec![], imported: "".into(),
-        modified: "".into(), revision: fsutil::fnv1a64_hex(&bytes), missing: vec![],
+        modified: "".into(), revision: fsutil::fnv1a64_hex(&bytes), exports: Default::default(), missing: vec![],
         position: None, album_position: None,
     };
     assert!(e.repo.save_track(e.req(&fake, vec![]), &|_| None).is_err());
@@ -1300,7 +1300,7 @@ fn old_track_json_files_load_unchanged_with_no_position() {
             assert_eq!(t.position, None, "{fixture} {}", t.id);
             assert_eq!(t.album_position, None, "{fixture} {}", t.id);
             let bytes = fs::read(root.join("tracks").join(&t.id).join("track.json")).unwrap();
-            assert_eq!(t.revision, fsutil::fnv1a64_hex(&bytes), "{fixture} {}", t.id);
+            assert_eq!(t.revision, track_meta::revision(&bytes), "{fixture} {}", t.id);
         }
         assert_eq!(snapshot(&root), before, "{fixture}: the scan must not write");
     }

@@ -183,6 +183,20 @@ pub fn parse(bytes: &[u8], dir_name: &str) -> Result<TrackMeta, String> {
     Ok(meta)
 }
 
+/// The revision of a `track.json`: FNV-1a over the file with the top-level `exports` removed
+/// and re-serialized compactly, so a change to the export info alone never counts as a change
+/// (and whitespace or key order don't either). Not JSON, or not an object: the hash of the bytes.
+pub fn revision(bytes: &[u8]) -> String {
+    match serde_json::from_slice::<Value>(bytes) {
+        Ok(Value::Object(mut obj)) => {
+            obj.remove(crate::export_record::EXPORTS_KEY);
+            let compact = serde_json::to_vec(&Value::Object(obj)).expect("a JSON value serialises");
+            crate::fsutil::fnv1a64_hex(&compact)
+        }
+        _ => crate::fsutil::fnv1a64_hex(bytes),
+    }
+}
+
 pub fn to_json_pretty(meta: &TrackMeta) -> String {
     let mut s = serde_json::to_string_pretty(meta).expect("track metadata serialises");
     s.push('\n');
@@ -803,6 +817,60 @@ mod tests {
         let with_future = text.replace("\"year\"", "\"future\": 1, \"year\"");
         let m = parse(with_future.as_bytes(), ID).unwrap();
         assert_eq!(m.extra.get("future"), Some(&Value::from(1)));
+    }
+
+    #[test]
+    fn revision_ignores_exports_whitespace_and_key_order() {
+        let base = EXAMPLE_V2;
+        let with_exports = base.replace(
+            "\"year\"",
+            "\"exports\": {\"rc5\": {\"memory\": 7, \"at\": \"t\"}}, \"year\"",
+        );
+        let other_exports = with_exports.replace("\"memory\": 7", "\"memory\": 8");
+        let r = revision(base.as_bytes());
+        assert_eq!(revision(with_exports.as_bytes()), r);
+        assert_eq!(revision(other_exports.as_bytes()), r);
+        // whitespace and key order
+        let v: Value = serde_json::from_str(base).unwrap();
+        assert_eq!(revision(serde_json::to_string(&v).unwrap().as_bytes()), r);
+        let mut lines: Vec<&str> = base.lines().collect();
+        lines.swap(3, 4); // band <-> album, still valid JSON
+        assert_eq!(revision(lines.join("\n").as_bytes()), r);
+        // any other change, also an unknown field, changes it
+        for changed in [
+            base.replace("Slow Burn", "Slow Burn 2"),
+            base.replace("\"year\"", "\"future\": 1, \"year\""),
+            base.replace("2019,", "2020,"),
+        ] {
+            assert_ne!(revision(changed.as_bytes()), r);
+        }
+        // not JSON / not an object: the raw bytes
+        assert_eq!(revision(b"nope"), crate::fsutil::fnv1a64_hex(b"nope"));
+        assert_eq!(revision(b"[1, 2]"), crate::fsutil::fnv1a64_hex(b"[1, 2]"));
+    }
+
+    #[test]
+    fn older_builds_keep_exports_verbatim() {
+        let text = EXAMPLE_V2.replace(
+            "\"year\"",
+            "\"exports\": {\"rc5\": {\"memory\": 7, \"at\": \"t\"}, \"x\": [1]}, \"year\"",
+        );
+        let mut m = parse(text.as_bytes(), ID).unwrap();
+        assert!(m.extra.contains_key("exports"));
+        let edits = TrackEdits {
+            band: "B".into(),
+            album: "A".into(),
+            title: "T".into(),
+            composers: vec![],
+            year: Some(2020),
+            source_url: None,
+            copyright: None,
+        };
+        apply_edits(&mut m, edits).unwrap();
+        let back: Value = serde_json::from_str(&to_json_pretty(&m)).unwrap();
+        let orig: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(back["exports"], orig["exports"]);
+        assert_eq!(back["title"], "T");
     }
 
     #[test]

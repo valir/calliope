@@ -108,6 +108,12 @@ pub fn suggest_memory(last: Option<u8>) -> u8 {
     }
 }
 
+/// The Memory box default: the track's recorded memory when it has one, else the suggestion
+/// after the last one used.
+pub fn memory_for(recorded: Option<u8>, last: Option<u8>) -> u8 {
+    recorded.unwrap_or_else(|| suggest_memory(last))
+}
+
 // ---- file names (MP3 / OGG) ----
 
 /// `Band - Title.ext`, or just `Title.ext` without a band. Each part is made safe like the
@@ -223,6 +229,19 @@ pub fn start_dir(remembered: Option<&Path>, home: Option<&Path>) -> (&'static st
     }
 }
 
+/// The start folder of an MP3/OGG dialog: the folder of the file recorded for that kind when
+/// it still exists (`"recorded"`), else what `start_dir` gives.
+pub fn file_start_dir(
+    recorded: Option<&Path>,
+    remembered: Option<&Path>,
+    home: Option<&Path>,
+) -> (&'static str, Option<PathBuf>) {
+    if let Some(parent) = recorded.and_then(Path::parent).filter(|p| p.is_dir()) {
+        return ("recorded", Some(parent.to_path_buf()));
+    }
+    start_dir(remembered, home)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,6 +282,7 @@ mod tests {
             imported: String::new(),
             modified: String::new(),
             revision: String::new(),
+            exports: Default::default(),
             missing: vec![],
         }
     }
@@ -309,6 +329,10 @@ mod tests {
         assert_eq!(suggest_memory(Some(7)), 8);
         assert_eq!(suggest_memory(Some(98)), 99);
         assert_eq!(suggest_memory(Some(99)), 99);
+        assert_eq!(memory_for(Some(7), Some(98)), 7);
+        assert_eq!(memory_for(Some(7), None), 7);
+        assert_eq!(memory_for(None, Some(98)), 99);
+        assert_eq!(memory_for(None, None), 1);
     }
 
     #[test]
@@ -426,6 +450,29 @@ mod tests {
         let f = d.path().join("file");
         std::fs::write(&f, "x").unwrap();
         assert_eq!(start_dir(Some(&f), Some(&home)).0, "home");
+    }
+
+    #[test]
+    fn file_dialog_start_folders() {
+        let d = tempfile::tempdir().unwrap();
+        let home = d.path().join("home");
+        let last = d.path().join("last");
+        let rec = d.path().join("rec");
+        for p in [&home, &last, &rec] {
+            std::fs::create_dir(p).unwrap();
+        }
+        let file = rec.join("a.mp3");
+        assert_eq!(
+            file_start_dir(Some(&file), Some(&last), Some(&home)),
+            ("recorded", Some(rec.clone())),
+            "the file itself need not exist"
+        );
+        let gone = d.path().join("gone").join("a.mp3");
+        assert_eq!(file_start_dir(Some(&gone), Some(&last), Some(&home)), ("last", Some(last.clone())));
+        let nolast = d.path().join("nolast");
+        assert_eq!(file_start_dir(Some(&gone), Some(&nolast), Some(&home)), ("home", Some(home.clone())));
+        assert_eq!(file_start_dir(None, Some(&last), Some(&home)).0, "last");
+        assert_eq!(file_start_dir(Some(&gone), None, None), ("none", None));
     }
 
     #[test]

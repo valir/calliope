@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::export_record::{self, ExportEntry, TrackExports, EXPORTS_KEY};
 use crate::fsutil;
 use crate::track_meta::{self, BackingVariant, StemEntry, TrackEdits, TrackMeta, TrackType};
 
@@ -58,6 +59,8 @@ pub struct TrackRecord {
     pub imported: String,
     pub modified: String,
     pub revision: String,
+    /// The last export to each destination (read leniently from `exports`).
+    pub exports: TrackExports,
     /// Files listed in the metadata that are not on disk.
     pub missing: Vec<String>,
 }
@@ -141,6 +144,13 @@ pub struct BatchFailure {
     pub id: String,
     pub title: String,
     pub message: String,
+}
+
+/// What `clear_rc5_holders` did: the records of the cleared tracks and the failures.
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+pub struct ClearOutcome {
+    pub cleared: Vec<TrackRecord>,
+    pub failed: Vec<BatchFailure>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
@@ -345,11 +355,12 @@ impl Repository {
         let dir = self.track_dir(id)?;
         let bytes = fs::read(dir.join(TRACK_FILE)).map_err(|e| io_err("cannot read track.json", e))?;
         let meta = track_meta::parse(&bytes, id).map_err(|e| format!("track \"{id}\": {e}"))?;
-        Ok((dir, Loaded { meta, revision: fsutil::fnv1a64_hex(&bytes) }))
+        Ok((dir, Loaded { meta, revision: track_meta::revision(&bytes) }))
     }
 
     fn record(dir: &Path, l: Loaded) -> TrackRecord {
         let m = l.meta;
+        let exports = export_record::read(m.extra.get(EXPORTS_KEY));
         let missing = track_files(&m)
             .into_iter()
             .filter(|n| !dir.join(n).is_file())
@@ -375,6 +386,7 @@ impl Repository {
             imported: m.imported,
             modified: m.modified,
             revision: l.revision,
+            exports,
             missing,
         }
     }
@@ -382,6 +394,84 @@ impl Repository {
     pub fn load_record(&self, id: &str) -> Result<TrackRecord, String> {
         let (dir, l) = self.load(id)?;
         Ok(Self::record(&dir, l))
+    }
+
+    /// Reads `track.json` as a raw JSON object, only for a track `track_meta::parse` accepts
+    /// (problem tracks and tracks from a newer build are never rewritten).
+    fn raw_meta(&self, id: &str) -> Result<(PathBuf, serde_json::Map<String, serde_json::Value>), String> {
+        let dir = self.track_dir(id)?;
+        let bytes = fs::read(dir.join(TRACK_FILE)).map_err(|e| io_err("cannot read track.json", e))?;
+        track_meta::parse(&bytes, id).map_err(|e| format!("track \"{id}\": {e}"))?;
+        match serde_json::from_slice(&bytes) {
+            Ok(serde_json::Value::Object(o)) => Ok((dir, o)),
+            _ => Err(format!("track \"{id}\": track.json is not a JSON object")),
+        }
+    }
+
+    fn write_raw(dir: &Path, obj: serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+        let mut text = serde_json::to_string_pretty(&serde_json::Value::Object(obj)).expect("JSON serialises");
+        text.push('\n');
+        fsutil::write_atomic(&dir.join(TRACK_FILE), text.as_bytes()).map_err(|e| io_err("cannot write track.json", e))
+    }
+
+    /// Writes `exports.<kind>` of the track and nothing else (not even `modified`), working on
+    /// the raw JSON so that every other byte of meaning stays. The caller holds the repository lock.
+    pub fn record_export(&self, id: &str, entry: &ExportEntry, at: &str) -> Result<TrackRecord, String> {
+        let (dir, mut obj) = self.raw_meta(id)?;
+        export_record::set(&mut obj, entry, at);
+        Self::write_raw(&dir, obj)?;
+        match entry {
+            ExportEntry::Rc5 { memory } => {
+                eprintln!("calliope: export recorded id={id} target=rc5 memory={memory} at={at}")
+            }
+            ExportEntry::Mp3 { path } => eprintln!("calliope: export recorded id={id} target=mp3 path={path} at={at}"),
+            ExportEntry::Ogg { path } => eprintln!("calliope: export recorded id={id} target=ogg path={path} at={at}"),
+        }
+        self.load_record(id)
+    }
+
+    /// Removes the RC-5 entry of every track but `except` that names `memory` (one track per
+    /// memory). Problem tracks are skipped; a write failure is reported and the others go on.
+    pub fn clear_rc5_holders(&self, memory: u8, except: &str) -> ClearOutcome {
+        let mut out = ClearOutcome::default();
+        let mut names: Vec<String> = fs::read_dir(self.tracks_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        for id in names {
+            if is_dot_or_tmp(&id) || id == except || !track_meta::is_valid_id(&id) {
+                continue;
+            }
+            let Ok(dir) = self.track_dir(&id) else { continue };
+            let Ok(bytes) = fs::read(dir.join(TRACK_FILE)) else { continue };
+            let Ok(serde_json::Value::Object(mut obj)) = serde_json::from_slice(&bytes) else { continue };
+            if export_record::rc5_memory(&obj) != Some(memory) {
+                continue;
+            }
+            if let Err(m) = track_meta::parse(&bytes, &id) {
+                eprintln!("calliope: export clear skipped id={id} reason={m}");
+                continue;
+            }
+            export_record::clear_rc5(&mut obj);
+            match Self::write_raw(&dir, obj) {
+                Ok(()) => {
+                    eprintln!("calliope: export cleared id={id} memory={memory}");
+                    if let Ok(r) = self.load_record(&id) {
+                        out.cleared.push(r);
+                    }
+                }
+                Err(message) => {
+                    eprintln!("calliope: export clear failed id={id} memory={memory} message={message}");
+                    let title = track_meta::parse(&bytes, &id).map(|m| m.title).unwrap_or_default();
+                    out.failed.push(BatchFailure { id, title, message });
+                }
+            }
+        }
+        out
     }
 
     /// Reads every track folder. Unreadable ones become problems; the scan never fails and

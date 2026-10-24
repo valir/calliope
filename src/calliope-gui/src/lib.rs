@@ -10,6 +10,7 @@ pub mod editor;
 pub mod export_audio;
 pub mod export_ipc;
 pub mod export_job;
+pub mod export_record;
 pub mod export_rules;
 pub mod fsutil;
 pub mod gui;

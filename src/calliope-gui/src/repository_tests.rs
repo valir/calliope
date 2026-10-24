@@ -352,7 +352,7 @@ fn save_conflict_changes_nothing() {
     let rec = env.track("aaa", &["one.gp5"]);
     let p = env.dir("aaa").join("track.json");
     let mut text = fs::read_to_string(&p).unwrap();
-    text.push_str("\n\n");
+    text = text.replace("\"Title\"", "\"Title, changed outside\"");
     fs::write(&p, &text).unwrap();
     let snapshot = tree(&env);
     let e = env.repo.save_track(req(&rec, vec![TabEntry::Add { token: "new".into() }]), &env.lookup()).unwrap_err();
@@ -1021,17 +1021,17 @@ fn scan_list_export_never_rewrite_any_track_json() {
 }
 
 #[test]
-fn v1_revision_is_the_hash_of_its_bytes_and_is_migrated_in_memory() {
+fn v1_revision_is_the_revision_of_its_bytes_and_is_migrated_in_memory() {
     let v = V2::new();
     let bytes = fs::read(v.dir(V1_A).join("track.json")).unwrap();
     assert!(String::from_utf8_lossy(&bytes).contains("\"schema_version\": 1"));
     let rec = v.record(V1_A);
-    assert_eq!(rec.revision, crate::fsutil::fnv1a64_hex(&bytes));
+    assert_eq!(rec.revision, track_meta::revision(&bytes));
     assert_eq!(rec.track_type, TrackType::Backing);
     assert_eq!(rec.audio.as_deref(), Some("backing.mp3"));
     assert!(rec.stems.is_empty() && rec.original.is_none() && rec.stem_model.is_none());
     let v2 = fs::read(v.dir(V2_BACKING).join("track.json")).unwrap();
-    assert_eq!(v.record(V2_BACKING).revision, crate::fsutil::fnv1a64_hex(&v2));
+    assert_eq!(v.record(V2_BACKING).revision, track_meta::revision(&v2));
 }
 
 #[test]
@@ -1759,4 +1759,145 @@ mod backing {
         assert!(r.is_err());
         assert_eq!(snapshot(&e.dir(MIXED)), snap);
     }
+}
+
+// ---- export info (`exports` in track.json) ----
+
+fn json_of(env: &Env, id: &str) -> serde_json::Value {
+    serde_json::from_slice(&bytes_of(env, id)).unwrap()
+}
+
+fn without_exports(mut v: serde_json::Value) -> serde_json::Value {
+    v.as_object_mut().unwrap().remove("exports");
+    v
+}
+
+#[test]
+fn record_export_writes_only_the_exports_of_each_kind() {
+    let env = Env::new();
+    let rec = env.track("aaa", &[]);
+    let before = json_of(&env, "aaa");
+    let a = env.repo.record_export("aaa", &ExportEntry::Rc5 { memory: 7 }, "2026-10-24T18:30:00Z").unwrap();
+    assert_eq!(a.exports.rc5.as_ref().map(|e| (e.memory, e.at.as_str())), Some((7, "2026-10-24T18:30:00Z")));
+    let b = env.repo.record_export("aaa", &ExportEntry::Mp3 { path: "/m/a.mp3".into() }, "t2").unwrap();
+    let c = env.repo.record_export("aaa", &ExportEntry::Ogg { path: "/m/a.ogg".into() }, "t3").unwrap();
+    assert!(b.exports.rc5.is_some() && b.exports.mp3.is_some() && b.exports.ogg.is_none());
+    assert_eq!(c.exports.ogg.unwrap().path, "/m/a.ogg");
+    let after = json_of(&env, "aaa");
+    assert_eq!(without_exports(after.clone()), before, "only exports differs, modified included");
+    assert_eq!(after["exports"]["mp3"], serde_json::json!({"path": "/m/a.mp3", "at": "t2"}));
+    assert_eq!(c.modified, rec.modified);
+    assert_eq!(c.revision, rec.revision, "the revision ignores exports");
+    // re-exporting a kind replaces just that entry
+    let d = env.repo.record_export("aaa", &ExportEntry::Rc5 { memory: 9 }, "t4").unwrap();
+    assert_eq!(d.exports.rc5.unwrap().memory, 9);
+    assert_eq!(d.exports.mp3.unwrap().at, "t2");
+    assert!(!env.dir("aaa").join("track.json.tmp").exists());
+}
+
+#[test]
+fn record_export_keeps_a_v1_file_v1_and_refuses_problem_tracks() {
+    let v = V2::new();
+    let before = fs::read(v.dir(V1_A).join("track.json")).unwrap();
+    v.repo.record_export(V1_A, &ExportEntry::Rc5 { memory: 3 }, "t").unwrap();
+    let after: serde_json::Value = serde_json::from_slice(&fs::read(v.dir(V1_A).join("track.json")).unwrap()).unwrap();
+    assert_eq!(after["schema_version"], 1);
+    assert!(after.get("type").is_none() && after.get("stems").is_none(), "not migrated on disk");
+    assert_eq!(without_exports(after), serde_json::from_slice::<serde_json::Value>(&before).unwrap());
+    assert_eq!(v.record(V1_A).exports.rc5.unwrap().memory, 3);
+
+    let env = Env::new();
+    env.track("aaa", &[]);
+    let p = env.dir("aaa").join("track.json");
+    let mut j = json_of(&env, "aaa");
+    j["schema_version"] = 3.into();
+    fs::write(&p, serde_json::to_vec_pretty(&j).unwrap()).unwrap();
+    let bytes = fs::read(&p).unwrap();
+    let e = env.repo.record_export("aaa", &ExportEntry::Rc5 { memory: 1 }, "t").unwrap_err();
+    assert!(e.contains("newer"), "{e}");
+    assert!(env.repo.record_export("../x", &ExportEntry::Rc5 { memory: 1 }, "t").is_err());
+    assert!(env.repo.record_export("nope", &ExportEntry::Rc5 { memory: 1 }, "t").is_err());
+    assert_eq!(fs::read(&p).unwrap(), bytes);
+}
+
+#[test]
+fn clear_rc5_holders_clears_the_others_and_keeps_their_files_entries() {
+    let env = Env::new();
+    for id in ["aaa", "bbb", "ccc", "ddd", "eee"] {
+        env.track(id, &[]);
+    }
+    let rc5 = |m| ExportEntry::Rc5 { memory: m };
+    for id in ["aaa", "bbb", "ccc", "ddd"] {
+        env.repo.record_export(id, &rc5(7), "old").unwrap();
+    }
+    env.repo.record_export("eee", &rc5(8), "old").unwrap();
+    env.repo.record_export("aaa", &ExportEntry::Mp3 { path: "/m/a.mp3".into() }, "old").unwrap();
+    // ddd becomes a problem track: skipped and untouched
+    let pd = env.dir("ddd").join("track.json");
+    let mut j = json_of(&env, "ddd");
+    j["schema_version"] = 3.into();
+    fs::write(&pd, serde_json::to_vec_pretty(&j).unwrap()).unwrap();
+    let ddd = fs::read(&pd).unwrap();
+    let ccc_before = json_of(&env, "ccc");
+
+    let out = env.repo.clear_rc5_holders(7, "bbb");
+    assert!(out.failed.is_empty(), "{:?}", out.failed);
+    let ids: Vec<_> = out.cleared.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["aaa", "ccc"]);
+    assert!(out.cleared.iter().all(|r| r.exports.rc5.is_none()));
+    assert_eq!(env.repo.load_record("aaa").unwrap().exports.mp3.unwrap().path, "/m/a.mp3");
+    assert_eq!(without_exports(json_of(&env, "ccc")), without_exports(ccc_before));
+    assert!(json_of(&env, "ccc").get("exports").is_none(), "an empty exports is removed");
+    assert!(env.repo.load_record("bbb").unwrap().exports.rc5.is_some(), "except is kept");
+    assert!(env.repo.load_record("eee").unwrap().exports.rc5.is_some(), "other memory is kept");
+    assert_eq!(fs::read(&pd).unwrap(), ddd);
+}
+
+#[cfg(unix)]
+#[test]
+fn clear_rc5_holders_reports_an_unwritable_holder_and_clears_the_rest() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = Env::new();
+    for id in ["aaa", "bbb", "ccc"] {
+        env.track(id, &[]);
+        env.repo.record_export(id, &ExportEntry::Rc5 { memory: 4 }, "old").unwrap();
+    }
+    let dir = env.dir("bbb");
+    let before = bytes_of(&env, "bbb");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+    if fs::File::create(dir.join("probe")).is_ok() {
+        fs::remove_file(dir.join("probe")).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        return; // running as root: permissions are not enforced
+    }
+    let out = env.repo.clear_rc5_holders(4, "zzz");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    let ids: Vec<_> = out.cleared.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["aaa", "ccc"]);
+    assert_eq!(out.failed.len(), 1);
+    assert_eq!((out.failed[0].id.as_str(), out.failed[0].title.as_str()), ("bbb", "Title"));
+    assert!(out.failed[0].message.starts_with("cannot write track.json"), "{}", out.failed[0].message);
+    assert_eq!(bytes_of(&env, "bbb"), before);
+}
+
+#[test]
+fn save_after_an_export_keeps_exports_and_other_changes_still_conflict() {
+    let env = Env::new();
+    let rec = env.track("aaa", &[]);
+    env.repo.record_export("aaa", &ExportEntry::Mp3 { path: "/m/a.mp3".into() }, "t").unwrap();
+    // the draft was loaded before the export: its revision is still good
+    let mut r = req(&rec, vec![]);
+    r.edits.title = "Edited".into();
+    let res = env.repo.save_track(r, &env.lookup()).unwrap();
+    assert_eq!(res.track.title, "Edited");
+    assert_eq!(res.track.exports.mp3.as_ref().unwrap().path, "/m/a.mp3");
+    assert_eq!(json_of(&env, "aaa")["exports"]["mp3"]["at"], "t");
+    // a real change after the draft was loaded still conflicts
+    let stale = req(&res.track, vec![]);
+    let p = env.dir("aaa").join("track.json");
+    let mut j = json_of(&env, "aaa");
+    j["future"] = 1.into();
+    fs::write(&p, serde_json::to_vec_pretty(&j).unwrap()).unwrap();
+    let e = env.repo.save_track(stale, &env.lookup()).unwrap_err();
+    assert!(e.starts_with("conflict:"), "{e}");
 }
