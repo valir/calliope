@@ -164,15 +164,27 @@ Editor); a plain backing track is exported as it is.
 
 * "to BOSS RC-5": press the button, choose the root folder of the RC-5 drive (the one that holds
   `ROLAND/`), and the file is written to `ROLAND/WAVE/<NNN>_1/<NNN>_1.WAV` (32-bit float stereo WAV).
-  The Memory box (1 to 99) is the RC-5 memory number; it starts at 1 and then suggests the last one
-  plus one. The dialog starts in the drive you chose last. Eject the RC-5 before unplugging it.
+  The Memory box (1 to 99) is the RC-5 memory number; it shows the track's remembered memory, else
+  the last one used plus one (1 at first). The dialog starts in the drive you chose last.
+  Eject the RC-5 before unplugging it.
 * "MP3 file" / "OGG file": choose a folder; the file is named `Band - Title.mp3` (or `.ogg`) and
   carries the title, band, album, track number and year as tags.
 * Count-in: every export starts with 5 beats of silence at the track's tempo, with six ticks
   in the first 4 beats (the 5th beat is silent), so the audio that follows is in time with the
   loop. The exported file is therefore 5 beats longer than the original.
 * An existing file is only replaced after you confirm. Cancel stops a running export and leaves
-  nothing behind; the repository is never changed.
+  nothing behind.
+* What is remembered: after a successful export the track's `track.json` gets an `exports` entry
+  per kind: the RC-5 memory number, or the MP3 / OGG file path, and the time. The Library shows
+  them as read-only rows (RC-5, MP3, OGG; only the kinds exported) and the Export view as "Last:"
+  lines. Nothing else in the repository changes, and a pending edit in the Library is kept. If
+  the entry cannot be saved (for example a read-only track folder) the file is still written and
+  the Export view says so.
+* Exporting again replaces the entry of that kind. The Memory box shows the track's remembered
+  memory, so a re-export goes to the same place, and the folder dialog for MP3 / OGG starts in the
+  folder of the last file of the track.
+* RC-5: one track per memory. Exporting a track to a memory number that another track holds
+  (after you confirm the overwrite) removes the RC-5 entry of the other track.
 
 ## Import and stem extraction
 

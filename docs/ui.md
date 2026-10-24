@@ -269,3 +269,15 @@
   band or album row, a track without a usable backing or tempo map, and while an export runs. Overwriting
   asks first (Replace the existing file ...? focus on No). Measured: no vertical overflow at 1280x800; at
   1024x640 (tree shown) the Memory box wraps below its button and the count-in line takes two lines.
+- (gui-export-info) Export info. The Library track pane (read-only, never editable) gets one extra
+  row after Modified for each kind that was exported, and none for a kind that was not: "RC-5"
+  (`memory 7 (2026-10-24 18:30)`), "MP3" and "OGG" (`<path> (2026-10-24 18:30)`); the time is local
+  time, `YYYY-MM-DD HH:MM`. The Export view shows a muted "Last: memory 7, 2026-10-24" line (RC-5:
+  beside the Memory box; MP3 / OGG: under their button) only for a kind that was exported, with the
+  path breaking anywhere so a long one wraps inside the pane. When the export succeeded but the
+  record could not be saved, an accent-colour line under the result tells why (the file is written
+  anyway). The Memory box follows the selected track (its recorded RC-5 memory, else the
+  last one used plus one); a refill after an export shows the memory just used. Measured: at 1280x800 the Export view
+  has no overflow with all three "Last:" lines (a path of about 80 characters takes two lines and
+  pushes the OGG button down by 58 px); at 1024x640 the Memory box sits under its button and the
+  pane scrolls. In the Library the rows are at the end of the scrolling field list.

@@ -836,8 +836,11 @@ fn library_delete_from_tree() {
     // Again, but one track changes on disk before the confirmation: it stays, the others go.
     app.click(&wid, TREE_DELETE.0, TREE_DELETE.1);
     settle();
-    let mut changed = std::fs::read(dirs.track_json("t-b")).unwrap();
-    changed.push(b'\n');
+    // A real change: whitespace and `exports` don't count for the revision.
+    let mut changed: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dirs.track_json("t-b")).unwrap()).unwrap();
+    changed["copyright"] = serde_json::json!("changed on disk");
+    let changed = changed.to_string().into_bytes();
     std::fs::write(dirs.track_json("t-b"), &changed).unwrap();
     app.key(&wid, "Tab Return");
     wait_log(

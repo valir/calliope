@@ -495,6 +495,22 @@ pub fn snapshot(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
     m
 }
 
+/// Like [`snapshot`], but each `track.json` is compared without its `exports` member (an export
+/// records what was written there), re-serialized.
+pub fn snapshot_except_exports(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut m = snapshot(dir);
+    for (k, v) in m.iter_mut() {
+        if k.ends_with("track.json") {
+            let mut j: serde_json::Value = serde_json::from_slice(v).unwrap();
+            if let Some(o) = j.as_object_mut() {
+                o.remove("exports");
+            }
+            *v = serde_json::to_vec_pretty(&j).unwrap();
+        }
+    }
+    m
+}
+
 /// A temp area for one import test: the library fixture is the starting repository, the
 /// fixture sources are copied to `<base>/media/`.
 pub fn import_dirs(test: &str) -> Dirs {

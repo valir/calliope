@@ -68,7 +68,8 @@ fn target_line(app: &mut App, id: &str, kind: &str) -> String {
 // Buttons at 1280x800 (window coordinates).
 const BTN_RC5: (i32, i32) = (748, 290);
 const BTN_MP3: (i32, i32) = (748, 362);
-const BTN_OGG: (i32, i32) = (748, 434);
+// The OGG button once the MP3 "Last:" line below the MP3 button wraps onto two lines (a temp path).
+const BTN_OGG_AFTER_MP3: (i32, i32) = (748, 492);
 const MEMORY_BOX: (i32, i32) = (971, 290);
 
 fn press(app: &App, wid: &str, at: (i32, i32)) {
@@ -80,6 +81,26 @@ fn set_memory(app: &App, wid: &str, text: &str) {
     app.key(wid, "ctrl+a");
     app.typ(wid, text);
     settle();
+}
+
+/// Waits (without consuming lines) until a log line contains `what`.
+fn wait_has(app: &App, what: &str, timeout: Duration) -> String {
+    let end = std::time::Instant::now() + timeout;
+    loop {
+        if let Some(l) = lines_with(app, what).pop() {
+            return l;
+        }
+        assert!(
+            std::time::Instant::now() < end,
+            "timeout waiting for {what:?}; got: {:?}",
+            app.all_lines()
+        );
+        sleep_ms(50);
+    }
+}
+
+fn track_json(dirs: &Dirs, id: &str) -> serde_json::Value {
+    serde_json::from_slice(&std::fs::read(dirs.track_json(id)).unwrap()).unwrap()
 }
 
 fn lines_with(app: &App, what: &str) -> Vec<String> {
@@ -241,7 +262,7 @@ fn export_rc5_flow() {
         return;
     }
     let dirs = export_dirs("export_rc5_flow");
-    let before = snapshot(&dirs.repo());
+    let before = snapshot_except_exports(&dirs.repo());
     let base = rc5(&dirs, "rc5");
     let target = wav(&base, 7);
     let ans = answers(&dirs, &[format!("export-rc5 {}", base.display())]);
@@ -268,13 +289,31 @@ fn export_rc5_flow() {
         assert_eq!(l.len(), 44100 * 4 + 110250);
         assert!(l.iter().any(|v| v.abs() > 0.05), "the audio is there");
         assert!(!target.with_extension("WAV.part").exists());
+        wait_has(
+            &app,
+            &format!("calliope: export recorded id={EX_MONO} target=rc5 memory=7"),
+            secs(10),
+        );
+        assert_eq!(track_json(&dirs, EX_MONO)["exports"]["rc5"]["memory"], 7);
         app.assert_no_real_audio();
     }
 
-    // After a restart: the dialog starts in the remembered drive and the box suggests 8.
+    // Between the runs: a stale time, to see the re-export refresh it.
+    let stale = "2020-01-01T00:00:00Z";
+    let mut j = track_json(&dirs, EX_MONO);
+    j["exports"]["rc5"]["at"] = stale.into();
+    std::fs::write(
+        dirs.track_json(EX_MONO),
+        serde_json::to_vec_pretty(&j).unwrap(),
+    )
+    .unwrap();
+
+    // After a restart: the dialog starts in the remembered drive and the box follows the track's
+    // recorded memory (7), nothing is typed.
     let ans = answers(
         &dirs,
         &[
+            format!("export-rc5 {}", base.display()),
             format!("export-rc5 {}", base.display()),
             format!("export-rc5 {}", base.display()),
         ],
@@ -282,9 +321,13 @@ fn export_rc5_flow() {
     let (mut app, wid) = start(&dirs, &ans, &[]);
     pick(&mut app, &wid, "mono backing", EX_MONO);
     target_line(&mut app, EX_MONO, "track");
+    wait_has(
+        &app,
+        &format!("export last id={EX_MONO} memory=7 rc5=7"),
+        secs(10),
+    );
     settle();
-    shot("export-restart-memory-8");
-    set_memory(&app, &wid, "7");
+    shot("export-restart-memory-7");
     press(&app, &wid, BTN_RC5);
     let l = app.wait_line(|l| l.contains("dialog start kind=export-rc5"), secs(10));
     assert!(l.contains("from=last"), "{l}");
@@ -324,8 +367,41 @@ fn export_rc5_flow() {
     let (_, l, r) = read_wav(&target);
     assert_eq!(l, r);
     assert_eq!(settings(&dirs)["rc5_memory"], 7);
+    wait_has(&app, "calliope: export recorded", secs(10));
+    let j = track_json(&dirs, EX_MONO);
+    assert_eq!(j["exports"]["rc5"]["memory"], 7);
+    assert!(
+        j["exports"]["rc5"]["at"].as_str().unwrap() > stale,
+        "the time is refreshed: {j}"
+    );
+
+    // One track per memory: 7 for another track takes it over (Yes to overwrite).
+    pick(&mut app, &wid, "plain mp3", EX_PLAIN);
+    target_line(&mut app, EX_PLAIN, "track");
+    set_memory(&app, &wid, "7");
+    press(&app, &wid, BTN_RC5);
+    app.wait_line(
+        |l| l.contains("export prepare target=rc5 result=plan exists=true"),
+        secs(10),
+    );
+    app.key(&wid, "Tab Return");
+    let l = app.wait_line(|l| l.contains("export confirm answer="), secs(10));
+    assert!(l.contains("answer=yes"), "{l}");
+    wait_has(
+        &app,
+        &format!("calliope: export cleared id={EX_MONO} memory=7"),
+        secs(30),
+    );
+    wait_has(
+        &app,
+        &format!("calliope: export recorded id={EX_PLAIN} target=rc5 memory=7"),
+        secs(30),
+    );
+    settle();
+    assert!(track_json(&dirs, EX_MONO)["exports"].get("rc5").is_none());
+    assert_eq!(track_json(&dirs, EX_PLAIN)["exports"]["rc5"]["memory"], 7);
     assert_eq!(
-        snapshot(&dirs.repo()),
+        snapshot_except_exports(&dirs.repo()),
         before,
         "the repository must not change"
     );
@@ -392,7 +468,7 @@ fn export_mp3_and_ogg() {
         return;
     }
     let dirs = export_dirs("export_mp3_and_ogg");
-    let before = snapshot(&dirs.repo());
+    let before = snapshot_except_exports(&dirs.repo());
     let dest = dirs.base().join("music");
     std::fs::create_dir_all(&dest).unwrap();
     let ans = answers(
@@ -400,6 +476,7 @@ fn export_mp3_and_ogg() {
         &[
             format!("export-audio {}", dest.display()),
             format!("export-audio {}", dest.display()),
+            "export-audio CANCEL".to_string(),
         ],
     );
     let (mut app, wid) = start(&dirs, &ans, &[]);
@@ -411,6 +488,7 @@ fn export_mp3_and_ogg() {
     assert!(!l.contains("from=last"), "{l}");
     wait_done(&mut app);
     settle();
+    shot("export-mp3-done");
     let mp3 = dest.join("The Example Band - Stem Mix.mp3");
     assert!(mp3.is_file());
     let t = tags(&mp3);
@@ -435,7 +513,7 @@ fn export_mp3_and_ogg() {
     .unwrap();
     assert!((dur - 6.5).abs() < 0.2, "4 s + 2.5 s count-in, got {dur}");
 
-    press(&app, &wid, BTN_OGG);
+    press(&app, &wid, BTN_OGG_AFTER_MP3);
     let l = app.wait_line(|l| l.contains("dialog start kind=export-audio"), secs(10));
     assert!(l.contains("from=last"), "{l}");
     app.wait_line(|l| l.contains("export done path="), secs(30));
@@ -449,6 +527,52 @@ fn export_mp3_and_ogg() {
     assert_eq!(t["album"], "Export Tests");
     assert_eq!(t["track"], "3");
     assert_eq!(settings(&dirs)["export_dir"], dest.display().to_string());
+    wait_has(&app, "calliope: export recorded", secs(10));
+    let j = track_json(&dirs, EX_STEM);
+    assert_eq!(j["exports"]["mp3"]["path"], mp3.display().to_string());
+    assert_eq!(j["exports"]["ogg"]["path"], ogg.display().to_string());
+    wait_has(&app, &format!("export last id={EX_STEM}"), secs(10));
+    settle();
+    shot("export-last-lines");
+    assert!(
+        layout_overflow(&app) <= 14,
+        "layout overflow {}",
+        layout_overflow(&app)
+    );
+    size(&wid, 1024, 640);
+    settle();
+    shot("export-last-lines-1024");
+    size(&wid, 1280, 800);
+
+    // The dialog starts where the last file went.
+    press(&app, &wid, BTN_MP3);
+    let l = app.wait_line(|l| l.contains("dialog start kind=export-audio"), secs(10));
+    assert!(
+        l.contains("from=recorded") && l.contains(&format!("dir={}", dest.display())),
+        "{l}"
+    );
+    sleep_ms(500);
+
+    // The Library shows the rows.
+    app.key(&wid, "alt+1");
+    app.wait_view("library");
+    wait_has(
+        &app,
+        &format!("track exports id={EX_STEM} rows=mp3,ogg"),
+        secs(10),
+    );
+    settle();
+    // Scroll the fields to the bottom to see the rows.
+    let _ = std::process::Command::new("xdotool")
+        .args(["mousemove", "--window", &wid, "940", "300"])
+        .status();
+    for _ in 0..8 {
+        let _ = std::process::Command::new("xdotool")
+            .args(["click", "5"])
+            .status();
+    }
+    settle();
+    shot("library-export-rows");
     assert!(
         settings(&dirs)
             .get("rc5_memory")
@@ -468,11 +592,58 @@ fn export_mp3_and_ogg() {
         ]
     );
     assert_eq!(
-        snapshot(&dirs.repo()),
+        snapshot_except_exports(&dirs.repo()),
         before,
         "the repository must not change"
     );
     app.assert_no_real_audio();
+    app.no_csp_violation();
+}
+
+#[test]
+#[ignore]
+fn export_info_keeps_library_edit() {
+    if !ready() {
+        return;
+    }
+    let dirs = export_dirs("export_info_keeps_library_edit");
+    let dest = dirs.base().join("music");
+    std::fs::create_dir_all(&dest).unwrap();
+    let ans = answers(&dirs, &[format!("export-audio {}", dest.display())]);
+    let (mut app, wid) = start(&dirs, &ans, &[]);
+    app.key(&wid, "alt+1");
+    app.wait_view("library");
+    pick(&mut app, &wid, "plain mp3", EX_PLAIN);
+    app.key(&wid, "ctrl+e");
+    app.wait_contains(&format!("mode=edit id={EX_PLAIN}"));
+    // Band, Album, Title: the title is changed (no rename confirmation).
+    app.key(&wid, "Tab Tab Tab ctrl+a");
+    app.typ(&wid, "Plain Edited");
+    settle();
+
+    app.key(&wid, "alt+6");
+    app.wait_view("export");
+    press(&app, &wid, BTN_MP3);
+    app.wait_line(|l| l.contains("dialog start kind=export-audio"), secs(10));
+    wait_done(&mut app);
+    wait_has(&app, "calliope: export recorded", secs(10));
+    settle();
+
+    app.key(&wid, "alt+1");
+    app.wait_view("library");
+    settle();
+    app.key(&wid, "ctrl+s");
+    app.wait_contains(&format!("saved id={EX_PLAIN}"));
+    settle();
+    assert_eq!(app.count("conflict"), 0, "no conflict");
+    let j = track_json(&dirs, EX_PLAIN);
+    assert_eq!(j["title"], "Plain Edited");
+    assert!(j["exports"]["mp3"]["path"].is_string(), "{j}");
+    wait_has(
+        &app,
+        &format!("track exports id={EX_PLAIN} rows=mp3"),
+        secs(10),
+    );
     app.no_csp_violation();
 }
 
