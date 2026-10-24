@@ -168,9 +168,9 @@ Editor); a plain backing track is exported as it is.
   plus one. The dialog starts in the drive you chose last. Eject the RC-5 before unplugging it.
 * "MP3 file" / "OGG file": choose a folder; the file is named `Band - Title.mp3` (or `.ogg`) and
   carries the title, band, album, track number and year as tags.
-* Count-in: every export starts with 4 beats of silence at the track's tempo, with six ticks
-  ending on the first beat, so the audio that follows is in time with the loop. The exported
-  file is therefore 4 beats longer than the original.
+* Count-in: every export starts with 5 beats of silence at the track's tempo, with six ticks
+  in the first 4 beats (the 5th beat is silent), so the audio that follows is in time with the
+  loop. The exported file is therefore 5 beats longer than the original.
 * An existing file is only replaced after you confirm. Cancel stops a running export and leaves
   nothing behind; the repository is never changed.
 

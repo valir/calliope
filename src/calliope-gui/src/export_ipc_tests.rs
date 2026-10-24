@@ -117,7 +117,7 @@ fn info_for_each_fixture() {
     let i = rig.info(401);
     assert!(i.available && i.reason.is_none());
     assert_eq!(i.source.as_deref(), Some("backings/backing.flac"));
-    assert_eq!(i.count_in, Some(CountInInfo { bpm: 120.0, first_beat_ms: 0.0, lead_ms: 2000.0 }));
+    assert_eq!(i.count_in, Some(CountInInfo { bpm: 120.0, first_beat_ms: 0.0, lead_ms: 2500.0 }));
     assert_eq!(i.memory, 1);
     assert_eq!(rig.info(402).reason.as_deref(), Some("No mix saved yet: save one in the Editor"));
     assert!(!rig.info(402).available && rig.info(402).source.is_none() && rig.info(402).count_in.is_none());
@@ -125,10 +125,10 @@ fn info_for_each_fixture() {
     assert!(i.available);
     assert_eq!(i.source.as_deref(), Some("backing.mp3"));
     assert!(rig.info(404).available);
-    assert_eq!(rig.info(405).count_in, Some(CountInInfo { bpm: 100.0, first_beat_ms: 0.0, lead_ms: 2400.0 }));
+    assert_eq!(rig.info(405).count_in, Some(CountInInfo { bpm: 100.0, first_beat_ms: 0.0, lead_ms: 3000.0 }));
     assert_eq!(rig.info(406).count_in.unwrap().first_beat_ms, 500.0);
     let i = rig.info(407);
-    assert_eq!(i.count_in, Some(CountInInfo { bpm: 100.0, first_beat_ms: 3000.0, lead_ms: 2400.0 }));
+    assert_eq!(i.count_in, Some(CountInInfo { bpm: 100.0, first_beat_ms: 3000.0, lead_ms: 3000.0 }));
     assert_eq!(
         rig.info(408).reason.as_deref(),
         Some("The saved mix (backings/backing.flac) is missing: save it again in the Editor")

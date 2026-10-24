@@ -8,6 +8,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::Manager;
 
+use crate::export_audio::LEAD_BEATS;
 use crate::export_job::{
     ExportEvent, ExportPlan, ExportSnapshot, ExportState, PlanInput, Sink, TargetReq, BUSY_MESSAGE, STALE_MESSAGE,
 };
@@ -23,7 +24,7 @@ use crate::tempo_store::TempoStore;
 pub struct CountInInfo {
     pub bpm: f64,
     pub first_beat_ms: f64,
-    /// 4 beats at `bpm`.
+    /// `LEAD_BEATS` beats at `bpm`.
     pub lead_ms: f64,
 }
 
@@ -74,7 +75,7 @@ pub fn do_export_info(
             info.count_in = Some(CountInInfo {
                 bpm: seg.bpm,
                 first_beat_ms: seg.start_ms,
-                lead_ms: 4.0 * 60000.0 / seg.bpm,
+                lead_ms: LEAD_BEATS as f64 * 60000.0 / seg.bpm,
             });
         }
         _ => info.reason = Some(NO_TEMPO_REASON.into()),

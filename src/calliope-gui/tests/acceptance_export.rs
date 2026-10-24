@@ -1,7 +1,7 @@
 //! Rust-side acceptance tests of specs/gui-export.md (plan section 7), through the `do_*`
 //! functions of `export_ipc`. Temporary directories only (a copy of `tests/fixtures/library-export`,
 //! temp destinations), the scripted dialog, the local ffmpeg/ffprobe; no real drive, no audio device.
-//! Every length is "the original + 4 beats at the first section's BPM" (owner answer 1).
+//! Every length is "the original + 5 beats at the first section's BPM" (owner answer 1).
 
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
@@ -319,7 +319,7 @@ fn ac_plain_backing_is_exportable() {
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     let (rate, l, _) = read_wav(&wav_path(&base, 3));
     assert_eq!(rate, 44100);
-    assert_seconds(l.len(), 6.0, 0.03);
+    assert_seconds(l.len(), 6.5, 0.03);
     e.repo_unchanged();
 }
 
@@ -334,13 +334,13 @@ fn ac_rc5_memory_7() {
     assert_eq!(plan.path, wav_path(&base, 7).display().to_string());
     let (rate, l, r) = read_wav(&wav_path(&base, 7));
     assert_eq!(rate, 44100);
-    // 4 beats at 120 BPM (2 s) + the 4 s original.
-    assert_eq!(l.len(), 88200 + 176400);
+    // 5 beats at 120 BPM (2.5 s) + the 4 s original.
+    assert_eq!(l.len(), 110250 + 176400);
     let (ol, or) = decode(&e.repo.join("tracks").join(id(401)).join("backings/backing.flac"));
     assert_eq!(ol.len(), 176400);
     // The original is unchanged after the lead; the ticks are all inside the lead.
-    assert!(l[88200..] == ol[..] && r[88200..] == or[..], "the original differs");
-    assert!(l[..88200].iter().any(|&v| v != 0.0), "no ticks");
+    assert!(l[110250..] == ol[..] && r[110250..] == or[..], "the original differs");
+    assert!(l[..110250].iter().any(|&v| v != 0.0), "no ticks");
     assert_eq!(std::fs::read_dir(wav_path(&base, 7).parent().unwrap()).unwrap().count(), 1);
     e.repo_unchanged();
 }
@@ -377,7 +377,7 @@ fn ac_rc5_overwrite_confirmed() {
     e.start(&plan.token, true).unwrap();
     assert_eq!(e.wait().phase, ExportPhase::Done);
     let (_, l, _) = read_wav(&wav_path(&base, 7));
-    assert_eq!(l.len(), 88200 + 176400);
+    assert_eq!(l.len(), 110250 + 176400);
     assert_eq!(std::fs::read(dir.join("notes.txt")).unwrap(), b"mine");
     e.repo_unchanged();
 }
@@ -409,7 +409,7 @@ fn ac_rc5_mono_becomes_stereo() {
     assert_eq!(rate, 44100);
     assert!(l == r, "both channels carry the same signal");
     assert!(l.iter().any(|v| v.abs() > 0.1));
-    assert_eq!(l.len(), 88200 + 176400);
+    assert_eq!(l.len(), 110250 + 176400);
     e.repo_unchanged();
 }
 
@@ -435,10 +435,10 @@ fn ac_rc5_resamples_48k() {
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     let (rate, l, _) = read_wav(&wav_path(&base, 5));
     assert_eq!(rate, 44100);
-    // 4 beats at 100 BPM (2.4 s) + the 4 s original.
-    let want = 105840 + 176400;
+    // 5 beats at 100 BPM (3 s) + the 4 s original.
+    let want = 132300 + 176400;
     assert!(l.len().abs_diff(want) <= 1, "{} vs {want}", l.len());
-    let tone = &l[105840 + 20000..105840 + 40000];
+    let tone = &l[132300 + 20000..132300 + 40000];
     assert!(goertzel(tone, 1000.0) > 5.0 * goertzel(tone, 440.0));
     e.repo_unchanged();
 }
@@ -460,7 +460,7 @@ fn ac_mp3_export() {
     assert_eq!(tag(&v, "album").as_deref(), Some("Export Tests"));
     assert_eq!(tag(&v, "track").as_deref(), Some("3"));
     assert_eq!(tag(&v, "date").as_deref(), Some("2021"));
-    assert_seconds(decode(&file).0.len(), 6.0, 0.03);
+    assert_seconds(decode(&file).0.len(), 6.5, 0.03);
     // A track with an odd name and no album.
     let (_, s) = e.export(409, TargetReq::Mp3, &out);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
@@ -483,7 +483,7 @@ fn ac_ogg_export() {
     assert_eq!(tag(&v, "title").as_deref(), Some("Stem Mix"));
     assert_eq!(tag(&v, "artist").as_deref(), Some(BAND));
     assert_eq!(tag(&v, "album").as_deref(), Some("Export Tests"));
-    assert_seconds(decode(&file).0.len(), 6.0, 0.03);
+    assert_seconds(decode(&file).0.len(), 6.5, 0.03);
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 1);
     e.repo_unchanged();
 }
@@ -576,7 +576,7 @@ fn ac_remembered_after_restart() {
 #[test]
 fn ac_count_in_before_the_first_beat() {
     // (track, file, first beat frame in the original, lead frames, original length in frames)
-    for (n, first, lead) in [(406u32, 22050usize, 88200usize), (407, 132300, 105840)] {
+    for (n, first, lead) in [(406u32, 22050usize, 110250usize), (407, 132300, 132300)] {
         let e = Env::new();
         let wav_base = e.rc5("rc5");
         let out = e.folder("out");
@@ -591,14 +591,16 @@ fn ac_count_in_before_the_first_beat() {
         let original = e.repo.join("tracks").join(id(n));
         let src = if n == 406 { original.join("backings/backing.flac") } else { original.join("intro.flac") };
         let (ol, or) = decode(&src);
-        // Length: the original + 4 beats.
+        // Length: the original + 5 beats.
         assert_eq!(wl.len(), lead + ol.len(), "{n}");
         assert_seconds(ml.len(), (lead + ol.len()) as f64 / 44100.0, 0.03);
-        // The ticks sit at first + {0, 1, 2, 2.5, 3, 3.5} beats; the count ends on the first beat.
-        let beat = lead / 4;
+        // The ticks sit at first + {0, 1, 2, 2.5, 3, 3.5} beats; the last tick is at first + 3.5 beats, the first beat at the end of the 5-beat lead.
+        let beat = lead / 5;
         let ticks: Vec<usize> =
             [0.0, 1.0, 2.0, 2.5, 3.0, 3.5].iter().map(|o| first + (o * beat as f64).round() as usize).collect();
-        assert_eq!(first + 4 * beat, lead + first, "the count ends on the first beat");
+        assert_eq!(ticks[5], first + (3.5 * beat as f64).round() as usize, "the last tick");
+        assert!(ticks[5] + 1400 < lead + first, "the 5th beat of the lead is silent before the first beat");
+        assert_eq!(first + 5 * beat, lead + first, "the first beat is 5 beats after the start");
         // WAV: silence + exactly six ticks until the original starts; the original after the lead
         // is bit-exact except under a tick that overlaps it.
         for (k, v) in wl[..lead].iter().enumerate() {
@@ -677,9 +679,9 @@ fn ac_count_in_odd_beat_length_rounds_once_and_ticks_are_exact() {
     let (ol, _) = decode(&e.repo.join("tracks").join(id(401)).join("backings/backing.flac"));
     let beat = (44100.0f64 * 60.0 / 120.7).round() as usize;
     let first = (333.0f64 * 44.1).round() as usize;
-    assert_eq!(l.len(), 4 * beat + 176400, "original + exactly 4 beats, the beat rounded once");
+    assert_eq!(l.len(), 5 * beat + 176400, "original + exactly 5 beats, the beat rounded once");
     for &t in &ticks_for(first, beat) {
-        let o = tick_onset(&l, &ol, 4 * beat, t.saturating_sub(200), t + 400).unwrap_or_else(|| panic!("no tick near {t}"));
+        let o = tick_onset(&l, &ol, 5 * beat, t.saturating_sub(200), t + 400).unwrap_or_else(|| panic!("no tick near {t}"));
         assert!(o >= t && o <= t + 3, "tick at {t} starts at {o}");
     }
     e.repo_unchanged();
@@ -695,9 +697,9 @@ fn ac_count_in_ignores_speed_and_bar_length() {
     let (_, s) = e.export(401, rc5("7"), &base);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     let (_, l, _) = read_wav(&wav_path(&base, 7));
-    assert_eq!(l.len(), 88200 + 176400, "always 4 beats at the first section's BPM, speed 100 %");
+    assert_eq!(l.len(), 110250 + 176400, "always 5 beats at the first section's BPM, speed 100 %");
     let info = e.info(401);
-    assert_eq!(info.count_in.unwrap().lead_ms, 2000.0);
+    assert_eq!(info.count_in.unwrap().lead_ms, 2500.0);
     e.repo_unchanged();
 }
 
@@ -709,7 +711,7 @@ fn ac_count_in_uses_the_first_section_only_and_the_map_as_it_is_at_start() {
     let base = e.rc5("rc5");
     let (_, s) = e.export(401, rc5("1"), &base);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
-    assert_eq!(read_wav(&wav_path(&base, 1)).1.len(), 88200 + 176400);
+    assert_eq!(read_wav(&wav_path(&base, 1)).1.len(), 110250 + 176400);
 
     // The first beat moves between prepare and start: the ticks follow the new map.
     e.answer(&rc5("2"), &base);
@@ -719,12 +721,12 @@ fn ac_count_in_uses_the_first_section_only_and_the_map_as_it_is_at_start() {
     assert_eq!(e.wait().phase, ExportPhase::Done);
     let (_, l, _) = read_wav(&wav_path(&base, 2));
     let (ol, _) = decode(&e.repo.join("tracks").join(id(401)).join("backings/backing.flac"));
-    assert_eq!(l.len(), 88200 + 176400);
+    assert_eq!(l.len(), 110250 + 176400);
     for &t in &ticks_for(44100, 22050) {
-        let o = tick_onset(&l, &ol, 88200, t.saturating_sub(200), t + 400).unwrap_or_else(|| panic!("no tick near {t}"));
+        let o = tick_onset(&l, &ol, 110250, t.saturating_sub(200), t + 400).unwrap_or_else(|| panic!("no tick near {t}"));
         assert!(o >= t && o <= t + 3, "tick at {t} starts at {o}");
     }
-    assert!(tick_onset(&l, &ol, 88200, 0, 44100).is_none(), "nothing before the moved first tick");
+    assert!(tick_onset(&l, &ol, 110250, 0, 44100).is_none(), "nothing before the moved first tick");
 
     // The map is emptied between prepare and start: refused, nothing written.
     e.answer(&rc5("3"), &base);
@@ -809,7 +811,7 @@ fn ac_destination_inside_the_repository_is_refused() {
 fn ac_mp3_and_ogg_keep_the_source_rate_and_channels() {
     let e = Env::new();
     let out = e.folder("out");
-    for (n, rate, ch, secs) in [(405u32, "48000", 2, 6.4), (404, "44100", 1, 6.0)] {
+    for (n, rate, ch, secs) in [(405u32, "48000", 2, 7.0), (404, "44100", 1, 6.5)] {
         for (t, ext, codec) in [(TargetReq::Mp3, "mp3", "mp3"), (TargetReq::Ogg, "ogg", "vorbis")] {
             let (plan, s) = e.export(n, t, &out);
             assert_eq!(s.phase, ExportPhase::Done, "{n} {ext} {s:?}");
@@ -897,7 +899,7 @@ fn ac_mp3_overwrite_needs_confirmation_and_replaces() {
     let plan = e.prepare(401, TargetReq::Mp3).unwrap().unwrap();
     e.start(&plan.token, true).unwrap();
     assert_eq!(e.wait().phase, ExportPhase::Done);
-    assert_seconds(decode(&f).0.len(), 6.0, 0.03);
+    assert_seconds(decode(&f).0.len(), 6.5, 0.03);
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 1);
     // A used token cannot start a second export.
     assert!(e.start(&plan.token, true).is_err());
@@ -977,7 +979,7 @@ fn ac_long_intro_is_kept_and_a_stem_or_other_files_are_never_exported() {
     let (_, s) = e.export(407, rc5("7"), &base);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     let (_, l, _) = read_wav(&wav_path(&base, 7));
-    let (lead, first) = (105840usize, 132300usize);
+    let (lead, first) = (132300usize, 132300usize);
     assert_eq!(l.len(), lead + 264600);
     // The original's 3 s of silence and its tone are where the original put them.
     let tone = |a: usize| goertzel(&l[a..a + 20000], 440.0);
@@ -987,7 +989,7 @@ fn ac_long_intro_is_kept_and_a_stem_or_other_files_are_never_exported() {
     let (_, s) = e.export(401, rc5("8"), &base);
     assert_eq!(s.phase, ExportPhase::Done);
     let (_, l, r) = read_wav(&wav_path(&base, 8));
-    let w = 88200 + 5000..88200 + 25000;
+    let w = 110250 + 5000..110250 + 25000;
     assert!(goertzel(&l[w.clone()], 330.0) > 5.0 * goertzel(&l[w.clone()], 550.0));
     assert!(goertzel(&r[w.clone()], 550.0) > 5.0 * goertzel(&r[w], 330.0));
     e.repo_unchanged();

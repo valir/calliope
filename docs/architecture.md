@@ -43,7 +43,7 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (beat detection job) | Laptop | Renders the drums + bass + guitar stems (`other` without a guitar, else all stems) at unity gain to a part file, uploads it to `POST /v1/beats`, waits, fetches and validates the beats, derives the sections, saves them through the `TempoStore`; phases, cancel, cleanup | Rust (own std thread) | `src/beat_detect.rs` (+ `src/beat_detect_tests.rs`) |
 | calliope-gui (backing render) | Laptop | Offline render of the mix to FLAC | Rust, `flacenc` | `src/backing_render.rs` |
 | calliope-gui (export rules) | Laptop | Which file a track exports (first backing variant, else `audio`) or why not, RC-5 memory numbers and paths, MP3/OGG file names, output rate/channels per target, tags, ffprobe stream info, ffmpeg encoder list, memory suggestion, dialog start folder | Rust, pure | `src/export_rules.rs` |
-| calliope-gui (export audio) | Laptop | The export count-in in exact frames (4 beats of silence before the original, 6 ticks at the first beat + 0, 1, 2, 2.5, 3, 3.5 beats of the output, ending on the first beat), tick mixing, ffmpeg decoder/encoder argv, the pipeline ffmpeg decode → Rust lead + ticks → WAV writer or ffmpeg encoder stdin, cancel | Rust (std threads), external `ffmpeg` | `src/export_audio.rs` |
+| calliope-gui (export audio) | Laptop | The export count-in in exact frames (5 beats of silence before the original, 6 ticks at the first beat + 0, 1, 2, 2.5, 3, 3.5 beats of the output, the 5th lead beat silent), tick mixing, ffmpeg decoder/encoder argv, the pipeline ffmpeg decode → Rust lead + ticks → WAV writer or ffmpeg encoder stdin, cancel | Rust (std threads), external `ffmpeg` | `src/export_audio.rs` |
 | calliope-gui (export job) | Laptop | One export at a time: single-use plans from the chosen folder, part file in the destination + rename, folders it created removed on failure/cancel, events, snapshot/watch, shutdown | Rust (own std thread) | `src/export_job.rs` (+ `src/export_job_tests.rs`) |
 | calliope-gui (tempo map) | Laptop | Tempo segments, beat grid in 1/64-note ticks (16 per beat, `beats_per_bar` default 4), ms<->tick, snapping, "set BPM at position", beats in a range, loop boundary re-snapping; detected changes (`Segment.detected_ms`) and placed changes (`Segment.on_beat`, added or moved in the Player) both start their section on a beat: beat-rounded tick base, stretched last beat. Section operations: `move_change` (1/64-beat steps of the left tempo; detected: ±256 from the detected position, widened to the current offset; others: counted from the left section's start, no limit), `set_section_bpm`, `scale_section` (×2/÷2), `add_change` (on the split section's 1/64-beat grid), `remove_change`; every section ≥ 1 beat of its own tempo; `set_change_offset` (the Editor's, detected only). Per-section settings `Segment.meta: SectionMeta {name, metronome, count_in}` (flattened; carried through edits: Add copies the split section's metronome flag, Remove drops the joined section's), `set_section_flags`, `set_section_name`, `section_jump_ms` (start, or end; the player lands End on the last frame inside the section) | Rust, pure | `src/tempo_map.rs` |
 | calliope-gui (player state) | Laptop | `player.json` schema 6 (reads 1-6, migrating the old global metronome of 1-4; lenient read, strict write, newer schema read-only), the track speed (stored as a factor 0.25..2.0, used as a whole percentage), loop list operations (a new loop ends at the next tempo section or the track end), per-loop speed-training settings (Training on also sets Loop On; Loop On off ends Training), source choice rule, load/save | Rust + serde, pure | `src/player_state.rs` |
@@ -435,9 +435,9 @@ the GUI crate, `src/calliope-gui/`.
   album)/date. **Count-in** (required: a track without a tempo map
   cannot be exported): read from the Player's tempo map at export time (`TempoStore::load`, so an open Player session is
   flushed first; nothing cached). At the output rate R: `beat = round(R·60/bpm)` (first section's BPM, speed and
-  `beats_per_bar` ignored), `lead = 4·beat`, `first = round(segments[0].start_ms·R/1000)`; the file is `lead` frames of
-  silence + the original unchanged (always original + 4 beats long); the Player's click (no accent) starts at output frames
-  `first + round(k·beat)`, k = 0, 1, 2, 2.5, 3, 3.5, so the count ends on the first beat at `lead + first`; samples under a
+  `beats_per_bar` ignored), `lead = 5·beat` (`LEAD_BEATS`), `first = round(segments[0].start_ms·R/1000)`; the file is `lead` frames of
+  silence + the original unchanged (always original + 5 beats long); the Player's click (no accent) starts at output frames
+  `first + round(k·beat)`, k = 0, 1, 2, 2.5, 3, 3.5, so the last tick is at `first + 3.5·beat` and the first beat at `lead + first = first + 5·beat` (the 5th lead beat is silent); samples under a
   tick are clamped to ±1, all others bit-exact. **Writes**: a `.<name>.calliope-<pid>-<n>.part` file in the
   destination folder (created with `create_new`; ffmpeg encoders write it with `-y`), fsync, `rename` over the target
   (an existing target only after the user confirmed; otherwise exists-check + rename, since FAT has no hard links),
@@ -1484,9 +1484,16 @@ whatever is there (the silence, or the intro). Everything is in whole frames at 
 a tick are clamped. The first beat is read from the tempo map at export time (prepare and again at start), because a later
 Editor feature will let the user place it precisely. A track without a tempo map cannot be exported: the buttons are
 disabled with "Set a tempo in the Player first: the export starts with a count-in", and Rust refuses (`no-tempo`).
-Consequence: "the same length" in the export spec means the original + 4 beats. Alternatives considered before the
+Consequence: "the same length" in the export spec means the original + 4 beats (superseded on 2026-10-24: 5 beats). Alternatives considered before the
 answers: prepending only the missing silence (file length would depend on the intro), cutting the intro, exporting
 without a count-in when there is no tempo.
+
+### 2026-10-24: Export count-in lead is 5 beats, the last silent   (fix: export count-in; owner, after testing on the RC-5)
+After trying the export on the real RC-5 the owner wants the count-in to start one beat earlier. The lead before the original
+is now `LEAD_BEATS = 5` beats (still the first section's BPM, speed ignored): the six ticks keep their positions relative to
+the file start (`first + round(k·beat)`, k = 0, 1, 2, 2.5, 3, 3.5), the original starts after `5·beat` frames of silence, so the
+first beat is at `lead + first = first + 5·beat` and the 5th beat of the lead is silent (like the Player's count-in). The file is
+the original + 5 beats. This supersedes the 2026-10-23 "4 beats ending on the first beat"; everything else of that entry stands.
 
 ### 2026-10-23: Export writes = part file in the destination folder + rename; one export job at a time   (feature: gui-export; plan §2.6)
 A cancelled or failed export must leave nothing, and an existing file is replaced only after a confirmation. Choice: the

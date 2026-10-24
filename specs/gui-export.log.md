@@ -24,3 +24,4 @@ fix round 1 | implementer + me | stale treeFocus cleared by selectTrack; exportT
 tester (re-verify 1) | tester | defect fixed; all PASS
 reviewer (re-verify 1) | reviewer | APPROVED
 report | me | done
+fix round 2 (owner, RC-5 test) | implementer | count-in lead 5 beats, last silent; npm test + GUI suite pass

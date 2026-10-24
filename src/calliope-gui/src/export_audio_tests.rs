@@ -15,14 +15,14 @@ fn map(start_ms: f64, bpm: f64) -> TempoMap {
 #[test]
 fn plan_worked_examples() {
     let p = count_in_plan(&map(500.0, 120.0), 44100).unwrap();
-    assert_eq!((p.beat_frames, p.lead_frames), (22050, 88200));
+    assert_eq!((p.beat_frames, p.lead_frames), (22050, 110250));
     assert_eq!(p.ticks, [22050, 44100, 66150, 77175, 88200, 99225]);
-    assert_eq!(p.first_beat_frame, 110250);
+    assert_eq!(p.first_beat_frame, 132300);
     assert_eq!(p.bpm, 120.0);
     let p = count_in_plan(&map(3000.0, 100.0), 44100).unwrap();
-    assert_eq!((p.beat_frames, p.lead_frames), (26460, 105840));
+    assert_eq!((p.beat_frames, p.lead_frames), (26460, 132300));
     assert_eq!(p.ticks, [132300, 158760, 185220, 198450, 211680, 224910]);
-    assert_eq!(p.first_beat_frame, 238140);
+    assert_eq!(p.first_beat_frame, 264600);
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn plan_odd_beats_round_half_away_from_zero() {
     let p = count_in_plan(&map(0.0, bpm), 44100).unwrap();
     let beat = (44100.0f64 * 60.0 / bpm).round() as u64;
     assert_eq!(p.beat_frames, beat);
-    assert_eq!(p.lead_frames, 4 * beat);
+    assert_eq!(p.lead_frames, LEAD_BEATS * beat);
     let half = (2.5 * beat as f64).round() as u64;
     // 2.5 * odd beat ends in .5 and goes up
     assert_eq!(beat % 2, 1, "the test needs an odd beat ({beat})");
@@ -56,9 +56,9 @@ fn plan_extreme_tempos_other_rates_and_meter() {
     let p = count_in_plan(&map(0.0, 300.0), 44100).unwrap();
     assert_eq!(p.beat_frames, 8820);
     let p = count_in_plan(&map(0.0, 20.0), 44100).unwrap();
-    assert_eq!((p.beat_frames, p.lead_frames), (132300, 529200));
+    assert_eq!((p.beat_frames, p.lead_frames), (132300, 661500));
     let p = count_in_plan(&map(0.0, 100.0), 48000).unwrap();
-    assert_eq!((p.beat_frames, p.lead_frames), (28800, 115200));
+    assert_eq!((p.beat_frames, p.lead_frames), (28800, 144000));
     let mut three = map(500.0, 120.0);
     three.beats_per_bar = 3;
     assert_eq!(count_in_plan(&three, 44100), count_in_plan(&map(500.0, 120.0), 44100));
@@ -247,7 +247,7 @@ fn wav_equals_lead_plus_original_with_ticks() {
         assert_eq!(got.len(), want.len(), "{n}");
         assert!(got == want, "{n}: samples differ");
         assert_eq!(stats.frames, (got.len() / 2) as u64);
-        assert_eq!(stats.frames, 88200 + 176400, "{n}");
+        assert_eq!(stats.frames, 110250 + 176400, "{n}");
         assert!(stats.clipped < 50);
     }
 }
@@ -257,19 +257,19 @@ fn long_intro_ticks_fall_in_silence() {
     let (_d, dir) = fixture(407);
     let src = dir.join("intro.flac");
     let (stats, got, plan) = render_wav(&src, 3000.0, 100.0);
-    assert_eq!(plan.first_beat_frame, 238140);
-    assert_eq!(stats.frames, 105840 + 264600);
+    assert_eq!(plan.first_beat_frame, 264600);
+    assert_eq!(stats.frames, 132300 + 264600);
     let click = Click::new(44100).samples().to_vec();
-    let mut want = vec![0.0f32; 238140 * 2];
+    let mut want = vec![0.0f32; 264600 * 2];
     mix_ticks(&mut want, 2, 0, &plan, &click);
-    assert!(got[..238140 * 2] == want[..], "silence + exactly the six ticks until the first beat");
+    assert!(got[..264600 * 2] == want[..], "silence + exactly the six ticks until the first beat");
     for &t in &plan.ticks {
         let w = &left(&got)[t as usize..t as usize + click.len()];
         assert!(goertzel(w, 1500.0, 44100) > 0.05);
     }
-    let after = &left(&got)[238140..238140 + 20000];
+    let after = &left(&got)[264600..264600 + 20000];
     assert!(goertzel(after, 440.0, 44100) > 10.0 * goertzel(after, 1000.0, 44100));
-    let before = &left(&got)[238140 - 5000..238140];
+    let before = &left(&got)[264600 - 5000..264600];
     assert!(before.iter().all(|&v| v == 0.0));
 }
 
@@ -277,14 +277,14 @@ fn long_intro_ticks_fall_in_silence() {
 fn mono_becomes_stereo_and_48k_is_resampled() {
     let (_d, dir) = fixture(404);
     let (stats, got, _) = render_wav(&dir.join("backing.flac"), 0.0, 120.0);
-    assert_eq!(stats.frames, 88200 + 176400);
+    assert_eq!(stats.frames, 110250 + 176400);
     assert!(got.chunks_exact(2).all(|f| f[0] == f[1]));
     assert!(got.iter().any(|&v| v.abs() > 0.1));
 
     let (_d, dir) = fixture(405);
     let (stats, got, plan) = render_wav(&dir.join("backing.flac"), 0.0, 100.0);
-    assert_eq!(plan.lead_frames, 105840);
-    let want = 105840 + (4.0f64 * 44100.0).round() as u64;
+    assert_eq!(plan.lead_frames, 132300);
+    let want = 132300 + (4.0f64 * 44100.0).round() as u64;
     assert!(stats.frames.abs_diff(want) <= 1, "{} vs {want}", stats.frames);
     let l = left(&got);
     let after = &l[plan.lead_frames as usize + 20000..plan.lead_frames as usize + 40000];
@@ -325,10 +325,10 @@ fn encodes_mp3_and_ogg_with_tags() {
             let p = pipeline(&src, 44100, 2, plan, &part);
             let stats = run(&p, Output::Encode { ffmpeg: "ffmpeg".into(), args }, &AtomicBool::new(false), &mut no_progress())
                 .unwrap_or_else(|e| panic!("{n} {kind:?}: {e}"));
-            assert_eq!(stats.frames, 264600);
+            assert_eq!(stats.frames, 286650);
             let back = reference(&part, 44100, 2);
             let secs = (back.len() / 2) as f64 / 44100.0;
-            assert!((secs - 6.0).abs() <= 0.03, "{n} {kind:?}: {secs}");
+            assert!((secs - 6.5).abs() <= 0.03, "{n} {kind:?}: {secs}");
             let v = probe(&part, "format_tags:stream_tags");
             let mut tags = v["format"]["tags"].as_object().cloned().unwrap_or_default();
             tags.extend(v["streams"][0]["tags"].as_object().cloned().unwrap_or_default());
@@ -430,6 +430,6 @@ fn progress_is_reported_up_to_the_end() {
         calls += 1;
     })
     .unwrap();
-    assert_eq!(last, 264600);
+    assert_eq!(last, 286650);
     assert!(calls > 10);
 }

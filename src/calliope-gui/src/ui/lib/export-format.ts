@@ -30,7 +30,7 @@ function seconds(ms: number): string {
 export function countInText(info: { count_in: CountInInfo | null } | null): string {
   const c = info?.count_in;
   if (!c) return '';
-  return `Count-in: 4 beats at ${c.bpm} BPM, ending on the first beat (adds ${seconds(c.lead_ms)} s)`;
+  return `Count-in: 5 beats at ${c.bpm} BPM, the last one silent before the first beat (adds ${seconds(c.lead_ms)} s)`;
 }
 
 export function resultText(snap: ExportSnapshot | null): string {

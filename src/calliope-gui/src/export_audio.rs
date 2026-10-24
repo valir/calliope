@@ -1,5 +1,5 @@
 //! The audio pipeline of an export (plan sections 2.3 and 2.4): the count-in layout, the Player's
-//! click mixed at exact frames, and the run that streams `ffmpeg` (decoder) through Rust (4 beats
+//! click mixed at exact frames, and the run that streams `ffmpeg` (decoder) through Rust (5 beats
 //! of silence, the ticks) into the RC-5 WAV or into a second `ffmpeg` (encoder). No Tauri.
 
 use std::ffi::OsString;
@@ -29,6 +29,10 @@ const LEAD_BLOCK_FRAMES: usize = 4096;
 /// How long the job loop waits for decoded data before looking at the cancel flag.
 const RECV_TIMEOUT: Duration = Duration::from_millis(50);
 
+/// Length of the count-in lead in beats: 4 counted beats and a 5th, silent one before the first
+/// beat (the Player's count-in has the same silent beat). Owner decision 2026-10-24.
+pub const LEAD_BEATS: u64 = 5;
+
 /// Where the ticks fall. All values are output frames at the export's rate.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CountInPlan {
@@ -49,7 +53,7 @@ pub fn count_in_plan(map: &TempoMap, rate: u32) -> Option<CountInPlan> {
         return None;
     }
     let beat = (f64::from(rate) * 60.0 / seg.bpm).round() as u64;
-    let lead = 4 * beat;
+    let lead = LEAD_BEATS * beat;
     let first = (seg.start_ms * f64::from(rate) / 1000.0).round().max(0.0) as u64;
     let mut ticks = [0u64; 6];
     for (t, off) in ticks.iter_mut().zip(TICK_BEATS) {
