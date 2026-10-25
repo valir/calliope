@@ -149,7 +149,8 @@ fn info_for_each_fixture() {
         Some(CountInInfo {
             bpm: 120.0,
             first_beat_ms: 0.0,
-            lead_ms: 2500.0
+            lead_ms: 2500.0,
+            skip_ms: 0.0
         })
     );
     assert_eq!(i.memory, 1);
@@ -171,7 +172,8 @@ fn info_for_each_fixture() {
         Some(CountInInfo {
             bpm: 100.0,
             first_beat_ms: 0.0,
-            lead_ms: 3000.0
+            lead_ms: 3000.0,
+            skip_ms: 0.0
         })
     );
     assert_eq!(rig.info(406).count_in.unwrap().first_beat_ms, 500.0);
@@ -181,9 +183,20 @@ fn info_for_each_fixture() {
         Some(CountInInfo {
             bpm: 100.0,
             first_beat_ms: 3000.0,
-            lead_ms: 3000.0
+            lead_ms: 3000.0,
+            skip_ms: 0.0
         })
     );
+    // A set first beat: the pane is told how much is left out.
+    let dir = Repository::new(&rig.repo).tracks_dir().join(Rig::id(406));
+    FileTempoStore
+        .replace("t", &dir, &|m| {
+            let mut m = m.clone();
+            m.segments[0].found_ms = Some(500.0);
+            Ok(m)
+        })
+        .unwrap();
+    assert_eq!(rig.info(406).count_in.unwrap().skip_ms, 500.0);
     assert_eq!(
         rig.info(408).reason.as_deref(),
         Some("The saved mix (backings/backing.flac) is missing: save it again in the Editor")

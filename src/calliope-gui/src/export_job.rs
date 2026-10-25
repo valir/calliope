@@ -560,7 +560,7 @@ impl ExportState {
             info_error: None,
         };
         eprintln!(
-            "calliope: export start job={job_id} id={} target={} path={} rate={} channels={} count_in={} first_beat_ms={} lead_frames={} overwrite={overwrite}",
+            "calliope: export start job={job_id} id={} target={} path={} rate={} channels={} count_in={} first_beat_ms={} lead_frames={} skip_frames={} overwrite={overwrite}",
             pl.id,
             kind.as_str(),
             pl.target.display(),
@@ -569,6 +569,7 @@ impl ExportState {
             count_in.bpm,
             tempo.segments[0].start_ms,
             count_in.lead_frames,
+            count_in.skip_frames,
         );
         let cancel = Arc::new(AtomicBool::new(false));
         let work = Work {
@@ -763,8 +764,9 @@ impl Work {
                 args: export_audio::encoder_args(kind, pl.rate, pl.channels, &pl.tags, &self.part),
             },
         };
-        let expected =
-            self.count_in.lead_frames + (pl.duration_s * f64::from(pl.rate)).round() as u64;
+        let expected = (self.count_in.lead_frames
+            + (pl.duration_s * f64::from(pl.rate)).round() as u64)
+            .saturating_sub(self.count_in.skip_frames);
         let mut throttle = Throttle::new(PROGRESS_INTERVAL);
         let stats = export_audio::run(&pipeline, output, &self.cancel, &mut |frames| {
             let p = (frames as f64 / expected.max(1) as f64).min(0.99) as f32;

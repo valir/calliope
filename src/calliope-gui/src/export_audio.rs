@@ -34,14 +34,17 @@ pub struct CountInPlan {
     pub bpm: f64,
     pub beat_frames: u64,
     pub lead_frames: u64,
-    /// In the output: `lead + first`.
+    /// In the output: `lead + first - skip`.
     pub first_beat_frame: u64,
+    /// Decoded frames dropped before writing: the first beat's frame when it is set, else 0.
+    pub skip_frames: u64,
     pub ticks: [u64; 6],
 }
 
 /// The count-in for the first section of `map` at `rate`; `None` for an empty map. The beat is
 /// rounded once (`round(rate * 60 / bpm)`, as the Player's count-in), the first beat is
-/// `round(start_ms * rate / 1000)` frames into the original, each tick is `first + round(offset * beat)`.
+/// `round(start_ms * rate / 1000)` frames into the original, each tick is `(first - skip) + round(offset * beat)`;
+/// `skip` is `first` when the first beat is set (the audio before it is dropped), else 0.
 pub fn count_in_plan(map: &TempoMap, rate: u32) -> Option<CountInPlan> {
     let seg = map.segments.first()?;
     if !(seg.bpm.is_finite() && seg.bpm > 0.0) {
@@ -50,15 +53,17 @@ pub fn count_in_plan(map: &TempoMap, rate: u32) -> Option<CountInPlan> {
     let beat = (f64::from(rate) * 60.0 / seg.bpm).round() as u64;
     let lead = LEAD_BEATS * beat;
     let first = (seg.start_ms * f64::from(rate) / 1000.0).round().max(0.0) as u64;
+    let skip = if map.first_beat_set() { first } else { 0 };
     let mut ticks = [0u64; 6];
     for (t, off) in ticks.iter_mut().zip(TICK_BEATS) {
-        *t = first + (off * beat as f64).round() as u64;
+        *t = (first - skip) + (off * beat as f64).round() as u64;
     }
     Some(CountInPlan {
         bpm: seg.bpm,
         beat_frames: beat,
         lead_frames: lead,
-        first_beat_frame: lead + first,
+        first_beat_frame: lead + first - skip,
+        skip_frames: skip,
         ticks,
     })
 }
@@ -243,7 +248,7 @@ pub(crate) enum Output {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RunStats {
-    /// Frames written (lead + original).
+    /// Frames written (lead + original - skipped).
     pub frames: u64,
     /// Samples clamped under a tick.
     pub clipped: u32,
@@ -459,6 +464,7 @@ pub(crate) fn run(
     // 2. The original.
     let frame_bytes = channels * 4;
     let mut pending: Vec<u8> = Vec::new();
+    let mut skip_left = p.plan.skip_frames;
     loop {
         if cancel.load(Ordering::SeqCst) {
             drop(rx);
@@ -471,6 +477,11 @@ pub(crate) fn run(
             Err(RecvTimeoutError::Disconnected) => break,
         };
         pending.extend_from_slice(&chunk);
+        if skip_left > 0 {
+            let drop_frames = skip_left.min((pending.len() / frame_bytes) as u64);
+            pending.drain(..drop_frames as usize * frame_bytes);
+            skip_left -= drop_frames;
+        }
         let usable = pending.len() / frame_bytes * frame_bytes;
         if usable == 0 {
             continue;

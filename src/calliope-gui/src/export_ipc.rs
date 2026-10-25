@@ -30,6 +30,8 @@ pub struct CountInInfo {
     pub first_beat_ms: f64,
     /// `LEAD_BEATS` beats at `bpm`.
     pub lead_ms: f64,
+    /// The audio before the first beat that the export leaves out (0 unless the first beat is set).
+    pub skip_ms: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -92,6 +94,7 @@ pub fn do_export_info(
                 bpm: seg.bpm,
                 first_beat_ms: seg.start_ms,
                 lead_ms: LEAD_BEATS as f64 * 60000.0 / seg.bpm,
+                skip_ms: tempo.play_start_ms(),
             });
         }
         _ => info.reason = Some(NO_TEMPO_REASON.into()),

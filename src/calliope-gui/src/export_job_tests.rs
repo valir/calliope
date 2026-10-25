@@ -301,6 +301,23 @@ fn rc5_writes_the_memory_file() {
 }
 
 #[test]
+fn set_first_beat_export_is_shorter_and_progress_reaches_one() {
+    let rig = Rig::new();
+    let base = rig.rc5("rc5");
+    let plan = rig.plan(401, ExportKind::Rc5, Some(7), &base).unwrap();
+    let mut tempo = rig.tempo(401);
+    tempo.segments[0].start_ms = 500.0;
+    tempo.segments[0].found_ms = Some(500.0);
+    let (r, _ev, _done) = rig.start(&plan.token, plan.exists, &tempo);
+    r.unwrap();
+    let s = wait_terminal(&rig.state);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    assert_eq!(s.progress, 1.0);
+    let (_, samples) = wav_samples(&base.join("ROLAND/WAVE/007_1/007_1.WAV"));
+    assert_eq!(samples.len() as u64, (110250 + 176400 - 22050) * 2);
+}
+
+#[test]
 fn rc5_refusals_write_nothing() {
     let rig = Rig::new();
     let check = |base: &Path, want: String| {

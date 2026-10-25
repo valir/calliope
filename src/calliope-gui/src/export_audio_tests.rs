@@ -33,6 +33,21 @@ fn plan_worked_examples() {
 }
 
 #[test]
+fn plan_set_first_beat_skips_the_audio_before_it() {
+    let mut m = map(1200.0, 120.0);
+    m.segments[0].found_ms = Some(1200.0);
+    let p = count_in_plan(&m, 44100).unwrap();
+    assert_eq!(p.skip_frames, 52920);
+    assert_eq!(p.ticks, [0, 22050, 44100, 55125, 66150, 77175]);
+    assert_eq!(p.first_beat_frame, 110250);
+    assert_eq!(p.first_beat_frame, p.lead_frames);
+    let p = count_in_plan(&map(1200.0, 120.0), 44100).unwrap();
+    assert_eq!(p.skip_frames, 0);
+    assert_eq!(p.first_beat_frame, 110250 + 52920);
+    assert_eq!(p.ticks[0], 52920);
+}
+
+#[test]
 fn plan_empty_map_and_first_beat_at_zero() {
     assert_eq!(count_in_plan(&TempoMap::default(), 44100), None);
     let p = count_in_plan(&map(0.0, 120.0), 44100).unwrap();
@@ -138,6 +153,7 @@ fn mix_ticks_clamps_and_counts() {
         beat_frames: 10,
         lead_frames: 40,
         first_beat_frame: 40,
+        skip_frames: 0,
         ticks: [2, 100, 200, 300, 400, 500],
     };
     let click = vec![0.5f32; 4];
@@ -561,4 +577,49 @@ fn progress_is_reported_up_to_the_end() {
     .unwrap();
     assert_eq!(last, 286650);
     assert!(calls > 10);
+}
+
+#[test]
+fn set_first_beat_wav_drops_the_noisy_lead_in() {
+    let d = tempfile::tempdir().unwrap();
+    let src = d.path().join("noisy-intro.flac");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/first-beat/noisy-intro.flac"),
+        &src,
+    )
+    .unwrap();
+    let mut m = map(1200.0, 120.0);
+    m.segments[0].found_ms = Some(1200.0);
+    let plan = count_in_plan(&m, 44100).unwrap();
+    let part = d.path().join("out.wav");
+    let w = WavWriter::create(&part, 44100).unwrap();
+    let p = pipeline(&src, 44100, 2, plan.clone(), &part);
+    let stats = run(
+        &p,
+        Output::Wav(w),
+        &AtomicBool::new(false),
+        &mut no_progress(),
+    )
+    .unwrap();
+    assert_eq!(stats.frames, 110250 + 229320 - 52920);
+    let bytes = std::fs::read(&part).unwrap();
+    let got: Vec<f32> = bytes[44..]
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+    assert_eq!(got.len() as u64, stats.frames * 2);
+    let lead = plan.lead_frames as usize;
+    let click = Click::new(44100).samples().to_vec();
+    let mut want_lead = vec![0.0f32; lead * 2];
+    mix_ticks(&mut want_lead, 2, 0, &plan, &click);
+    assert!(
+        got[..lead * 2] == want_lead[..],
+        "lead is silence plus ticks"
+    );
+    let src_pcm = reference(&src, 44100, 2);
+    assert_eq!(src_pcm.len(), 229320 * 2);
+    assert!(
+        got[lead * 2..] == src_pcm[52920 * 2..],
+        "audio from the first beat, bit-exact"
+    );
 }
