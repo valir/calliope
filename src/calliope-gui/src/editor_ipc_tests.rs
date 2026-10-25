@@ -480,7 +480,7 @@ fn tempo_move_uses_absolute_steps_and_persists() {
         .load(FOUR, &e.st.with(|m| m.dir_of(FOUR)).unwrap())
         .unwrap();
     assert_eq!(on_disk.segments, c.tempo.segments);
-    // Out of range and the first section are refused.
+    // Out of range is refused.
     assert!(do_editor_tempo(
         &e.st,
         &FileTempoStore,
@@ -491,13 +491,62 @@ fn tempo_move_uses_absolute_steps_and_persists() {
         }
     )
     .is_err());
-    assert!(do_editor_tempo(
+}
+
+#[test]
+fn tempo_move_of_the_first_bar_keeps_the_changes_and_releases_the_player() {
+    use crate::player_ipc::{do_open_player, PlayerHost, PlayerTempoStore};
+    let e = env();
+    write_tempo_v7(&e);
+    do_open_editor(&e.st, &e.repo, &FileTempoStore, FOUR, Arc::new(|_| {})).unwrap();
+    // A Player session on the same track is closed by the move.
+    let host = Arc::new(PlayerHost::new(Arc::new(ManualBackend::new()), None));
+    do_open_player(&host, &e.repo, FOUR, Arc::new(|_| {})).unwrap();
+    assert!(host.with(|m| m.is_open(FOUR)));
+    let store = PlayerTempoStore::new(host.clone());
+    let fine = crate::tempo_map::fine_ms(120.0);
+    let a = do_editor_tempo(&e.st, &store, FOUR, TempoEdit::Move { index: 0, steps: 1 }).unwrap();
+    assert!(!host.with(|m| m.is_open(FOUR)));
+    assert!((a.tempo.segments[0].start_ms - (500.0 + fine)).abs() < 1e-6);
+    assert_eq!(a.tempo.segments[0].found_ms, Some(500.0));
+    assert_eq!(a.tempo.segments[1].start_ms, 4000.0);
+    let dir = e.st.with(|m| m.dir_of(FOUR)).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("player.json")).unwrap()).unwrap();
+    assert_eq!(v["schema_version"], 7);
+    // Far to the left: clamped at 0.0.
+    let b = do_editor_tempo(
         &e.st,
         &FileTempoStore,
         FOUR,
-        TempoEdit::Move { index: 0, steps: 1 }
+        TempoEdit::Move {
+            index: 0,
+            steps: -10_000,
+        },
     )
-    .is_err());
+    .unwrap();
+    assert_eq!(b.tempo.segments[0].start_ms, 0.0);
+    assert_eq!(b.tempo.segments[1].start_ms, 4000.0);
+    // Refused while a detection runs.
+    e.st.with(|m| m.test_fake_detect(FOUR));
+    let err = do_editor_tempo(
+        &e.st,
+        &FileTempoStore,
+        FOUR,
+        TempoEdit::Move { index: 0, steps: 1 },
+    )
+    .unwrap_err();
+    assert_eq!(err, "Beat detection is running; wait for it to finish");
+}
+
+fn write_tempo_v7(e: &Env) {
+    let dir = Repository::new(e.repo.current_root())
+        .tracks_dir()
+        .join(FOUR);
+    let v = serde_json::json!({"schema_version": 7, "tempo": {"beats_per_bar": 4, "segments": [
+        {"start_ms": 500.0, "bpm": 120.0, "found_ms": 500.0},
+        {"start_ms": 4000.0, "bpm": 100.0, "detected_ms": 4000.0}]}});
+    std::fs::write(dir.join("player.json"), serde_json::to_vec(&v).unwrap()).unwrap();
 }
 
 #[test]

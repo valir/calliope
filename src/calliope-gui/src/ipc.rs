@@ -923,9 +923,15 @@ pub fn do_editor_tempo(
             if st.with(|m| m.detect_running(id)) {
                 return Err("Beat detection is running; wait for it to finish".into());
             }
+            let duration_ms = st.with(|m| m.snapshot(id))?.duration_ms as f64;
             store.replace(id, &dir, &|old| {
-                old.set_change_offset(index, steps)
-                    .map(|(map, _applied)| map)
+                // The first bar is the set first beat (moved from `found_ms`); the other changes are detected ones.
+                if index == 0 {
+                    old.move_first_beat(steps, duration_ms)
+                } else {
+                    old.set_change_offset(index, steps)
+                }
+                .map(|(map, _applied)| map)
             })?
         }
         TempoEdit::Reload => store.load(id, &dir)?,

@@ -481,3 +481,166 @@ fn qa_json_roundtrip_starts_are_accepted_by_every_section_action() {
         assert_eq!(after.tempo.segments.len(), segs.len() - 1);
     }
 }
+
+// ---- the first beat (gui-first-beat) ----
+
+const NOISY: &str = "0199c0a0-0000-7000-8000-0000000005f1";
+
+/// Seeds a plain backing track (`audio` = the noisy-intro fixture, plus the stem `x` when asked) with the given
+/// `player.json` (none: no file).
+fn seed_noisy(e: &Env, player: Option<serde_json::Value>, with_stem: bool) {
+    let dir = e.dir.path().join("lib/tracks").join(NOISY);
+    std::fs::create_dir_all(&dir).unwrap();
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    std::fs::copy(
+        fixtures.join("first-beat/noisy-intro.flac"),
+        dir.join("audio.flac"),
+    )
+    .unwrap();
+    let mut stems = serde_json::json!([]);
+    if with_stem {
+        std::fs::create_dir_all(dir.join("stems")).unwrap();
+        std::fs::copy(
+            fixtures.join(
+                "library-player/tracks/0199c0a0-0000-7000-8000-000000000301/stems/guitar.flac",
+            ),
+            dir.join("stems/x.flac"),
+        )
+        .unwrap();
+        stems = serde_json::json!([{"name": "x", "file": "stems/x.flac"}]);
+    }
+    let track = serde_json::json!({
+        "schema_version": 2, "id": NOISY, "type": "backing", "band": "B", "album": "A",
+        "title": "Noisy", "composers": [], "year": null, "source_url": null, "copyright": null,
+        "audio": "audio.flac", "original": null, "stems": stems, "stem_model": null,
+        "tablatures": [], "imported": "2026-10-07T10:00:00Z", "modified": "2026-10-07T10:00:00Z"
+    });
+    std::fs::write(dir.join("track.json"), track.to_string()).unwrap();
+    if let Some(p) = player {
+        std::fs::write(dir.join("player.json"), p.to_string()).unwrap();
+    }
+}
+
+fn player_json(start: f64, found: Option<f64>, source: &str, schema: u32) -> serde_json::Value {
+    let mut first = serde_json::json!({"start_ms": start, "bpm": 120.0});
+    if let Some(f) = found {
+        first["found_ms"] = f.into();
+    }
+    serde_json::json!({
+        "schema_version": schema, "source": source, "position_ms": 0,
+        "tempo": {"beats_per_bar": 4, "segments": [first]},
+        "speed": 1.0, "loops": [], "current_loop": null,
+    })
+}
+
+fn first_of(s: &PlayerSnapshot) -> (f64, Option<f64>) {
+    let g = &s.tempo.segments[0];
+    (g.start_ms, g.found_ms)
+}
+
+#[test]
+fn open_finds_the_start_once_and_find_start_repeats_it() {
+    let e = env();
+    seed_noisy(&e, Some(player_json(0.0, None, "audio", 7)), false);
+    let snap = open(&e, NOISY).unwrap();
+    let (start, found) = first_of(&snap);
+    assert!((start - 1200.0).abs() < 10.0, "{start}");
+    assert_eq!(found, Some(start));
+    do_close_player(&e.host);
+    let saved = player_state::load(state_path(&e, NOISY).parent().unwrap()).0;
+    assert_eq!(saved.tempo.segments[0].found_ms, Some(start));
+
+    // moved by hand: a second open does not run again
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(state_path(&e, NOISY)).unwrap()).unwrap();
+    v["tempo"]["segments"][0]["start_ms"] = 1300.0.into();
+    std::fs::write(state_path(&e, NOISY), v.to_string()).unwrap();
+    let snap = open(&e, NOISY).unwrap();
+    assert_eq!(first_of(&snap).0, 1300.0);
+
+    // the button moves it back, even though it is set
+    let snap = do_player_tempo(&e.host, NOISY, TempoAction::FindStart).unwrap();
+    assert!((first_of(&snap).0 - 1200.0).abs() < 10.0);
+}
+
+#[test]
+fn open_leaves_an_owner_set_start_and_find_start_moves_it() {
+    let e = env();
+    seed_noisy(&e, Some(player_json(500.0, None, "audio", 7)), false);
+    let snap = open(&e, NOISY).unwrap();
+    assert_eq!(first_of(&snap), (500.0, None));
+    let snap = do_player_tempo(&e.host, NOISY, TempoAction::FindStart).unwrap();
+    assert!((first_of(&snap).0 - 1200.0).abs() < 10.0);
+}
+
+#[test]
+fn find_start_after_moving_the_first_bar_resets_the_offset() {
+    let e = env();
+    seed_noisy(&e, Some(player_json(0.0, None, "audio", 7)), false);
+    let snap = open(&e, NOISY).unwrap();
+    let found = first_of(&snap).0;
+    let moved = do_player_tempo(
+        &e.host,
+        NOISY,
+        TempoAction::MoveChange {
+            index: 0,
+            at: found,
+            steps: 64,
+        },
+    )
+    .unwrap();
+    assert!(first_of(&moved).0 > found + 400.0);
+    assert_eq!(first_of(&moved).1, Some(found));
+    let back = do_player_tempo(&e.host, NOISY, TempoAction::FindStart).unwrap();
+    assert!((first_of(&back).0 - 1200.0).abs() < 10.0);
+    assert_eq!(first_of(&back).1, Some(first_of(&back).0));
+}
+
+#[test]
+fn no_tempo_runs_nothing_and_find_start_asks_for_a_bpm() {
+    let e = env();
+    open(&e, PRACTICE).unwrap();
+    let snap = e.host.with(|m| m.snapshot(PRACTICE)).unwrap();
+    assert!(snap.tempo.segments.is_empty());
+    let err = do_player_tempo(&e.host, PRACTICE, TempoAction::FindStart).unwrap_err();
+    assert_eq!(err, "Type a BPM first");
+}
+
+#[test]
+fn music_from_zero_is_placed_at_zero_and_remembered() {
+    let e = env();
+    let dir = state_path(&e, PRACTICE).parent().unwrap().to_path_buf();
+    std::fs::write(
+        dir.join("player.json"),
+        player_json(0.0, None, "backing:backing", 7).to_string(),
+    )
+    .unwrap();
+    let snap = open(&e, PRACTICE).unwrap();
+    assert_eq!(first_of(&snap), (0.0, Some(0.0)));
+    assert_eq!(snap.transport.position_ms, 0);
+}
+
+#[test]
+fn the_backing_is_analysed_while_a_stem_is_loaded() {
+    let e = env();
+    seed_noisy(&e, Some(player_json(0.0, None, "stem:x", 7)), true);
+    let snap = open(&e, NOISY).unwrap();
+    assert_eq!(snap.source, "stem:x");
+    // the stem has music from 0; the backing's intro puts the start at ~1200
+    assert!(
+        (first_of(&snap).0 - 1200.0).abs() < 10.0,
+        "{:?}",
+        first_of(&snap)
+    );
+    let again = do_player_tempo(&e.host, NOISY, TempoAction::FindStart).unwrap();
+    assert!((first_of(&again).0 - 1200.0).abs() < 10.0);
+}
+
+#[test]
+fn a_newer_player_json_runs_nothing() {
+    let e = env();
+    seed_noisy(&e, Some(player_json(0.0, None, "audio", 8)), false);
+    let snap = open(&e, NOISY).unwrap();
+    // read-only default state: the newer file's tempo is not read, nothing is placed
+    assert!(snap.tempo.segments.is_empty());
+}

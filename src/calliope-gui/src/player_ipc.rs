@@ -2,6 +2,7 @@
 //! the same shape as `EditorState`) and the thin async command wrappers.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -9,9 +10,10 @@ use serde::Deserialize;
 use tauri::Manager;
 
 use crate::audio_out::OutputBackend;
+use crate::first_beat;
 use crate::ipc::{EditorState, RepoState};
 use crate::player::{
-    self, EventSink, LoopAction, OpenSpec, OutputRequest, PlayerEvent, PlayerManager,
+    self, EventSink, FirstBeatVia, LoopAction, OpenSpec, OutputRequest, PlayerEvent, PlayerManager,
     PlayerSnapshot, PlayerTransport, SectionEdit, SpeedAction,
 };
 use crate::player_source;
@@ -177,12 +179,83 @@ pub(crate) fn do_open_player(
             }
         };
         let loaded = player::load(&spec, &ticket, &events)?;
-        host.with(|m| m.finish_open(&ticket, &spec, loaded))
+        // The automatic first-beat run happens off the lock, like the decode.
+        let wants = loaded.wants_first_beat();
+        let found = if wants {
+            analyse_loaded(&spec, &loaded)
+        } else {
+            None
+        };
+        let now = Instant::now();
+        host.with(|m| {
+            let snap = m.finish_open(&ticket, &spec, loaded)?;
+            if let Some(ms) = found {
+                return m.place_first_beat(id, ms, FirstBeatVia::Auto, now);
+            }
+            if !wants {
+                if let Some(first) = snap.tempo.segments.first() {
+                    let reason = if first.found_ms.is_some() {
+                        "set"
+                    } else if first.start_ms == 0.0 {
+                        "read-only"
+                    } else {
+                        "not-at-zero"
+                    };
+                    eprintln!("calliope: player first-beat skipped id={id} reason={reason}");
+                }
+            }
+            Ok(snap)
+        })
     })();
     if result.is_err() {
         host.with(|m| m.abort_open(&ticket));
     }
     result
+}
+
+/// The start of the music in the open track's analysis source; the loaded PCM is used when it is that source.
+/// A decode failure skips the run (logged; retried at the next open).
+fn analyse_loaded(spec: &OpenSpec, loaded: &player::Loaded) -> Option<f64> {
+    let src = first_beat::analysis_source(&spec.sources, loaded.source_key())?;
+    if src.key == loaded.source_key() {
+        return Some(first_beat::find_start(loaded.pcm()));
+    }
+    let cancel = AtomicBool::new(false);
+    match player_source::decode(
+        &spec.dir.join(&src.file),
+        spec.ffmpeg.as_deref(),
+        &cancel,
+        &mut |_, _| {},
+    ) {
+        Ok(pcm) => Some(first_beat::find_start(&pcm)),
+        Err(e) => {
+            eprintln!(
+                "calliope: player first-beat skipped id={} reason=decode ({e})",
+                spec.id
+            );
+            None
+        }
+    }
+}
+
+/// Find start: analyses the track's backing (decoding it off the lock when it is not loaded) and moves the
+/// first beat there.
+fn do_find_start(host: &PlayerHost, id: &str) -> Result<PlayerSnapshot, String> {
+    let input = host.with(|m| m.first_beat_input(id))?;
+    let ms = match &input.pcm {
+        Some(pcm) => first_beat::find_start(pcm),
+        None => {
+            let cancel = AtomicBool::new(false);
+            let pcm = player_source::decode(
+                &input.file,
+                input.ffmpeg.as_deref(),
+                &cancel,
+                &mut |_, _| {},
+            )?;
+            first_beat::find_start(&pcm)
+        }
+    };
+    host.with(|m| m.place_first_beat(id, ms, FirstBeatVia::Button, Instant::now()))
 }
 
 pub(crate) fn do_close_player(host: &PlayerHost) {
@@ -308,6 +381,7 @@ pub(crate) enum TempoAction {
         at: f64,
         edge: Edge,
     },
+    FindStart,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
@@ -431,6 +505,7 @@ pub(crate) fn do_player_tempo(
         TempoAction::SectionName { index, at, name } => {
             edit(host, id, SectionEdit::Name { index, at, name })
         }
+        TempoAction::FindStart => do_find_start(host, id),
         TempoAction::JumpSection { index, at, edge } => {
             let edge = if edge == Edge::Start {
                 crate::tempo_map::Edge::Start
