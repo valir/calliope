@@ -134,7 +134,7 @@ Ctrl+L folds it to a narrow rail).
 * Per section (Sections group, for the selected section): the name box next to "Section 2 of 3 - 93 BPM"
   (Enter or leaving the box saves it, Escape drops the edit; it is shown in the box and spoken by the waveform; the Editor does
   not show names), "This section" Click (the section's metronome clicks; off makes the section silent)
-  and Count In (three clicks at this section's tempo just before it, replacing the end of the section
+  and Count In (six ticks over the 5 beats at this section's tempo just before it, the 5th beat silent, replacing the end of the section
   before, and skipped where a repeating loop ends at the section; Play pressed anywhere in a section with
   Count In counts in at its tempo, also in the first section), and Start / End (jump to the section's
   first beat / its last frame, just before the next section; playing continues without a pause). There is no global

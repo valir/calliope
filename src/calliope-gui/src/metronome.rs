@@ -46,29 +46,40 @@ impl Click {
     }
 }
 
-/// Output frames of the three audible count-in clicks and of the audio start (the silent 4th beat, or up to a beat
-/// earlier with `lead_in`).
+/// Beat offsets of the six count-in ticks from the count-in's first beat: 1/4, 1/4, then four 1/8 notes. The export
+/// and the Player share it (owner decision 2026-10-25).
+pub const TICK_BEATS: [f64; 6] = [0.0, 1.0, 2.0, 2.5, 3.0, 3.5];
+
+/// Length of the count-in lead in beats: 4 counted beats and a 5th, silent one before the first beat.
+/// Owner decision 2026-10-24 (export), 2026-10-25 (Player).
+pub const LEAD_BEATS: u64 = 5;
+
+/// Output frames of the six audible count-in clicks and of the audio start (the end of the silent 5th beat, or up
+/// to a beat earlier with `lead_in`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CountIn {
-    pub clicks: [u64; 3],
+    pub clicks: [u64; 6],
     pub start: u64,
+    /// One beat in output frames.
+    pub beat: u64,
 }
 
 pub fn count_in_plan(bpm: f64, rate: u32) -> CountIn {
     let b = (rate as f64 * 60.0 / bpm).round() as u64;
     CountIn {
-        clicks: [0, b, 2 * b],
-        start: 3 * b,
+        clicks: TICK_BEATS.map(|k| (k * b as f64).round() as u64),
+        start: LEAD_BEATS * b,
+        beat: b,
     }
 }
 
 impl CountIn {
-    /// The same clicks with the audio starting `lead` output frames before the 4th beat, for a start `lead`
-    /// frames before the track's next beat: that beat then falls on the 4th beat. Kept under one beat.
+    /// The same clicks with the audio starting `lead` output frames before the end of the lead, for a start `lead`
+    /// frames before the track's next beat: that beat then falls on the count-in's 6th beat position. Kept under
+    /// one beat.
     pub fn lead_in(self, lead: u64) -> CountIn {
-        let b = self.clicks[1];
         CountIn {
-            start: self.start - lead.min(b.saturating_sub(1)),
+            start: self.start - lead.min(self.beat.saturating_sub(1)),
             ..self
         }
     }
@@ -93,7 +104,8 @@ pub(crate) fn place(
 }
 
 /// The clicks to sound, in ms, sorted: the beats of sections whose metronome is on, with each section's
-/// count-in (three clicks at its tempo before its first beat) replacing the clicks before it. `wrap` is a
+/// count-in (the export's six ticks over the 5 beats at its tempo before its first beat) replacing the clicks
+/// before it. `wrap` is a
 /// repeating loop (start, end) in ms: a count-in whose span the loop ends in is skipped.
 pub(crate) fn section_clicks(map: &TempoMap, dur_ms: f64, wrap: Option<(f64, f64)>) -> Vec<f64> {
     const EPS: f64 = 1e-6;
@@ -118,15 +130,15 @@ pub(crate) fn section_clicks(map: &TempoMap, dur_ms: f64, wrap: Option<(f64, f64
             continue;
         }
         if let Some((_, le)) = wrap {
-            if first - 3.5 * b < le && le <= first + EPS {
+            if first - (LEAD_BEATS as f64 + 0.5) * b < le && le <= first + EPS {
                 continue;
             }
         }
-        clicks.retain(|&t| !(t > first - 3.5 * b && t < first - EPS));
+        clicks.retain(|&t| !(t > first - (LEAD_BEATS as f64 + 0.5) * b && t < first - EPS));
         clicks.extend(
-            [3.0, 2.0, 1.0]
+            TICK_BEATS
                 .iter()
-                .map(|n| first - n * b)
+                .map(|k| first - (LEAD_BEATS as f64 - k) * b)
                 .filter(|&t| t >= 0.0),
         );
     }
@@ -158,18 +170,19 @@ mod tests {
         assert_eq!(
             p.lead_in(5000),
             CountIn {
-                clicks: [0, 11025, 22050],
-                start: 33075 - 5000
+                start: 55125 - 5000,
+                ..p
             }
         );
-        assert_eq!(p.lead_in(99_999).start, 22051, "after the third click");
+        assert_eq!(p.lead_in(99_999).start, 55125 - 11024, "under one beat");
     }
 
     #[test]
     fn count_in_at_120_bpm() {
         let p = count_in_plan(120.0, 22050);
-        assert_eq!(p.clicks, [0, 11025, 22050]);
-        assert_eq!(p.start, 33075);
+        assert_eq!(p.clicks, [0, 11025, 22050, 27563, 33075, 38588]);
+        assert_eq!(p.start, 55125);
+        assert_eq!(p.beat, 11025);
     }
 
     #[test]
@@ -289,17 +302,18 @@ mod tests {
     #[test]
     fn clicks_ts11_count_in() {
         let c = section_clicks(&ts11(true), 12000.0, None);
-        assert!(has(&c, 6000.0));
+        assert!(has(&c, 4500.0) && !has(&c, 6000.0), "own clicks replaced");
         near(
-            &in_range(&c, 6241.94, 8500.0 - 1e-6),
-            &[6564.516, 7209.677, 7854.839],
+            &in_range(&c, 4600.0, 8500.0 - 1e-6),
+            &[5274.194, 5919.355, 6564.516, 6887.097, 7209.677, 7532.258],
         );
+        assert!(!has(&c, 8500.0 - 645.16), "the 5th beat is silent");
         assert!(has(&c, 8500.0) && has(&c, 9145.161));
-        // previous section off: the same three clicks, nothing else
+        // previous section off: the same six ticks, nothing else
         let c = section_clicks(&ts11(false), 12000.0, None);
         near(
             &in_range(&c, 0.0, 8500.0 - 1e-6),
-            &[6564.516, 7209.677, 7854.839],
+            &[5274.194, 5919.355, 6564.516, 6887.097, 7209.677, 7532.258],
         );
     }
 
@@ -312,7 +326,7 @@ mod tests {
         let first = m.beats_in(8530.0 - 1e-6, 20000.0)[0].0;
         let c = section_clicks(&m, 20000.0, None);
         assert!(has(&c, first));
-        for n in [1.0, 2.0, 3.0] {
+        for n in [5.0, 4.0, 3.0, 2.5, 2.0, 1.5] {
             assert!(has(&c, first - n * 600.0), "{first} {c:?}");
         }
     }
@@ -327,7 +341,7 @@ mod tests {
         let c = section_clicks(&m, 8000.0, None);
         near(
             &in_range(&c, 1400.0, 5000.0 - 1e-6),
-            &[1500.0, 2000.0, 3000.0, 4000.0],
+            &[2000.0, 2500.0, 3000.0, 3500.0],
         );
         assert!(has(&c, 5000.0));
     }
@@ -342,7 +356,7 @@ mod tests {
         let c = section_clicks(&m, 8000.0, None);
         near(
             &in_range(&c, 1400.0, 5000.0 - 1e-6),
-            &[1500.0, 2000.0, 3000.0, 4000.0],
+            &[2000.0, 2500.0, 3000.0, 3500.0],
         );
     }
 
@@ -351,10 +365,11 @@ mod tests {
         let m = ts11(true);
         let c = section_clicks(&m, 12000.0, Some((500.0, 8500.0)));
         assert_eq!(c, plain(&m, 12000.0));
-        let c = section_clicks(&m, 12000.0, Some((500.0, 6000.0)));
+        // a loop ending before the count-in's window (first - 5.5 beats = 4951.6) keeps it
+        let c = section_clicks(&m, 12000.0, Some((500.0, 4900.0)));
         near(
-            &in_range(&c, 6241.94, 8500.0 - 1e-6),
-            &[6564.516, 7209.677, 7854.839],
+            &in_range(&c, 5000.0, 8500.0 - 1e-6),
+            &[5274.194, 5919.355, 6564.516, 6887.097, 7209.677, 7532.258],
         );
     }
 
@@ -363,11 +378,11 @@ mod tests {
         // count-in clicks before 0 ms are dropped
         let m = tmap(vec![
             seg(0.0, 120.0, false, true, false),
-            seg(800.0, 120.0, true, true, true),
+            seg(2000.0, 120.0, true, true, true),
         ]);
         let c = section_clicks(&m, 4000.0, None);
         assert!(c.iter().all(|&t| t >= 0.0));
-        near(&c[..2], &[300.0, 800.0]);
+        near(&c[..6], &[0.0, 500.0, 750.0, 1000.0, 1250.0, 2000.0]);
         // a section starting at or after dur is ignored
         let m = ts11(true);
         assert_eq!(section_clicks(&m, 8500.0, None), plain(&m, 8500.0));

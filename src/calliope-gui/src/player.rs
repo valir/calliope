@@ -1409,8 +1409,9 @@ impl Session {
         if let Some(p) = plan {
             let section = section.map_or_else(String::new, |i| format!(" section={i}"));
             eprintln!(
-                "calliope: player count-in clicks=3 beat_ms={}{section}",
-                self.ms_of(p.clicks[1])
+                "calliope: player count-in clicks={} beat_ms={}{section}",
+                p.clicks.len(),
+                self.ms_of(p.beat)
             );
         }
     }

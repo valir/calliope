@@ -18,8 +18,7 @@ use crate::metronome::Click;
 use crate::tempo_map::TempoMap;
 use crate::wav::WavWriter;
 
-/// Beat offsets of the six ticks from the first beat's count: 1/4, 1/4, then four 1/8 notes.
-pub const TICK_BEATS: [f64; 6] = [0.0, 1.0, 2.0, 2.5, 3.0, 3.5];
+pub use crate::metronome::{LEAD_BEATS, TICK_BEATS};
 
 /// What `run` returns for a cancel.
 pub const CANCELLED: &str = "cancelled";
@@ -28,10 +27,6 @@ pub const CANCELLED: &str = "cancelled";
 const LEAD_BLOCK_FRAMES: usize = 4096;
 /// How long the job loop waits for decoded data before looking at the cancel flag.
 const RECV_TIMEOUT: Duration = Duration::from_millis(50);
-
-/// Length of the count-in lead in beats: 4 counted beats and a 5th, silent one before the first
-/// beat (the Player's count-in has the same silent beat). Owner decision 2026-10-24.
-pub const LEAD_BEATS: u64 = 5;
 
 /// Where the ticks fall. All values are output frames at the export's rate.
 #[derive(Debug, Clone, PartialEq)]

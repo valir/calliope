@@ -342,7 +342,7 @@ fn tempo_metronome_count_in() {
     }
 
     // Count-in with the guitar: Click off and Count In on in section 1, so the only clicks are
-    // three 500 ms apart, then the tone after 1500 ms.
+    // the six ticks (0, 500, 1000, 1250, 1500, 1750 ms), then the tone after 2500 ms.
     choose_source(&app, &wid, 3);
     app.wait_contains("player source key=stem:guitar");
     at(&app, &wid, SEC_CLICK);
@@ -357,18 +357,18 @@ fn tempo_metronome_count_in() {
     app.wait_contains("player play");
     ms(300);
     shot("player-count-in");
-    ms(2200);
+    ms(3200);
     at(&app, &wid, PLAY);
     app.wait_contains("player pause");
     let heard = since(&app, &cap, start);
     let clicks = click_onsets_ms(&heard, rate);
-    assert_eq!(clicks.len(), 3, "count-in clicks: {clicks:?}");
-    for w in clicks.windows(2) {
-        assert!((w[1] - w[0] - 500.0).abs() <= 10.0, "{clicks:?}");
+    assert_eq!(clicks.len(), 6, "count-in clicks: {clicks:?}");
+    for (w, gap) in clicks.windows(2).zip([500.0, 500.0, 250.0, 250.0, 250.0]) {
+        assert!((w[1] - w[0] - gap).abs() <= 10.0, "{clicks:?}");
     }
     let tone = tone_start_ms(&heard, rate, 660.0).expect("the guitar starts");
     assert!(
-        (tone - clicks[0] - 1500.0).abs() <= 10.0,
+        (tone - clicks[0] - 2500.0).abs() <= 10.0,
         "the tone starts at {tone} ms, the first click at {} ms",
         clicks[0]
     );
@@ -550,7 +550,8 @@ fn player_section_metronome() {
     at(&app, &wid, SEC_COUNT_IN);
     app.wait_contains("player section flags index=1 metronome=true count_in=true");
 
-    // 3. Played from 5.0 s: the 120-BPM clicks of the last bar (6500 .. 8000) become three clicks at 93 BPM.
+    // 3. Played from 5.0 s: the 120-BPM clicks from 4951.6 on (5.5 beats before the section) become the six
+    //    count-in ticks at 93 BPM (the 5th beat silent).
     let play_from = |app: &mut App, wid: &str, play_ms: u64| -> Vec<f64> {
         enter(app, wid, TIME, "0:05.0");
         app.wait_line(|l| l.contains("player seek position=5000"), secs(10));
@@ -565,9 +566,9 @@ fn player_section_metronome() {
         click_onsets_ms(&since(app, &cap, start), rate)
     };
     let on = play_from(&mut app, &wid, 4500);
-    // The first click is the one at 5000 ms (a beat of section 0); the rest are relative to it.
-    let rel: Vec<f64> = on.iter().map(|t| t - on[0] + 5000.0).collect();
-    const WANT3: [f64; 7] = [5000.0, 5500.0, 6000.0, 6564.5, 7209.7, 7854.8, 8500.0];
+    // The first click is the first tick at 5274.2 ms; the rest are relative to it.
+    let rel: Vec<f64> = on.iter().map(|t| t - on[0] + 5274.2).collect();
+    const WANT3: [f64; 7] = [5274.2, 5919.4, 6564.5, 6887.1, 7209.7, 7532.3, 8500.0];
     let want = WANT3;
     assert!(rel.len() >= want.len(), "click onsets: {rel:?}");
     // The onsets are found to a few ms: the gaps within 5 ms, the places within 10 ms of the first.
@@ -589,16 +590,16 @@ fn player_section_metronome() {
     at(&app, &wid, SEC_CLICK);
     app.wait_contains("player section flags index=0 metronome=false count_in=false");
     let on = play_from(&mut app, &wid, 4500);
-    // No click before the count-in, which starts 1564.5 ms after Play (plus the start-up of the stream).
+    // No click before the count-in, which starts 274.2 ms after Play (plus the start-up of the stream).
     assert!(
-        on[0] >= 1500.0 && on[0] <= 1700.0,
+        on[0] >= 250.0 && on[0] <= 450.0,
         "the first click is not the count-in: {on:?}"
     );
-    let want = [0.0, 645.16, 1290.32, 1935.48];
+    let want = [0.0, 645.16, 1290.32, 1612.9, 1935.48, 2258.06, 3225.76];
     assert!(on.len() >= want.len(), "click onsets: {on:?}");
     for (got, want) in on.iter().zip(want) {
         assert!(
-            (got - on[0] - want).abs() <= 5.0,
+            (got - on[0] - want).abs() <= 10.0,
             "click onsets: {on:?}, wanted {want:?} after the first"
         );
     }
@@ -1094,8 +1095,8 @@ fn player_phase3() {
     );
     shot("player-p3-layout");
 
-    // 2. Play inside section 2 (Count In on): three clicks at its tempo, then the tone, started 435.48 ms
-    //    before the 4th beat so that the next beat (10435.48 ms) falls on it.
+    // 2. Play inside section 2 (Count In on): six ticks at its tempo, then the tone, started 435.48 ms
+    //    before the end of the 5th beat so that the next beat (10435.48 ms) falls on the 6th beat position.
     enter(&app, &wid, TIME, "0:10.0");
     app.wait_line(|l| l.contains("player seek position=10000"), secs(10));
     let start = mark(&app, &cap);
@@ -1103,24 +1104,28 @@ fn player_phase3() {
     at(&app, &wid, BLANK);
     app.key(&wid, "space");
     app.wait_contains("audio backend=capture");
-    app.wait_contains("player count-in clicks=3 beat_ms=645 section=1");
+    app.wait_contains("player count-in clicks=6 beat_ms=645 section=1");
     app.wait_contains("player play");
     let rate = rate_of(&app);
     ms(300);
     shot("player-p3-count-in");
-    ms(2800);
+    ms(3700);
     app.key(&wid, "space");
     app.wait_contains("player pause");
     let heard = since(&app, &cap, start);
     let clicks = click_onsets_ms(&heard, rate);
-    assert!(clicks.len() >= 3, "count-in clicks: {clicks:?}");
-    for w in clicks[..3].windows(2) {
-        assert!((w[1] - w[0] - 645.16).abs() <= 5.0, "{clicks:?}");
+    assert!(clicks.len() >= 6, "count-in clicks: {clicks:?}");
+    let beat = 645.16;
+    for (w, gap) in clicks[..6]
+        .windows(2)
+        .zip([beat, beat, beat / 2.0, beat / 2.0, beat / 2.0])
+    {
+        assert!((w[1] - w[0] - gap).abs() <= 5.0, "{clicks:?}");
     }
     let tone = tone_start_ms(&heard, rate, 330.0).expect("the backing starts");
     let lead = 8500.0 + 3.0 * 645.16 - 10000.0;
     assert!(
-        (tone - clicks[0] - (3.0 * 645.16 - lead)).abs() <= 10.0,
+        (tone - clicks[0] - (5.0 * 645.16 - lead)).abs() <= 10.0,
         "the tone starts at {tone} ms, the first click at {} ms",
         clicks[0]
     );
@@ -1144,7 +1149,7 @@ fn player_phase3() {
     );
     let heard = since(&app, &cap, start);
     let tone = tone_start_ms(&heard, rate, 330.0).expect("the backing starts");
-    // The capture also holds the silence between the mark and the key press; a count-in would add 1500 ms.
+    // The capture also holds the silence between the mark and the key press; a count-in would add about 3200 ms.
     assert!(tone <= 1000.0, "the tone starts after {tone} ms");
     // (the tone's own start shows up as an onset in the click band; nothing else may)
     let clicks: Vec<f64> = click_onsets_ms(&heard, rate)

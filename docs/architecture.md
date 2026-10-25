@@ -224,7 +224,7 @@ the GUI crate, `src/calliope-gui/`.
   `editor detect failed id=<id> message=<m>`, `editor detect cancelled id=<id>`, `player released id=<id> flushed=<b>`,
   `tempo saved id=<id> segments=<k> detected=<n>`, `player open id=<id> source=<key> duration_ms=<ms> rate=<hz> position_ms=<ms>`,
   `player transport playing=<b> counting_in=<b> loop=<n|none> position_ms=<ms>` (changes only),
-  `player count-in clicks=3 beat_ms=<ms>`, `player wrap loop=<index, 0-based> count_in=<b>`, `player state saved id=<id>`,
+  `player count-in clicks=6 beat_ms=<ms>`, `player wrap loop=<index, 0-based> count_in=<b>`, `player state saved id=<id>`,
   `player state error id=<id> message=<m>`, `player section <bpm|scale|add|remove|move|flags|name> id=<id> index=<i> segments=<k> bpm=<..>[ steps=<s> applied=<s'>] metronome=<1|0,..> count_in=<1|0,..>`,
   `player section jump id=<id> index=<i> edge=<start|end> position_ms=<ms>`, `player speed id=<id> percent=<n>`,
   `player training loop=<i> pass=<n> speed=<pct> repeat=<r>/<of|end>`, `player training end loop=<i> speed=<pct>`;
@@ -1323,7 +1323,7 @@ Each tempo section can be named, silenced and given a count-in that plays while 
 settings live in the section's segment (`SectionMeta`, flattened, defaults not written) so they move with their change
 through every edit; the manager turns the map into the list of click frames (`metronome::section_clicks`: beats of
 sections whose metronome is on, then for each section with count-in three clicks at its tempo ending one beat before
-its first beat, replacing the clicks in that span, skipped when a repeating loop ends there) and sends it with the
+its first beat (six ticks over 5 beats since 2026-10-25), replacing the clicks in that span, skipped when a repeating loop ends there) and sends it with the
 existing `Cmd::SetGrid`. The engine and its real-time rules are unchanged, and the engine's existing metronome flag
 (top-level `metronome.on`) becomes the master switch. `Count In` stays the pre-roll before Play and loop Play. Schema 4
 because the schema-3 parser drops unknown segment keys. Alternatives: per-beat flags evaluated in the audio callback
@@ -1560,3 +1560,15 @@ target track changes (and after `done`, as before), not only when it is empty, s
 Typed text survives reloads of the same track's info. The MP3/OGG folder dialog starts in the recorded file's folder of
 that kind when it exists, else the remembered `export_dir`, else home (`file_start_dir`, `from=recorded`). The file name
 is unchanged, so a re-export meets the existing overwrite confirmation.
+
+### 2026-10-25: Player count-ins use the export pattern (6 ticks over 5 beats, the 5th silent)   (fix: player count-in; owner)
+Every Player count-in now sounds like the export's (2026-10-24): six ticks at `round(k·beat)` for k = 0, 1, 2, 2.5, 3, 3.5 of a
+5-beat lead, the 5th beat silent, then the music's beat. `TICK_BEATS` and `LEAD_BEATS` live in `metronome.rs` and are re-exported
+by `export_audio.rs`, so both use one source. Play and loop-wrap count-ins (`CountIn`: six `clicks`, `start = 5·beat`, plus the
+beat length) keep the beat from `bpm × speed`; `lead_in` (2026-10-22) keeps its meaning: the audio starts `lead` frames before the
+end of the 5th beat, so the track's next beat falls on the 6th beat position (5·beat), kept under one beat. Section count-ins inside
+the song (`section_clicks`) put the ticks at `first − 5·beat + k·beat` (first −5, −4, −3, −2.5, −2, −1.5 beats), nothing at
+`first − beat`, and replace any other clicks in (first − 5.5 beats, first); the loop-wrap skip uses the same 5.5-beat span; ticks
+before 0 ms are dropped; with overlapping count-ins the later one still wins. The log line is `player count-in clicks=6 beat_ms=<ms>`.
+This supersedes the three clicks and the 4-beat lead of 2026-10-11, 2026-10-17 (per-section count-ins) and 2026-10-22 (the grid
+placement stands, with the 5-beat lead).
