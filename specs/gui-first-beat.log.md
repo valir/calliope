@@ -11,3 +11,6 @@ task 9 | Waveform geometry helpers | implementer (local result discarded: wrong 
 task 10 | Waveform view: the first bar, the readout, the dimmed lead-in | implementer | done
 task 11 | Player: Find start button | implementer | done
 task 12 | Export pane count-in line | implementer | done
+task 13 | Player GUI e2e | implementer | done
+task 14 | Editor GUI e2e | implementer | done
+task 15 | Docs | implementer | done

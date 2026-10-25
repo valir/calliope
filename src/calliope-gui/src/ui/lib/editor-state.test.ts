@@ -497,6 +497,18 @@ describe('waveform, tempo and detection', () => {
     expect(logs()).toContain('editor tempo move index=1 steps=5 applied=3');
   });
 
+  it('moveChange on the first bar logs the steps from the found start', async () => {
+    await open();
+    ed.tempo = tempo();
+    handlers.editor_tempo = async () => ({
+      ...snapshot(stemTrack.id),
+      tempo: { ...tempo(), segments: [{ start_ms: 500 + 3 * (500 / 64), bpm: 120, found_ms: 500 }, tempo().segments[1]] },
+    });
+    moveChange(0, 3);
+    await sleep(20);
+    expect(logs()).toContain('editor tempo move index=0 steps=3 applied=3');
+  });
+
   it('moveChange is ignored during a detection; reloadTempo refreshes the map', async () => {
     await open();
     ed.detect = { phase: 'mixing', progress: 0 };

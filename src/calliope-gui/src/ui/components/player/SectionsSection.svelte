@@ -102,7 +102,7 @@
     >▶|</Button>
     <Button
       variant="outline"
-      class="h-[3.25rem] px-3 text-lg"
+      class="h-[3.25rem] px-1.5 text-sm"
       aria-label="Find where the music starts and put the first beat there"
       disabled={noFind}
       title={none ? NEED_BPM : pl.findingStart ? 'Finding the start...' : undefined}

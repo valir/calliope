@@ -471,6 +471,7 @@ fn mix_waveform_and_autodetect() {
     // The light theme (Settings, Alt+7, is not needed: the theme is a settings.json value).
     // Keys on the waveform: Shift+Right moves by a beat, Right by 1/64 beat.
     app.click(&wid, wave_x(2000.0), WAVE_Y); // focuses the canvas, away from the bar
+    app.key(&wid, "Down"); // the focus starts on the first bar (index 0); Down selects the detected change
     app.key(&wid, "shift+Right");
     let l = app.wait_line(|l| l.contains("editor tempo move"), secs(10));
     assert_eq!(field(&l, "applied"), "64", "{l}");
@@ -678,5 +679,57 @@ fn autodetect_errors_cancel_and_player_reload() {
         0,
         "Autodetect must be disabled without a server"
     );
+    finish(&app);
+}
+
+/// The first bar of a track with a found first beat: moved by keys in the Mix lane, down to 0:00.
+#[test]
+#[ignore]
+fn editor_first_beat() {
+    if !ready() {
+        return;
+    }
+    let dirs = editor_dirs("editor_first_beat");
+    std::fs::write(
+        dirs.player_json(ED_FOUR),
+        r#"{"schema_version":7,"tempo":{"beats_per_bar":4,"segments":[
+            {"start_ms":500.0,"bpm":120.0,"found_ms":500.0},
+            {"start_ms":4500.0,"bpm":90.0,"detected_ms":4500.0}]}}"#,
+    )
+    .unwrap();
+    let (mut app, wid) = start_editor(&dirs);
+    select(&mut app, &wid, "four lanes", ED_FOUR);
+    app.wait_contains("editor active");
+    app.click(&wid, CHECK_X, LANE_Y[0]);
+    app.wait_line(
+        |l| l.contains("editor waveform peaks=") && peaks_max(l) > 0.0,
+        secs(5),
+    );
+    settle();
+
+    // Right on the focused waveform moves the first bar (section 1) by 1/64 beat.
+    app.click(&wid, wave_x(2000.0), WAVE_Y); // focuses the canvas, away from the bars
+    app.skip_seen();
+    app.key(&wid, "Right");
+    let l = app.wait_line(|l| l.contains("editor tempo move"), secs(10));
+    assert_eq!(field(&l, "index"), "0", "{l}");
+    assert_eq!(field(&l, "steps"), "1", "{l}");
+    assert_eq!(field(&l, "applied"), "1", "{l}");
+    let segs = wait_segments(&dirs, ED_FOUR, |s| {
+        s.len() == 2 && (start_ms(&s[0]) - (500.0 + FINE_MS)).abs() < 0.01
+    });
+    assert_eq!(segs[0]["found_ms"].as_f64(), Some(500.0), "{segs:?}");
+    settle();
+    shot("editor-first-beat");
+
+    // Twenty beats back stop at 0:00.
+    for _ in 0..20 {
+        app.key(&wid, "shift+Left");
+    }
+    let segs = wait_segments(&dirs, ED_FOUR, |s| s.len() == 2 && start_ms(&s[0]) == 0.0);
+    assert_eq!(segs[0]["found_ms"].as_f64(), Some(500.0), "{segs:?}");
+    assert_eq!(start_ms(&segs[1]), 4500.0, "{segs:?}");
+    settle();
+    shot("editor-first-beat-zero");
     finish(&app);
 }

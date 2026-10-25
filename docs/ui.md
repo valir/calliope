@@ -282,3 +282,10 @@
   button (one line for RC-5, two for MP3 and OGG), so the buttons sit at fixed y positions whatever the
   text (a path of two lines or fewer moves nothing; a longer one pushes the rows below it down); at 1024x640 the Memory box sits under its button and the
   pane scrolls. In the Library the rows are at the end of the scrolling field list.
+- (gui-first-beat) Player waveform: the part before the first beat is dimmed (the background colour at 60 % over
+  it). The first bar is drawn like the other bars, also at 0:00, with its BPM label to its right; it is dragged
+  and moved by keys like the others, and its readout reads "+N/64 beat (time) from the found start". The "Find
+  start" button sits after the "▶|" (Jump to the end) button in the Sections buttons row, in the same row as
+  the other buttons (a smaller text, so that Sections and Loops stay side by side at 1280x800); its message line
+  says "Finding the start..." while it runs and then "First beat at 0:01.200" (the time found); errors use the
+  destructive text colour.

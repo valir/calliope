@@ -139,6 +139,13 @@ Ctrl+L folds it to a narrow rail).
   Count In counts in at its tempo, also in the first section), and Start / End (jump to the section's
   first beat / its last frame, just before the next section; playing continues without a pause). There is no global
   metronome switch: a section clicks only when its Click is on.
+* First beat: the first section starts where the music starts. The first time a track is opened with its
+  first beat still at 0:00, the Player looks for the start by itself (the "Find start" button next to the
+  Start / End buttons does it again on demand: the line under the Sections shows "Finding the start..." and then
+  "First beat at 0:01.200"). Drag the first bar or use the keys on it (Left / Right move it 1/64 beat, with Shift
+  1 beat) to fine-tune it, from 0:00 up to one beat before the next section. The audio before the first beat is
+  dimmed in the waveform, is not played and is not exported (the Export pane says how much is left out). Tracks
+  saved before this feature are unchanged until their start is found or the first bar is moved.
 * Playback: Rew / FF jump 5 s, the time field takes a time (the mouse wheel nudges by 100 ms), the
   slider seeks.
 * Loops: "+" starts a loop at the position and ends it where the next tempo section starts (or at the end of

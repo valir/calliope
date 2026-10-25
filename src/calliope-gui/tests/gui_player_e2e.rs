@@ -58,6 +58,8 @@ const WAVE_BAR: (i32, i32) = (729, 270);
 const WAVE_SECTION0: (i32, i32) = (450, 270);
 const WAVE_SECTION1: (i32, i32) = (1000, 270);
 const WAVE_LABEL0: (i32, i32) = (370, 304);
+const REW: (i32, i32) = (400, 629);
+const FIND_START: (i32, i32) = (768, 413);
 
 fn secs(s: u64) -> Duration {
     Duration::from_secs(s)
@@ -1470,5 +1472,178 @@ fn qa_p3_layout_never_clips_sideways() {
         report.join("\n") + "\n",
     )
     .unwrap();
+    finish(&app);
+}
+
+const NOISY: &str = "0199c0a0-0000-7000-8000-000000000501";
+
+/// The Player fixture plus a plain backing track "Noisy Intro" (1.2 s of faint noise, then a 440 Hz tone)
+/// whose `player.json` is a schema-6 file with 120 BPM at 0:00 and a count-in.
+fn noisy_dirs(test: &str) -> Dirs {
+    let dirs = player_dirs(test);
+    let dir = dirs.track_dir(NOISY);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(
+        root().join("tests/fixtures/first-beat/noisy-intro.flac"),
+        dir.join("noisy-intro.flac"),
+    )
+    .unwrap();
+    let t = serde_json::json!({
+        "schema_version": 2, "type": "backing", "id": NOISY, "band": "Zed Noise", "album": "First Beat",
+        "title": "Noisy Intro", "composers": [], "year": null, "source_url": null, "copyright": null,
+        "audio": "noisy-intro.flac", "original": null, "stems": [], "stem_model": null,
+        "tablatures": [], "backings": [], "imported": "2026-10-07T10:00:00Z", "modified": "2026-10-07T10:00:00Z"
+    });
+    std::fs::write(dir.join("track.json"), t.to_string()).unwrap();
+    std::fs::write(
+        dirs.player_json(NOISY),
+        r#"{"schema_version":6,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":0.0,"bpm":120.0,"count_in":true}]}}"#,
+    )
+    .unwrap();
+    dirs
+}
+
+/// A track whose first beat is at 0:00 gets it found once, at open; the lead-in is dimmed and never
+/// played; the first bar moves with keys and the mouse; Find start finds it again.
+#[test]
+#[ignore]
+fn player_first_beat() {
+    if !ready() {
+        return;
+    }
+    let dirs = noisy_dirs("player_first_beat");
+    let (mut app, wid) = start_player(&dirs);
+    let mut collapsed = false;
+    pick(&mut app, &wid, &mut collapsed, "noisy intro", NOISY);
+    let cap = dirs.capture();
+
+    // 1. Found at open.
+    let l = app
+        .all_lines()
+        .into_iter()
+        .find(|l| l.contains("calliope: player first-beat id="))
+        .expect("the automatic first-beat line");
+    assert_eq!(field(&l, "via"), "auto", "{l}");
+    let start: f64 = field(&l, "start_ms").parse().unwrap();
+    assert!((start - 1200.0).abs() <= 10.0, "{l}");
+    let v = wait_json(&dirs, NOISY, |v| {
+        v["tempo"]["segments"][0]["found_ms"].is_number()
+    });
+    let found = v["tempo"]["segments"][0]["found_ms"].as_f64().unwrap();
+    assert!((found - 1200.0).abs() <= 10.0, "{v}");
+    ms(1200);
+    shot("player-first-beat");
+
+    // 2. Home and Rew never go below the first beat.
+    app.key(&wid, "Home");
+    ms(300);
+    app.skip_seen();
+    at(&app, &wid, REW);
+    app.wait_contains("player skip delta=-5000");
+    ms(300);
+    // no position the player reports (jump, transport, seek) is before the first beat
+    let below: Vec<String> = app
+        .all_lines()
+        .into_iter()
+        .filter(|l| l.contains("calliope: player") && !l.contains("player open"))
+        .filter(|l| {
+            ["position_ms", "position"].iter().any(|k| {
+                l.contains(&format!(" {k}="))
+                    && field(l, k).parse::<f64>().is_ok_and(|p| p < 1195.0)
+            })
+        })
+        .collect();
+    assert!(below.is_empty(), "below the first beat: {below:?}");
+
+    // 3. Play from the start: count-in, then the tone; none of the noise is played.
+    let m = mark(&app, &cap);
+    app.skip_seen();
+    at(&app, &wid, PLAY);
+    app.wait_contains("player play");
+    let rate = rate_of(&app);
+    ms(3800);
+    at(&app, &wid, PLAY);
+    app.wait_contains("player pause");
+    let heard = since(&app, &cap, m);
+    let clicks = click_onsets_ms(&heard, rate);
+    let tone = tone_start_ms(&heard, rate, 440.0).expect("the tone starts");
+    let tone_clicks: Vec<f64> = clicks
+        .iter()
+        .cloned()
+        .filter(|c| *c < tone - 50.0)
+        .collect();
+    assert_eq!(tone_clicks.len(), 6, "count-in clicks: {clicks:?}");
+    for (w, gap) in tone_clicks
+        .windows(2)
+        .zip([500.0, 500.0, 250.0, 250.0, 250.0])
+    {
+        assert!((w[1] - w[0] - gap).abs() <= 3.0, "{clicks:?}");
+    }
+    assert!(
+        (tone - clicks[0] - 2500.0).abs() <= 10.0,
+        "tone at {tone}, clicks {clicks:?}"
+    );
+    let left: Vec<f32> = heard.chunks_exact(2).map(|c| c[0]).collect();
+    for (i, x) in left.iter().enumerate() {
+        let t = i as f64 * 1000.0 / rate;
+        if t < tone - 20.0 && !clicks.iter().any(|c| t >= c - 5.0 && t < c + 80.0) {
+            assert!(x.abs() < 0.0015, "noise {x} at {t} ms");
+        }
+    }
+
+    // 4. Keys on the first bar: one step is 1/64 beat = 7.8125 ms; the found start stays.
+    at(&app, &wid, WAVE_SECTION1);
+    app.key(&wid, "Up");
+    app.skip_seen();
+    app.key(&wid, "Right");
+    let l = moved(&mut app);
+    assert_eq!(field(&l, "index"), "0", "{l}");
+    assert_eq!(field(&l, "steps"), "1", "{l}");
+    assert_eq!(field(&l, "applied"), "1", "{l}");
+    let v = wait_json(&dirs, NOISY, |v| change_start(v, 0) > found + 7.0);
+    assert!((change_start(&v, 0) - (found + 7.8125)).abs() < 0.01, "{v}");
+    assert_eq!(
+        v["tempo"]["segments"][0]["found_ms"].as_f64(),
+        Some(found),
+        "{v}"
+    );
+
+    // 5. Drag the first bar a little; the readout speaks of the found start while the button is held.
+    let (x0, x1, y, _) = wave_box(1280, 800, true);
+    let bar = x0 + ((x1 - x0) as f64 * (found + 7.8125) / 5200.0) as i32;
+    app.drag_xy(&wid, (bar, y), (bar + 12, y), || {
+        ms(200);
+        shot("player-first-beat-drag");
+    });
+    moved(&mut app);
+
+    // 6. Find start puts it back.
+    app.skip_seen();
+    at(&app, &wid, FIND_START);
+    let l = app.wait_contains("calliope: player first-beat id=");
+    assert_eq!(field(&l, "via"), "button", "{l}");
+    let start: f64 = field(&l, "start_ms").parse().unwrap();
+    assert!((start - 1200.0).abs() <= 10.0, "{l}");
+
+    // 7. The button fits at 1280x800.
+    let l = last_layout(&app);
+    assert_eq!(field(&l, "overflow"), "0", "{l}");
+    assert_eq!(field(&l, "loops_beside"), "1", "{l}");
+    finish(&app);
+
+    // 8. The light theme (the found start is saved, so the track opens with its bar in place).
+    app.close_gracefully(&wid);
+    app.wait_exit(secs(5));
+    std::fs::create_dir_all(dirs.app_config()).unwrap();
+    std::fs::write(
+        dirs.app_config().join("settings.json"),
+        r#"{"theme":"light"}"#,
+    )
+    .unwrap();
+    let (mut app, wid) = start_player(&dirs);
+    let mut collapsed = false;
+    pick(&mut app, &wid, &mut collapsed, "noisy intro", NOISY);
+    ms(1200);
+    shot("player-first-beat-light");
     finish(&app);
 }

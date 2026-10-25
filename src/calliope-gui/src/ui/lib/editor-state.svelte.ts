@@ -576,11 +576,13 @@ export async function cancelDetect(): Promise<void> {
 const movePending = new Map<number, number>();
 let moveRunning = false;
 
-/** The offset the backend applied: the change's distance from `detected_ms` in steps of the left tempo. */
+/** The offset the backend applied: the first bar's distance from `found_ms` (steps of its own tempo), another change's from `detected_ms` (steps of the left tempo). */
 function appliedSteps(tempo: TempoSnap, index: number): number {
   const seg = tempo.segments[index];
+  if (!seg) return 0;
+  if (index === 0) return seg.found_ms == null ? 0 : offsetSteps(seg.start_ms, seg.found_ms, seg.bpm);
   const prev = tempo.segments[index - 1];
-  if (!seg || !prev || seg.detected_ms == null) return 0;
+  if (!prev || seg.detected_ms == null) return 0;
   return offsetSteps(seg.start_ms, seg.detected_ms, prev.bpm);
 }
 
