@@ -14,3 +14,5 @@ task 12 | Export pane count-in line | implementer | done
 task 13 | Player GUI e2e | implementer | done
 task 14 | Editor GUI e2e | implementer | done
 task 15 | Docs | implementer | done
+tester | 21 acceptance tests, all criteria pass, no defects | tester | done
+reviewer | APPROVED, 4 minors | reviewer | done
