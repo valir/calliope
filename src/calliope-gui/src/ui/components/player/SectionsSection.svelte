@@ -5,7 +5,7 @@
   import { sectionClicks, sectionCountIn, MAX_SECTION_NAME } from '$lib/section-meta';
   import {
     pl, removeChange, scaleSection, startAdd, targetSection, setSectionFlags, jumpSection,
-    beginNameEdit, commitSectionName, cancelSectionName,
+    beginNameEdit, commitSectionName, cancelSectionName, findStart,
   } from '$lib/player-state.svelte';
 
   const segs = $derived(pl.snap?.tempo.segments ?? []);
@@ -26,7 +26,8 @@
   const noCountIn = $derived(none);
   const pressed = 'bg-amber-500! text-black! hover:bg-amber-500/90!';
   const nameValue = $derived(pl.nameEdit ? pl.nameEdit.draft : (meta?.name ?? ''));
-  const message = $derived(pl.sectionError || (segs.length === 0 && pl.status === 'active' ? NEED_BPM : ''));
+  const message = $derived(pl.sectionError || pl.sectionNote || (segs.length === 0 && pl.status === 'active' ? NEED_BPM : ''));
+  const noFind = $derived(none || segs[0].bpm <= 0 || pl.findingStart);
 </script>
 <div class="flex min-w-0 max-w-full flex-none flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Sections">
   <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -99,6 +100,14 @@
       title={none ? NEED_BPM : undefined}
       onclick={() => void jumpSection('end')}
     >▶|</Button>
+    <Button
+      variant="outline"
+      class="h-[3.25rem] px-3 text-lg"
+      aria-label="Find where the music starts and put the first beat there"
+      disabled={noFind}
+      title={none ? NEED_BPM : pl.findingStart ? 'Finding the start...' : undefined}
+      onclick={() => void findStart()}
+    >Find start</Button>
   </div>
   <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
     <div class="flex flex-none items-center gap-2" role="group" aria-label="This section" title="This section">
@@ -123,5 +132,5 @@
     </div>
     <span class="min-w-0 max-w-full text-base tabular-nums" data-testid="section-status">{status}</span>
   </div>
-  <span class="min-h-5 min-w-0 truncate text-sm {pl.sectionError ? 'text-destructive' : 'text-muted-foreground'}" role={pl.sectionError ? 'alert' : undefined} title={message || undefined} data-testid="section-message">{message}</span>
+  <span class="min-h-5 min-w-0 truncate text-sm {pl.sectionError ? 'text-destructive' : 'text-muted-foreground'}" role={pl.sectionError ? 'alert' : undefined} title={message || undefined} data-testid="section-message">{pl.findingStart ? 'Finding the start...' : message}</span>
 </div>

@@ -58,6 +58,10 @@ export const pl = $state({
   bpmEdit: null as { index: number } | { addAt: number } | null,
   /** Refusal of the last section edit; the next successful edit clears it. */
   sectionError: '',
+  /** A note under the section buttons (the found first beat); any other section action clears it. */
+  sectionNote: '',
+  /** The Find start call is running. */
+  findingStart: false,
   /** The section whose name is being edited, captured on focus so the playhead can't move the edit. */
   nameEdit: null as { index: number; at: number; draft: string } | null,
   treeCollapsed: false,
@@ -88,6 +92,8 @@ function resetFields(): void {
   pl.section = null;
   pl.bpmEdit = null;
   pl.sectionError = '';
+  pl.sectionNote = '';
+  pl.findingStart = false;
   pl.nameEdit = null;
   movePending = null;
   seekPending = null;
@@ -474,6 +480,7 @@ async function sectionCall(
     applySnapshot(s);
     after?.(oldStarts, s);
     pl.sectionError = '';
+    pl.sectionNote = '';
     pl.stateError = '';
     log(`player section ${kind} index=${index}${detail ? ' ' + detail(s) : ''}`);
     logSections(s);
@@ -483,6 +490,41 @@ async function sectionCall(
     pl.sectionError = clean(err);
     fail('player_tempo', err);
     return false;
+  }
+}
+
+const mmss = (ms: number): string => {
+  const total = Math.max(0, ms) / 1000;
+  const m = Math.floor(total / 60);
+  const sec = (total - m * 60).toFixed(3);
+  return `${m}:${Number(sec) < 10 ? '0' : ''}${sec}`;
+};
+
+/** Finds where the music starts and puts the first beat there; one call at a time, ignored after a track switch. */
+export async function findStart(): Promise<void> {
+  const id = pl.trackId;
+  if (pl.status !== 'active' || !id || pl.findingStart) return;
+  if ((pl.snap?.tempo.segments[0]?.bpm ?? 0) <= 0) return;
+  const gen = generation;
+  pl.findingStart = true;
+  pl.sectionError = '';
+  pl.sectionNote = '';
+  log('player first-beat find');
+  try {
+    const s = await playerTempo(id, { kind: 'find-start' });
+    if (gen !== generation) return;
+    applySnapshot(s);
+    const start = s.tempo.segments[0]?.start_ms ?? 0;
+    pl.sectionNote = `First beat at ${mmss(start)}`;
+    pl.stateError = '';
+    log(`player first-beat start=${Math.round(start)}`);
+    logSections(s);
+  } catch (err) {
+    if (gen !== generation) return;
+    pl.sectionError = clean(err);
+    fail('player_tempo', err);
+  } finally {
+    if (gen === generation) pl.findingStart = false;
   }
 }
 

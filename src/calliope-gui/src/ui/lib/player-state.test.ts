@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import type { Channel } from '@tauri-apps/api/core';
 import {
-  loop, beginNameEdit, cancelSectionBpm, cancelSectionName, commitSectionBpm, commitSectionName, jumpSection, setSectionFlags, editSectionBpm, leavePlayer, moveChange, pl, removeChange, scaleSection,
+  loop, beginNameEdit, cancelSectionBpm, cancelSectionName, commitSectionBpm, commitSectionName, jumpSection, findStart, setSectionFlags, editSectionBpm, leavePlayer, moveChange, pl, removeChange, scaleSection,
   selectSection, startAdd, targetSection, playLabel, resetPlayer, seek, selectSource, syncSelection, togglePlay,
   speedStep, speedReset, speedSet, setTraining, speedLocked, shownSpeed } from './player-state.svelte';
 import { resetLibrary } from './library-state.svelte';
@@ -219,6 +219,35 @@ describe('player sections', () => {
     ]);
     expect(logs()).toContain('player section remove index=1');
     expect(logs()).toContain('player sections segments=3 bpm=100,120,90 starts=0,2000,5000 metronome=1,1,1 count_in=0,0,0 named=0');
+  });
+
+  it('findStart sends find-start and notes the new start; a reply after a track switch is ignored', async () => {
+    await open();
+    let release!: (s: PlayerSnapshot) => void;
+    handlers.player_tempo = () => new Promise((res) => { release = res; });
+    const run = findStart();
+    expect(pl.findingStart).toBe(true);
+    await findStart(); // busy: not sent twice
+    release(withSegs(practice.id, [{ ...seg(1200, 100), found_ms: 1200 }, seg(2000, 120)]));
+    await run;
+    expect(tempoCalls()).toEqual([{ kind: 'find-start' }]);
+    expect(pl.findingStart).toBe(false);
+    expect(pl.sectionNote).toBe('First beat at 0:01.200');
+    expect(logs()).toContain('player first-beat find');
+    expect(logs()).toContain('player first-beat start=1200');
+    // another section action clears the note
+    selectSection(0);
+    handlers.player_tempo = (a) => withSegs(a.id as string, three);
+    await jumpSection('start');
+    expect(pl.sectionNote).toBe('');
+    // a reply arriving after a track switch is ignored
+    handlers.player_tempo = () => new Promise((res) => { release = res; });
+    const late = findStart();
+    resetPlayer();
+    release(withSegs(practice.id, [{ ...seg(900, 100), found_ms: 900 }]));
+    await late;
+    expect(pl.sectionNote).toBe('');
+    expect(pl.snap).toBeNull();
   });
 
   it('playback carrying the playhead into another section hands the target to it; Start jumps there', async () => {

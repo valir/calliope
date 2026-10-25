@@ -34,6 +34,7 @@ const timestamps = (): PlayerSnapshot => ({
 let calls: [string, Record<string, unknown>][];
 let channel: Channel<PlayerEvent>;
 let snap: PlayerSnapshot;
+let tempoHook: (() => Promise<PlayerSnapshot>) | null;
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const of = (cmd: string) => calls.filter((c) => c[0] === cmd).map((c) => c[1]);
 const group = (name: string) => within(screen.getByRole('group', { name }));
@@ -54,10 +55,12 @@ async function type(el: HTMLInputElement, text: string) {
 
 beforeEach(() => {
   calls = [];
+  tempoHook = null;
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
     calls.push([cmd, a]);
     if (cmd === 'open_player') { channel = a.events as Channel<PlayerEvent>; return snap; }
+    if (cmd === 'player_tempo' && tempoHook) return tempoHook();
     if (cmd === 'player_tempo' || cmd === 'player_loop') return snap;
     if (cmd.startsWith('player_')) return { ...idle };
     if (cmd === 'get_repository') return { root: '/r', is_default: false, status: 'ok' };
@@ -512,6 +515,48 @@ describe('Sections group', () => {
       { kind: 'scale-section', index: 1, at: 6000, factor: 'halve' },
       { kind: 'remove-change', index: 1, at: 6000 },
     ]);
+  });
+
+  describe('Find start', () => {
+    const find = () => btn('Sections', 'Find where the music starts and put the first beat there');
+    const found = (): PlayerSnapshot => {
+      const t = three();
+      t.tempo.segments[0] = { ...t.tempo.segments[0], start_ms: 1200, found_ms: 1200 };
+      return t;
+    };
+
+    it('is disabled without a tempo', async () => {
+      await open(timestamps());
+      expect(find().disabled).toBe(true);
+      expect(find().title).toBe('Type a BPM first');
+    });
+
+    it('sends find-start, is disabled while it runs and then shows the new start', async () => {
+      await open(three());
+      expect(find().disabled).toBe(false);
+      let done!: (s: PlayerSnapshot) => void;
+      tempoHook = () => new Promise((res) => { done = res; });
+      await fireEvent.click(find());
+      await flush();
+      expect(of('player_tempo').map((c) => c.action)).toEqual([{ kind: 'find-start' }]);
+      expect(find().disabled).toBe(true);
+      expect(find().title).toBe('Finding the start...');
+      expect(screen.getByTestId('section-message').textContent).toBe('Finding the start...');
+      done(found());
+      await flush();
+      expect(find().disabled).toBe(false);
+      expect(screen.getByTestId('section-message').textContent).toBe('First beat at 0:01.200');
+      expect(of('frontend_log').map((c) => c.message)).toContain('player first-beat start=1200');
+    });
+
+    it('shows a refusal in the message line', async () => {
+      await open(three());
+      tempoHook = () => Promise.reject('Nothing but noise: no start found');
+      await fireEvent.click(find());
+      await flush();
+      expect(screen.getByTestId('section-message').textContent).toBe('Nothing but noise: no start found');
+      expect(find().disabled).toBe(false);
+    });
   });
 
   it('Add captures the playhead for the overlay (the overlay itself is tested with the waveform)', async () => {

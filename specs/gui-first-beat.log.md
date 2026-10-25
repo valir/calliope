@@ -7,3 +7,7 @@ task 5 | Player engine and manager: floor, first-beat placement, moving bar 1 | 
 task 6 | Player IPC: automatic run at open and the find-start action | implementer | done
 task 7 | Editor: move the first bar | implementer | done
 task 8 | Export without the audio before the first beat | implementer | done
+task 9 | Waveform geometry helpers | implementer (local result discarded: wrong playStartMs) | done
+task 10 | Waveform view: the first bar, the readout, the dimmed lead-in | implementer | done
+task 11 | Player: Find start button | implementer | done
+task 12 | Export pane count-in line | implementer | done

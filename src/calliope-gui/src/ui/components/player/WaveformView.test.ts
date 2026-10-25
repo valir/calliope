@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import WaveformView from './WaveformView.svelte';
-import { columns, fineMs, loopMarks, sectionMarks } from '$lib/waveform-geometry';
+import { columns, fineMs, loopMarks, sectionMarks, xOf } from '$lib/waveform-geometry';
 import type { PlayerLoop, TempoSegment } from '$lib/ipc';
 
 const mk = (id: string, start_ms: number, end_ms: number | null): PlayerLoop => ({
@@ -87,10 +87,10 @@ describe('WaveformView sections', () => {
     render(WaveformView, { props: { ...base, segments: segs } });
     await tick();
     const [m0, m1, m2] = sectionMarks(segs, 20000, 200);
-    expect(m0.x).toBeNull();
-    expect(bars().map((r) => r.x)).toEqual([m1.x, m2.x]);
+    expect(m0.x).toBe(0);
+    expect(bars().map((r) => r.x)).toEqual([0, m1.x, m2.x]);
     expect(texts).toEqual([
-      { t: '120 BPM', x: 3, y: 92 },
+      { t: '120 BPM', x: 5, y: 92 },
       { t: '90 BPM', x: m1.x! + 5, y: 92 },
       { t: '100 BPM', x: m2.x! + 5, y: 92 },
     ]);
@@ -145,8 +145,11 @@ describe('WaveformView editing', () => {
     expect(c.getAttribute('role')).toBe('slider');
     expect(c.getAttribute('tabindex')).toBe('0');
     cleanup();
+    // the first bar is movable whenever a tempo exists; without a tempo nothing is
     const typed = mount({ segments: [seg(0, 120), seg(6500, 90)] });
-    expect(typed.getAttribute('role')).toBe('img');
+    expect(typed.getAttribute('role')).toBe('slider');
+    cleanup();
+    expect(mount({ segments: [seg(0, 0)] }).getAttribute('role')).toBe('img');
   });
 
   it('a drag of N px sends one onmove with the absolute steps', async () => {
@@ -221,6 +224,7 @@ describe('WaveformView editing', () => {
   it('arrows move the selected change by absolute steps and stop at 256', async () => {
     const c = mount();
     await fireEvent.focus(c);
+    await fireEvent.keyDown(c, { key: 'ArrowDown' }); // the first bar is selected first
     // offset of change 1 is +8 ms = 1 step (8/7.8125)
     expect(c.getAttribute('aria-valuetext')).toBe('Tempo change 1 of 2 at 0:06.508, 90 BPM, +1/64 beat');
     await fireEvent.keyDown(c, { key: 'ArrowRight' });
@@ -240,6 +244,7 @@ describe('WaveformView editing', () => {
     const c = mount();
     await fireEvent.focus(c);
     await fireEvent.keyDown(c, { key: 'ArrowDown' });
+    await fireEvent.keyDown(c, { key: 'ArrowDown' });
     expect(c.getAttribute('aria-valuetext')).toMatch(/^Tempo change 2 of 2 at 0:15\.000, 110 BPM/);
     await fireEvent.keyDown(c, { key: 'ArrowLeft' });
     expect(moves[0][0]).toBe(3);
@@ -247,6 +252,82 @@ describe('WaveformView editing', () => {
     expect(c.getAttribute('aria-valuetext')).toMatch(/^Tempo change 2 of 2/);
     await fireEvent.keyDown(c, { key: 'ArrowUp' });
     expect(c.getAttribute('aria-valuetext')).toMatch(/^Tempo change 1 of 2/);
+    await fireEvent.keyDown(c, { key: 'ArrowUp' });
+    expect(c.getAttribute('aria-valuetext')).toMatch(/^Section 1 of 4 from the start, 120 BPM/);
+  });
+
+  it('the first bar is selectable and movable in the Editor mode', async () => {
+    const found = [{ ...seg(1200, 120), found_ms: 1200 }, ...edit.slice(1)];
+    const c = mount({ segments: found });
+    await fireEvent.focus(c);
+    await fireEvent.keyDown(c, { key: 'ArrowRight' });
+    expect(moves).toEqual([[0, 1]]);
+    cleanup();
+    const moved = mount({ segments: [{ ...seg(1207.8125, 120), found_ms: 1200 }, ...edit.slice(1)] });
+    await fireEvent.focus(moved);
+    expect(moved.getAttribute('aria-valuetext')).toBe('Section 1 of 4 from the start, 120 BPM, first beat, +1/64 beat');
+  });
+});
+
+describe('WaveformView first bar', () => {
+  const found = (start: number | null): TempoSegment[] => [
+    { start_ms: start ?? 1200, bpm: 120, ...(start === null ? {} : { found_ms: 1200 }) },
+  ];
+  let moves: [number, number][];
+  const mountF = (segments: TempoSegment[]) => {
+    moves = [];
+    render(WaveformView, { props: { ...base, segments, freeMove: true, selected: 0, onselect() {}, onmove: (i: number, s: number) => moves.push([i, s]) } });
+    return screen.getByTestId('wf');
+  };
+  it('draws the first bar at 1200 ms; a drag by one fine step shows +1/64 beat and sends onmove(0, 1)', async () => {
+    cssWidth = 2500; // 1 px = 8.0 ms
+    const c = mountF([{ start_ms: 1200, bpm: 120, found_ms: 1200 }]);
+    await tick();
+    const x = xOf(1200, 20000, 2500);
+    expect(rects.some((r) => r.h === 96 && r.x === x - 1 && r.w === 4)).toBe(true); // selected: the 4 px bar
+    await fireEvent.pointerDown(c, { clientX: x });
+    await fireEvent.pointerMove(c, { clientX: x + 1 });
+    expect(screen.getByTestId('wf-readout').textContent).toContain('+1/64 beat');
+    await fireEvent.pointerUp(c);
+    expect(moves).toEqual([[0, 1]]);
+  });
+
+  it('Shift+Left stops at 0:00 and Right stops at the end limit', async () => {
+    const c = mountF(found(1200));
+    await fireEvent.focus(c);
+    for (let i = 0; i < 40; i++) await fireEvent.keyDown(c, { key: 'ArrowLeft', shiftKey: true });
+    expect(moves[moves.length - 1]).toEqual([0, -154]);
+    cleanup();
+    const d = mountF(found(1200));
+    await fireEvent.focus(d);
+    for (let i = 0; i < 600; i++) await fireEvent.keyDown(d, { key: 'ArrowRight', shiftKey: true });
+    // hi = 20000 - 500 ms
+    expect(moves[moves.length - 1][1]).toBe(Math.ceil((19500 - 1200) / fineMs(120)));
+  });
+
+  it('dims the lead-in only when the first beat is set', async () => {
+    mountF(found(1200));
+    await tick();
+    expect(rects.some((r) => r.x === 0 && r.w === xOf(1200, 20000, 200) && r.h === 96)).toBe(true);
+    cleanup();
+    mountF(found(null));
+    await tick();
+    expect(rects.some((r) => r.x === 0 && r.w === xOf(1200, 20000, 200) && r.h === 96)).toBe(false);
+  });
+
+  it('draws the dim with the background colour at 0.6 alpha', async () => {
+    const alphas: [number, string][] = [];
+    let alpha = 1;
+    let fill = '';
+    (HTMLCanvasElement.prototype.getContext as unknown as { mockImplementation: (f: unknown) => void }).mockImplementation(() => ({
+      setTransform() {}, clearRect() {}, measureText: () => ({ width: 10 }), fillText() {},
+      set globalAlpha(v: number) { alpha = v; }, get globalAlpha() { return alpha; },
+      set fillStyle(v: string) { fill = v; },
+      fillRect: (x: number, _y: number, w: number) => { if (x === 0 && w === xOf(1200, 20000, 200)) alphas.push([alpha, fill]); },
+    }));
+    mountF(found(1200));
+    await tick();
+    expect(alphas).toContainEqual([0.6, '#fff']);
   });
 });
 

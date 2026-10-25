@@ -37,7 +37,7 @@ export function fineMs(bpm: number): number {
 }
 
 export interface SectionMark {
-  /** null for the first section: its label sits at the left edge, no bar */
+  /** Pixel column of the section's start; never null now (the first bar is drawn too) */
   x: number | null;
   bpm: number;
   index: number;
@@ -50,7 +50,7 @@ export function sectionMarks(
   width: number,
 ): SectionMark[] {
   return segments.map((s, index) => ({
-    x: index === 0 ? null : xOf(s.start_ms, durationMs, width),
+    x: xOf(s.start_ms, durationMs, width),
     bpm: s.bpm,
     index,
     detected: s.detected_ms != null,
@@ -98,18 +98,55 @@ export function offsetSteps(startMs: number, detectedMs: number, leftBpm: number
   return roundHalfAway((startMs - detectedMs) / fineMs(leftBpm));
 }
 
-type MoveSeg = { start_ms: number; bpm: number; detected_ms?: number | null };
+type MoveSeg = { start_ms: number; bpm: number; detected_ms?: number | null; found_ms?: number | null };
 
-/** The point a change's offset is measured from: `detected_ms`, else the left section's start. Needs i >= 1. */
+/** The point a bar's offset is measured from: for index 0 `found_ms` (else its start); else `detected_ms`, else the left section's start. */
 export function moveRefMs(segs: MoveSeg[], i: number): number {
+  if (i === 0) {
+    return segs[0].found_ms ?? segs[0].start_ms;
+  }
   return segs[i].detected_ms ?? segs[i - 1].start_ms;
 }
 
-/** Largest |offset| in fine steps: detected changes keep max(256, current offset); others are free. */
+/** Largest |offset| in fine steps: the first bar is free; detected changes keep max(256, current offset); others are free. */
 export function moveLimit(segs: MoveSeg[], i: number): number {
+  if (i === 0) {
+    return Infinity;
+  }
   const d = segs[i].detected_ms;
   if (d == null) {
     return Infinity;
   }
   return Math.max(MAX_OFFSET_STEPS, Math.abs(offsetSteps(segs[i].start_ms, d, segs[i - 1].bpm)));
+}
+
+/** Where playback starts: the first beat when it is set (`found_ms` present), else 0. */
+export function playStartMs(segs: MoveSeg[]): number {
+  if (segs.length === 0) {
+    return 0;
+  }
+  return segs[0].found_ms != null ? Math.max(0, segs[0].start_ms) : 0;
+}
+
+/** The BPM whose 1/64 beat moves bar `i`: the first section's for bar 0, else the section to its left. */
+export function stepBpm(segs: MoveSeg[], i: number): number {
+  return i === 0 ? segs[0].bpm : segs[i - 1].bpm;
+}
+
+/** Range `[lo, hi]` of the first beat: 0 up to one beat before the second section (or the end). */
+export function firstBeatLimits(segs: MoveSeg[], durationMs: number): [number, number] {
+  return [0, (segs[1]?.start_ms ?? durationMs) - 60000 / segs[0].bpm];
+}
+
+/** Fine steps of the first beat from `refMs` for a pointer at `pointerMs`; mirrors the Rust clamp (floor/ceil). */
+export function firstBeatSteps(refMs: number, pointerMs: number, bpm: number, lo: number, hi: number): number {
+  const fine = fineMs(bpm);
+  const nmin = Math.floor((lo - refMs) / fine);
+  const nmax = Number.isFinite(hi) ? Math.ceil((hi - refMs) / fine) : Infinity;
+  return Math.min(Math.max(roundHalfAway((pointerMs - refMs) / fine), nmin), nmax);
+}
+
+/** The first beat's position for `steps` fine steps from `refMs`, clamped to `[lo, hi]`. */
+export function firstBeatAt(refMs: number, steps: number, bpm: number, lo: number, hi: number): number {
+  return Math.min(Math.max(refMs + steps * fineMs(bpm), lo), hi);
 }

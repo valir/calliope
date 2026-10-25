@@ -264,6 +264,8 @@ export interface TempoSegment {
   bpm: number;
   /** set on changes found by beat detection */
   detected_ms?: number | null;
+  /** first section only: set when the first beat was found or placed; `start_ms` is the first beat then */
+  found_ms?: number | null;
   /** set on changes added or moved in the Player: the section starts on a beat */
   on_beat?: boolean;
   /** the section's name; missing = no name */
@@ -282,7 +284,7 @@ export interface DetectState {
   phase: 'checking' | 'mixing' | 'uploading' | 'waiting' | 'detecting' | 'applying';
   progress: number | null;
 }
-/** `steps` is the absolute offset from `detected_ms`, -256..256. */
+/** `steps` is the absolute offset from `detected_ms`, -256..256; for index 0 from `found_ms` (else the start), clamped to the track. */
 export type TempoEdit = { kind: 'move'; index: number; steps: number } | { kind: 'reload' };
 export type EditorEvent =
   | { kind: 'loading'; id: string; done: number; total: number }
@@ -422,6 +424,7 @@ export type TempoAction =
   | { kind: 'set-bpm'; bpm: number }
   | { kind: 'speed-step'; steps: number }
   | { kind: 'speed-reset' }
+  | { kind: 'find-start' }
   | { kind: 'speed-set'; percent: number }
   | { kind: 'section-bpm'; index: number; at: number; bpm: number }
   | { kind: 'scale-section'; index: number; at: number; factor: 'double' | 'halve' }
@@ -476,7 +479,7 @@ export const playerLoop = (id: string, action: LoopAction): Promise<PlayerSnapsh
 // Export: mirrors src/export_job.rs and src/export_ipc.rs.
 export type ExportKind = 'rc5' | 'mp3' | 'ogg';
 export type ExportTargetReq = { kind: 'rc5'; memory: string } | { kind: 'mp3' } | { kind: 'ogg' };
-export interface CountInInfo { bpm: number; first_beat_ms: number; lead_ms: number }
+export interface CountInInfo { bpm: number; first_beat_ms: number; lead_ms: number; skip_ms: number }
 export interface ExportInfo {
   id: string;
   available: boolean;

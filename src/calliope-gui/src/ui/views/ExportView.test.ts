@@ -40,7 +40,7 @@ beforeEach(() => {
   plan = { token: 'tok', path: '/out/a.mp3', exists: false };
   info = {
     id: TRACK.id, available: true, reason: null, source: 'backings/backing.flac',
-    count_in: { bpm: 120, first_beat_ms: 0, lead_ms: 2500 }, memory: 7,
+    count_in: { bpm: 120, first_beat_ms: 0, lead_ms: 2500, skip_ms: 0 }, memory: 7,
     last: { rc5: null, mp3: null, ogg: null },
   };
   mockIPC((cmd, args) => {

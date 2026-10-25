@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { columns, xOf, loopMarks, fineMs, sectionMarks, labelFits, dragSteps, offsetSteps, moveRefMs, moveLimit } from './waveform-geometry';
+import { columns, xOf, loopMarks, fineMs, sectionMarks, labelFits, dragSteps, offsetSteps, moveRefMs, moveLimit, playStartMs, stepBpm, firstBeatLimits, firstBeatSteps, firstBeatAt } from './waveform-geometry';
 
 describe('columns', () => {
   it('should handle empty peaks', () => {
@@ -45,10 +45,11 @@ describe('sectionMarks', () => {
       [{ start_ms: 500, bpm: 120 }, { start_ms: 10300, bpm: 90, detected_ms: 10300 }, { start_ms: 30000, bpm: 100, detected_ms: null }],
       40000, 401);
     expect(marks).toEqual([
-      { x: null, bpm: 120, index: 0, detected: false },
+      { x: 5, bpm: 120, index: 0, detected: false },
       { x: 103, bpm: 90, index: 1, detected: true },
       { x: 300, bpm: 100, index: 2, detected: false },
     ]);
+    expect(sectionMarks([{ start_ms: 0, bpm: 120 }], 40000, 401)[0].x).toBe(0);
   });
 });
 
@@ -135,5 +136,37 @@ describe('free moves', () => {
     expect(dragSteps(10000, 10000 + 399 * f, 120, 0, 1e9, 400)).toBe(399);
     expect(dragSteps(10000, 10000 + 400 * f, 120, 0, 1e9, 400)).toBe(400);
     expect(dragSteps(10000, 10000 + 401 * f, 120, 0, 1e9, 400)).toBe(400);
+  });
+});
+
+describe('first beat', () => {
+  const set = [{ start_ms: 1200, bpm: 120, found_ms: 1200 }, { start_ms: 2600, bpm: 90 }];
+  const unset = [{ start_ms: 1200, bpm: 120 }];
+
+  it('playStartMs follows found_ms', () => {
+    expect(playStartMs(set)).toBe(1200);
+    expect(playStartMs(unset)).toBe(0);
+    expect(playStartMs([])).toBe(0);
+  });
+
+  it('stepBpm and moveRefMs/moveLimit for bar 0', () => {
+    expect(stepBpm(set, 0)).toBe(120);
+    expect(stepBpm(set, 1)).toBe(120);
+    expect(moveRefMs(set, 0)).toBe(1200);
+    expect(moveRefMs([{ start_ms: 900, bpm: 120, found_ms: null }], 0)).toBe(900);
+    expect(moveLimit(set, 0)).toBe(Infinity);
+  });
+
+  it('firstBeatLimits with and without a second section', () => {
+    expect(firstBeatLimits(set, 5000)).toEqual([0, 2100]);
+    expect(firstBeatLimits(unset, 3000)).toEqual([0, 2500]);
+  });
+
+  it('firstBeatSteps and firstBeatAt clamp', () => {
+    expect(firstBeatSteps(1200, 1207.9, 120, 0, 2500)).toBe(1);
+    expect(firstBeatSteps(1200, -50, 120, 0, 2500)).toBe(-154);
+    expect(firstBeatAt(1200, -154, 120, 0, 2500)).toBe(0);
+    expect(firstBeatSteps(1200, 9999, 120, 0, 2500)).toBe(167);
+    expect(firstBeatAt(1200, 167, 120, 0, 2500)).toBe(2500);
   });
 });

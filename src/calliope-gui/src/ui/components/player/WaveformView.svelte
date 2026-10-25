@@ -2,7 +2,8 @@
   import { onMount } from 'svelte';
   import type { PlayerLoop, TempoSegment } from '$lib/ipc';
   import {
-    columns, dragSteps, fineMs, labelFits, loopMarks, MAX_OFFSET_STEPS, moveLimit, moveRefMs, offsetSteps, sectionMarks, xOf,
+    columns, dragSteps, fineMs, firstBeatAt, firstBeatLimits, firstBeatSteps, labelFits, loopMarks, MAX_OFFSET_STEPS, moveLimit, moveRefMs,
+    offsetSteps, playStartMs, sectionMarks, stepBpm, xOf,
   } from '$lib/waveform-geometry';
   import SectionBpmInput from './SectionBpmInput.svelte';
 
@@ -13,7 +14,7 @@
     loops?: PlayerLoop[];
     currentLoop?: number | null;
     segments?: TempoSegment[];
-    /** Moves detected change `index` to the absolute offset `steps`; without it the view is read-only. */
+    /** Moves the first bar (index 0, offset from the found start) or detected change `index` to the absolute offset `steps`; without it the view is read-only. */
     onmove?: (index: number, steps: number) => void;
     /** Drag and keys are off while true (a detection is running). */
     locked?: boolean;
@@ -66,20 +67,30 @@
     if (drag && drag.index >= segments.length) drag = null;
   });
 
+  /** Where bar `i` is drawn for an offset of `steps` while dragging (the first bar stays within the track). */
+  function previewMs(i: number, steps: number): number {
+    if (i === 0) {
+      const [lo, hi] = firstBeatLimits(segments, durationMs);
+      return firstBeatAt(moveRefMs(segments, 0), steps, segments[0].bpm, lo, hi);
+    }
+    return moveRefMs(segments, i) + steps * fineMs(stepBpm(segments, i));
+  }
+
   const editable = $derived(!!onmove);
   const shown = $derived(
     drag
-      ? segments.map((s, i) => (i === drag!.index ? { ...s, start_ms: moveRefMs(segments, i) + drag!.steps * fineMs(segments[i - 1].bpm) } : s))
+      ? segments.map((s, i) => (i === drag!.index ? { ...s, start_ms: previewMs(i, drag!.steps) } : s))
       : segments,
   );
   const detectedIdx = $derived(segments.flatMap((s, i) => (i > 0 && s.detected_ms != null ? [i] : [])));
-  const active = $derived(
-    editable && !locked && (freeMove ? segments.length > 0 && segments[0].bpm > 0 : detectedIdx.length > 0),
-  );
+  const hasTempo = $derived(segments.length > 0 && segments[0].bpm > 0);
+  /** Editor mode: the first bar (when a tempo exists) plus the detected changes. */
+  const movableIdx = $derived(hasTempo ? [0, ...detectedIdx] : detectedIdx);
+  const active = $derived(editable && !locked && (freeMove ? hasTempo : movableIdx.length > 0));
   const sel = $derived(
     freeMove
       ? Math.min(Math.max(selected ?? 0, 0), Math.max(segments.length - 1, 0))
-      : selectedInt !== null && detectedIdx.includes(selectedInt) ? selectedInt : (detectedIdx[0] ?? null),
+      : selectedInt !== null && movableIdx.includes(selectedInt) ? selectedInt : (movableIdx[0] ?? null),
   );
 
   function fmt(ms: number, decimals: 1 | 3): string {
@@ -99,7 +110,11 @@
   });
 
   function offsetOf(i: number): number {
-    return offsetSteps(segments[i].start_ms, moveRefMs(segments, i), segments[i - 1].bpm);
+    return offsetSteps(segments[i].start_ms, moveRefMs(segments, i), stepBpm(segments, i));
+  }
+  /** The first section's value text: with the first beat's offset once it is set. */
+  function firstBeatText(head: string): string {
+    return segments[0].found_ms != null ? `${head}, first beat, ${signed(offsetOf(0))}/64 beat` : head;
   }
   const valueText = $derived.by(() => {
     if (!active || sel === null) return undefined;
@@ -107,9 +122,12 @@
       const s = segments[sel];
       const nm = s.name ? `, ${s.name},` : '';
       const head = `Section ${sel + 1} of ${segments.length}${nm} ${sel === 0 ? 'from the start' : `from ${fmt(s.start_ms, 3)}`}, ${bpmText(s.bpm)} BPM`;
-      if (sel === 0) return head;
+      if (sel === 0) return firstBeatText(head);
       const kind = s.detected_ms != null ? 'detected' : s.on_beat ? 'placed' : 'typed';
       return kind === 'typed' ? `${head}, typed` : `${head}, ${kind}, ${signed(offsetOf(sel))}/64 beat`;
+    }
+    if (sel === 0) {
+      return firstBeatText(`Section 1 of ${segments.length} from the start, ${bpmText(segments[0].bpm)} BPM`);
     }
     const n = offsetOf(sel);
     const pos = detectedIdx.indexOf(sel) + 1;
@@ -117,12 +135,18 @@
   });
   const readout = $derived.by(() => {
     if (!drag || drag.index >= segments.length) return '';
-    const ms = drag.steps * fineMs(segments[drag.index - 1].bpm);
+    const ms = drag.steps * fineMs(stepBpm(segments, drag.index));
     const sign = ms < 0 ? '-' : '+';
-    const limit = freeMove ? moveLimit(segments, drag.index) : MAX_OFFSET_STEPS;
+    if (drag.index === 0) return `${signed(drag.steps)}/64 beat (${sign}${fmt(Math.abs(ms), 3)}) from the found start`;
+    const limit = limitOf(drag.index);
     const tail = Number.isFinite(limit) ? ` · limit ±${limit / 64} beats` : '';
     return `${signed(drag.steps)}/64 beat (${sign}${fmt(Math.abs(ms), 3)})${tail}`;
   });
+
+  /** Largest |offset| in fine steps of bar `i`; the first bar is limited by the track instead. */
+  function limitOf(i: number): number {
+    return i === 0 ? Infinity : freeMove ? moveLimit(segments, i) : MAX_OFFSET_STEPS;
+  }
 
   /** Neighbour limits of change `i` in ms, as `set_change_offset`. */
   function limits(i: number): [number, number] {
@@ -131,9 +155,12 @@
     return [prev.start_ms + 60000 / prev.bpm, next ? next.start_ms - 60000 / segments[i].bpm : Infinity];
   }
   function stepsFor(i: number, pointerMs: number): number {
+    if (i === 0) {
+      const [flo, fhi] = firstBeatLimits(segments, durationMs);
+      return firstBeatSteps(moveRefMs(segments, 0), pointerMs, segments[0].bpm, flo, fhi);
+    }
     const [lo, hi] = limits(i);
-    const limit = freeMove ? moveLimit(segments, i) : MAX_OFFSET_STEPS;
-    return dragSteps(moveRefMs(segments, i), pointerMs, segments[i - 1].bpm, lo, hi, limit);
+    return dragSteps(moveRefMs(segments, i), pointerMs, segments[i - 1].bpm, lo, hi, limitOf(i));
   }
 
   function colour(style: CSSStyleDeclaration, name: string, fallback: string): string {
@@ -162,6 +189,15 @@
       ctx.fillRect(x, mid - h / 2, 1, h);
     });
 
+    // the part before the first beat is dimmed (it is not played in the Player)
+    const start = playStartMs(shown);
+    if (shown[0]?.found_ms != null && start > 0) {
+      ctx.fillStyle = colour(style, '--background', '#fff');
+      ctx.globalAlpha = 0.6;
+      ctx.fillRect(0, 0, xOf(start, duration, width), height);
+      ctx.globalAlpha = 1;
+    }
+
     const marks = loopMarks(loops, duration, width);
     ctx.fillStyle = accent;
     marks.forEach((m, i) => {
@@ -188,7 +224,7 @@
     secs.forEach((m) => {
       if (m.x === null) return;
       const isSel = freeMove ? active && m.index === sel : active && focused && m.index === sel;
-      ctx.globalAlpha = editable && !freeMove && !m.detected ? 0.55 : 1;
+      ctx.globalAlpha = editable && !freeMove && !movableIdx.includes(m.index) ? 0.55 : 1;
       ctx.fillStyle = accent;
       if (isSel) ctx.fillRect(m.x - 1, 0, 4, height);
       else ctx.fillRect(m.x, 0, 2, height);
@@ -201,7 +237,7 @@
     labelRects = [];
     secs.forEach((m, i) => {
       if (m.bpm <= 0) return;
-      const x = m.x === null ? 3 : m.x + 5;
+      const x = (m.x ?? 0) + 5;
       const nextX = secs[i + 1]?.x ?? null;
       const b = bpmText(m.bpm);
       for (const t of [`${b} BPM`, b]) {
@@ -240,7 +276,7 @@
   const localX = (e: PointerEvent): number => e.clientX - (canvas?.getBoundingClientRect().left ?? 0);
   const msAt = (x: number): number => (width > 1 ? (Math.min(Math.max(x, 0), width - 1) / (width - 1)) * durationMs : 0);
 
-  /** The change (index >= 1) whose bar is within GRAB_PX of `x`, nearest first. */
+  /** The bar (the first one included) whose bar is within GRAB_PX of `x`, nearest first. */
   function barAt(x: number): number | null {
     let best: number | null = null;
     let bestD = GRAB_PX + 1;
@@ -292,7 +328,7 @@
       return;
     }
     const i = barAt(x);
-    if (i === null || segments[i].detected_ms == null) return;
+    if (i === null || !movableIdx.includes(i)) return;
     drag = { index: i, steps: offsetOf(i) };
     selectedInt = i;
     keyTarget = null;
@@ -307,8 +343,8 @@
       return;
     }
     const i = locked ? null : barAt(localX(e));
-    hoverBar = i !== null && (freeMove || segments[i].detected_ms != null);
-    hoverTyped = !freeMove && i !== null && segments[i].detected_ms == null;
+    hoverBar = i !== null && (freeMove || movableIdx.includes(i));
+    hoverTyped = !freeMove && i !== null && !movableIdx.includes(i);
   }
 
   function onpointerup(): void {
@@ -329,7 +365,7 @@
 
   function onfocus(): void {
     focused = true;
-    if (!freeMove) selectedInt = detectedIdx[0] ?? null;
+    if (!freeMove) selectedInt = movableIdx[0] ?? null;
     keyTarget = null;
   }
 
@@ -344,8 +380,8 @@
       if (freeMove) {
         onselect?.(Math.min(Math.max(sel + (e.key === 'ArrowUp' ? -1 : 1), 0), segments.length - 1));
       } else {
-        const at = detectedIdx.indexOf(sel) + (e.key === 'ArrowUp' ? -1 : 1);
-        selectedInt = detectedIdx[Math.min(Math.max(at, 0), detectedIdx.length - 1)];
+        const at = movableIdx.indexOf(sel) + (e.key === 'ArrowUp' ? -1 : 1);
+        selectedInt = movableIdx[Math.min(Math.max(at, 0), movableIdx.length - 1)];
       }
       keyTarget = null;
       e.preventDefault();
@@ -370,12 +406,11 @@
     }
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     e.preventDefault();
-    if (sel === 0) return;
     const delta = (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 64 : 1);
     const base = keyTarget && keyTarget.index === sel ? keyTarget.steps : offsetOf(sel);
-    const limit = freeMove ? moveLimit(segments, sel) : MAX_OFFSET_STEPS;
+    const limit = limitOf(sel);
     const wanted = Math.min(Math.max(base + delta, -limit), limit);
-    const fine = fineMs(segments[sel - 1].bpm);
+    const fine = fineMs(stepBpm(segments, sel));
     const steps = stepsFor(sel, moveRefMs(segments, sel) + wanted * fine);
     if (steps === base) return;
     keyTarget = { index: sel, steps };
@@ -396,7 +431,7 @@
     } else {
       const i = bpmEdit.index;
       if (i < 0 || i >= segments.length) return null;
-      x = i === 0 ? 3 : xOf(segments[i].start_ms, durationMs, width) + 5;
+      x = xOf(segments[i].start_ms, durationMs, width) + 5;
       initial = segments[i].bpm;
       name = `BPM of section ${i + 1}`;
     }
@@ -429,7 +464,7 @@
     aria-label={ariaLabel}
     aria-valuemin={active && !freeMove ? -MAX_OFFSET_STEPS : undefined}
     aria-valuemax={active && !freeMove ? MAX_OFFSET_STEPS : undefined}
-    aria-valuenow={active && sel !== null ? (sel === 0 ? 0 : offsetOf(sel)) : undefined}
+    aria-valuenow={active && sel !== null ? offsetOf(sel) : undefined}
     data-player-keys={freeMove ? '' : undefined}
     aria-valuetext={valueText}
     tabindex={active ? 0 : undefined}
