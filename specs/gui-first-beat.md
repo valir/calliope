@@ -16,7 +16,7 @@ and the exported count-in lead exactly into the first beat.
   and its tempo extends backwards to 0:00. Section start bars are drawn on the
   waveform in the Editor and in the Player, and can be dragged (in 1/64-beat
   steps, at most 4 beats from where they were detected or added).
-- Every count-in is six ticks over 4 beats, the 5th silent, then the music's
+- Every count-in is six ticks over 5 beats, the 5th silent, then the music's
   beat (fix 2026-10-25): on Play and loop wraps, before a section with Count
   In on, and in front of every export (`gui-export.md`, requirement 12).
 - The export already places its count-in from the first section's start, so
