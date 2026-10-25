@@ -585,6 +585,7 @@ pub(crate) fn detect(
         detected_ms: None,
         on_beat: false,
         meta: SectionMeta::default(),
+        found_ms: None,
     }];
     for k in 1..q.len() {
         let (bpm, f) = q[k];
@@ -601,6 +602,7 @@ pub(crate) fn detect(
             detected_ms: Some(start),
             on_beat: false,
             meta: SectionMeta::default(),
+            found_ms: None,
         });
     }
     let last = *t.last().unwrap();

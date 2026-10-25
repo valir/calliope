@@ -230,6 +230,7 @@ mod tests {
             bpm,
             detected_ms: None,
             on_beat,
+            found_ms: None,
             meta: SectionMeta {
                 name: String::new(),
                 metronome,

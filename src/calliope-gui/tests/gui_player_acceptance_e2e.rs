@@ -90,7 +90,7 @@ fn newer_schema_player_json_is_left_alone() {
         return;
     }
     let dirs = player_dirs("qa_player_newer");
-    let text = r#"{"schema_version": 7, "source": "stem:guitar", "future_field": [1,2,3]}"#;
+    let text = r#"{"schema_version": 8, "source": "stem:guitar", "future_field": [1,2,3]}"#;
     std::fs::write(dirs.player_json(PL_PRACTICE), text).unwrap();
     let (mut app, wid) = start_player(&dirs);
     pick(&mut app, &wid, "practice song", PL_PRACTICE);

@@ -1777,6 +1777,7 @@ fn new_map() -> crate::tempo_map::TempoMap {
             detected_ms: None,
             on_beat: false,
             meta: Default::default(),
+            found_ms: None,
         }],
     }
 }

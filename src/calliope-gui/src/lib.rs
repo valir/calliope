@@ -12,6 +12,7 @@ pub mod export_ipc;
 pub mod export_job;
 pub mod export_record;
 pub mod export_rules;
+pub mod first_beat;
 pub mod fsutil;
 pub mod gui;
 pub mod import_job;

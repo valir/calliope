@@ -92,14 +92,16 @@ fn stub_ok_pattern_is_exact() {
                 bpm: 120.0,
                 detected_ms: None,
                 on_beat: false,
-                meta: SectionMeta::default()
+                meta: SectionMeta::default(),
+                found_ms: None,
             },
             Segment {
                 start_ms: 6500.0,
                 bpm: 90.0,
                 detected_ms: Some(6500.0),
                 on_beat: false,
-                meta: SectionMeta::default()
+                meta: SectionMeta::default(),
+                found_ms: None,
             },
         ]
     );

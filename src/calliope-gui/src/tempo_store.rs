@@ -65,6 +65,7 @@ mod tests {
                 detected_ms: None,
                 on_beat: false,
                 meta: SectionMeta::default(),
+                found_ms: None,
             }],
         }
     }
@@ -115,7 +116,7 @@ mod tests {
     #[test]
     fn newer_schema_is_refused_and_the_file_is_unchanged() {
         let d = tempfile::tempdir().unwrap();
-        write(d.path(), json!({"schema_version": 7, "x": 1}));
+        write(d.path(), json!({"schema_version": 8, "x": 1}));
         let bytes = std::fs::read(d.path().join("player.json")).unwrap();
         assert_eq!(
             FileTempoStore

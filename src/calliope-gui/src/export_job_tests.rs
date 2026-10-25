@@ -19,6 +19,7 @@ fn map(start_ms: f64, bpm: f64) -> TempoMap {
             detected_ms: None,
             on_beat: false,
             meta: SectionMeta::default(),
+            found_ms: None,
         }],
     }
 }

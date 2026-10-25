@@ -425,7 +425,7 @@ fn player_tempo_sections() {
     let l = moved(&mut app);
     assert_eq!(field(&l, "applied"), "256", "{l}");
     let v = wait_json(&dirs, PL_PRACTICE, |v| change_start(v, 1) == 10500.0);
-    assert_eq!(v["schema_version"], 6, "{v}");
+    assert_eq!(v["schema_version"], 7, "{v}");
     assert_eq!(
         v["tempo"]["segments"][1]["detected_ms"].as_f64(),
         Some(8500.0),
@@ -510,7 +510,7 @@ fn player_tempo_sections() {
     app.wait_exit(secs(5));
     let v = serde_json::from_slice::<Value>(&std::fs::read(dirs.player_json(PL_PRACTICE)).unwrap())
         .unwrap();
-    assert_eq!(v["schema_version"], 6, "{v}");
+    assert_eq!(v["schema_version"], 7, "{v}");
     let (mut app, wid) = start_player(&dirs);
     let mut collapsed = false;
     pick(&mut app, &wid, &mut collapsed, "practice song", PL_PRACTICE);
@@ -629,7 +629,7 @@ fn player_section_metronome() {
     let v = wait_json(&dirs, PL_PRACTICE, |v| {
         v["tempo"]["segments"][1]["name"] == "Verse"
     });
-    assert_eq!(v["schema_version"], 6, "{v}");
+    assert_eq!(v["schema_version"], 7, "{v}");
     assert_eq!(v["tempo"]["segments"][1]["count_in"], true, "{v}");
     assert_eq!(v["tempo"]["segments"][0]["metronome"], false, "{v}");
 
@@ -1187,7 +1187,7 @@ fn player_phase3() {
     let v = wait_json(&dirs, PL_PRACTICE, |v| {
         v["loops"].as_array().is_some_and(|a| a.len() == 2)
     });
-    assert_eq!(v["schema_version"], 6, "{v}");
+    assert_eq!(v["schema_version"], 7, "{v}");
     assert!(v.get("metronome").is_none(), "{v}");
     let tick = v["loops"][0]["end"]["tick"].as_i64().expect("a tick end");
     assert_eq!(tick, 256, "{v}"); // (8500 - 500) ms at 120 BPM, 16 ticks per beat (31.25 ms)

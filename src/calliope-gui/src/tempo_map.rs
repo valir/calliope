@@ -31,6 +31,11 @@ pub struct Segment {
     /// change's. Never set on the first segment.
     #[serde(default, skip_serializing_if = "is_false")]
     pub on_beat: bool,
+    /// First segment only: where "Find start" placed the first beat, or where the first beat was before
+    /// its first move by hand. Present = the first beat is *set*: the audio before `start_ms` is left
+    /// out of playback and export, and moves are counted from here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub found_ms: Option<f64>,
     /// Name, metronome and count-in of the section that starts here.
     #[serde(flatten)]
     pub meta: SectionMeta,
@@ -313,6 +318,7 @@ impl TempoMap {
                     detected_ms: None,
                     on_beat: false,
                     meta: SectionMeta::default(),
+                    found_ms: None,
                 });
             }
             return Ok(());
@@ -323,6 +329,7 @@ impl TempoMap {
             if let Some(first) = self.segments.first_mut() {
                 first.detected_ms = None;
                 first.on_beat = false;
+                first.found_ms = None;
             }
         } else {
             let tick = self.tick_near(position_ms);
@@ -359,6 +366,7 @@ impl TempoMap {
                         detected_ms: None,
                         on_beat: false,
                         meta,
+                        found_ms: None,
                     },
                 );
             }
@@ -429,6 +437,90 @@ impl TempoMap {
         if !seg.starts_on_beat() {
             map.segments[index].on_beat = true;
         }
+        Ok((map, applied))
+    }
+
+    /// The first beat is *set* (found or moved): `segments[0].found_ms` is present.
+    pub fn first_beat_set(&self) -> bool {
+        self.segments.first().is_some_and(|s| s.found_ms.is_some())
+    }
+
+    /// Where playback and export start: the first beat when it is set (never below 0), else 0.
+    pub fn play_start_ms(&self) -> f64 {
+        match self.segments.first() {
+            Some(s) if s.found_ms.is_some() => s.start_ms.max(0.0),
+            _ => 0.0,
+        }
+    }
+
+    /// Whether the automatic search for the first beat may run: a tempo exists, its first beat is
+    /// exactly at 0.0 and has not been set yet.
+    pub fn needs_first_beat(&self) -> bool {
+        self.segments
+            .first()
+            .is_some_and(|s| s.start_ms == 0.0 && s.found_ms.is_none())
+    }
+
+    /// Range of the first beat: 0 up to one beat (of the first section's tempo) before the next
+    /// section, or before `end_ms` for a single section (`hi` is infinite for an infinite `end_ms`).
+    pub fn first_beat_limits(&self, end_ms: f64) -> Result<(f64, f64), String> {
+        let first = self
+            .segments
+            .first()
+            .ok_or_else(|| "Type a BPM first".to_string())?;
+        let hi = self.segments.get(1).map_or(end_ms, |n| n.start_ms) - 60000.0 / first.bpm;
+        if hi < 0.0 {
+            return Err("There is no room to move the first beat".to_string());
+        }
+        Ok((0.0, hi))
+    }
+
+    /// The next section keeps its place, so when the first beat moved it becomes a placed change.
+    fn first_beat_moved(&mut self, changed: bool) {
+        if changed {
+            if let Some(n) = self.segments.get_mut(1) {
+                if !n.starts_on_beat() {
+                    n.on_beat = true;
+                }
+            }
+        }
+    }
+
+    /// Put the first beat at `ms` (clamped to `first_beat_limits`) and mark it set with
+    /// `found_ms` = the new start (the readout then shows 0).
+    pub fn place_first_beat(&self, ms: f64, end_ms: f64) -> Result<TempoMap, String> {
+        let (lo, hi) = self.first_beat_limits(end_ms)?;
+        let start = ms.clamp(lo, hi.max(lo));
+        let mut map = self.clone();
+        let changed = start != map.segments[0].start_ms;
+        map.segments[0].start_ms = start;
+        map.segments[0].found_ms = Some(start);
+        map.first_beat_moved(changed);
+        Ok(map)
+    }
+
+    /// Move the first beat by `steps` fine steps (1/64 beat of the first section's tempo) counted
+    /// from `found_ms` (else from the current start, which then becomes `found_ms`). Clamped so
+    /// the extreme steps land exactly on 0 and on the upper limit. Returns the new map and the
+    /// applied steps.
+    pub fn move_first_beat(&self, steps: i64, end_ms: f64) -> Result<(TempoMap, i64), String> {
+        let (lo, hi) = self.first_beat_limits(end_ms)?;
+        let first = &self.segments[0];
+        let reference = first.found_ms.unwrap_or(first.start_ms);
+        let fine = fine_ms(first.bpm);
+        let nmin = ((lo - reference) / fine).floor().max(-1e9) as i64;
+        let nmax = if hi.is_finite() {
+            (((hi - reference) / fine).ceil().min(1e9) as i64).max(nmin)
+        } else {
+            i64::MAX
+        };
+        let applied = steps.clamp(nmin, nmax);
+        let start = (reference + applied as f64 * fine).clamp(lo, hi.max(lo));
+        let mut map = self.clone();
+        let changed = start != first.start_ms;
+        map.segments[0].start_ms = start;
+        map.segments[0].found_ms = Some(reference);
+        map.first_beat_moved(changed);
         Ok((map, applied))
     }
 
@@ -512,6 +604,7 @@ impl TempoMap {
                 detected_ms: None,
                 on_beat: true,
                 meta,
+                found_ms: None,
             },
         );
         Ok((map, k + 1))
@@ -562,7 +655,7 @@ impl TempoMap {
         Ok(map)
     }
 
-    /// Where Start / End of section `index` jump to: the section start (0 for the first section),
+    /// Where Start / End of section `index` jump to: the section start (the first beat for the first section when it is set, else 0),
     /// or its end (the next change, or `end_ms` for the last section). The player lands End on the
     /// last frame before that end, so the playhead stays in the section.
     pub fn section_jump_ms(&self, index: usize, edge: Edge, end_ms: f64) -> Result<f64, String> {
@@ -570,7 +663,11 @@ impl TempoMap {
             .segments
             .get(index)
             .ok_or_else(|| "There is no such section".to_string())?;
-        let start = if index == 0 { 0.0 } else { seg.start_ms };
+        let start = if index == 0 {
+            self.play_start_ms()
+        } else {
+            seg.start_ms
+        };
         if edge == Edge::Start {
             return Ok(start);
         }
@@ -625,6 +722,7 @@ mod tests {
                     detected_ms: None,
                     on_beat: false,
                     meta: SectionMeta::default(),
+                    found_ms: None,
                 })
                 .collect(),
         }
@@ -676,7 +774,8 @@ mod tests {
                 bpm: 120.0,
                 detected_ms: None,
                 on_beat: false,
-                meta: SectionMeta::default()
+                meta: SectionMeta::default(),
+                found_ms: None,
             }]
         );
 
@@ -697,7 +796,8 @@ mod tests {
                 bpm: 100.0,
                 detected_ms: None,
                 on_beat: false,
-                meta: SectionMeta::default()
+                meta: SectionMeta::default(),
+                found_ms: None,
             }
         );
         assert_eq!(m.segments[2].start_ms, 10500.0);
@@ -720,7 +820,8 @@ mod tests {
                 bpm: 120.0,
                 detected_ms: None,
                 on_beat: false,
-                meta: SectionMeta::default()
+                meta: SectionMeta::default(),
+                found_ms: None,
             }]
         );
         m.set_bpm_at(12000.0, 0.0).unwrap();
@@ -805,6 +906,7 @@ mod tests {
             detected_ms: Some(detected_ms),
             on_beat: false,
             meta: SectionMeta::default(),
+            found_ms: None,
         };
         m.segments[2].detected_ms = Some(30000.0);
         m
@@ -1039,6 +1141,7 @@ mod tests {
             detected_ms: Some(10500.0),
             on_beat: false,
             meta: SectionMeta::default(),
+            found_ms: None,
         };
         let d = d.set_section_bpm(0, 120.0).unwrap();
         assert_eq!(d.move_change(1, 400, 1e6).unwrap().1, 400);
@@ -1071,7 +1174,8 @@ mod tests {
                 bpm: 91.5,
                 detected_ms: Some(10300.0),
                 on_beat: false,
-                meta: SectionMeta::default()
+                meta: SectionMeta::default(),
+                found_ms: None,
             }
         );
         assert_eq!(
@@ -1172,6 +1276,7 @@ mod tests {
             detected_ms: None,
             on_beat: false,
             meta: SectionMeta::default(),
+            found_ms: None,
         };
         assert!(!serde_json::to_string(&s).unwrap().contains("on_beat"));
         s.on_beat = true;
@@ -1188,6 +1293,7 @@ mod tests {
             detected_ms: None,
             on_beat: false,
             meta: SectionMeta::default(),
+            found_ms: None,
         };
         assert_eq!(
             serde_json::to_string(&s).unwrap(),
@@ -1417,5 +1523,146 @@ mod tests {
         );
         assert!(m.section_jump_ms(2, Edge::Start, 20000.0).is_err());
         assert!(m.section_jump_ms(1, Edge::End, f64::INFINITY).is_err());
+    }
+
+    fn set_at(start: f64) -> TempoMap {
+        let mut m = map(&[(start, 120.0)]);
+        m.segments[0].found_ms = Some(start);
+        m
+    }
+
+    #[test]
+    fn first_beat_state() {
+        let mut m = map(&[(1200.0, 120.0)]);
+        assert!(!m.first_beat_set() && m.play_start_ms() == 0.0);
+        assert!(
+            !m.needs_first_beat(),
+            "an owner-set first beat is left alone"
+        );
+        assert!(map(&[(0.0, 120.0)]).needs_first_beat());
+        assert!(!set_at(0.0).needs_first_beat());
+        assert!(!TempoMap::default().needs_first_beat());
+        assert_eq!(TempoMap::default().play_start_ms(), 0.0);
+        assert!(!TempoMap::default().first_beat_set());
+        m.segments[0].found_ms = Some(1200.0);
+        assert!(m.first_beat_set() && m.play_start_ms() == 1200.0);
+        assert_eq!(m.section_jump_ms(0, Edge::Start, 9000.0).unwrap(), 1200.0);
+        let unset = map(&[(1200.0, 120.0)]);
+        assert_eq!(unset.section_jump_ms(0, Edge::Start, 9000.0).unwrap(), 0.0);
+        assert_eq!(
+            TempoMap::default().first_beat_limits(9000.0),
+            Err("Type a BPM first".to_string())
+        );
+        assert!(map(&[(0.0, 120.0)]).first_beat_limits(400.0).is_err());
+        assert_eq!(m.first_beat_limits(9000.0), Ok((0.0, 8500.0)));
+    }
+
+    #[test]
+    fn place_first_beat_clamps() {
+        let m = map(&[(0.0, 120.0)]);
+        let p = m.place_first_beat(1200.0, 9000.0).unwrap();
+        assert_eq!(
+            (p.segments[0].start_ms, p.segments[0].found_ms),
+            (1200.0, Some(1200.0))
+        );
+        assert_eq!(
+            m.place_first_beat(-5.0, 9000.0).unwrap().segments[0].start_ms,
+            0.0
+        );
+        let q = m.place_first_beat(99999.0, 9000.0).unwrap();
+        assert_eq!(q.segments[0].start_ms, 8500.0);
+        // placing at the current start changes only found_ms
+        let same = m.place_first_beat(0.0, 9000.0).unwrap();
+        assert_eq!(same.segments[0].found_ms, Some(0.0));
+        let mut expect = m.clone();
+        expect.segments[0].found_ms = Some(0.0);
+        assert_eq!(same, expect);
+    }
+
+    #[test]
+    fn move_first_beat_steps_and_limits() {
+        let m = set_at(1200.0);
+        let (a, n) = m.move_first_beat(1, 9000.0).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(a.segments[0].start_ms, 1200.0 + 7.8125);
+        assert_eq!(a.segments[0].found_ms, Some(1200.0));
+        let (z, n) = m.move_first_beat(-10_000, 9000.0).unwrap();
+        assert_eq!((z.segments[0].start_ms, n), (0.0, -154));
+        // counted from found_ms, not from the moved start
+        let (b, n) = a.move_first_beat(-1, 9000.0).unwrap();
+        assert_eq!((b.segments[0].start_ms, n), (1200.0 - 7.8125, -1));
+        let mut two = map(&[(1200.0, 120.0), (3000.0, 100.0)]);
+        two.segments[0].found_ms = Some(1200.0);
+        let (e, _) = two.move_first_beat(10_000, 9000.0).unwrap();
+        assert_eq!(e.segments[0].start_ms, 2500.0);
+        assert_eq!(e.segments[1].start_ms, 3000.0);
+        // never found: the old start becomes the reference
+        let (u, n) = map(&[(800.0, 120.0)]).move_first_beat(2, 9000.0).unwrap();
+        assert_eq!((u.segments[0].start_ms, n), (800.0 + 15.625, 2));
+        assert_eq!(u.segments[0].found_ms, Some(800.0));
+        // no track end known: no upper limit
+        let (f, _) = m.move_first_beat(1000, f64::INFINITY).unwrap();
+        assert_eq!(f.segments[0].start_ms, 1200.0 + 7812.5);
+    }
+
+    #[test]
+    fn move_first_beat_keeps_later_sections() {
+        let mut m = map(&[(0.0, 120.0), (4000.0, 90.0), (8000.0, 100.0)]);
+        m.segments[1].detected_ms = Some(4000.0);
+        m.segments[0].found_ms = Some(0.0);
+        let before = m.bases();
+        let (n, applied) = m.move_first_beat(19, 12000.0).unwrap(); // +0.297 beat
+        assert_eq!(applied, 19);
+        let start = n.segments[0].start_ms;
+        assert!((start - 19.0 * 7.8125).abs() < 1e-9);
+        assert_eq!(n.segments[1].start_ms, 4000.0);
+        assert_eq!(n.segments[2].start_ms, 8000.0);
+        assert_eq!(n.ms_at(0), start);
+        for k in 0..=7 {
+            assert!((n.ms_at(16 * k) - (start + k as f64 * 500.0)).abs() < 1e-9);
+        }
+        let b = n.bases();
+        assert_eq!(n.ms_at(b[1]), 4000.0);
+        let stretched = 4000.0 - n.ms_at(b[1] - 16);
+        assert!((250.0..=750.0).contains(&stretched), "{stretched}");
+        assert_eq!(b[2] - b[1], before[2] - before[1]);
+        let mut prev = f64::MIN;
+        for t in 0..=(b[2] + 200) {
+            let ms = n.ms_at(t);
+            assert!(ms > prev, "monotonic at tick {t}");
+            assert_eq!(n.tick_near(ms), t, "inverse at tick {t}");
+            prev = ms;
+        }
+    }
+
+    #[test]
+    fn move_first_beat_places_a_typed_second_section() {
+        let mut m = map(&[(0.0, 120.0), (4003.0, 100.0)]);
+        m.segments[0].found_ms = Some(0.0);
+        assert!(!m.segments[1].starts_on_beat());
+        let (n, _) = m.move_first_beat(3, 9000.0).unwrap();
+        assert!(n.segments[1].on_beat && n.segments[1].start_ms == 4003.0);
+        // not moving keeps it typed
+        let (k, _) = m.move_first_beat(0, 9000.0).unwrap();
+        assert!(!k.segments[1].on_beat);
+    }
+
+    #[test]
+    fn removing_the_first_section_clears_found_ms() {
+        let mut m = map(&[(500.0, 120.0), (8500.0, 93.0)]);
+        m.segments[0].found_ms = Some(500.0);
+        m.set_bpm_at(9000.0, 0.0).unwrap();
+        assert_eq!(m.segments.len(), 1);
+        assert_eq!(m.segments[0].found_ms, None);
+    }
+
+    #[test]
+    fn found_ms_serde() {
+        let mut s = map(&[(1200.0, 120.0)]).segments.remove(0);
+        assert!(!serde_json::to_string(&s).unwrap().contains("found_ms"));
+        s.found_ms = Some(1200.0);
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains(r#""found_ms":1200.0"#));
+        assert_eq!(serde_json::from_str::<Segment>(&json).unwrap(), s);
     }
 }

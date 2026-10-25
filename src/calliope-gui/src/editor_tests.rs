@@ -1151,6 +1151,7 @@ fn the_snapshot_carries_the_tempo_and_set_tempo_replaces_it() {
                 detected_ms: None,
                 on_beat: false,
                 meta: SectionMeta::default(),
+                found_ms: None,
             },
             Segment {
                 start_ms: 6500.0,
@@ -1158,6 +1159,7 @@ fn the_snapshot_carries_the_tempo_and_set_tempo_replaces_it() {
                 detected_ms: Some(6500.0),
                 on_beat: false,
                 meta: SectionMeta::default(),
+                found_ms: None,
             },
         ],
     };

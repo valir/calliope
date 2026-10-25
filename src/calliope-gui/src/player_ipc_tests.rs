@@ -407,6 +407,7 @@ fn tempo_store_flushes_on_load_and_releases_on_replace() {
             detected_ms: None,
             on_beat: false,
             meta: SectionMeta::default(),
+            found_ms: None,
         }],
     };
     store.replace(PRACTICE, &dir, &|_| Ok(map.clone())).unwrap();
