@@ -17,3 +17,5 @@ task 15 | Docs | implementer | done
 tester | 21 acceptance tests, all criteria pass, no defects | tester | done
 reviewer | APPROVED, 4 minors | reviewer | done
 fix round 1 | auto run never fails an open, cancelled decode, preview clamp, loop-save poll deadline | implementer | done
+reviewer | fix round 1 APPROVED | reviewer | done
+report | written | me | done
