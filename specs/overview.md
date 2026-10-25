@@ -154,6 +154,7 @@ tester for the features.
 - [x] `gui-library-album-order.md`: ability to adjust track ordering for albums
 - [x] `gui-export.md`: exports backing track to various destinations (Boss RC-5 for instance)
 - [x] `gui-export-info.md`: adds export-related metadata
+- [ ] `gui-first-beat.md`: find and set the first track beat
 - [ ] `gui-tablatures.md`: associate tablature to backing track
 - [ ] `gui-manipulate-backing-track.md`: associate tempo and MIDI commands into the backing track
 - [ ] `stems-empty-detection.md`: better detection of the empty resulting stems
