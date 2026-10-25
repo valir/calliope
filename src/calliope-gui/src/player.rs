@@ -84,6 +84,8 @@ pub enum Cmd {
     SetMetronome(bool),
     /// The track speed in percent (25..=200).
     SetSpeed(u32),
+    /// The playback floor in frames (the first beat when it is set, else 0): where "restart at the end" goes.
+    SetStart(u64),
 }
 
 /// Status written by the callback, read by the manager (atomics only).
@@ -209,6 +211,8 @@ fn fill_stereo(pcm: &Pcm, from: u64, buf: &mut [f32]) {
 pub struct Engine {
     pcm: Arc<Pcm>,
     pos: u64,
+    /// The playback floor (`Cmd::SetStart`).
+    start: u64,
     playing: bool,
     audible: bool,
     fade_len: u32,
@@ -271,6 +275,7 @@ impl Engine {
         Engine {
             pcm,
             pos,
+            start: 0,
             playing: false,
             audible: false,
             fade_len,
@@ -496,7 +501,7 @@ impl Engine {
             Cmd::Play { count_in } => {
                 self.end_run();
                 if self.pos >= self.pcm.frames {
-                    self.pos = 0;
+                    self.pos = self.start.min(self.pcm.frames);
                 }
                 self.begin(count_in);
             }
@@ -517,7 +522,7 @@ impl Engine {
                         self.speed = f64::from(pct) / 100.0;
                     }
                 } else if self.pos >= self.pcm.frames {
-                    self.pos = 0;
+                    self.pos = self.start.min(self.pcm.frames);
                 }
                 self.begin(count_in);
             }
@@ -575,6 +580,7 @@ impl Engine {
                     let _ = t.try_send(old); // when full, freed here (rare)
                 }
             }
+            Cmd::SetStart(f) => self.start = f,
             Cmd::SetMetronome(on) => {
                 self.metronome = on;
                 self.beat_dirty = true;
@@ -1155,6 +1161,44 @@ pub struct Loaded {
     revision: Option<String>,
 }
 
+impl Loaded {
+    /// Whether the automatic search for the first beat may run on this track (a tempo whose first beat is
+    /// at exactly 0.0 and not set yet, and a writable state).
+    pub fn wants_first_beat(&self) -> bool {
+        !self.state.read_only && self.state.tempo.needs_first_beat()
+    }
+
+    /// Key of the decoded source.
+    pub fn source_key(&self) -> &str {
+        &self.source
+    }
+
+    pub fn pcm(&self) -> &Pcm {
+        &self.pcm
+    }
+}
+
+/// Who asked for the first beat to be placed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirstBeatVia {
+    /// The automatic run at open (re-checks `needs_first_beat`).
+    Auto,
+    /// The Find start button (always moves it).
+    Button,
+}
+
+/// What "Find start" needs to analyse, taken under the lock.
+#[derive(Clone)]
+pub struct FirstBeatInput {
+    /// Key of the analysis source (the track's backing).
+    pub key: String,
+    /// Its absolute file.
+    pub file: PathBuf,
+    /// Its PCM when the Player has it loaded (no second decode).
+    pub pcm: Option<Arc<Pcm>>,
+    pub ffmpeg: Option<PathBuf>,
+}
+
 /// A source change in progress (`begin_select`).
 #[derive(Clone)]
 pub struct SelectJob {
@@ -1331,10 +1375,29 @@ impl Session {
         self.shared.position.load(Ordering::Acquire)
     }
 
-    fn set_pos(&self, frames: u64) {
-        self.shared
-            .position
-            .store(frames.min(self.pcm.frames), Ordering::Release);
+    /// The playback floor in frames: the set first beat (nearest frame), else 0.
+    fn floor(&self) -> u64 {
+        self.frame_of_ms_f(self.state.tempo.play_start_ms())
+    }
+
+    /// Stores a position clamped to `floor..=frames` and returns the frame actually set.
+    fn set_pos(&self, frames: u64) -> u64 {
+        let f = frames.min(self.pcm.frames).max(self.floor());
+        self.shared.position.store(f, Ordering::Release);
+        f
+    }
+
+    /// After a tempo change: a position below the new floor moves to it (a jump while playing).
+    fn clamp_to_floor(&self) {
+        let floor = self.floor();
+        if self.pos() < floor {
+            self.shared.position.store(floor, Ordering::Release);
+            self.send(if self.transport.shows_playing() {
+                Cmd::Jump(floor)
+            } else {
+                Cmd::Seek(floor)
+            });
+        }
     }
 
     fn ms_of(&self, frames: u64) -> u64 {
@@ -1442,7 +1505,9 @@ impl Session {
     fn loop_spec(&self) -> Option<LoopSpec> {
         let l = self.state.current()?;
         let end = self.frame_of_ms_f(self.boundary_ms(l.end?));
-        let start = self.frame_of_ms_f(self.boundary_ms(l.start));
+        let start = self
+            .frame_of_ms_f(self.boundary_ms(l.start))
+            .max(self.floor());
         if end <= start {
             return None;
         }
@@ -1469,6 +1534,7 @@ impl Session {
 
     fn sync_grid(&mut self) {
         self.grid_wrap = self.wrap_ms();
+        self.send(Cmd::SetStart(self.floor()));
         self.send(Cmd::SetGrid(self.grid()));
         self.send(Cmd::SetMetronome(!self.state.tempo.is_empty()));
     }
@@ -1866,6 +1932,10 @@ impl PlayerManager {
         if frames >= pcm.frames {
             frames = 0; // past the end gives 0:00.0
         }
+        let floor = (state.tempo.play_start_ms() * f64::from(pcm.rate) / 1000.0)
+            .round()
+            .max(0.0) as u64;
+        frames = frames.max(floor.min(pcm.frames));
         let shared = Arc::new(Shared::default());
         shared.position.store(frames, Ordering::Release);
         state.source = Some(source.clone());
@@ -2068,8 +2138,8 @@ impl PlayerManager {
             return Err(OUTPUT_LOST.into());
         }
         if s.pos() >= s.pcm.frames {
-            s.set_pos(0);
-            s.send(Cmd::Seek(0));
+            let f = s.set_pos(0);
+            s.send(Cmd::Seek(f));
         }
         // A count-in precedes a start from paused or stopped, not a play that is already running,
         // when the section under the playhead has Count In.
@@ -2119,8 +2189,7 @@ impl PlayerManager {
     ) -> Result<PlayerTransport, String> {
         let sink = self.sink.clone();
         let s = self.session(id)?;
-        let f = s.frames_of(position_ms);
-        s.set_pos(f);
+        let f = s.set_pos(s.frames_of(position_ms));
         s.transport.seek(now);
         s.send(Cmd::Seek(f));
         s.mark_dirty(now);
@@ -2149,8 +2218,7 @@ impl PlayerManager {
         let sink = self.sink.clone();
         let s = self.session(id)?;
         let cur = s.ms_of(s.pos()) as i64;
-        let f = s.frames_of(cur.saturating_add(delta_ms).max(0) as u64);
-        s.set_pos(f);
+        let f = s.set_pos(s.frames_of(cur.saturating_add(delta_ms).max(0) as u64));
         s.send(Cmd::Jump(f));
         s.mark_dirty(now);
         Ok(publish(&sink, s, now))
@@ -2181,6 +2249,7 @@ impl PlayerManager {
         map.set_bpm_at(s.pos_ms_f(), bpm)?;
         s.state.apply_tempo_change(map);
         s.loop_message = None;
+        s.clamp_to_floor();
         s.sync_grid();
         s.sync_loop();
         s.mark_dirty(now);
@@ -2239,7 +2308,11 @@ impl PlayerManager {
             }
             SectionEdit::Move { index, at, steps } => {
                 guard(index, at)?;
-                let (map, applied) = old.move_change(index, steps, end_ms)?;
+                let (map, applied) = if index == 0 {
+                    old.move_first_beat(steps, end_ms)?
+                } else {
+                    old.move_change(index, steps, end_ms)?
+                };
                 (
                     "move",
                     index,
@@ -2273,6 +2346,7 @@ impl PlayerManager {
         };
         s.state.apply_tempo_change(map);
         s.loop_message = None;
+        s.clamp_to_floor();
         s.sync_grid();
         s.sync_loop();
         s.mark_dirty(now);
@@ -2290,6 +2364,74 @@ impl PlayerManager {
             bpms.join(","),
             flag(|g| g.meta.metronome),
             flag(|g| g.meta.count_in)
+        );
+        Ok(s.snapshot())
+    }
+
+    /// What the detector needs for the open track; refused without a tempo or while the source is switching.
+    pub fn first_beat_input(&self, id: &str) -> Result<FirstBeatInput, String> {
+        let s = match self.session.as_ref() {
+            Some(s) if s.id == id => s,
+            _ => return Err(format!("no player session for {id}")),
+        };
+        if s.state.tempo.is_empty() {
+            return Err("Type a BPM first".into());
+        }
+        if s.switching.is_some() {
+            return Err("The source is still loading".into());
+        }
+        let loaded = s.state.source.clone().unwrap_or_default();
+        let src = crate::first_beat::analysis_source(&s.sources, &loaded)
+            .ok_or_else(|| "There is no audio to analyse".to_string())?;
+        Ok(FirstBeatInput {
+            key: src.key.clone(),
+            file: s.dir.join(&src.file),
+            pcm: (src.key == loaded).then(|| s.pcm.clone()),
+            ffmpeg: s.ffmpeg.clone(),
+        })
+    }
+
+    /// Puts the first beat at `ms` (the found start) and marks it set; the grid, loops, floor and the saved file
+    /// follow, playback is not interrupted. `Auto` re-checks `needs_first_beat()` and otherwise changes nothing.
+    pub fn place_first_beat(
+        &mut self,
+        id: &str,
+        ms: f64,
+        via: FirstBeatVia,
+        now: Instant,
+    ) -> Result<PlayerSnapshot, String> {
+        let s = self.session(id)?;
+        if via == FirstBeatVia::Auto && (s.state.read_only || !s.state.tempo.needs_first_beat()) {
+            let reason = if s.state.read_only {
+                "read-only"
+            } else if s.state.tempo.first_beat_set() {
+                "set"
+            } else {
+                "not-at-zero"
+            };
+            eprintln!("calliope: player first-beat skipped id={id} reason={reason}");
+            return Ok(s.snapshot());
+        }
+        let end_ms = s.pcm.frames as f64 * 1000.0 / f64::from(s.pcm.rate.max(1));
+        let map = s.state.tempo.place_first_beat(ms, end_ms)?;
+        let start = map.segments[0].start_ms;
+        s.state.apply_tempo_change(map);
+        s.loop_message = None;
+        s.clamp_to_floor();
+        s.sync_grid();
+        s.sync_loop();
+        s.mark_dirty(now);
+        let loaded = s.state.source.clone().unwrap_or_default();
+        let source = crate::first_beat::analysis_source(&s.sources, &loaded)
+            .map_or(loaded.clone(), |x| x.key.clone());
+        eprintln!(
+            "calliope: player first-beat id={id} via={} source={source} found_ms={ms:.1} start_ms={start:.3} clamped={}",
+            if via == FirstBeatVia::Auto {
+                "auto"
+            } else {
+                "button"
+            },
+            start != ms
         );
         Ok(s.snapshot())
     }
@@ -2320,7 +2462,7 @@ impl PlayerManager {
         } else {
             s.frame_at_or_after_ms(ms).saturating_sub(1).max(first)
         };
-        s.set_pos(f);
+        let f = s.set_pos(f);
         s.send(Cmd::Jump(f));
         s.mark_dirty(now);
         publish(&sink, s, now);
@@ -2390,7 +2532,10 @@ impl PlayerManager {
             return Err(OUTPUT_LOST.into());
         }
         let l = s.state.current().expect("checked");
-        let (start_ms, loop_count_in) = (s.boundary_ms(l.start), l.count_in);
+        let (start_ms, loop_count_in) = (
+            s.boundary_ms(l.start).max(s.state.tempo.play_start_ms()),
+            l.count_in,
+        );
         let first_pct = l
             .training
             .filter(|t| t.on && l.repeat)
@@ -2457,7 +2602,7 @@ impl PlayerManager {
                 s.state.select(&id)?;
                 let l = &s.state.loops[to];
                 let f = s.frame_of_ms_f(s.boundary_ms(l.start));
-                s.set_pos(f);
+                let f = s.set_pos(f);
                 s.send(Cmd::Jump(f)); // at once, no scrub silence
             }
             LoopAction::Mark(edge) => match s.state.mark(edge, pos_ms) {
@@ -2483,7 +2628,7 @@ impl PlayerManager {
                 let f = s.frame_of_ms_f(s.boundary_ms(l.start));
                 s.transport.stop();
                 s.halt();
-                s.set_pos(f);
+                let f = s.set_pos(f);
                 s.send(Cmd::Seek(f));
                 s.next_pos_save = None;
             }
@@ -2577,7 +2722,7 @@ impl PlayerManager {
             f = 0;
         }
         s.shared = Arc::new(Shared::default());
-        s.set_pos(f);
+        let f = s.set_pos(f);
         s.state.source = Some(job.key.clone());
         s.switching = None;
         s.select_cancel = None;
@@ -2670,8 +2815,8 @@ impl PlayerManager {
                 s.next_pos_save = None;
                 s.halt();
                 if ended {
-                    s.set_pos(0);
-                    s.send(Cmd::Seek(0));
+                    let f = s.set_pos(0);
+                    s.send(Cmd::Seek(f));
                     save_session(&sink, s);
                 } else {
                     s.mark_dirty(now);

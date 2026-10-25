@@ -2504,15 +2504,18 @@ fn qa_first_section_cannot_be_removed_or_moved_removed_detected_loses_anchor() {
         },
     );
     assert!(e.contains("no tempo change to remove"), "{e}");
-    let e = edit_err(
-        &mut r,
-        SectionEdit::Move {
-            index: 0,
-            at: 500.0,
-            steps: 1,
-        },
-    );
-    assert!(e.contains("first"), "{e}");
+    // the first section moves as the first beat (gui-first-beat): by 1/64 beat, other sections stay
+    let before = r.edit(SectionEdit::Move {
+        index: 0,
+        at: 500.0,
+        steps: 1,
+    });
+    assert!((before.tempo.segments[0].start_ms - (500.0 + 500.0 / 64.0)).abs() < 1e-6);
+    r.edit(SectionEdit::Move {
+        index: 0,
+        at: before.tempo.segments[0].start_ms,
+        steps: 0,
+    });
     // remove the detected change, add a new one: no anchor, free to move far
     r.edit(SectionEdit::Remove {
         index: 1,

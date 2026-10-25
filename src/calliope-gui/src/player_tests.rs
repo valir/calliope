@@ -2676,3 +2676,302 @@ fn a_jump_into_the_last_100ms_of_a_repeating_loop_still_wraps() {
         );
     }
 }
+
+// ------------------------------------------------------------------ the first beat (gui-first-beat)
+
+/// WITH_TEMPO with `player.json` rewritten: 120 BPM from `start`, then 90 BPM at 10500, `found_ms` as given,
+/// count-in on in the first section, the clicks off, the given loops, position 0.
+fn first_beat_track(
+    start: f64,
+    found: Option<f64>,
+    loops: serde_json::Value,
+    schema: u32,
+) -> (
+    tempfile::TempDir,
+    OpenSpec,
+    PlayerManager,
+    ManualBackend,
+    Events,
+    Pcm,
+) {
+    let (t, spec) = spec_of(WITH_TEMPO);
+    let mut first =
+        serde_json::json!({"start_ms": start, "bpm": 120.0, "metronome": false, "count_in": true});
+    if let Some(f) = found {
+        first["found_ms"] = f.into();
+    }
+    let current = loops.get(0).map(|l| l["id"].clone());
+    let v = serde_json::json!({
+        "schema_version": schema, "source": GUITAR, "position_ms": 0,
+        "tempo": {"beats_per_bar": 4, "segments": [first, {"start_ms": 10500.0, "bpm": 90.0, "metronome": false}]},
+        "speed": 1.0, "loops": loops, "current_loop": current,
+    });
+    std::fs::write(spec.dir.join("player.json"), v.to_string()).unwrap();
+    let (mut m, b, e) = manager();
+    m.open(&spec).unwrap();
+    let pcm = decoded(&spec, GUITAR);
+    (t, spec, m, b, e, pcm)
+}
+
+fn floor_of(m: &PlayerManager) -> u64 {
+    m.session.as_ref().unwrap().floor()
+}
+
+fn frame_of(m: &PlayerManager) -> u64 {
+    m.session.as_ref().unwrap().pos()
+}
+
+fn ms_loop(id: &str, start: f64, end: f64) -> serde_json::Value {
+    serde_json::json!({"id": id, "start": {"ms": start}, "end": {"ms": end}, "repeat": true, "count_in": false})
+}
+
+#[test]
+fn a_set_first_beat_is_the_floor_of_every_position() {
+    let loops = serde_json::json!([ms_loop("a", 500.0, 3000.0), ms_loop("b", 4000.0, 6000.0)]);
+    let (_t, spec, mut m, b, _e, _pcm) = first_beat_track(1200.0, Some(1200.0), loops, 7);
+    let want = (1.2 * RATE as f64).round() as u64;
+    let id = &spec.id;
+    let t0 = Instant::now();
+    assert_eq!(floor_of(&m), want);
+    assert_eq!(frame_of(&m), want, "a saved position 0 opens on the floor");
+    m.seek(id, 3000, t0).unwrap();
+    m.seek(id, 0, t0).unwrap();
+    assert_eq!(frame_of(&m), want);
+    m.seek(id, 3000, t0).unwrap();
+    m.nudge(id, -5000, t0).unwrap();
+    assert_eq!(frame_of(&m), want);
+    m.seek(id, 3000, t0).unwrap();
+    m.skip(id, -5000, t0).unwrap();
+    assert_eq!(frame_of(&m), want);
+    m.seek(id, 3000, t0).unwrap();
+    m.jump_section(id, 0, 1200.0, Edge::Start, t0).unwrap();
+    assert_eq!(frame_of(&m), want);
+    // loop "b" is current after Prev from nothing; Prev again lands on "a", which starts before the floor
+    m.loop_action(id, LoopAction::Select(1), t0).unwrap();
+    m.seek(id, 3000, t0).unwrap();
+    m.loop_action(id, LoopAction::Select(-1), t0).unwrap();
+    assert_eq!(frame_of(&m), want);
+    m.seek(id, 3000, t0).unwrap();
+    m.loop_action(id, LoopAction::Stop, t0).unwrap();
+    assert_eq!(frame_of(&m), want);
+    // the engine got the floor too: the loop start it plays is clamped
+    let l = m.session.as_ref().unwrap().loop_spec().unwrap();
+    assert_eq!(l.start, want);
+    m.loop_action(id, LoopAction::Play, t0).unwrap();
+    b.pull(100);
+    assert!(frame_of(&m) >= want);
+}
+
+#[test]
+fn play_from_the_floor_counts_in_and_hears_the_first_beat_on_the_sixth_position() {
+    for start in [1200.0, 1203.47] {
+        let (_t, spec, mut m, b, _e, pcm) =
+            first_beat_track(start, Some(start), serde_json::json!([]), 7);
+        let t0 = Instant::now();
+        let floor = floor_of(&m) as usize;
+        let st = m.play(&spec.id, t0).unwrap();
+        assert!(st.counting_in);
+        let got = b.pull(55125 + 2000);
+        let mut want = vec![0.0f32; (55125 + 2000) * 2];
+        for f in tick_frames(11025) {
+            add_click(&mut want, f);
+        }
+        let src = expected(&pcm, floor, 2000);
+        for (k, x) in src.iter().enumerate() {
+            want[55125 * 2 + k] = *x;
+        }
+        fade_in(&mut want, 55125);
+        close(&got, &want);
+    }
+}
+
+#[test]
+fn playing_to_the_end_and_again_restarts_at_the_floor() {
+    let (_t, spec, mut m, b, _e, _pcm) =
+        first_beat_track(1200.0, Some(1200.0), serde_json::json!([]), 7);
+    let t0 = Instant::now();
+    let floor = floor_of(&m);
+    m.seek(&spec.id, 19_900, t0).unwrap();
+    m.play(&spec.id, t0 + ms(1)).unwrap();
+    b.pull(RATE * 3);
+    m.tick(t0 + ms(30));
+    let s = m.snapshot(&spec.id).unwrap();
+    assert!(!s.transport.playing);
+    assert_eq!(frame_of(&m), floor);
+    m.play(&spec.id, t0 + ms(60)).unwrap();
+    b.pull(RATE / 10);
+    // the engine restarts at its own floor too when it is at the end
+    let mut en = Engine::new(
+        Arc::new(Pcm {
+            rate: 100,
+            channels: 1,
+            frames: 1000,
+            samples: vec![0; 1000],
+        }),
+        1000,
+        Arc::new(Shared::default()),
+    );
+    en.apply(Cmd::SetStart(250));
+    en.apply(Cmd::Play { count_in: None });
+    assert_eq!(en.pos, 250);
+}
+
+#[test]
+fn without_found_ms_nothing_is_cut_off() {
+    let (_t, spec, mut m, b, _e, pcm) = first_beat_track(1200.0, None, serde_json::json!([]), 6);
+    let t0 = Instant::now();
+    assert_eq!(floor_of(&m), 0);
+    m.seek(&spec.id, 300, t0).unwrap();
+    m.seek(&spec.id, 0, t0).unwrap();
+    assert_eq!(frame_of(&m), 0);
+    m.edit_sections(
+        &spec.id,
+        SectionEdit::Flags {
+            index: 0,
+            at: 1200.0,
+            metronome: false,
+            count_in: false,
+        },
+        t0,
+    )
+    .unwrap();
+    m.play(&spec.id, t0).unwrap();
+    let got = b.pull(5000);
+    let mut want = expected(&pcm, 0, 5000);
+    fade_in(&mut want, 0);
+    close(&got, &want);
+}
+
+#[test]
+fn moving_the_first_bar_keeps_the_other_sections_and_clamps() {
+    let (_t, spec, mut m, _b, _e, _pcm) =
+        first_beat_track(1200.0, Some(1200.0), serde_json::json!([]), 7);
+    let t0 = Instant::now();
+    let fine = 60000.0 / 120.0 / 64.0;
+    let s = m
+        .edit_sections(
+            &spec.id,
+            SectionEdit::Move {
+                index: 0,
+                at: 1200.0,
+                steps: 1,
+            },
+            t0,
+        )
+        .unwrap();
+    assert_eq!(starts(&s), vec![1200.0 + fine, 10500.0]);
+    assert_eq!(s.tempo.segments[0].found_ms, Some(1200.0));
+    assert_eq!(
+        frame_of(&m),
+        floor_of(&m),
+        "the paused playhead follows the new floor"
+    );
+    let at = 1200.0 + fine;
+    m.tick(t0 + ms(500));
+    let written = disk(&spec).unwrap();
+    assert_eq!(written["tempo"]["segments"][0]["start_ms"], at);
+    assert_eq!(written["tempo"]["segments"][0]["found_ms"], 1200.0);
+    // beyond the limits: 0.0 and one beat before the next section
+    let s = m
+        .edit_sections(
+            &spec.id,
+            SectionEdit::Move {
+                index: 0,
+                at,
+                steps: -100_000,
+            },
+            t0,
+        )
+        .unwrap();
+    assert_eq!(s.tempo.segments[0].start_ms, 0.0);
+    assert_eq!(floor_of(&m), 0);
+    let s = m
+        .edit_sections(
+            &spec.id,
+            SectionEdit::Move {
+                index: 0,
+                at: 0.0,
+                steps: 100_000,
+            },
+            t0,
+        )
+        .unwrap();
+    assert_eq!(s.tempo.segments[0].start_ms, 10500.0 - 500.0);
+    assert_eq!(s.tempo.segments[1].start_ms, 10500.0);
+    // a stale `at` is refused and changes nothing
+    let e = m
+        .edit_sections(
+            &spec.id,
+            SectionEdit::Move {
+                index: 0,
+                at: 1200.0,
+                steps: 1,
+            },
+            t0,
+        )
+        .unwrap_err();
+    assert_eq!(e, STALE);
+    assert_eq!(
+        m.snapshot(&spec.id).unwrap().tempo.segments[0].start_ms,
+        10000.0
+    );
+}
+
+#[test]
+fn place_first_beat_auto_needs_a_first_beat_at_zero() {
+    let (_t, spec, mut m, _b, _e, _pcm) = first_beat_track(500.0, None, serde_json::json!([]), 6);
+    let t0 = Instant::now();
+    let s = m
+        .place_first_beat(&spec.id, 1200.0, FirstBeatVia::Auto, t0)
+        .unwrap();
+    assert_eq!(s.tempo.segments[0].start_ms, 500.0);
+    assert_eq!(s.tempo.segments[0].found_ms, None);
+    let s = m
+        .place_first_beat(&spec.id, 1200.0, FirstBeatVia::Button, t0)
+        .unwrap();
+    assert_eq!(s.tempo.segments[0].start_ms, 1200.0);
+    assert_eq!(s.tempo.segments[0].found_ms, Some(1200.0));
+    assert_eq!(floor_of(&m), (1.2 * RATE as f64).round() as u64);
+    assert_eq!(frame_of(&m), floor_of(&m));
+    // already set: Auto leaves it
+    let s = m
+        .place_first_beat(&spec.id, 2000.0, FirstBeatVia::Auto, t0)
+        .unwrap();
+    assert_eq!(s.tempo.segments[0].start_ms, 1200.0);
+
+    let (_t, spec, mut m, _b, _e, _pcm) = first_beat_track(0.0, None, serde_json::json!([]), 6);
+    let s = m
+        .place_first_beat(&spec.id, 1200.0, FirstBeatVia::Auto, t0)
+        .unwrap();
+    assert_eq!(s.tempo.segments[0].start_ms, 1200.0);
+    assert_eq!(s.tempo.segments[0].found_ms, Some(1200.0));
+    m.tick(t0 + ms(500));
+    assert_eq!(
+        disk(&spec).unwrap()["tempo"]["segments"][0]["found_ms"],
+        1200.0
+    );
+
+    // the music starts at 0:00: nothing moves, but it is remembered
+    let (_t, spec, mut m, _b, _e, _pcm) = first_beat_track(0.0, None, serde_json::json!([]), 6);
+    let s = m
+        .place_first_beat(&spec.id, 0.0, FirstBeatVia::Auto, t0)
+        .unwrap();
+    assert_eq!(s.tempo.segments[0].found_ms, Some(0.0));
+    assert!(!m.session.as_ref().unwrap().state.tempo.needs_first_beat());
+}
+
+#[test]
+fn first_beat_input_names_the_backing_and_refuses_without_a_tempo() {
+    let (_t, spec, m, _b, _e, _pcm) = first_beat_track(0.0, None, serde_json::json!([]), 6);
+    let i = m.first_beat_input(&spec.id).unwrap();
+    assert!(i.file.starts_with(&spec.dir));
+    let loaded = m.snapshot(&spec.id).unwrap().source;
+    assert_eq!(i.pcm.is_some(), i.key == loaded);
+    let (_t, spec, mut m, _b, _e) = opened(PRACTICE);
+    assert_eq!(
+        m.first_beat_input(&spec.id).err().unwrap(),
+        "Type a BPM first"
+    );
+    assert!(m.first_beat_input("nope").is_err());
+    let _ = &mut m;
+}
