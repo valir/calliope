@@ -1811,3 +1811,197 @@ fn ac_info_mp3_not_saved_is_reported_and_the_file_is_written() {
     assert!(exports_of(&e, 401).mp3.is_none());
     e.repo_unchanged_except_exports();
 }
+
+// ==== gui-first-beat: the export leaves out the audio before the first beat ====
+
+const NOISY_FRAMES: usize = 229320; // 5.2 s at 44.1 kHz: 1.2 s of faint noise, then 440 Hz
+
+/// Adds the noisy-intro track (id 411, a plain backing) with the given `player.json` and re-takes
+/// the "before" snapshot.
+fn add_noisy(e: &mut Env, player: serde_json::Value) {
+    let n = 411;
+    let dir = e.repo.join("tracks").join(id(n));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/first-beat/noisy-intro.flac"),
+        dir.join("audio.flac"),
+    )
+    .unwrap();
+    let t = serde_json::json!({
+        "schema_version": 2, "id": id(n), "type": "backing", "band": BAND, "album": "First Beat",
+        "title": "Noisy Intro", "composers": [], "year": null, "source_url": null, "copyright": null,
+        "audio": "audio.flac", "original": null, "stems": [], "stem_model": null,
+        "tablatures": [], "imported": "2026-10-07T10:00:00Z", "modified": "2026-10-07T10:00:00Z"
+    });
+    std::fs::write(dir.join("track.json"), t.to_string()).unwrap();
+    std::fs::write(dir.join("player.json"), player.to_string()).unwrap();
+    e.before = tree(&e.repo);
+}
+
+fn first_beat_tempo(start_ms: f64, found: Option<f64>, bpm: f64) -> serde_json::Value {
+    let mut g = serde_json::json!({"start_ms": start_ms, "bpm": bpm});
+    if let Some(f) = found {
+        g["found_ms"] = f.into();
+    }
+    serde_json::json!({"schema_version": 7, "tempo": {"beats_per_bar": 4, "segments": [g]}})
+}
+
+fn noisy_original(e: &Env) -> (Vec<f32>, Vec<f32>) {
+    let (l, r) = decode(&e.repo.join("tracks").join(id(411)).join("audio.flac"));
+    assert_eq!(l.len(), NOISY_FRAMES);
+    (l, r)
+}
+
+/// Checks `wl`/`wr` = silent 5-beat lead with the six ticks at {0,1,2,2.5,3,3.5} beats, then the
+/// original from frame `first` on, bit for bit; the length is exactly 5 beats + the rest.
+fn assert_lead_then_audio(
+    wl: &[f32],
+    wr: &[f32],
+    orig: &(Vec<f32>, Vec<f32>),
+    first: usize,
+    beat: usize,
+) {
+    let lead = 5 * beat;
+    assert_eq!(wl.len(), lead + NOISY_FRAMES - first, "length");
+    assert_eq!(wr.len(), wl.len());
+    let ticks = ticks_for(0, beat);
+    let in_tick = |k: usize| ticks.iter().any(|&t| k >= t && k < t + 1400);
+    for (k, v) in wl[..lead].iter().enumerate() {
+        if !in_tick(k) {
+            assert_eq!(*v, 0.0, "lead frame {k} should be silent");
+        }
+    }
+    for &t in &ticks {
+        assert!(goertzel(&wl[t..t + 1300], 1500.0) > 0.05, "no tick at {t}");
+    }
+    // the 5th beat is silent and ends exactly at the first beat
+    assert!(wl[ticks[5] + 1400..lead].iter().all(|&v| v == 0.0));
+    // from the first beat on: the original, every frame, nothing of the noise before it
+    for k in 0..NOISY_FRAMES - first {
+        assert_eq!(wl[lead + k], orig.0[first + k], "left frame {k}");
+        assert_eq!(wr[lead + k], orig.1[first + k], "right frame {k}");
+    }
+}
+
+#[test]
+fn ac_first_beat_rc5_is_the_lead_then_the_audio_from_the_first_beat() {
+    let mut e = Env::new();
+    add_noisy(&mut e, first_beat_tempo(1200.0, Some(1200.0), 120.0));
+    let base = e.rc5("rc5");
+    let (_, s) = e.export(411, rc5("7"), &base);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let (rate, wl, wr) = read_wav(&wav_path(&base, 7));
+    assert_eq!(rate, 44100);
+    assert_lead_then_audio(&wl, &wr, &noisy_original(&e), 52920, 22050);
+    // the faint noise (0.005) of the first 1.2 s is nowhere after the lead: the tone starts at once
+    assert!(wl[110250..110250 + 2000].iter().any(|v| v.abs() > 0.1));
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_first_beat_mp3_and_ogg_have_the_same_length() {
+    let mut e = Env::new();
+    add_noisy(&mut e, first_beat_tempo(1200.0, Some(1200.0), 120.0));
+    let want = (110250 + NOISY_FRAMES - 52920) as f64 / 44100.0;
+    for (target, ext) in [(TargetReq::Mp3, "mp3"), (TargetReq::Ogg, "ogg")] {
+        let out = e.folder(ext);
+        let (_, s) = e.export(411, target, &out);
+        assert_eq!(s.phase, ExportPhase::Done, "{ext}: {s:?}");
+        let f = std::fs::read_dir(&out)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let (l, _) = decode(&f);
+        assert_seconds(l.len(), want, 0.06);
+        // the lead is quiet before the tone: nothing of the 1.2 s noise-then-tone intro
+        let tone = |a: usize| goertzel(&l[a..a + 4000], 440.0);
+        assert!(
+            tone(110250 + 8000) > 20.0 * tone(110250 - 20000).max(1e-6),
+            "{ext}"
+        );
+    }
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_first_beat_fractional_position_and_odd_tempo_are_sample_exact() {
+    let mut e = Env::new();
+    add_noisy(&mut e, first_beat_tempo(1234.6, Some(1200.0), 117.3));
+    let base = e.rc5("rc5");
+    let (_, s) = e.export(411, rc5("7"), &base);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let (_, wl, wr) = read_wav(&wav_path(&base, 7));
+    let beat = (44100.0f64 * 60.0 / 117.3).round() as usize;
+    let first = (1234.6f64 * 44.1).round() as usize; // 54444.9 -> 54445 (nearest frame)
+    assert_lead_then_audio(&wl, &wr, &noisy_original(&e), first, beat);
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_first_beat_at_zero_keeps_the_whole_track() {
+    let mut e = Env::new();
+    add_noisy(&mut e, first_beat_tempo(0.0, Some(0.0), 120.0));
+    let base = e.rc5("rc5");
+    let (_, s) = e.export(411, rc5("7"), &base);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let (_, wl, wr) = read_wav(&wav_path(&base, 7));
+    assert_lead_then_audio(&wl, &wr, &noisy_original(&e), 0, 22050);
+}
+
+#[test]
+fn ac_first_beat_with_several_sections_uses_the_first_sections_tempo_and_start_only() {
+    let mut e = Env::new();
+    let mut t = first_beat_tempo(1200.0, Some(1000.0), 120.0);
+    t["tempo"]["segments"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"start_ms": 3000.0, "bpm": 90.0}));
+    add_noisy(&mut e, t);
+    let base = e.rc5("rc5");
+    let (_, s) = e.export(411, rc5("7"), &base);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let (_, wl, wr) = read_wav(&wav_path(&base, 7));
+    assert_lead_then_audio(&wl, &wr, &noisy_original(&e), 52920, 22050);
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_first_beat_track_saved_before_the_feature_exports_everything() {
+    // schema 6, a first beat at 1.2 s that was never "found": the full original after the lead,
+    // the lead's ticks where they were (first + k beats), as before the feature.
+    let mut e = Env::new();
+    let mut t = first_beat_tempo(1200.0, None, 120.0);
+    t["schema_version"] = 6.into();
+    add_noisy(&mut e, t);
+    let base = e.rc5("rc5");
+    let (_, s) = e.export(411, rc5("7"), &base);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let (_, wl, _) = read_wav(&wav_path(&base, 7));
+    let (ol, _) = noisy_original(&e);
+    assert_eq!(wl.len(), 110250 + NOISY_FRAMES);
+    for &t in &ticks_for(52920, 22050) {
+        let o = tick_onset(&wl, &ol, 110250, t.saturating_sub(200), t + 400)
+            .unwrap_or_else(|| panic!("no tick near {t}"));
+        assert!(o >= t && o <= t + 3, "tick at {t} starts at {o}");
+    }
+    assert_eq!(&wl[110250 + 100000..], &ol[100000..], "untouched audio");
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_first_beat_newer_schema_file_is_refused_not_trimmed_nor_written() {
+    // A player.json from a newer version is read-only and its tempo is not used: the export is
+    // refused like a track without a tempo (as before the feature) and nothing is written.
+    let mut e = Env::new();
+    let mut t = first_beat_tempo(1200.0, Some(1200.0), 120.0);
+    t["schema_version"] = 8.into();
+    add_noisy(&mut e, t);
+    let base = e.rc5("rc5");
+    e.answer(&rc5("7"), &base);
+    let err = e.prepare(411, rc5("7")).unwrap_err();
+    assert!(err.contains("tempo"), "{err}");
+    assert!(!wav_path(&base, 7).exists());
+    e.repo_unchanged();
+}

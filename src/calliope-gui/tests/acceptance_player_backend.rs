@@ -6050,3 +6050,407 @@ fn sp26_a_speed_action_right_after_a_training_loop_play_is_refused_and_a_plain_l
     r.lp(LoopAction::Play).unwrap();
     assert!(r.m.speed(&r.id(), SpeedAction::Set(80), r.t0).is_ok());
 }
+
+// =========================================================================================
+// gui-first-beat (specs/gui-first-beat.md): the noisy-intro track, 44.1 kHz, 1.2 s noise then 440 Hz
+// =========================================================================================
+
+const NRATE: usize = 44100;
+const NOISY_ID: &str = "0199c0a0-0000-7000-8000-0000000005f2";
+
+fn noisy_player_json(start: f64, found: Option<f64>, schema: u32, count_in: bool) -> String {
+    let mut g = json!({"start_ms": start, "bpm": 120.0, "count_in": count_in, "metronome": false});
+    if let Some(f) = found {
+        g["found_ms"] = f.into();
+    }
+    json!({"schema_version": schema, "tempo": {"beats_per_bar": 4, "segments": [g]}}).to_string()
+}
+
+/// A temp repository with the noisy-intro track (a plain backing track) and the given `player.json`.
+fn noisy_rig(player: Option<&str>) -> Rig {
+    let from = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("lib");
+    copy_tree(&from.join("library-player"), &root);
+    let dir = root.join("tracks").join(NOISY_ID);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(
+        from.join("first-beat/noisy-intro.flac"),
+        dir.join("audio.flac"),
+    )
+    .unwrap();
+    let t = json!({
+        "schema_version": 2, "id": NOISY_ID, "type": "backing", "band": "B", "album": "A",
+        "title": "Noisy Intro", "composers": [], "year": null, "source_url": null, "copyright": null,
+        "audio": "audio.flac", "original": null, "stems": [], "stem_model": null,
+        "tablatures": [], "imported": "2026-10-07T10:00:00Z", "modified": "2026-10-07T10:00:00Z"
+    });
+    std::fs::write(dir.join("track.json"), t.to_string()).unwrap();
+    if let Some(p) = player {
+        std::fs::write(dir.join("player.json"), p).unwrap();
+    }
+    let tr = Repository::new(&root)
+        .scan()
+        .tracks
+        .into_iter()
+        .find(|t| t.id == NOISY_ID)
+        .unwrap();
+    let spec = OpenSpec {
+        id: tr.id.clone(),
+        title: tr.title.clone(),
+        dir,
+        sources: player_source::sources(&tr),
+        ffmpeg: None,
+    };
+    let (mut m, b, e) = manager();
+    m.open(&spec).unwrap();
+    Rig {
+        _t: tmp,
+        spec,
+        m,
+        b,
+        e,
+        t0: Instant::now(),
+    }
+}
+
+impl Rig {
+    fn found_start(&self) -> f64 {
+        calliope_gui::first_beat::find_start(&self.pcm())
+    }
+    fn place(&mut self, ms: f64, via: FirstBeatVia) -> PlayerSnapshot {
+        self.m
+            .place_first_beat(&self.id(), ms, via, self.t0)
+            .unwrap()
+    }
+    fn first(&self) -> (f64, Option<f64>) {
+        let g = &self.snap().tempo.segments[0];
+        (g.start_ms, g.found_ms)
+    }
+    fn move_first(&mut self, steps: i64) -> PlayerSnapshot {
+        let at = self.first().0;
+        self.m
+            .edit_sections(
+                &self.id(),
+                SectionEdit::Move {
+                    index: 0,
+                    at,
+                    steps,
+                },
+                self.t0,
+            )
+            .unwrap()
+    }
+    fn saved_player_json(&mut self) -> Value {
+        self.flush();
+        self.disk().expect("player.json")
+    }
+}
+
+#[test]
+fn fb_the_start_is_found_within_10_ms_of_1200() {
+    let r = noisy_rig(Some(&noisy_player_json(0.0, None, 6, true)));
+    let f = r.found_start();
+    assert!((f - 1200.0).abs() <= 10.0, "found {f}");
+    // a track whose music starts at 0:00 keeps its first beat at 0:00
+    let (_t, spec) = spec_of(PRACTICE);
+    let pcm = decoded(&spec, "backing:backing");
+    let f0 = calliope_gui::first_beat::find_start(&pcm);
+    assert!(f0 < 100.0, "a practice backing that starts at once: {f0}");
+}
+
+#[test]
+fn fb_automatic_placement_sets_the_first_beat_once_and_find_start_returns_to_it() {
+    let mut r = noisy_rig(Some(&noisy_player_json(0.0, None, 6, true)));
+    assert_eq!(r.first(), (0.0, None));
+    let f = r.found_start();
+    r.place(f, FirstBeatVia::Auto);
+    let (start, found) = r.first();
+    assert!((start - 1200.0).abs() <= 10.0, "{start}");
+    assert_eq!(
+        found,
+        Some(start),
+        "the readout offset is zero at the found start"
+    );
+    // a second automatic run changes nothing (the first beat is set)
+    let before = r.snap().tempo.segments;
+    r.place(f + 500.0, FirstBeatVia::Auto);
+    assert_eq!(r.snap().tempo.segments, before);
+    // by hand: +3/64 beat, found_ms stays (the readout's reference)
+    r.move_first(3);
+    let (moved, found2) = r.first();
+    let fine = 60000.0 / 120.0 / 64.0;
+    assert!((moved - (start + 3.0 * fine)).abs() < 1e-6, "{moved}");
+    assert_eq!(found2, found);
+    // Find start goes back
+    r.place(f, FirstBeatVia::Button);
+    assert_eq!(r.first(), (start, Some(start)));
+}
+
+#[test]
+fn fb_drag_one_64th_later_moves_by_one_fine_step_from_the_found_position() {
+    let mut r = noisy_rig(Some(&noisy_player_json(1200.0, Some(1200.0), 7, true)));
+    r.move_first(1);
+    let (s, f) = r.first();
+    assert!((s - (1200.0 + 500.0 / 64.0)).abs() < 1e-6, "{s}");
+    assert_eq!(f, Some(1200.0));
+    // steps count from the found position (the readout), not from where the bar is
+    r.move_first(-1);
+    assert_eq!(r.first().0, 1200.0 - 500.0 / 64.0);
+    r.move_first(0);
+    assert_eq!(r.first().0, 1200.0);
+}
+
+#[test]
+fn fb_play_from_the_beginning_counts_in_then_starts_the_music_at_1200_exactly() {
+    let mut r = noisy_rig(Some(&noisy_player_json(1200.0, Some(1200.0), 7, true)));
+    assert_eq!(r.pos(), 1200, "opening puts the playhead on the first beat");
+    r.seek(0);
+    assert_eq!(r.pos(), 1200);
+    let st = r.play();
+    assert!(st.counting_in && st.playing);
+    let b = NRATE / 2;
+    let tail = 6000;
+    let got = r.b.pull(5 * b + tail);
+    let zero = vec![0.0f32; 2 * 5 * b];
+    let on = clicks(&got[..2 * 5 * b], &zero, 0);
+    assert_eq!(on.len(), 6, "{on:?}");
+    for (o, w) in on.iter().zip([0, b, 2 * b, 5 * b / 2, 3 * b, 7 * b / 2]) {
+        assert!((*o as i64 - w as i64).abs() < 5, "{o} vs {w}");
+    }
+    assert!(
+        silent_between(&got, 7 * b / 2 + 1400, 5 * b - 1),
+        "5th beat silent"
+    );
+    // the music is the file from 1.2 s, starting exactly at the 6th beat position (after the fade-in)
+    let want = expected(&r.pcm(), 1200 * NRATE / 1000, tail);
+    for i in 400..2 * tail {
+        assert!((got[2 * 5 * b + i] - want[i]).abs() < 1e-5, "sample {i}");
+    }
+}
+
+#[test]
+fn fb_without_count_in_play_starts_at_the_first_beat_at_once() {
+    let mut r = noisy_rig(Some(&noisy_player_json(1200.0, Some(1200.0), 7, false)));
+    r.seek(0);
+    let st = r.play();
+    assert!(!st.counting_in);
+    let got = r.b.pull(4000);
+    let want = expected(&r.pcm(), 1200 * NRATE / 1000, 4000);
+    for i in 400..8000 {
+        assert!((got[i] - want[i]).abs() < 1e-5, "sample {i}");
+    }
+}
+
+#[test]
+fn fb_the_playhead_cannot_be_placed_before_the_first_beat() {
+    let mut r = noisy_rig(Some(&noisy_player_json(1200.0, Some(1200.0), 7, false)));
+    r.seek(500);
+    assert_eq!(r.pos(), 1200);
+    r.seek(0);
+    assert_eq!(r.pos(), 1200);
+    r.seek(3000);
+    assert_eq!(r.m.skip(&r.id(), -5000, r.t0).unwrap().position_ms, 1200);
+    assert_eq!(r.m.nudge(&r.id(), -9999, r.t0).unwrap().position_ms, 1200);
+    r.seek(1300);
+    assert_eq!(r.pos(), 1300, "after the floor is free");
+}
+
+#[test]
+fn fb_moving_the_first_beat_past_the_playhead_pulls_it_along_and_playing_continues() {
+    let mut r = noisy_rig(Some(&noisy_player_json(1200.0, Some(1200.0), 7, false)));
+    r.seek(1200);
+    r.play();
+    r.b.pull(500);
+    r.move_first(64); // one beat later: 1700 ms
+    assert!(r.pos() >= 1700, "{}", r.pos());
+    assert!(r.snap().transport.playing);
+}
+
+#[test]
+fn fb_limits_stop_at_zero_and_one_beat_before_the_next_section() {
+    let mut r = noisy_rig(Some(&noisy_player_json(1200.0, Some(1200.0), 7, false)));
+    r.move_first(-1_000_000);
+    assert_eq!(r.first().0, 0.0);
+    r.move_first(1_000_000);
+    let dur = r.snap().duration_ms as f64;
+    let last = r.first().0;
+    assert!(last < dur && last > dur - 600.0, "{last} of {dur}");
+    let two = json!({"schema_version": 7, "tempo": {"beats_per_bar": 4, "segments": [
+        {"start_ms": 1200.0, "bpm": 120.0, "found_ms": 1200.0},
+        {"start_ms": 3000.0, "bpm": 90.0}]}})
+    .to_string();
+    let mut r = noisy_rig(Some(&two));
+    r.move_first(-1_000_000);
+    assert_eq!(r.first().0, 0.0);
+    assert_eq!(r.snap().tempo.segments[1].start_ms, 3000.0);
+    r.move_first(1_000_000);
+    let hi = r.first().0;
+    assert!(
+        (hi - 2500.0).abs() < 1.0,
+        "one beat (500 ms) before 3000: {hi}"
+    );
+    assert_eq!(r.snap().tempo.segments[1].start_ms, 3000.0);
+    r.place(9999.0, FirstBeatVia::Button);
+    assert!((r.first().0 - 2500.0).abs() < 1.0);
+    r.place(-50.0, FirstBeatVia::Button);
+    assert_eq!(r.first().0, 0.0);
+}
+
+#[test]
+fn fb_other_sections_are_unchanged_and_the_first_sections_grid_follows() {
+    let two = json!({"schema_version": 7, "tempo": {"beats_per_bar": 4, "segments": [
+        {"start_ms": 1200.0, "bpm": 120.0, "found_ms": 1200.0},
+        {"start_ms": 3000.0, "bpm": 90.0}]}})
+    .to_string();
+    let mut r = noisy_rig(Some(&two));
+    r.move_first(10);
+    let segs = r.snap().tempo.segments;
+    assert_eq!(segs[1].start_ms, 3000.0);
+    assert_eq!(segs[1].bpm, 90.0);
+    let fine = 500.0 / 64.0;
+    assert!((segs[0].start_ms - (1200.0 + 10.0 * fine)).abs() < 1e-6);
+    // Click on: the metronome sits on beats counted from the new first beat
+    // (1278.125 ms): beats at +0.5 s, +1.0 s ...
+    let first = r.first().0;
+    let seek_ms = first.ceil() as u64 + 20;
+    r.seek(seek_ms);
+    r.play();
+    let skip_frames = 0;
+    let start_ms = seek_ms as f64;
+    let got = r.b.pull(NRATE);
+    let want = expected(&r.pcm(), (seek_ms as usize) * NRATE / 1000, NRATE);
+    let c = clicks(&got, &want, 300 + skip_frames);
+    let beat2 = ((first + 500.0 - start_ms) * NRATE as f64 / 1000.0).round() as i64;
+    assert!(
+        c.iter().any(|&f| (f as i64 - beat2).abs() < 40),
+        "a click on the 2nd beat at frame {beat2}: {c:?}"
+    );
+}
+
+#[test]
+fn fb_the_first_beat_is_saved_with_the_tempo_and_restored() {
+    let mut r = noisy_rig(Some(&noisy_player_json(0.0, None, 6, true)));
+    let f = r.found_start();
+    r.place(f, FirstBeatVia::Auto);
+    r.move_first(5);
+    let j = r.saved_player_json();
+    let seg = &j["tempo"]["segments"][0];
+    assert_eq!(j["schema_version"], 7);
+    assert!((seg["found_ms"].as_f64().unwrap() - r.first().1.unwrap()).abs() < 1e-9);
+    assert!((seg["start_ms"].as_f64().unwrap() - r.first().0).abs() < 1e-9);
+    let was = r.first();
+    r.reopen();
+    assert_eq!(r.first(), was);
+    r.seek(0);
+    assert_eq!(r.pos(), was.0 as u64, "floor restored with the file");
+}
+
+#[test]
+fn fb_a_track_saved_before_the_feature_plays_from_zero_and_keeps_its_tempo() {
+    // schema 6, first beat at 0:00 and not found yet; and one placed by hand at 500 ms
+    for start in [0.0, 500.0] {
+        let text = noisy_player_json(start, None, 6, true);
+        let mut r = noisy_rig(Some(&text));
+        r.seek(0);
+        assert_eq!(
+            r.pos(),
+            0,
+            "start {start}: no floor before the first beat is found"
+        );
+        r.seek(300);
+        assert_eq!(r.pos(), 300);
+        // opening alone never rewrites the file
+        let r2 = noisy_rig(Some(&text));
+        let mut r2 = r2;
+        r2.m.tick(r2.after(5000));
+        assert_eq!(
+            std::fs::read_to_string(r2.spec.dir.join("player.json")).unwrap(),
+            text,
+            "start {start}: opening does not rewrite a legacy file"
+        );
+        // a later save keeps the tempo as it was: no first beat found
+        r2.seek(1000);
+        let j = r2.saved_player_json();
+        let seg = &j["tempo"]["segments"][0];
+        assert_eq!(seg["start_ms"].as_f64().unwrap(), start);
+        assert!(seg.get("found_ms").is_none(), "{seg}");
+        // without count-in the music plays from 0:00 including the noisy intro
+        let mut r = noisy_rig(Some(&noisy_player_json(start, None, 6, false)));
+        r.seek(0);
+        r.play();
+        let got = r.b.pull(3000);
+        let want = expected(&r.pcm(), 0, 3000);
+        for i in 400..6000 {
+            assert!((got[i] - want[i]).abs() < 1e-5, "start {start}: sample {i}");
+        }
+    }
+}
+
+#[test]
+fn fb_a_legacy_track_with_a_count_in_still_counts_in_from_where_it_is() {
+    let mut r = noisy_rig(Some(&noisy_player_json(500.0, None, 6, true)));
+    r.seek(500);
+    let st = r.play();
+    assert!(st.counting_in);
+    let off = 5 * NRATE / 2;
+    let got = r.b.pull(off + 2000);
+    let want = expected(&r.pcm(), 500 * NRATE / 1000, 2000);
+    for i in 400..4000 {
+        assert!((got[2 * off + i] - want[i]).abs() < 1e-5, "sample {i}");
+    }
+}
+
+#[test]
+fn fb_a_newer_schema_file_is_read_only_the_first_beat_is_not_saved() {
+    let text = json!({"schema_version": 8, "tempo": {"beats_per_bar": 4, "segments": [
+        {"start_ms": 0.0, "bpm": 120.0}]}})
+    .to_string();
+    let mut r = noisy_rig(Some(&text));
+    // a newer file's values are not applied: no tempo, so no first beat can be found or placed
+    assert!(r.snap().tempo.segments.is_empty());
+    r.m.tick(r.after(5000));
+    assert!(r.m.first_beat_input(&r.id()).is_err());
+    let _ =
+        r.m.place_first_beat(&r.id(), 1200.0, FirstBeatVia::Auto, r.t0);
+    let _ =
+        r.m.place_first_beat(&r.id(), 1200.0, FirstBeatVia::Button, r.t0);
+    r.seek(2000);
+    r.m.tick(r.after(5000));
+    r.m.leave(&r.id(), r.t0).unwrap();
+    r.m.close();
+    assert_eq!(
+        std::fs::read_to_string(r.spec.dir.join("player.json")).unwrap(),
+        text
+    );
+}
+
+#[test]
+fn fb_loops_that_start_before_the_first_beat_never_play_it() {
+    // a loop 400 ms .. 2400 ms saved before the feature; the first beat is now at 1200
+    let mut text: Value =
+        serde_json::from_str(&noisy_player_json(1200.0, Some(1200.0), 7, false)).unwrap();
+    text["loops"] = json!([{"id": "a", "start": {"ms": 400.0}, "end": {"ms": 2400.0}}]);
+    text["current_loop"] = 0.into();
+    let mut r = noisy_rig(Some(&text.to_string()));
+    eprintln!("loops after open: {:?}", r.snap().loops);
+    let t =
+        r.m.loop_action(&r.id(), LoopAction::Play, r.t0)
+            .map(|s| s.transport);
+    eprintln!("loop play: {t:?}");
+    if let Ok(t) = t {
+        assert!(
+            t.position_ms >= 1200,
+            "loop play starts at {}",
+            t.position_ms
+        );
+        for _ in 0..12 {
+            r.b.pull(NRATE / 2);
+            assert!(
+                r.pos() >= 1200,
+                "position {} is before the first beat",
+                r.pos()
+            );
+        }
+    }
+}
