@@ -1150,6 +1150,13 @@ pub struct OpenTicket {
     cancel: Arc<AtomicBool>,
 }
 
+impl OpenTicket {
+    /// Set when a later open or a close supersedes this one.
+    pub fn cancel_flag(&self) -> &AtomicBool {
+        &self.cancel
+    }
+}
+
 /// A decoded track; produced without holding the manager.
 pub struct Loaded {
     state: PlayerState,

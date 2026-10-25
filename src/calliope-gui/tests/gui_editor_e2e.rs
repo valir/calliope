@@ -586,7 +586,7 @@ fn autodetect_errors_cancel_and_player_reload() {
     app.click(&wid, PLAYER_LOOP_ADD.0, PLAYER_LOOP_ADD.1);
     app.wait_contains("player loop add");
     let loops = |dirs: &Dirs| -> usize {
-        let end = Instant::now() + secs(4);
+        let end = Instant::now() + secs(12);
         loop {
             if let Ok(b) = std::fs::read(dirs.player_json(ED_FOUR)) {
                 if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&b) {

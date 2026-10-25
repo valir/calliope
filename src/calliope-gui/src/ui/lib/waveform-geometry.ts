@@ -142,11 +142,11 @@ export function firstBeatLimits(segs: MoveSeg[], durationMs: number): [number, n
 export function firstBeatSteps(refMs: number, pointerMs: number, bpm: number, lo: number, hi: number): number {
   const fine = fineMs(bpm);
   const nmin = Math.floor((lo - refMs) / fine);
-  const nmax = Number.isFinite(hi) ? Math.ceil((hi - refMs) / fine) : Infinity;
+  const nmax = Number.isFinite(hi) ? Math.ceil((Math.max(hi, lo) - refMs) / fine) : Infinity;
   return Math.min(Math.max(roundHalfAway((pointerMs - refMs) / fine), nmin), nmax);
 }
 
 /** The first beat's position for `steps` fine steps from `refMs`, clamped to `[lo, hi]`. */
 export function firstBeatAt(refMs: number, steps: number, bpm: number, lo: number, hi: number): number {
-  return Math.min(Math.max(refMs + steps * fineMs(bpm), lo), hi);
+  return Math.min(Math.max(refMs + steps * fineMs(bpm), lo), Math.max(hi, lo));
 }

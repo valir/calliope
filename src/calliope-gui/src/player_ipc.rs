@@ -182,7 +182,7 @@ pub(crate) fn do_open_player(
         // The automatic first-beat run happens off the lock, like the decode.
         let wants = loaded.wants_first_beat();
         let found = if wants {
-            analyse_loaded(&spec, &loaded)
+            analyse_loaded(&spec, &loaded, ticket.cancel_flag())
         } else {
             None
         };
@@ -190,7 +190,14 @@ pub(crate) fn do_open_player(
         host.with(|m| {
             let snap = m.finish_open(&ticket, &spec, loaded)?;
             if let Some(ms) = found {
-                return m.place_first_beat(id, ms, FirstBeatVia::Auto, now);
+                // The automatic run never fails an open.
+                return match m.place_first_beat(id, ms, FirstBeatVia::Auto, now) {
+                    Ok(snap) => Ok(snap),
+                    Err(_) => {
+                        eprintln!("calliope: player first-beat skipped id={id} reason=no-room");
+                        m.snapshot(id)
+                    }
+                };
             }
             if !wants {
                 if let Some(first) = snap.tempo.segments.first() {
@@ -215,16 +222,15 @@ pub(crate) fn do_open_player(
 
 /// The start of the music in the open track's analysis source; the loaded PCM is used when it is that source.
 /// A decode failure skips the run (logged; retried at the next open).
-fn analyse_loaded(spec: &OpenSpec, loaded: &player::Loaded) -> Option<f64> {
+fn analyse_loaded(spec: &OpenSpec, loaded: &player::Loaded, cancel: &AtomicBool) -> Option<f64> {
     let src = first_beat::analysis_source(&spec.sources, loaded.source_key())?;
     if src.key == loaded.source_key() {
         return Some(first_beat::find_start(loaded.pcm()));
     }
-    let cancel = AtomicBool::new(false);
     match player_source::decode(
         &spec.dir.join(&src.file),
         spec.ffmpeg.as_deref(),
-        &cancel,
+        cancel,
         &mut |_, _| {},
     ) {
         Ok(pcm) => Some(first_beat::find_start(&pcm)),

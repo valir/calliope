@@ -644,3 +644,17 @@ fn a_newer_player_json_runs_nothing() {
     // read-only default state: the newer file's tempo is not read, nothing is placed
     assert!(snap.tempo.segments.is_empty());
 }
+
+#[test]
+fn no_room_for_the_first_beat_does_not_fail_the_open() {
+    let e = env();
+    // the second section starts less than one beat after 0
+    let mut p = player_json(0.0, None, "audio", 7);
+    p["tempo"]["segments"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"start_ms": 300.0, "bpm": 120.0}));
+    seed_noisy(&e, Some(p), false);
+    let snap = open(&e, NOISY).unwrap();
+    assert_eq!(first_of(&snap), (0.0, None));
+}

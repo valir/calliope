@@ -169,4 +169,11 @@ describe('first beat', () => {
     expect(firstBeatSteps(1200, 9999, 120, 0, 2500)).toBe(167);
     expect(firstBeatAt(1200, 167, 120, 0, 2500)).toBe(2500);
   });
+
+  it('firstBeatSteps and firstBeatAt hold at lo when hi < lo', () => {
+    expect(firstBeatAt(1200, 5, 120, 0, -100)).toBe(0);
+    expect(firstBeatAt(1200, -500, 120, 0, -100)).toBe(0);
+    expect(firstBeatSteps(1200, 900, 120, 0, -100)).toBe(firstBeatSteps(1200, 900, 120, 0, 0));
+    expect(firstBeatAt(1200, firstBeatSteps(1200, 900, 120, 0, -100), 120, 0, -100)).toBeGreaterThanOrEqual(0);
+  });
 });
