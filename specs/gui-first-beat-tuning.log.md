@@ -10,3 +10,5 @@ task 8 | Docs | implementer | done
 tester | 8 vitest acceptance tests, all criteria pass, no defects | tester | done
 reviewer | APPROVED, 5 minors | reviewer | done
 fix round 1 | readout cleared on Up/Down, no re-commit of refused text on blur, Start as the field name, comments | implementer | done
+reviewer | fix round 1 APPROVED | reviewer | done
+report | written | me | done
