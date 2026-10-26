@@ -150,3 +150,26 @@ export function firstBeatSteps(refMs: number, pointerMs: number, bpm: number, lo
 export function firstBeatAt(refMs: number, steps: number, bpm: number, lo: number, hi: number): number {
   return Math.min(Math.max(refMs + steps * fineMs(bpm), lo), Math.max(hi, lo));
 }
+
+/** How long the keyboard readout stays after the last key press, in ms. */
+export const KEY_READOUT_MS = 1500;
+
+/** The offset of bar `i` from its reference (the drag readout's reference): fine steps and the applied ms. */
+export function sectionOffset(segs: MoveSeg[], i: number): { steps: number; ms: number } {
+  const ref = moveRefMs(segs, i);
+  return { steps: offsetSteps(segs[i].start_ms, ref, stepBpm(segs, i)), ms: segs[i].start_ms - ref };
+}
+
+/** The drag clamp for a wanted step count of bar `i`; mirrors `TempoMap::move_first_beat` / `move_change`. */
+export function clampMoveSteps(segs: MoveSeg[], i: number, steps: number, durationMs: number): number {
+  const ref = moveRefMs(segs, i);
+  if (i === 0) {
+    const [lo, hi] = firstBeatLimits(segs, durationMs);
+    return firstBeatSteps(ref, ref + steps * fineMs(segs[0].bpm), segs[0].bpm, lo, hi);
+  }
+  const prev = segs[i - 1];
+  const next = segs[i + 1];
+  const lo = prev.start_ms + 60000 / prev.bpm;
+  const hi = (next ? next.start_ms : durationMs) - 60000 / segs[i].bpm;
+  return dragSteps(ref, ref + steps * fineMs(prev.bpm), prev.bpm, lo, hi, moveLimit(segs, i));
+}

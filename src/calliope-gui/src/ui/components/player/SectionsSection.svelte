@@ -1,17 +1,19 @@
 <script lang="ts">
   import BpmSection from './BpmSection.svelte';
+  import SectionOffset from './SectionOffset.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { formatBpm, scaleBpm } from '$lib/bpm-format';
   import { sectionClicks, sectionCountIn, MAX_SECTION_NAME } from '$lib/section-meta';
   import {
     pl, removeChange, scaleSection, startAdd, targetSection, setSectionFlags, jumpSection,
-    beginNameEdit, commitSectionName, cancelSectionName, findStart,
+    beginNameEdit, commitSectionName, cancelSectionName, stepSection,
   } from '$lib/player-state.svelte';
 
   const segs = $derived(pl.snap?.tempo.segments ?? []);
   const none = $derived(pl.status !== 'active' || segs.length === 0);
   // While the name box has the focus, everything shows the section captured on focus.
-  const target = $derived(none ? null : pl.nameEdit ? Math.min(pl.nameEdit.index, segs.length - 1) : targetSection());
+  const edit = $derived(pl.nameEdit ?? pl.offsetEdit);
+  const target = $derived(none ? null : edit ? Math.min(edit.index, segs.length - 1) : targetSection());
   const bpm = $derived(target === null ? null : segs[target].bpm);
   const status = $derived(
     target === null || bpm === null ? 'No tempo' : `Section ${target + 1} of ${segs.length} · ${formatBpm(bpm)} BPM`,
@@ -27,7 +29,8 @@
   const pressed = 'bg-amber-500! text-black! hover:bg-amber-500/90!';
   const nameValue = $derived(pl.nameEdit ? pl.nameEdit.draft : (meta?.name ?? ''));
   const message = $derived(pl.sectionError || pl.sectionNote || (segs.length === 0 && pl.status === 'active' ? NEED_BPM : ''));
-  const noFind = $derived(none || segs[0].bpm <= 0 || pl.findingStart);
+  const noPrev = $derived(none || target === null || target === 0);
+  const noNext = $derived(none || target === null || target === segs.length - 1);
 </script>
 <div class="flex min-w-0 max-w-full flex-none flex-col gap-1 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Sections">
   <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -54,7 +57,7 @@
   <div class="flex flex-wrap items-center gap-2">
     <Button
       variant="outline"
-      class="h-[3.25rem] w-12 px-0 text-lg"
+      class="h-[3.25rem] w-11 px-0 text-lg"
       aria-label="Add a tempo change at the playhead"
       disabled={none}
       title={none ? NEED_BPM : undefined}
@@ -62,7 +65,7 @@
     >+</Button>
     <Button
       variant="outline"
-      class="h-[3.25rem] w-12 px-0 text-lg"
+      class="h-[3.25rem] w-11 px-0 text-lg"
       aria-label="Remove the tempo change"
       disabled={noRemove}
       title={none ? NEED_BPM : noRemove ? 'The first section has no tempo change to remove' : undefined}
@@ -70,7 +73,7 @@
     >−</Button>
     <Button
       variant="outline"
-      class="h-[3.25rem] w-12 px-0 text-lg"
+      class="h-[3.25rem] w-11 px-0 text-lg"
       aria-label="Double the section's BPM"
       disabled={noDouble}
       title={none ? NEED_BPM : noDouble ? 'Doubling would go over 300 BPM' : undefined}
@@ -78,7 +81,7 @@
     >×2</Button>
     <Button
       variant="outline"
-      class="h-[3.25rem] w-12 px-0 text-lg"
+      class="h-[3.25rem] w-11 px-0 text-lg"
       aria-label="Halve the section's BPM"
       disabled={noHalve}
       title={none ? NEED_BPM : noHalve ? 'Halving would go under 20 BPM' : undefined}
@@ -86,7 +89,15 @@
     >÷2</Button>
     <Button
       variant="outline"
-      class="h-[3.25rem] w-12 px-0 text-lg"
+      class="h-[3.25rem] w-11 px-0 text-base"
+      aria-label="Go to the start of the previous section"
+      disabled={noPrev}
+      title={none ? NEED_BPM : noPrev ? 'This is the first section' : undefined}
+      onclick={() => void stepSection(-1)}
+    >Prev</Button>
+    <Button
+      variant="outline"
+      class="h-[3.25rem] w-11 px-0 text-lg"
       aria-label="Jump to the start of the section"
       disabled={none}
       title={none ? NEED_BPM : undefined}
@@ -94,7 +105,7 @@
     >|◀</Button>
     <Button
       variant="outline"
-      class="h-[3.25rem] w-12 px-0 text-lg"
+      class="h-[3.25rem] w-11 px-0 text-lg"
       aria-label="Jump to the end of the section"
       disabled={none}
       title={none ? NEED_BPM : undefined}
@@ -102,12 +113,12 @@
     >▶|</Button>
     <Button
       variant="outline"
-      class="h-[3.25rem] px-1.5 text-sm"
-      aria-label="Find where the music starts and put the first beat there"
-      disabled={noFind}
-      title={none ? NEED_BPM : pl.findingStart ? 'Finding the start...' : undefined}
-      onclick={() => void findStart()}
-    >Find start</Button>
+      class="h-[3.25rem] w-11 px-0 text-base"
+      aria-label="Go to the start of the next section"
+      disabled={noNext}
+      title={none ? NEED_BPM : noNext ? 'This is the last section' : undefined}
+      onclick={() => void stepSection(1)}
+    >Next</Button>
   </div>
   <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
     <div class="flex flex-none items-center gap-2" role="group" aria-label="This section" title="This section">
@@ -132,5 +143,6 @@
     </div>
     <span class="min-w-0 max-w-full text-base tabular-nums" data-testid="section-status">{status}</span>
   </div>
+  <SectionOffset {target} />
   <span class="min-h-5 min-w-0 truncate text-sm {pl.sectionError ? 'text-destructive' : 'text-muted-foreground'}" role={pl.sectionError ? 'alert' : undefined} title={message || undefined} data-testid="section-message">{pl.findingStart ? 'Finding the start...' : message}</span>
 </div>

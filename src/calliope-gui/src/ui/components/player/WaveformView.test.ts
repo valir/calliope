@@ -510,3 +510,92 @@ describe('WaveformView Editor mode is unchanged by the Player props', () => {
     expect(moves).toEqual([]);
   });
 });
+
+describe('WaveformView keyboard readout', () => {
+  let moves: [number, number][];
+  const mountK = (segments: TempoSegment[], extra: Record<string, unknown> = {}) => {
+    moves = [];
+    render(WaveformView, { props: { ...base, segments, onmove: (i: number, s: number) => moves.push([i, s]), ...extra } });
+    return screen.getByTestId('wf');
+  };
+  const readout = () => screen.queryByTestId('wf-readout')?.textContent ?? null;
+  const first = (start = 1200): TempoSegment[] => [{ start_ms: start, bpm: 120, found_ms: 1200 }];
+  afterEach(() => vi.useRealTimers());
+
+  it('Player mode: shows for 1.5 s after the last key, is refreshed by each key and goes on blur', async () => {
+    vi.useFakeTimers();
+    const c = mountK(first(), { freeMove: true, selected: 0, onselect() {} });
+    await fireEvent.focus(c);
+    await fireEvent.keyDown(c, { key: 'ArrowRight' });
+    expect(readout()).toBe('+1/64 beat (+0:00.008) from the found start');
+    await vi.advanceTimersByTimeAsync(1499);
+    expect(readout()).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(readout()).toBeNull();
+
+    await fireEvent.keyDown(c, { key: 'ArrowRight' });
+    await vi.advanceTimersByTimeAsync(1000);
+    await fireEvent.keyDown(c, { key: 'ArrowRight' });
+    expect(readout()).toBe('+3/64 beat (+0:00.023) from the found start');
+    await vi.advanceTimersByTimeAsync(1400);
+    expect(readout()).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(readout()).toBeNull();
+
+    await fireEvent.keyDown(c, { key: 'ArrowRight' });
+    expect(readout()).not.toBeNull();
+    await fireEvent.blur(c);
+    expect(readout()).toBeNull();
+  });
+
+  it('a second key shows the next step count', async () => {
+    vi.useFakeTimers();
+    const c = mountK(first(), { freeMove: true, selected: 0, onselect() {} });
+    await fireEvent.focus(c);
+    await fireEvent.keyDown(c, { key: 'ArrowRight' });
+    await vi.advanceTimersByTimeAsync(1000);
+    await fireEvent.keyDown(c, { key: 'ArrowRight' });
+    expect(readout()).toBe('+2/64 beat (+0:00.016) from the found start');
+  });
+
+  it('Editor mode: a detected change shows the same text as its drag, with the limit tail', async () => {
+    vi.useFakeTimers();
+    cssWidth = 2500; // 1 px = 8 ms
+    const segs: TempoSegment[] = [seg(0, 120), seg(6500, 90, 6500)];
+    const c = mountK(segs);
+    const x = sectionMarks(segs, 20000, 2500)[1].x!;
+    await fireEvent.pointerDown(c, { clientX: x });
+    await fireEvent.pointerMove(c, { clientX: x + 1 });
+    const dragText = readout();
+    await fireEvent.pointerUp(c);
+    expect(dragText).toMatch(/^\+1\/64 beat \(\+0:00\.008\) · limit ±4 beats$/);
+    expect(readout()).toBeNull();
+    await fireEvent.focus(c);
+    await fireEvent.keyDown(c, { key: 'ArrowDown' });
+    await fireEvent.keyDown(c, { key: 'ArrowRight' });
+    expect(readout()).toBe(dragText);
+  });
+
+  it('at the limit the readout shows and no move is sent', async () => {
+    vi.useFakeTimers();
+    const c = mountK(first(0), { freeMove: true, selected: 0, onselect() {} });
+    await fireEvent.focus(c);
+    await fireEvent.keyDown(c, { key: 'ArrowLeft' });
+    expect(readout()).toMatch(/^-154\/64 beat .* from the found start$/);
+    expect(moves).toEqual([]);
+  });
+
+  it('a pointerdown replaces the key readout by the drag readout, gone after pointerup', async () => {
+    vi.useFakeTimers();
+    cssWidth = 2500;
+    const c = mountK(first(), { freeMove: true, selected: 0, onselect() {} });
+    await fireEvent.focus(c);
+    await fireEvent.keyDown(c, { key: 'ArrowRight' });
+    expect(readout()).not.toBeNull();
+    const x = xOf(1200, 20000, 2500);
+    await fireEvent.pointerDown(c, { clientX: x, clientY: 10 });
+    expect(readout()).toBe('0/64 beat (+0:00.000) from the found start');
+    await fireEvent.pointerUp(c);
+    expect(readout()).toBeNull();
+  });
+});

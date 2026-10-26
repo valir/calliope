@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { columns, xOf, loopMarks, fineMs, sectionMarks, labelFits, dragSteps, offsetSteps, moveRefMs, moveLimit, playStartMs, stepBpm, firstBeatLimits, firstBeatSteps, firstBeatAt } from './waveform-geometry';
+import { columns, xOf, loopMarks, fineMs, sectionMarks, labelFits, dragSteps, offsetSteps, moveRefMs, moveLimit, playStartMs, stepBpm, firstBeatLimits, firstBeatSteps, firstBeatAt, KEY_READOUT_MS, sectionOffset, clampMoveSteps } from './waveform-geometry';
 
 describe('columns', () => {
   it('should handle empty peaks', () => {
@@ -175,5 +175,44 @@ describe('first beat', () => {
     expect(firstBeatAt(1200, -500, 120, 0, -100)).toBe(0);
     expect(firstBeatSteps(1200, 900, 120, 0, -100)).toBe(firstBeatSteps(1200, 900, 120, 0, 0));
     expect(firstBeatAt(1200, firstBeatSteps(1200, 900, 120, 0, -100), 120, 0, -100)).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('section offset helpers', () => {
+  const mk = () => [
+    { start_ms: 1200, bpm: 120, found_ms: 1200 },
+    { start_ms: 3000, bpm: 120, detected_ms: 3000 },
+    { start_ms: 4200, bpm: 120 },
+  ] as { start_ms: number; bpm: number; detected_ms?: number; found_ms?: number }[];
+  const D = 5200;
+
+  it('clampMoveSteps clamps like a drag', () => {
+    const S = mk();
+    expect(clampMoveSteps(S, 0, 10, D)).toBe(10);
+    expect(clampMoveSteps(S, 0, -9999, D)).toBe(-154);
+    expect(clampMoveSteps(S, 0, 9999, D)).toBe(167);
+    expect(clampMoveSteps(S, 1, -8, D)).toBe(-8);
+    expect(clampMoveSteps(S, 1, -9999, D)).toBe(-166);
+    expect(clampMoveSteps(S, 1, 9999, D)).toBe(89);
+    expect(clampMoveSteps(S, 2, 9999, D)).toBe(217);
+    expect(clampMoveSteps(S, 2, -9999, D)).toBe(64);
+    expect(clampMoveSteps(S, 0, 1e9, D)).toBe(167);
+  });
+
+  it('sectionOffset gives steps and applied ms', () => {
+    const S = mk();
+    expect(sectionOffset(S, 0)).toEqual({ steps: 0, ms: 0 });
+    expect(sectionOffset(S, 2)).toEqual({ steps: 154, ms: 1200 });
+    S[0].start_ms = 1278.125;
+    expect(sectionOffset(S, 0)).toEqual({ steps: 10, ms: 78.125 });
+    S[0].start_ms = 0;
+    expect(sectionOffset(S, 0)).toEqual({ steps: -154, ms: -1200 });
+    const T = mk();
+    T[1].start_ms = 2937.5;
+    expect(sectionOffset(T, 1)).toEqual({ steps: -8, ms: -62.5 });
+  });
+
+  it('KEY_READOUT_MS is 1500', () => {
+    expect(KEY_READOUT_MS).toBe(1500);
   });
 });

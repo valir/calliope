@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import type { Channel } from '@tauri-apps/api/core';
 import {
-  loop, beginNameEdit, cancelSectionBpm, cancelSectionName, commitSectionBpm, commitSectionName, jumpSection, findStart, setSectionFlags, editSectionBpm, leavePlayer, moveChange, pl, removeChange, scaleSection,
+  loop, beginNameEdit, cancelSectionBpm, cancelSectionName, commitSectionBpm, commitSectionName, commitSectionOffset, beginOffsetEdit, cancelOffsetEdit, stepSection, jumpSection, findStart, setSectionFlags, editSectionBpm, leavePlayer, moveChange, pl, removeChange, scaleSection,
   selectSection, startAdd, targetSection, playLabel, resetPlayer, seek, selectSource, syncSelection, togglePlay,
   speedStep, speedReset, speedSet, setTraining, speedLocked, shownSpeed } from './player-state.svelte';
 import { resetLibrary } from './library-state.svelte';
@@ -534,6 +534,122 @@ describe('player sections', () => {
     syncSelection(stemsOnly);
     await flush();
     expect(pl.nameEdit).toBeNull();
+  });
+  describe('start offset field and Prev / Next', () => {
+    const S: TempoSegment[] = [
+      { start_ms: 1200, bpm: 120, found_ms: 1200, detected_ms: null, on_beat: true },
+      { start_ms: 3000, bpm: 120, detected_ms: 3000, on_beat: true },
+      { start_ms: 4200, bpm: 120, detected_ms: null, on_beat: true },
+    ];
+    const snapS = (id: string): PlayerSnapshot => ({ ...withSegs(id, S), duration_ms: 5200 });
+    const openS = async (): Promise<void> => {
+      handlers.open_player = (a) => snapS(a.id as string);
+      syncSelection(practice);
+      await flush();
+      handlers.player_tempo = (a) => snapS(a.id as string);
+    };
+    const at = (i: number) => {
+      pl.transport.tempo_index = i;
+      pl.section = null;
+    };
+
+    it('a valid text sends the absolute steps with at and resolves true', async () => {
+      await openS();
+      at(0);
+      expect(await commitSectionOffset('+10')).toBe(true);
+      expect(tempoCalls()).toEqual([{ kind: 'move-change', index: 0, at: 1200, steps: 10 }]);
+      expect(logs()).toContain('player section offset index=0 text=+10 steps=10');
+    });
+
+    it('a too large value is clamped before it is sent', async () => {
+      await openS();
+      at(0);
+      await commitSectionOffset('-9999');
+      at(1);
+      await commitSectionOffset('-9999');
+      expect(tempoCalls()).toEqual([
+        { kind: 'move-change', index: 0, at: 1200, steps: -154 },
+        { kind: 'move-change', index: 1, at: 3000, steps: -166 },
+      ]);
+    });
+
+    it('an invalid text sends nothing, resolves false and sets the message', async () => {
+      await openS();
+      at(0);
+      expect(await commitSectionOffset('1.5')).toBe(false);
+      expect(tempoCalls()).toEqual([]);
+      expect(pl.sectionError).toBe('Type a whole number of 1/64 beats, like +10 or -8');
+      expect(logs()).toContain('player section offset refused text=1.5');
+    });
+
+    it('the current value sends nothing and clears the message', async () => {
+      await openS();
+      at(0);
+      pl.sectionError = 'old';
+      expect(await commitSectionOffset('0')).toBe(true);
+      expect(tempoCalls()).toEqual([]);
+      expect(pl.sectionError).toBe('');
+      expect(logs()).toContain('player section offset index=0 text=0 steps=0 unchanged');
+    });
+
+    it('the captured edit keeps its section when the playhead moves on', async () => {
+      await openS();
+      const ev = (tempo_index: number) => channels[0].onmessage({ kind: 'transport', id: practice.id, ...idle, tempo_index });
+      ev(1);
+      beginOffsetEdit();
+      expect(pl.offsetEdit).toEqual({ index: 1, at: 3000 });
+      ev(2);
+      expect(targetSection()).toBe(2);
+      await commitSectionOffset('-8');
+      expect(tempoCalls()).toEqual([{ kind: 'move-change', index: 1, at: 3000, steps: -8 }]);
+      cancelOffsetEdit();
+      expect(pl.offsetEdit).toBeNull();
+    });
+
+    it('Next and Prev send the jump to the neighbour, like Start would', async () => {
+      await openS();
+      at(1);
+      await stepSection(1);
+      expect(pl.section).toBe(2);
+      expect(logs().some((l) => /^player section jump index=2 edge=start position=\d+ via=next$/.test(l))).toBe(true);
+      at(1);
+      await stepSection(-1);
+      expect(pl.section).toBe(0);
+      expect(logs().some((l) => l.endsWith('via=prev'))).toBe(true);
+      at(2);
+      await jumpSection('start');
+      at(1);
+      await stepSection(1);
+      expect(tempoCalls()).toEqual([
+        { kind: 'jump-section', index: 2, at: 4200, edge: 'start' },
+        { kind: 'jump-section', index: 0, at: 1200, edge: 'start' },
+        { kind: 'jump-section', index: 2, at: 4200, edge: 'start' },
+        { kind: 'jump-section', index: 2, at: 4200, edge: 'start' },
+      ]);
+    });
+
+    it('Prev on the first and Next on the last section send nothing', async () => {
+      await openS();
+      at(0);
+      await stepSection(-1);
+      at(2);
+      await stepSection(1);
+      expect(tempoCalls()).toEqual([]);
+    });
+
+    it('a jump reply after a track switch is ignored', async () => {
+      await openS();
+      at(1);
+      let release!: (s: PlayerSnapshot) => void;
+      handlers.player_tempo = () => new Promise((res) => { release = res; });
+      const run = stepSection(1);
+      syncSelection(stemsOnly);
+      await flush();
+      release(snapS(practice.id));
+      await run;
+      expect(pl.section).toBeNull();
+      expect(logs().some((l) => l.startsWith('player section jump'))).toBe(false);
+    });
   });
 });
 

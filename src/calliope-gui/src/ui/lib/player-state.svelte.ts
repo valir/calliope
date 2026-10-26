@@ -25,7 +25,8 @@ import {
 import { selectTrack } from './library-state.svelte';
 import { scaleBpm } from './bpm-format';
 import { MAX_SPEED, MIN_SPEED, parseSpeed, readoutText } from './speed-format';
-import { cleanSectionName, sectionClicks, sectionCountIn } from './section-meta';
+import { cleanSectionName, parseOffset, sectionClicks, sectionCountIn } from './section-meta';
+import { clampMoveSteps, sectionOffset } from './waveform-geometry';
 
 export type PlayerStatus = 'inactive' | 'loading' | 'active' | 'error';
 
@@ -64,6 +65,8 @@ export const pl = $state({
   findingStart: false,
   /** The section whose name is being edited, captured on focus so the playhead can't move the edit. */
   nameEdit: null as { index: number; at: number; draft: string } | null,
+  /** The section whose start offset field has the focus, captured on focus so the playhead can't move the edit. */
+  offsetEdit: null as { index: number; at: number } | null,
   treeCollapsed: false,
   /** Bumped when the backend closed the session (the Editor took the track); the view reopens. */
   reopen: 0,
@@ -95,6 +98,7 @@ function resetFields(): void {
   pl.sectionNote = '';
   pl.findingStart = false;
   pl.nameEdit = null;
+  pl.offsetEdit = null;
   movePending = null;
   seekPending = null;
   seekGuard = null;
@@ -681,6 +685,64 @@ export async function jumpSection(edge: 'start' | 'end'): Promise<void> {
     undefined,
     (s) => `edge=${edge} position=${s.transport.position_ms}`,
   );
+}
+
+/** Goes to the start of the previous (-1) or next (+1) section, as |< does for the target section. */
+export async function stepSection(dir: -1 | 1): Promise<void> {
+  const from = targetSection();
+  if (from === null) return;
+  const to = from + dir;
+  const at = startOf(to);
+  if (at === null) return;
+  await sectionCall(
+    'jump',
+    to,
+    (id) => playerTempo(id, { kind: 'jump-section', index: to, at, edge: 'start' }),
+    () => {
+      pl.section = to;
+    },
+    (s) => `edge=start position=${s.transport.position_ms} via=${dir < 0 ? 'prev' : 'next'}`,
+  );
+}
+
+// ---- start offset field ----
+
+/** Captures the target section for an offset edit (on focus). */
+export function beginOffsetEdit(): void {
+  if (pl.offsetEdit || pl.status !== 'active') return;
+  const index = targetSection();
+  const at = index === null ? null : startOf(index);
+  if (index === null || at === null) return;
+  pl.offsetEdit = { index, at };
+}
+
+/** Drops the capture; the field follows the target section again. */
+export function cancelOffsetEdit(): void {
+  pl.offsetEdit = null;
+}
+
+/** Moves the captured (else target) section's start to `text` 1/64 beats from its reference, clamped like a drag. False when the text is refused. */
+export async function commitSectionOffset(text: string): Promise<boolean> {
+  const n = parseOffset(text);
+  if (n === null) {
+    pl.sectionError = 'Type a whole number of 1/64 beats, like +10 or -8';
+    log(`player section offset refused text=${text}`);
+    return false;
+  }
+  const segs = pl.snap?.tempo.segments;
+  const edit = pl.offsetEdit;
+  const index = edit ? edit.index : targetSection();
+  const at = edit ? edit.at : index === null ? null : startOf(index);
+  if (!segs || index === null || at === null || !segs[index]) return true;
+  const steps = clampMoveSteps(segs, index, n, pl.snap!.duration_ms);
+  if (steps === sectionOffset(segs, index).steps) {
+    log(`player section offset index=${index} text=${text} steps=${steps} unchanged`);
+    pl.sectionError = '';
+    return true;
+  }
+  log(`player section offset index=${index} text=${text} steps=${steps}`);
+  await sectionCall('move', index, (id) => playerTempo(id, { kind: 'move-change', index, at, steps }));
+  return true;
 }
 
 // ---- speed and training ----

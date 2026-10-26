@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import type { PlayerLoop, TempoSegment } from '$lib/ipc';
   import {
-    columns, dragSteps, fineMs, firstBeatAt, firstBeatLimits, firstBeatSteps, labelFits, loopMarks, MAX_OFFSET_STEPS, moveLimit, moveRefMs,
+    columns, dragSteps, fineMs, firstBeatAt, firstBeatLimits, firstBeatSteps, KEY_READOUT_MS, labelFits, loopMarks, MAX_OFFSET_STEPS, moveLimit, moveRefMs,
     offsetSteps, playStartMs, sectionMarks, stepBpm, xOf,
   } from '$lib/waveform-geometry';
   import SectionBpmInput from './SectionBpmInput.svelte';
@@ -59,13 +59,28 @@
   let labelRects: { index: number; x: number; y: number; w: number; h: number }[] = [];
   /** The offset last asked for by the keys (the segments update only after the backend answers). */
   let keyTarget: { index: number; steps: number } | null = null;
+  /** The keyboard readout: the bar last moved by a key and its offset, for KEY_READOUT_MS. */
+  let keyShow = $state<{ index: number; steps: number } | null>(null);
+  let keyTimer: ReturnType<typeof setTimeout> | undefined;
   let hoverTyped = $state(false);
   let hoverBar = $state(false);
 
   // the sections can shrink mid-drag (a new tempo map arrives): drop the drag
   $effect(() => {
     if (drag && drag.index >= segments.length) drag = null;
+    if (keyShow && keyShow.index >= segments.length) clearKeyShow();
   });
+
+  function clearKeyShow(): void {
+    clearTimeout(keyTimer);
+    keyTimer = undefined;
+    keyShow = null;
+  }
+  function showKey(index: number, steps: number): void {
+    clearTimeout(keyTimer);
+    keyShow = { index, steps };
+    keyTimer = setTimeout(() => (keyShow = null), KEY_READOUT_MS);
+  }
 
   /** Where bar `i` is drawn for an offset of `steps` while dragging (the first bar stays within the track). */
   function previewMs(i: number, steps: number): number {
@@ -134,13 +149,14 @@
     return `Tempo change ${pos} of ${detectedIdx.length} at ${fmt(segments[sel].start_ms, 3)}, ${bpmText(segments[sel].bpm)} BPM, ${signed(n)}/64 beat`;
   });
   const readout = $derived.by(() => {
-    if (!drag || drag.index >= segments.length) return '';
-    const ms = drag.steps * fineMs(stepBpm(segments, drag.index));
+    const d = drag ?? keyShow;
+    if (!d || d.index >= segments.length) return '';
+    const ms = d.steps * fineMs(stepBpm(segments, d.index));
     const sign = ms < 0 ? '-' : '+';
-    if (drag.index === 0) return `${signed(drag.steps)}/64 beat (${sign}${fmt(Math.abs(ms), 3)}) from the found start`;
-    const limit = limitOf(drag.index);
+    if (d.index === 0) return `${signed(d.steps)}/64 beat (${sign}${fmt(Math.abs(ms), 3)}) from the found start`;
+    const limit = limitOf(d.index);
     const tail = Number.isFinite(limit) ? ` · limit ±${limit / 64} beats` : '';
-    return `${signed(drag.steps)}/64 beat (${sign}${fmt(Math.abs(ms), 3)})${tail}`;
+    return `${signed(d.steps)}/64 beat (${sign}${fmt(Math.abs(ms), 3)})${tail}`;
   });
 
   /** Largest |offset| in fine steps of bar `i`; the first bar is limited by the track instead. */
@@ -265,10 +281,13 @@
       height = Math.floor(canvas!.clientHeight);
     };
     measure();
-    if (typeof ResizeObserver === 'undefined') return;
+    if (typeof ResizeObserver === 'undefined') return () => clearTimeout(keyTimer);
     const ro = new ResizeObserver(measure);
     ro.observe(canvas);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      clearTimeout(keyTimer);
+    };
   });
 
   // ---- pointer ----
@@ -306,6 +325,7 @@
 
   function onpointerdown(e: PointerEvent): void {
     if (!editable || locked || e.button > 0) return;
+    clearKeyShow();
     const x = localX(e);
     if (freeMove) {
       if (!active) return;
@@ -372,6 +392,7 @@
   function onblur(): void {
     focused = false;
     keyTarget = null;
+    clearKeyShow();
   }
 
   function onkeydown(e: KeyboardEvent): void {
@@ -412,6 +433,7 @@
     const wanted = Math.min(Math.max(base + delta, -limit), limit);
     const fine = fineMs(stepBpm(segments, sel));
     const steps = stepsFor(sel, moveRefMs(segments, sel) + wanted * fine);
+    showKey(sel, steps);
     if (steps === base) return;
     keyTarget = { index: sel, steps };
     onmove?.(sel, steps);
@@ -489,7 +511,7 @@
       oninvalid={(m) => oninvalidbpm?.(m)}
     />
   {/if}
-  {#if drag}
+  {#if drag || keyShow}
     <div class="pointer-events-none absolute top-1 left-1 rounded bg-background/90 px-2 py-0.5 text-base" data-testid="{testid}-readout">{readout}</div>
   {/if}
 </div>

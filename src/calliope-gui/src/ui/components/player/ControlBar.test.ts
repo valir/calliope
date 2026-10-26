@@ -520,7 +520,7 @@ describe('Sections group', () => {
   describe('Find start', () => {
     const find = () => btn('Sections', 'Find where the music starts and put the first beat there');
     const found = (): PlayerSnapshot => {
-      const t = three();
+      const t = three([120, 93, 160], 0);
       t.tempo.segments[0] = { ...t.tempo.segments[0], start_ms: 1200, found_ms: 1200 };
       return t;
     };
@@ -531,8 +531,14 @@ describe('Sections group', () => {
       expect(find().title).toBe('Type a BPM first');
     });
 
-    it('sends find-start, is disabled while it runs and then shows the new start', async () => {
+    it('is disabled outside section 1 with a reason', async () => {
       await open(three());
+      expect(find().disabled).toBe(true);
+      expect(find().title).toBe('Find start works in the first section');
+    });
+
+    it('sends find-start, is disabled while it runs and then shows the new start', async () => {
+      await open(three([120, 93, 160], 0));
       expect(find().disabled).toBe(false);
       let done!: (s: PlayerSnapshot) => void;
       tempoHook = () => new Promise((res) => { done = res; });
@@ -550,12 +556,130 @@ describe('Sections group', () => {
     });
 
     it('shows a refusal in the message line', async () => {
-      await open(three());
+      await open(three([120, 93, 160], 0));
       tempoHook = () => Promise.reject('Nothing but noise: no start found');
       await fireEvent.click(find());
       await flush();
       expect(screen.getByTestId('section-message').textContent).toBe('Nothing but noise: no start found');
       expect(find().disabled).toBe(false);
+    });
+  });
+
+  describe('Start offset row and Prev / Next', () => {
+    const S = (idx = 0, start0 = 1200): PlayerSnapshot => ({
+      ...withTempo(),
+      duration_ms: 5200,
+      tempo: {
+        beats_per_bar: 4, multi: true,
+        segments: [
+          { start_ms: start0, bpm: 120, found_ms: 1200 },
+          { start_ms: 3000, bpm: 120, detected_ms: 3000 },
+          { start_ms: 4200, bpm: 120 },
+        ],
+      },
+      transport: { ...idle, bpm: 120, tempo_index: idx },
+    });
+    const field = () => input('Start offset of the section in 1/64 beats');
+    const time = () => screen.getByTestId('section-offset-time').textContent;
+    const prev = () => btn('Sections', 'Go to the start of the previous section');
+    const next = () => btn('Sections', 'Go to the start of the next section');
+    const actions = () => of('player_tempo').map((c) => c.action);
+    const ev = (tempo_index: number) => channel.onmessage({ kind: 'transport', id: practice.id, ...idle, bpm: 120, tempo_index });
+
+    it('shows 0 and +0:00.000 for section 1', async () => {
+      await open(S());
+      expect(field().value).toBe('0');
+      expect(time()).toBe('+0:00.000');
+    });
+
+    it('+10 and Enter sends the move; the answer shows +10 and +0:00.078 and the field loses the focus', async () => {
+      await open(S());
+      field().focus();
+      snap = S(0, 1278.125);
+      await type(field(), '+10');
+      expect(actions()).toEqual([{ kind: 'move-change', index: 0, at: 1200, steps: 10 }]);
+      expect(field().value).toBe('+10');
+      expect(time()).toBe('+0:00.078');
+      expect(document.activeElement).not.toBe(field());
+    });
+
+    it('text x and Enter shows the refusal, keeps the text and the focus; blur restores the value', async () => {
+      await open(S());
+      field().focus();
+      await type(field(), 'x');
+      const msg = screen.getByTestId('section-message');
+      expect(msg.textContent).toBe('Type a whole number of 1/64 beats, like +10 or -8');
+      expect(msg.getAttribute('role')).toBe('alert');
+      expect(field().value).toBe('x');
+      expect(field().getAttribute('aria-invalid')).toBe('true');
+      expect(of('player_tempo')).toHaveLength(0);
+      await fireEvent.blur(field());
+      await flush();
+      expect(field().value).toBe('0');
+      expect(of('player_tempo')).toHaveLength(0);
+    });
+
+    it('follows the playhead into another section', async () => {
+      await open(S());
+      ev(1);
+      await flush();
+      expect(screen.getByTestId('section-status').textContent).toContain('Section 2 of 3');
+      expect(field().value).toBe('0');
+      expect(time()).toBe('+0:00.000');
+    });
+
+    it('follows a key move and Find start', async () => {
+      await open(S());
+      snap = S(0, 1223.4375);
+      const { moveChange } = await import('$lib/player-state.svelte');
+      moveChange(0, 3);
+      await flush();
+      expect(field().value).toBe('+3');
+      snap = S(0, 1200);
+      await fireEvent.click(btn('Sections', 'Find where the music starts and put the first beat there'));
+      await flush();
+      expect(field().value).toBe('0');
+    });
+
+    it('section 2: Find start disabled, the field enabled; -8 sends index 1', async () => {
+      await open(S(1));
+      const f = btn('Sections', 'Find where the music starts and put the first beat there');
+      expect(f.disabled).toBe(true);
+      expect(f.title).toBe('Find start works in the first section');
+      expect(field().disabled).toBe(false);
+      field().focus();
+      await type(field(), '-8');
+      expect(actions()).toEqual([{ kind: 'move-change', index: 1, at: 3000, steps: -8 }]);
+    });
+
+    it('Prev is disabled in section 1 and Next in section 3; both work in section 2', async () => {
+      await open(S(0));
+      expect(prev().disabled).toBe(true);
+      expect(prev().title).toBe('This is the first section');
+      expect(next().disabled).toBe(false);
+      ev(2);
+      await flush();
+      expect(next().disabled).toBe(true);
+      expect(next().title).toBe('This is the last section');
+      ev(1);
+      await flush();
+      expect(prev().disabled).toBe(false);
+      expect(next().disabled).toBe(false);
+      await fireEvent.click(next());
+      await fireEvent.click(prev());
+      await flush();
+      expect(actions()).toEqual([
+        { kind: 'jump-section', index: 2, at: 4200, edge: 'start' },
+        { kind: 'jump-section', index: 1, at: 3000, edge: 'start' },
+      ]);
+    });
+
+    it('without a tempo the field, Prev, Next and Find start are disabled with the reason', async () => {
+      await open(timestamps());
+      for (const el of [field(), prev(), next(), btn('Sections', 'Find where the music starts and put the first beat there')]) {
+        expect(el.disabled).toBe(true);
+        expect(el.title).toBe('Type a BPM first');
+      }
     });
   });
 
