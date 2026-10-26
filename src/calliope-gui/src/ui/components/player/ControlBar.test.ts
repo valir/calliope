@@ -674,6 +674,111 @@ describe('Sections group', () => {
       ]);
     });
 
+    const legacy = (idx = 0): PlayerSnapshot => {
+      const s = S(idx);
+      s.tempo.segments[0] = { start_ms: 0, bpm: 120 };
+      return s;
+    };
+
+    it('qa: a legacy track (no found_ms) counts from its start; Prev into section 1 jumps to 0:00', async () => {
+      await open(legacy(1));
+      await fireEvent.click(prev());
+      await flush();
+      expect(actions()).toEqual([{ kind: 'jump-section', index: 0, at: 0, edge: 'start' }]);
+      expect(pl.section).toBe(0);
+      expect(field().value).toBe('0');
+      expect(time()).toBe('+0:00.000');
+      expect(prev().disabled).toBe(true);
+      field().focus();
+      await type(field(), '+10');
+      expect(actions()[1]).toEqual({ kind: 'move-change', index: 0, at: 0, steps: 10 });
+      expect(field().title).toBe('1/64 beats from the found start');
+    });
+
+    it('qa: a typed section (no detected_ms) counts from the previous start and clamps to one beat after it', async () => {
+      await open(S(2));
+      expect(field().title).toBe("1/64 beats from the previous section's start");
+      expect(field().value).toBe('+154');
+      expect(time()).toBe('+0:01.200');
+      field().focus();
+      await type(field(), '-9999');
+      const a = actions().at(-1) as { kind: string; index: number; at: number; steps: number };
+      expect(a).toMatchObject({ kind: 'move-change', index: 2, at: 4200 });
+      expect(a.steps).toBe(64); // 3000 + one beat of 500 ms = 64 steps of 7.8125 ms
+    });
+
+    it('qa: the detected section field is titled from the detected position', async () => {
+      await open(S(1));
+      expect(field().title).toBe('1/64 beats from the detected position');
+    });
+
+    it('qa: typing while the playhead crosses a boundary still edits the section that had the focus', async () => {
+      await open(S(0));
+      field().focus();
+      await fireEvent.input(field(), { target: { value: '+5' } });
+      ev(1);
+      await flush();
+      expect(field().value).toBe('+5'); // the typed text is kept, the pane keeps its captured section
+      await fireEvent.keyDown(field(), { key: 'Enter' });
+      await flush();
+      expect(actions()).toEqual([{ kind: 'move-change', index: 0, at: 1200, steps: 5 }]);
+    });
+
+    it('qa: a typed value equal to the applied one sends nothing; a limit hit shows the applied value', async () => {
+      await open(S(0));
+      field().focus();
+      await type(field(), '0');
+      expect(actions()).toEqual([]);
+      field().focus();
+      snap = S(0, 0);
+      await type(field(), '-9999');
+      expect(actions()).toEqual([{ kind: 'move-change', index: 0, at: 1200, steps: -154 }]);
+      expect(field().value).toBe('-154');
+      expect(time()).toBe('-0:01.200');
+    });
+
+    it('qa: whole-number edge texts: 1.5, 1e3, empty and + are refused; a unicode minus is accepted', async () => {
+      await open(S(0));
+      for (const t of ['1.5', '1e3', '', '+', ' ']) {
+        field().focus();
+        await type(field(), t);
+        expect(screen.getByTestId('section-message').textContent).toBe('Type a whole number of 1/64 beats, like +10 or -8');
+        await fireEvent.keyDown(field(), { key: 'Escape' });
+        await flush();
+      }
+      expect(actions()).toEqual([]);
+      field().focus();
+      await type(field(), '\u22128');
+      expect(actions()).toEqual([{ kind: 'move-change', index: 0, at: 1200, steps: -8 }]);
+    });
+
+    it('qa: a read-only (newer schema) player.json has no tempo: field, Prev, Next and Find start are disabled and send nothing', async () => {
+      const ro = S(0);
+      ro.tempo = { beats_per_bar: 4, multi: false, segments: [] };
+      ro.transport = { ...idle };
+      ro.note = 'player.json was written by a newer version; the player settings will not be saved';
+      await open(ro);
+      for (const el of [field(), prev(), next(), btn('Sections', 'Find where the music starts and put the first beat there')]) {
+        expect(el.disabled).toBe(true);
+        await fireEvent.click(el);
+      }
+      await flush();
+      expect(of('player_tempo')).toHaveLength(0);
+    });
+
+    it('qa: a refusal from the backend (newer schema) shows in the message line and leaves the field on the stored value', async () => {
+      await open(S(0));
+      tempoHook = () => Promise.reject('player.json was written by a newer version; the tempo was not saved');
+      field().focus();
+      await type(field(), '+10');
+      expect(screen.getByTestId('section-message').textContent).toBe('player.json was written by a newer version; the tempo was not saved');
+      expect(field().value).toBe('0');
+      expect(time()).toBe('+0:00.000');
+      await fireEvent.click(next());
+      await flush();
+      expect(pl.snap!.tempo.segments[0].start_ms).toBe(1200);
+    });
+
     it('without a tempo the field, Prev, Next and Find start are disabled with the reason', async () => {
       await open(timestamps());
       for (const el of [field(), prev(), next(), btn('Sections', 'Find where the music starts and put the first beat there')]) {

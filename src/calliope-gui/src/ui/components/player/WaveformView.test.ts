@@ -598,4 +598,21 @@ describe('WaveformView keyboard readout', () => {
     await fireEvent.pointerUp(c);
     expect(readout()).toBeNull();
   });
+  it('Player mode: a typed section shows the offset from the previous start, a detected one the limit tail', async () => {
+    vi.useFakeTimers();
+    const segs: TempoSegment[] = [seg(1200, 120), seg(3000, 120, 3000), seg(4200, 120)];
+    segs[0].found_ms = 1200;
+    const c = mountK(segs, { freeMove: true, selected: 2, onselect() {} });
+    await fireEvent.focus(c);
+    await fireEvent.keyDown(c, { key: 'ArrowLeft' });
+    expect(readout()).toBe('+153/64 beat (+0:01.195)');
+    expect(moves).toEqual([[2, 153]]);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(readout()).toBeNull();
+    cleanup();
+    const d = mountK(segs, { freeMove: true, selected: 1, onselect() {} });
+    await fireEvent.focus(d);
+    await fireEvent.keyDown(d, { key: 'ArrowRight', shiftKey: true });
+    expect(readout()).toMatch(/^\+64\/64 beat \(\+0:00\.500\) · limit ±\d+ beats$/);
+  });
 });
