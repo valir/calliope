@@ -161,6 +161,7 @@ export function sectionOffset(segs: MoveSeg[], i: number): { steps: number; ms: 
 }
 
 /** The drag clamp for a wanted step count of bar `i`; mirrors `TempoMap::move_first_beat` / `move_change`. */
+// Mirrors move_first_beat / move_change in src/tempo_map.rs: change it together with them.
 export function clampMoveSteps(segs: MoveSeg[], i: number, steps: number, durationMs: number): number {
   const ref = moveRefMs(segs, i);
   if (i === 0) {

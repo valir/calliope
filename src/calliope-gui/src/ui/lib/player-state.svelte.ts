@@ -733,6 +733,7 @@ export async function commitSectionOffset(text: string): Promise<boolean> {
   const edit = pl.offsetEdit;
   const index = edit ? edit.index : targetSection();
   const at = edit ? edit.at : index === null ? null : startOf(index);
+  // Nothing to move without a snapshot or target section: not a refusal, so the field just closes.
   if (!segs || index === null || at === null || !segs[index]) return true;
   const steps = clampMoveSteps(segs, index, n, pl.snap!.duration_ms);
   if (steps === sectionOffset(segs, index).steps) {

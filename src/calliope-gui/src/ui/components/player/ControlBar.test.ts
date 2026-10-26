@@ -579,7 +579,7 @@ describe('Sections group', () => {
       },
       transport: { ...idle, bpm: 120, tempo_index: idx },
     });
-    const field = () => input('Start offset of the section in 1/64 beats');
+    const field = () => input('Start');
     const time = () => screen.getByTestId('section-offset-time').textContent;
     const prev = () => btn('Sections', 'Go to the start of the previous section');
     const next = () => btn('Sections', 'Go to the start of the next section');
@@ -617,6 +617,8 @@ describe('Sections group', () => {
       await flush();
       expect(field().value).toBe('0');
       expect(of('player_tempo')).toHaveLength(0);
+      expect(field().getAttribute('aria-invalid')).toBeNull();
+      expect(msg.textContent).toBe('Type a whole number of 1/64 beats, like +10 or -8');
     });
 
     it('follows the playhead into another section', async () => {

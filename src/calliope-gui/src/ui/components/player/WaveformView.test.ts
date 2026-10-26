@@ -183,6 +183,16 @@ describe('WaveformView editing', () => {
     expect(moves).toEqual([]);
   });
 
+  it('changing the selected bar with Up / Down clears the keyboard readout', async () => {
+    const c = mount();
+    await fireEvent.focus(c);
+    await fireEvent.keyDown(c, { key: 'ArrowDown' });
+    await fireEvent.keyDown(c, { key: 'ArrowRight' });
+    expect(screen.queryByTestId('wf-readout')).not.toBeNull();
+    await fireEvent.keyDown(c, { key: 'ArrowDown' });
+    expect(screen.queryByTestId('wf-readout')).toBeNull();
+  });
+
   it('Escape cancels a drag', async () => {
     const c = mount();
     await fireEvent.pointerDown(c, { clientX: barX(1) });

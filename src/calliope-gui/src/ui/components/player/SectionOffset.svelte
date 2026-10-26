@@ -68,9 +68,11 @@
 
   async function onblur(): Promise<void> {
     const t = text;
+    const refused = invalid;
     text = null;
     invalid = false;
-    if (t !== null && t !== formatOffset(offset.steps)) await commitSectionOffset(t);
+    // A refused Enter already showed its message: blurring cancels the edit instead of committing again.
+    if (!refused && t !== null && t !== formatOffset(offset.steps)) await commitSectionOffset(t);
     cancelOffsetEdit();
   }
 </script>
@@ -81,7 +83,6 @@
     id="section-offset"
     type="text"
     class="h-9 w-16 rounded-md border border-input bg-background px-1 text-center text-lg tabular-nums disabled:opacity-50"
-    aria-label="Start offset of the section in 1/64 beats"
     aria-invalid={invalid ? 'true' : undefined}
     disabled={!hasTempo}
     title={fieldTitle}

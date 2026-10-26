@@ -405,6 +405,7 @@
         selectedInt = movableIdx[Math.min(Math.max(at, 0), movableIdx.length - 1)];
       }
       keyTarget = null;
+      clearKeyShow();
       e.preventDefault();
       return;
     }
