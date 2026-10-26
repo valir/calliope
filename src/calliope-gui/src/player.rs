@@ -508,7 +508,13 @@ impl Engine {
             Cmd::PlayLoop { count_in } => {
                 self.end_run(); // a new PlayLoop restarts at pass 0
                 if let Some(l) = self.lp {
-                    self.pos = l.start.min(self.pcm.frames);
+                    self.pos = match count_in {
+                        Some(_) if l.count_in_bpm_milli.is_some() => {
+                            self.wrap_start(&l, l.count_in_lead)
+                        }
+                        _ => l.start,
+                    }
+                    .min(self.pcm.frames);
                     self.loop_play = true;
                     if let Some(t) = l.training.filter(|_| l.repeat) {
                         let pct = t.pass_speed(0);
@@ -642,13 +648,18 @@ impl Engine {
         }
     }
 
-    /// The count-in of a loop wrap, spaced for the coming pass; `lead` song frames before the next beat.
-    fn wrap_count(&self, bpm_milli: u32, lead: u64, speed: f64) -> CountState {
-        let plan = count_in_plan(f64::from(bpm_milli) / 1000.0 * speed, self.pcm.rate);
+    /// The count-in of a loop wrap, spaced for the coming pass (the music then starts on the beat after the
+    /// loop start, see `wrap_start`).
+    fn wrap_count(&self, bpm_milli: u32, speed: f64) -> CountState {
         CountState {
-            plan: plan.lead_in((lead as f64 / speed).round() as u64),
+            plan: count_in_plan(f64::from(bpm_milli) / 1000.0 * speed, self.pcm.rate),
             at: 0,
         }
+    }
+
+    /// Where the music of a loop pass with a count-in starts: the next beat at or after the loop start.
+    fn wrap_start(&self, l: &LoopSpec, lead: u64) -> u64 {
+        (l.start + lead).min(l.end.saturating_sub(1).max(l.start))
     }
 
     /// The loop the feed wraps at, when it is in play.
@@ -765,15 +776,15 @@ impl Engine {
             } => {
                 self.heard_pass(pass, pct);
                 self.shared.wraps.fetch_add(1, Ordering::AcqRel);
-                self.pos = start;
                 self.beat_dirty = true;
                 let speed = if pass > 0 {
                     f64::from(pct) / 100.0
                 } else {
                     self.speed
                 };
-                self.count = Some(self.wrap_count(bpm_milli, lead, speed));
-                self.enter(start);
+                self.count = Some(self.wrap_count(bpm_milli, speed));
+                self.pos = start + lead;
+                self.enter(self.pos);
                 true
             }
             EventKind::Once { start } => {
@@ -893,9 +904,10 @@ impl Engine {
             self.pos = l.start;
             self.beat_dirty = true;
             self.shared.wraps.fetch_add(1, Ordering::AcqRel);
-            self.count = l
-                .count_in_bpm_milli
-                .map(|b| self.wrap_count(b, l.count_in_lead, self.speed));
+            self.count = l.count_in_bpm_milli.map(|b| self.wrap_count(b, self.speed));
+            if self.count.is_some() {
+                self.pos = self.wrap_start(&l, l.count_in_lead);
+            }
             if self.count.is_none() {
                 self.start_fade();
             }
@@ -1447,12 +1459,11 @@ impl Session {
         }
     }
 
-    /// The count-in for a start at `ms`, on the beat grid at `pct`; none without a tempo.
+    /// The count-in for a start at `ms` (the music starts on the next beat, see `beat_lead`), at `pct`; none
+    /// without a tempo.
     fn plan_at(&self, ms: f64, pct: u32) -> Option<CountIn> {
         let bpm = self.state.tempo.bpm_at(ms) * f64::from(pct) / 100.0;
-        let lead = (self.beat_lead(ms) as f64 * 100.0 / f64::from(pct.max(1))).round() as u64;
-        (!self.state.tempo.is_empty() && bpm > 0.0)
-            .then(|| count_in_plan(bpm, self.pcm.rate).lead_in(lead))
+        (!self.state.tempo.is_empty() && bpm > 0.0).then(|| count_in_plan(bpm, self.pcm.rate))
     }
 
     /// Song frames from a start at `ms` to the next beat of the grid (0 on a beat or without a tempo).
@@ -2156,6 +2167,14 @@ impl PlayerManager {
         } else {
             s.plan_at(pos_ms, s.state.speed_pct())
         };
+        if plan.is_some() {
+            // the music starts on a beat: the next one at or after the playhead
+            let lead = s.beat_lead(pos_ms);
+            if lead > 0 {
+                let f = s.set_pos((s.pos() + lead).min(s.pcm.frames.saturating_sub(1)));
+                s.send(Cmd::Seek(f));
+            }
+        }
         s.log_count_in(&plan, s.state.tempo.segment_at(pos_ms));
         s.shared
             .counting_in
@@ -2547,12 +2566,16 @@ impl PlayerManager {
             .training
             .filter(|t| t.on && l.repeat)
             .map_or(s.state.speed_pct(), |t| t.pass_speed(0));
-        let start = s.frame_of_ms_f(start_ms);
+        let mut start = s.frame_of_ms_f(start_ms);
         let plan = if loop_count_in {
             s.plan_at(start_ms, first_pct)
         } else {
             None
         };
+        if plan.is_some() {
+            // the music starts on the next beat at or after the loop start
+            start = (start + s.beat_lead(start_ms)).min(s.pcm.frames.saturating_sub(1));
+        }
         s.loop_message = None;
         s.set_pos(start);
         s.log_count_in(&plan, None);

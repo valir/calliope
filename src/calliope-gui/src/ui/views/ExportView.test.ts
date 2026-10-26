@@ -40,7 +40,7 @@ beforeEach(() => {
   plan = { token: 'tok', path: '/out/a.mp3', exists: false };
   info = {
     id: TRACK.id, available: true, reason: null, source: 'backings/backing.flac',
-    count_in: { bpm: 120, first_beat_ms: 0, lead_ms: 2500, skip_ms: 0 }, memory: 7,
+    count_in: { bpm: 120, first_beat_ms: 0, lead_ms: 2000, skip_ms: 0 }, memory: 7,
     last: { rc5: null, mp3: null, ogg: null },
   };
   mockIPC((cmd, args) => {
@@ -87,7 +87,7 @@ describe('Export view', () => {
     expect(screen.getByText('Export...')).toBeTruthy();
     expect(screen.getByTestId('export-source').textContent).toBe('Backing track: backings/backing.flac');
     expect(screen.getByTestId('export-count-in').textContent)
-      .toBe('Count-in: 5 beats at 120 BPM, the last one silent before the first beat (adds 2.5 s)');
+      .toBe('Count-in: 4 beats at 120 BPM before the first beat (adds 2.0 s)');
     expect(reason()).toBe('');
     expect((screen.getByLabelText('Memory') as HTMLInputElement).value).toBe('7');
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(TRACK.title);

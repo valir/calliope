@@ -1,5 +1,5 @@
 //! The audio pipeline of an export (plan sections 2.3 and 2.4): the count-in layout, the Player's
-//! click mixed at exact frames, and the run that streams `ffmpeg` (decoder) through Rust (5 beats
+//! click mixed at exact frames, and the run that streams `ffmpeg` (decoder) through Rust (4 beats
 //! of silence, the ticks) into the RC-5 WAV or into a second `ffmpeg` (encoder). No Tauri.
 
 use std::ffi::OsString;

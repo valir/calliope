@@ -717,7 +717,7 @@ fn ac19_metronome_follows_tempo_change() {
 }
 
 #[test]
-fn ac20_count_in_six_ticks_over_five_beats_then_music_after_a_silent_fifth() {
+fn ac20_count_in_six_ticks_over_four_beats_then_music_half_a_beat_after_the_last() {
     let mut r = rig(WITH_TEMPO);
     r.m.select_source(&r.id(), "stem:vocals", r.t0).unwrap();
     r.count_in_at(1500.0);
@@ -726,23 +726,23 @@ fn ac20_count_in_six_ticks_over_five_beats_then_music_after_a_silent_fifth() {
     assert!(st.counting_in && st.playing);
     let b = RATE / 2; // 120 BPM
     let tail = 3000;
-    let got = r.b.pull(5 * b + tail);
+    let got = r.b.pull(4 * b + tail);
     // six ticks only (beats 1, 2, 3, 3.5, 4, 4.5), starting right away: the export's pattern
     let zero = vec![0.0f32; got.len()];
-    let on = clicks(&got[..2 * 5 * b], &zero[..2 * 5 * b], 0);
+    let on = clicks(&got[..2 * 4 * b], &zero[..2 * 4 * b], 0);
     assert_eq!(on.len(), 6, "{on:?}");
     for (o, w) in on.iter().zip(count_in_tick_frames(b)) {
         assert!((*o as i64 - w as i64).abs() < 5, "{o} vs {w}");
     }
-    // the 5th beat is silent: nothing between the end of the last tick and the start
+    // nothing between the end of the last tick and the start, half a beat later
     assert!(
-        silent_between(&got, 7 * b / 2 + 700, 5 * b - 1),
-        "silent 5th beat"
+        silent_between(&got, 7 * b / 2 + 700, 4 * b - 1),
+        "silent until the music"
     );
     assert!(silent_between(&got, 700, b - 1) && silent_between(&got, b + 700, 2 * b - 1));
-    // music starts at the end of the 5th beat (no tick)
+    // music starts at beat 4, half a beat after the last tick (no tick)
     let want = expected(&r.pcm(), 1500 * RATE / 1000, tail);
-    let after = &got[2 * (5 * b + 200)..];
+    let after = &got[2 * (4 * b + 200)..];
     let w = &want[2 * 200..];
     for (i, (g, x)) in after.iter().zip(w).enumerate() {
         assert!((g - x).abs() < 1e-5, "music sample {i}");
@@ -849,10 +849,10 @@ fn ac21_loop_count_in_precedes_every_pass() {
     r.lp(LoopAction::Play).unwrap();
     let b = RATE / 2;
     let pass = end - start;
-    let total = 5 * b + pass + 5 * b + 500;
+    let total = 4 * b + pass + 4 * b + 500;
     let got = r.b.pull(total);
     // second count-in begins right after pass one (+- fade)
-    let win = &got[2 * (5 * b + pass + 150)..2 * (5 * b + pass + 7 * b / 2 + 100)];
+    let win = &got[2 * (4 * b + pass + 150)..2 * (4 * b + pass + 7 * b / 2 + 100)];
     let zero = vec![0.0f32; win.len()];
     let on = clicks(win, &zero, 0);
     // (the first tick may have decayed below the threshold by then)
@@ -2899,7 +2899,7 @@ fn count_in_tick_frames(b: usize) -> [usize; 6] {
 }
 
 /// The six count-in ticks: up to just after the last, since a start between beats begins the audio
-/// before the end of the 5th beat.
+/// before the end of the lead.
 fn count_in_clicks(r: &mut Rig, beat_frames: usize) -> Vec<usize> {
     let got = r.b.pull(5 * beat_frames + 300);
     let n = 7 * beat_frames / 2 + 100;
@@ -3090,8 +3090,8 @@ fn clicks_from(r: &mut Rig, from_ms: u64, ms: f64) -> Vec<f64> {
     r.pull_clicks(ms).0
 }
 
-/// The six count-in ticks (ms) of the 93 BPM section at 8500 ms: 5, 4, 3, 2.5, 2 and 1.5 beats before it.
-const T93: [f64; 6] = [5274.24, 5919.41, 6564.58, 6887.12, 7209.71, 7532.29];
+/// The six count-in ticks (ms) of the 93 BPM section at 8500 ms: 4, 3, 2, 1.5, 1 and 0.5 beats before it.
+const T93: [f64; 6] = [5919.41, 6564.58, 7209.71, 7532.29, 7854.87, 8177.45];
 
 fn assert_clicks(found: &[f64], want: &[f64]) {
     let tol = 2.0 * 1000.0 / RATE as f64 + 0.5;
@@ -3124,16 +3124,16 @@ fn flags(
 fn ts11_count_in_replaces_the_previous_sections_last_clicks() {
     let mut r = rig_with(PRACTICE, &ts4_json(r#","count_in":true"#, true, ""));
     let c = clicks_from(&mut r, 4900, 4500.0);
-    // the six ticks replace the 120-BPM clicks from 4951.6 on (5.5 beats before the section)
+    // the six ticks replace the 120-BPM clicks from 5596.8 on (4.5 beats before the section)
     let want = [
-        T93[0], T93[1], T93[2], T93[3], T93[4], T93[5], 8500.0, 9145.16,
+        5000.0, 5500.0, T93[0], T93[1], T93[2], T93[3], T93[4], T93[5], 8500.0, 9145.16,
     ];
     assert_clicks(&c, &want);
-    // 93-BPM beats: ticks on beats 1, 2, 3, 3.5, 4, 4.5, a silent 5th beat, the section's first beat
+    // 93-BPM beats: ticks on beats 1, 2, 3, 3.5, 4, 4.5, the section's first beat half a beat later
     let b = 60000.0 / 93.0;
-    near_all(&gaps(&c[..3]), b);
-    near_all(&gaps(&c[2..6]), b / 2.0);
-    near_all(&gaps(&c[5..7]), 1.5 * b);
+    near_all(&gaps(&c[2..5]), b);
+    near_all(&gaps(&c[4..8]), b / 2.0);
+    near_all(&gaps(&c[7..9]), b / 2.0);
 }
 
 #[test]
@@ -3177,7 +3177,12 @@ fn ts13_count_in_with_previous_off_short_previous_and_loops() {
         .into_iter()
         .filter(|&t| t > 100.0)
         .collect(); // not the click at 0
-    assert_clicks(&c, &[1000.0, 2000.0, 2500.0, 3000.0, 3500.0, 5000.0]);
+    assert_clicks(
+        &c,
+        &[
+            500.0, 1000.0, 2000.0, 3000.0, 3500.0, 4000.0, 4500.0, 5000.0,
+        ],
+    );
 
     // Loop On, loop 500..8500 ending where the section starts: no count-in at the loop end
     let lp =
@@ -3483,7 +3488,7 @@ fn qa_p2_count_in_into_a_section_whose_own_metronome_is_off_has_no_click_after_t
         PRACTICE,
         &ts4_json(r#","metronome":false,"count_in":true"#, true, ""),
     );
-    let c = clicks_from(&mut r, 4900, 6000.0);
+    let c = clicks_from(&mut r, 5600, 6000.0);
     assert_clicks(&c, &T93);
 }
 
@@ -3501,12 +3506,12 @@ fn qa_p2_overlapping_count_ins_with_a_silent_middle_section() {
         .into_iter()
         .filter(|&t| t > 100.0)
         .collect();
-    // section 3 (60 BPM) wins: its ticks at 1000, 2000, 2500, 3000, 3500 (the one at 0 is filtered out), then
-    // its own beats; section 2 is silent from 4000
+    // section 3 (60 BPM) wins: its ticks at 1000, 2000, 3000, 3500, 4000, 4500 (after the 500 click, where its
+    // 4.5-beat window starts), then its own beats; section 2 is silent from 4000
     assert_clicks(
         &c,
         &[
-            1000.0, 2000.0, 2500.0, 3000.0, 3500.0, 5000.0, 6000.0, 7000.0,
+            500.0, 1000.0, 2000.0, 3000.0, 3500.0, 4000.0, 4500.0, 5000.0, 6000.0, 7000.0,
         ],
     );
 }
@@ -3522,7 +3527,7 @@ fn qa_p2_loop_end_inside_or_after_the_count_in_span() {
         ts4_json(r#","count_in":true"#, true, &lp(end))
             .replace(r#""loops""#, r#""current_loop":"loop-1","loops""#)
     };
-    // loop ends at 7000, inside the count-in span (4951.6 .. 8500): the count-in would lead nowhere, skipped
+    // loop ends at 7000, inside the count-in span (5596.8 .. 8500): the count-in would lead nowhere, skipped
     let mut r = rig_with(PRACTICE, &with(7000));
     r.lp(LoopAction::Play).unwrap();
     let (c, _) = r.pull_clicks(6400.0);
@@ -3892,32 +3897,34 @@ fn pre_roll(r: &mut Rig, from_ms: u64, ms: f64) -> (Vec<usize>, Vec<f32>) {
 
 #[test]
 fn ts19_play_counts_in_at_the_section_under_the_playhead() {
-    // section 2 (93 BPM from 8500) Count In, Play at 10000: six ticks at 93 BPM on the grid, then the
-    // source from 10000, so that its next beat (10435.48) falls on the 6th beat position
+    // section 2 (93 BPM from 8500) Count In, Play at 10000: the playhead moves to the next beat (10435.48), six
+    // ticks at 93 BPM, then the source from that beat, exactly 4 beats after the start
     let beat = 60000.0 / 93.0;
     let mut r = rig_with(PRACTICE, &ts5_json("", r#","count_in":true"#, ""));
     r.seek(10000);
     let st = r.play();
     assert!(st.counting_in && st.playing);
-    let got = r.b.pull(5 * frames_of(beat) + 3000);
+    assert_eq!(st.position_ms, 10435);
+    let got = r.b.pull(4 * frames_of(beat) + 3000);
     let zero = vec![0.0f32; got.len()];
-    let lead = frames_of(8500.0 + 3.0 * beat) - frames_of(10000.0);
-    let n = 5 * frames_of(beat) - lead; // the engine counts whole-frame beats
-    let on = clicks(&got[..2 * n], &zero[..2 * n], 0);
+    let n = 4 * frames_of(beat); // the engine counts whole-frame beats
+    let m = 7 * frames_of(beat) / 2 + 100;
+    let on = clicks(&got[..2 * m], &zero[..2 * m], 0);
     assert_frames(&on, &TICK_MS.map(|k| k * beat));
     assert!(
         silent_between(&got, frames_of(3.5 * beat) + 700, n - 1),
         "silent until the audio"
     );
-    let want = expected(&r.pcm(), frames_of(10000.0), 3000);
-    for (i, (g, w)) in got[2 * (n + 200)..]
+    // (past the metronome click on the first beat)
+    let want = expected(&r.pcm(), frames_of(8500.0 + 3.0 * beat), 3000);
+    for (i, (g, w)) in got[2 * (n + 800)..]
         .iter()
-        .zip(&want[2 * 200..])
+        .zip(&want[2 * 800..])
         .enumerate()
     {
         assert!(
             (g - w).abs() < 1e-5,
-            "the source from 10000 after 1500 ms: sample {i}"
+            "the source from the next beat after 4 beats: sample {i}"
         );
     }
     assert!(!r.snap().transport.counting_in);
@@ -4166,13 +4173,13 @@ fn ts23_loop_play_counts_in_only_with_the_loops_count_in() {
     assert!(st.transport.counting_in);
     let pass = frames_of(l.end_ms.unwrap()) - frames_of(l.start_ms);
     let b = frames_of(beat);
-    let got = r.b.pull(5 * b + pass + 5 * b + 500);
-    let n = 7 * b / 2 + 100; // the loop starts between beats: its audio begins before the end of the 5th beat
+    let got = r.b.pull(4 * b + pass + 4 * b + 500);
+    let n = 7 * b / 2 + 100; // the loop starts between beats: its audio begins before the end of the 4-beat lead
     let zero = vec![0.0f32; 2 * n];
     let on = clicks(&got[..2 * n], &zero, 0);
     assert_frames(&on, &TICK_MS.map(|k| k * beat));
-    let lead = frames_of(8500.0 + beat) - frames_of(9000.0); // to the next beat at 9145.16
-    let again_at = 5 * b - lead + pass;
+    let lead = frames_of(8500.0 + beat) - frames_of(9000.0); // to the next beat at 9145.16, where the first pass starts
+    let again_at = 4 * b - lead + pass;
     let win = &got[2 * (again_at + 150)..2 * (again_at + 7 * b / 2 + 100)];
     let zero = vec![0.0f32; win.len()];
     let again = clicks(win, &zero, 0);
@@ -6211,21 +6218,21 @@ fn fb_play_from_the_beginning_counts_in_then_starts_the_music_at_1200_exactly() 
     assert!(st.counting_in && st.playing);
     let b = NRATE / 2;
     let tail = 6000;
-    let got = r.b.pull(5 * b + tail);
-    let zero = vec![0.0f32; 2 * 5 * b];
-    let on = clicks(&got[..2 * 5 * b], &zero, 0);
+    let got = r.b.pull(4 * b + tail);
+    let zero = vec![0.0f32; 2 * 4 * b];
+    let on = clicks(&got[..2 * 4 * b], &zero, 0);
     assert_eq!(on.len(), 6, "{on:?}");
     for (o, w) in on.iter().zip([0, b, 2 * b, 5 * b / 2, 3 * b, 7 * b / 2]) {
         assert!((*o as i64 - w as i64).abs() < 5, "{o} vs {w}");
     }
     assert!(
-        silent_between(&got, 7 * b / 2 + 1400, 5 * b - 1),
-        "5th beat silent"
+        silent_between(&got, 7 * b / 2 + 1400, 4 * b - 1),
+        "silent until the music"
     );
-    // the music is the file from 1.2 s, starting exactly at the 6th beat position (after the fade-in)
+    // the music is the file from 1.2 s, starting exactly at beat 4 (after the fade-in)
     let want = expected(&r.pcm(), 1200 * NRATE / 1000, tail);
     for i in 400..2 * tail {
-        assert!((got[2 * 5 * b + i] - want[i]).abs() < 1e-5, "sample {i}");
+        assert!((got[2 * 4 * b + i] - want[i]).abs() < 1e-5, "sample {i}");
     }
 }
 
@@ -6393,7 +6400,7 @@ fn fb_a_legacy_track_with_a_count_in_still_counts_in_from_where_it_is() {
     r.seek(500);
     let st = r.play();
     assert!(st.counting_in);
-    let off = 5 * NRATE / 2;
+    let off = 4 * NRATE / 2;
     let got = r.b.pull(off + 2000);
     let want = expected(&r.pcm(), 500 * NRATE / 1000, 2000);
     for i in 400..4000 {

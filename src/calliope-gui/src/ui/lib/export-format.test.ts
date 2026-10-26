@@ -13,7 +13,7 @@ const snap = (o: Partial<ExportSnapshot> = {}): ExportSnapshot => ({
 });
 const info = (o: Partial<ExportInfo> = {}): ExportInfo => ({
   id: 't1', available: true, reason: null, source: 'backings/backing.flac',
-  count_in: { bpm: 120, first_beat_ms: 0, lead_ms: 2500, skip_ms: 0 }, memory: 1,
+  count_in: { bpm: 120, first_beat_ms: 0, lead_ms: 2000, skip_ms: 0 }, memory: 1,
   last: { rc5: null, mp3: null, ogg: null }, ...o,
 });
 
@@ -35,9 +35,9 @@ describe('texts', () => {
     expect(progressText(snap())).toBe('Exporting Stem Mix to /m/Stem Mix.mp3 · 42 %');
   });
   it('countInText', () => {
-    expect(countInText(info())).toBe('Count-in: 5 beats at 120 BPM, the last one silent before the first beat (adds 2.5 s)');
-    expect(countInText(info({ count_in: { bpm: 120, first_beat_ms: 1200, lead_ms: 2500, skip_ms: 1200 } }))).toBe(
-      'Count-in: 5 beats at 120 BPM, the last one silent before the first beat (adds 2.5 s; the 1.2 s before the first beat are left out)',
+    expect(countInText(info())).toBe('Count-in: 4 beats at 120 BPM before the first beat (adds 2.0 s)');
+    expect(countInText(info({ count_in: { bpm: 120, first_beat_ms: 1200, lead_ms: 2000, skip_ms: 1200 } }))).toBe(
+      'Count-in: 4 beats at 120 BPM before the first beat (adds 2.0 s; the 1.2 s before the first beat are left out)',
     );
     expect(countInText(info({ count_in: null }))).toBe('');
     expect(countInText(null)).toBe('');

@@ -269,8 +269,8 @@ fn rc5_writes_the_memory_file() {
     assert_eq!(u16::from_le_bytes([head[22], head[23]]), 2);
     assert_eq!(u32::from_le_bytes(head[24..28].try_into().unwrap()), 44100);
     assert_eq!(&head[36..40], b"data");
-    assert_eq!(samples.len() as u64, (110250 + 176400) * 2);
-    assert_eq!(std::fs::metadata(&target).unwrap().len(), 44 + 286650 * 8);
+    assert_eq!(samples.len() as u64, (88200 + 176400) * 2);
+    assert_eq!(std::fs::metadata(&target).unwrap().len(), 44 + 264600 * 8);
     assert!(base.join("ROLAND/WAVE").is_dir() && base.join("ROLAND/WAVE/007_1").is_dir());
     assert!(parts(&base).is_empty());
     assert_eq!(done.load(Ordering::SeqCst), 1);
@@ -314,7 +314,7 @@ fn set_first_beat_export_is_shorter_and_progress_reaches_one() {
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     assert_eq!(s.progress, 1.0);
     let (_, samples) = wav_samples(&base.join("ROLAND/WAVE/007_1/007_1.WAV"));
-    assert_eq!(samples.len() as u64, (110250 + 176400 - 22050) * 2);
+    assert_eq!(samples.len() as u64, (88200 + 176400 - 22050) * 2);
 }
 
 #[test]
@@ -386,7 +386,7 @@ fn overwrite_rules() {
     assert_eq!(wait_terminal(&rig.state).phase, ExportPhase::Done);
     assert_eq!(
         std::fs::metadata(dir.join("007_1.WAV")).unwrap().len(),
-        44 + 286650 * 8
+        44 + 264600 * 8
     );
     assert_eq!(std::fs::read(dir.join("notes.txt")).unwrap(), b"keep me");
     assert!(parts(&base).is_empty());
@@ -585,10 +585,10 @@ fn no_tempo_is_refused_and_the_map_at_start_is_used() {
     let (_, s) = wav_samples(&base.join("ROLAND/WAVE/007_1/007_1.WAV"));
     let click = Click::new(44100).samples().to_vec();
     let left: Vec<f32> = s.chunks_exact(2).map(|f| f[0]).collect();
-    // lead = 110250 frames of silence; the ticks start at 66150 (1500 ms) and not at 22050.
+    // lead = 88200 frames of silence; the ticks start at 66150 (1500 ms) and not at 22050.
     assert_eq!(&left[66150..66150 + click.len()], &click[..]);
     assert!(left[22050..22050 + click.len()].iter().all(|&v| v == 0.0));
-    assert_eq!(s.len(), 286650 * 2);
+    assert_eq!(s.len(), 264600 * 2);
     rig.assert_repo_untouched();
 }
 

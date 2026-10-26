@@ -194,10 +194,10 @@
   section and Count In off. Count In is enabled for every section, the first included (a count-in before the
   first section is the six count-in ticks at its tempo before the song starts); both are disabled when there is no BPM ("Type a
   BPM first"). Which beats click is decided by the section flags alone.
-- Play count-in: Play from paused or stopped counts in (six ticks over 5 beats at the tempo of the section under the
-  playhead, the 5th beat silent, then the audio; the same pattern as the export count-in) when that section has Count In on. The clicks are on the song's beat grid at the
-  heard speed: from a start between two beats the audio starts that much before the end of the 5th beat, so the next beat
-  falls on the 6th beat position (the same for a loop starting between beats); elsewhere Play starts at once. A loop's Play counts in only
+- Play count-in: Play from paused or stopped counts in (six ticks over 4 beats at the tempo of the section under the
+  playhead, then the audio half a beat after the last tick; the same pattern as the export count-in) when that section has Count In on. The music always starts on a beat:
+  from a start between two beats the playhead moves to the next beat and the count-in is placed before it, so that beat is
+  beat 4, half a beat after the last tick (the same for a loop starting between beats); elsewhere Play starts at once. A loop's Play counts in only
   with the loop's own Count-In. Older files are migrated: a track whose old Metronome was Off is silent (all section
   Click and Count In off), one whose old Count In was on gets Count In on its first section.
 - Loops group (3 short lines, about 430 px): the "Loops" title, Prev, `+`, the loop box, `-`, Next (4 px gaps so

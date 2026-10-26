@@ -347,7 +347,7 @@ fn tempo_metronome_count_in() {
     }
 
     // Count-in with the guitar: Click off and Count In on in section 1, so the only clicks are
-    // the six ticks (0, 500, 1000, 1250, 1500, 1750 ms), then the tone after 2500 ms.
+    // the six ticks (0, 500, 1000, 1250, 1500, 1750 ms), then the tone after 2000 ms.
     choose_source(&app, &wid, 3);
     app.wait_contains("player source key=stem:guitar");
     at(&app, &wid, SEC_CLICK);
@@ -373,7 +373,7 @@ fn tempo_metronome_count_in() {
     }
     let tone = tone_start_ms(&heard, rate, 660.0).expect("the guitar starts");
     assert!(
-        (tone - clicks[0] - 2500.0).abs() <= 10.0,
+        (tone - clicks[0] - 2000.0).abs() <= 10.0,
         "the tone starts at {tone} ms, the first click at {} ms",
         clicks[0]
     );
@@ -555,11 +555,11 @@ fn player_section_metronome() {
     at(&app, &wid, SEC_COUNT_IN);
     app.wait_contains("player section flags index=1 metronome=true count_in=true");
 
-    // 3. Played from 5.0 s: the 120-BPM clicks from 4951.6 on (5.5 beats before the section) become the six
-    //    count-in ticks at 93 BPM (the 5th beat silent).
+    // 3. Played from 5.6 s: the 120-BPM clicks from 5596.8 on (4.5 beats before the section) become the six
+    //    count-in ticks at 93 BPM (4 beats, the section's first beat half a beat after the last tick).
     let play_from = |app: &mut App, wid: &str, play_ms: u64| -> Vec<f64> {
-        enter(app, wid, TIME, "0:05.0");
-        app.wait_line(|l| l.contains("player seek position=5000"), secs(10));
+        enter(app, wid, TIME, "0:05.6");
+        app.wait_line(|l| l.contains("player seek position=5600"), secs(10));
         let start = mark(app, &cap);
         app.skip_seen();
         at(app, wid, PLAY);
@@ -571,9 +571,9 @@ fn player_section_metronome() {
         click_onsets_ms(&since(app, &cap, start), rate)
     };
     let on = play_from(&mut app, &wid, 4500);
-    // The first click is the first tick at 5274.2 ms; the rest are relative to it.
-    let rel: Vec<f64> = on.iter().map(|t| t - on[0] + 5274.2).collect();
-    const WANT3: [f64; 7] = [5274.2, 5919.4, 6564.5, 6887.1, 7209.7, 7532.3, 8500.0];
+    // The first click is the first tick at 5919.4 ms; the rest are relative to it.
+    let rel: Vec<f64> = on.iter().map(|t| t - on[0] + 5919.4).collect();
+    const WANT3: [f64; 7] = [5919.4, 6564.5, 7209.7, 7532.3, 7854.8, 8177.4, 8500.0];
     let want = WANT3;
     assert!(rel.len() >= want.len(), "click onsets: {rel:?}");
     // The onsets are found to a few ms: the gaps within 5 ms, the places within 10 ms of the first.
@@ -595,12 +595,12 @@ fn player_section_metronome() {
     at(&app, &wid, SEC_CLICK);
     app.wait_contains("player section flags index=0 metronome=false count_in=false");
     let on = play_from(&mut app, &wid, 4500);
-    // No click before the count-in, which starts 274.2 ms after Play (plus the start-up of the stream).
+    // No click before the count-in, which starts 319.4 ms after Play (plus the start-up of the stream).
     assert!(
         on[0] >= 250.0 && on[0] <= 450.0,
         "the first click is not the count-in: {on:?}"
     );
-    let want = [0.0, 645.16, 1290.32, 1612.9, 1935.48, 2258.06, 3225.76];
+    let want = [0.0, 645.16, 1290.32, 1612.9, 1935.48, 2258.06, 2580.64];
     assert!(on.len() >= want.len(), "click onsets: {on:?}");
     for (got, want) in on.iter().zip(want) {
         assert!(
@@ -1100,8 +1100,8 @@ fn player_phase3() {
     );
     shot("player-p3-layout");
 
-    // 2. Play inside section 2 (Count In on): six ticks at its tempo, then the tone, started 435.48 ms
-    //    before the end of the 5th beat so that the next beat (10435.48 ms) falls on the 6th beat position.
+    // 2. Play inside section 2 (Count In on): the playhead moves to the next beat (10435.48 ms), six ticks at its
+    //    tempo, then the tone exactly 4 beats after the first tick.
     enter(&app, &wid, TIME, "0:10.0");
     app.wait_line(|l| l.contains("player seek position=10000"), secs(10));
     let start = mark(&app, &cap);
@@ -1128,9 +1128,8 @@ fn player_phase3() {
         assert!((w[1] - w[0] - gap).abs() <= 5.0, "{clicks:?}");
     }
     let tone = tone_start_ms(&heard, rate, 330.0).expect("the backing starts");
-    let lead = 8500.0 + 3.0 * 645.16 - 10000.0;
     assert!(
-        (tone - clicks[0] - (5.0 * 645.16 - lead)).abs() <= 10.0,
+        (tone - clicks[0] - 4.0 * 645.16).abs() <= 10.0,
         "the tone starts at {tone} ms, the first click at {} ms",
         clicks[0]
     );
@@ -1583,7 +1582,7 @@ fn player_first_beat() {
         assert!((w[1] - w[0] - gap).abs() <= 3.0, "{clicks:?}");
     }
     assert!(
-        (tone - clicks[0] - 2500.0).abs() <= 10.0,
+        (tone - clicks[0] - 2000.0).abs() <= 10.0,
         "tone at {tone}, clicks {clicks:?}"
     );
     let left: Vec<f32> = heard.chunks_exact(2).map(|c| c[0]).collect();

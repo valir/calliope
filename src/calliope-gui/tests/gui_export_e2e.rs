@@ -282,11 +282,11 @@ fn export_rc5_flow() {
         shot("export-done");
         assert_eq!(settings(&dirs)["rc5_memory"], 7);
         assert_eq!(settings(&dirs)["rc5_dir"], base.display().to_string());
-        // A mono original becomes stereo with equal channels; 4 s + 5 beats of 120 BPM.
+        // A mono original becomes stereo with equal channels; 4 s + 4 beats of 120 BPM.
         let (rate, l, r) = read_wav(&target);
         assert_eq!(rate, 44100);
         assert_eq!(l, r, "equal channels");
-        assert_eq!(l.len(), 44100 * 4 + 110250);
+        assert_eq!(l.len(), 44100 * 4 + 88200);
         assert!(l.iter().any(|v| v.abs() > 0.05), "the audio is there");
         assert!(!target.with_extension("WAV.part").exists());
         wait_has(
@@ -511,7 +511,7 @@ fn export_mp3_and_ogg() {
     )
     .parse()
     .unwrap();
-    assert!((dur - 6.5).abs() < 0.2, "4 s + 2.5 s count-in, got {dur}");
+    assert!((dur - 6.0).abs() < 0.2, "4 s + 2 s count-in, got {dur}");
 
     press(&app, &wid, BTN_OGG);
     let l = app.wait_line(|l| l.contains("dialog start kind=export-audio"), secs(10));

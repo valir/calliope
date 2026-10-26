@@ -149,7 +149,7 @@ fn info_for_each_fixture() {
         Some(CountInInfo {
             bpm: 120.0,
             first_beat_ms: 0.0,
-            lead_ms: 2500.0,
+            lead_ms: 2000.0,
             skip_ms: 0.0
         })
     );
@@ -172,7 +172,7 @@ fn info_for_each_fixture() {
         Some(CountInInfo {
             bpm: 100.0,
             first_beat_ms: 0.0,
-            lead_ms: 3000.0,
+            lead_ms: 2400.0,
             skip_ms: 0.0
         })
     );
@@ -183,7 +183,7 @@ fn info_for_each_fixture() {
         Some(CountInInfo {
             bpm: 100.0,
             first_beat_ms: 3000.0,
-            lead_ms: 3000.0,
+            lead_ms: 2400.0,
             skip_ms: 0.0
         })
     );

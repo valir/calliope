@@ -135,7 +135,7 @@ Ctrl+L folds it to a narrow rail).
 * Per section (Sections group, for the selected section): the name box next to "Section 2 of 3 - 93 BPM"
   (Enter or leaving the box saves it, Escape drops the edit; it is shown in the box and spoken by the waveform; the Editor does
   not show names), "This section" Click (the section's metronome clicks; off makes the section silent)
-  and Count In (six ticks over the 5 beats at this section's tempo just before it, the 5th beat silent, replacing the end of the section
+  and Count In (six ticks over the 4 beats at this section's tempo just before it, replacing the end of the section
   before, and skipped where a repeating loop ends at the section; Play pressed anywhere in a section with
   Count In counts in at its tempo, also in the first section), and Start / End (jump to the section's
   first beat / its last frame, just before the next section; playing continues without a pause). There is no global
@@ -180,9 +180,9 @@ Editor); a plain backing track is exported as it is.
   Eject the RC-5 before unplugging it.
 * "MP3 file" / "OGG file": choose a folder; the file is named `Band - Title.mp3` (or `.ogg`) and
   carries the title, band, album, track number and year as tags.
-* Count-in: every export starts with 5 beats of silence at the track's tempo, with six ticks
-  in the first 4 beats (the 5th beat is silent), so the audio that follows is in time with the
-  loop. The exported file is therefore 5 beats longer than the original.
+* Count-in: every export starts with 4 beats of lead at the track's tempo, with six ticks
+  in it (the last half a beat before the audio), so the audio that follows is in time with the
+  loop. The exported file is therefore 4 beats longer than the original.
 * An existing file is only replaced after you confirm. Cancel stops a running export and leaves
   nothing behind.
 * What is remembered: after a successful export the track's `track.json` gets an `exports` entry

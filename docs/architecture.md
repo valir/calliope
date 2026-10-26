@@ -45,7 +45,7 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (backing render) | Laptop | Offline render of the mix to FLAC | Rust, `flacenc` | `src/backing_render.rs` |
 | calliope-gui (export rules) | Laptop | Which file a track exports (first backing variant, else `audio`) or why not, RC-5 memory numbers and paths, MP3/OGG file names, output rate/channels per target, tags, ffprobe stream info, ffmpeg encoder list, memory suggestion (`memory_for`: the track's recorded memory, else last used + 1), dialog start folder (`file_start_dir`: the recorded file's folder for MP3/OGG, else the remembered one) | Rust, pure | `src/export_rules.rs` |
 | calliope-gui (export record) | Laptop | The `track.json` `exports` object: `TrackExports` (`rc5` {memory, at}, `mp3`/`ogg` {path, at}), lenient read, JSON-level `set` / `clear_rc5` that touch nothing else | Rust, pure (serde_json) | `src/export_record.rs` |
-| calliope-gui (export audio) | Laptop | The export count-in in exact frames (5 beats of silence before the original, 6 ticks at the first beat + 0, 1, 2, 2.5, 3, 3.5 beats of the output, the 5th lead beat silent; with a set first beat the decoded audio before it is dropped (`skip_frames`), so the file is the lead + the audio from the first beat), tick mixing, ffmpeg decoder/encoder argv, the pipeline ffmpeg decode → Rust lead + ticks → WAV writer or ffmpeg encoder stdin, cancel | Rust (std threads), external `ffmpeg` | `src/export_audio.rs` |
+| calliope-gui (export audio) | Laptop | The export count-in in exact frames (a 4-beat lead before the original, 6 ticks at the first beat + 0, 1, 2, 2.5, 3, 3.5 beats of the output, the first beat half a beat after the last tick (lead shortened from 5 beats on 2026-10-26); with a set first beat the decoded audio before it is dropped (`skip_frames`), so the file is the lead + the audio from the first beat), tick mixing, ffmpeg decoder/encoder argv, the pipeline ffmpeg decode → Rust lead + ticks → WAV writer or ffmpeg encoder stdin, cancel | Rust (std threads), external `ffmpeg` | `src/export_audio.rs` |
 | calliope-gui (export job) | Laptop | One export at a time: single-use plans from the chosen folder, part file in the destination + rename, folders it created removed on failure/cancel, the `on_done` hook after the rename (remembers the memory, records the export info and clears other RC-5 holders; its `Recorded` result goes into `done` and the snapshot), events, snapshot/watch, shutdown | Rust (own std thread) | `src/export_job.rs` (+ `src/export_job_tests.rs`) |
 | calliope-gui (tempo map) | Laptop | Tempo segments, beat grid in 1/64-note ticks (16 per beat, `beats_per_bar` default 4), ms<->tick, snapping, "set BPM at position", beats in a range, loop boundary re-snapping; detected changes (`Segment.detected_ms`) and placed changes (`Segment.on_beat`, added or moved in the Player) both start their section on a beat: beat-rounded tick base, stretched last beat. Section operations: `move_change` (1/64-beat steps of the left tempo; detected: ±256 from the detected position, widened to the current offset; others: counted from the left section's start, no limit), `set_section_bpm`, `scale_section` (×2/÷2), `add_change` (on the split section's 1/64-beat grid), `remove_change`; every section ≥ 1 beat of its own tempo; `set_change_offset` (the Editor's, detected only). The first beat (gui-first-beat): `Segment.found_ms` on the first segment = the first beat is *set* (`first_beat_set`, `play_start_ms`: its start when set, else 0), `needs_first_beat` (start exactly 0.0, not set), `first_beat_limits` (0 .. next section or track end − 1 beat), `place_first_beat` (Find start), `move_first_beat` (1/64-beat steps of the first section's tempo from `found_ms`, else from the old start, which becomes `found_ms`; edges land exactly on 0 and the limit); moving it makes the second segment a placed change and leaves the other starts alone; `section_jump_ms(0, Start)` = `play_start_ms`. Per-section settings `Segment.meta: SectionMeta {name, metronome, count_in}` (flattened; carried through edits: Add copies the split section's metronome flag, Remove drops the joined section's), `set_section_flags`, `set_section_name`, `section_jump_ms` (start, or end; the player lands End on the last frame inside the section) | Rust, pure | `src/tempo_map.rs` |
 | calliope-gui (player state) | Laptop | `player.json` schema 7 (reads 1-7, migrating the old global metronome of 1-4; `found_ms` kept on the first segment only; lenient read, strict write, newer schema read-only), the track speed (stored as a factor 0.25..2.0, used as a whole percentage), loop list operations (a new loop ends at the next tempo section or the track end), per-loop speed-training settings (Training on also sets Loop On; Loop On off ends Training), source choice rule, load/save | Rust + serde, pure | `src/player_state.rs` |
@@ -372,7 +372,7 @@ the GUI crate, `src/calliope-gui/`.
   A set first beat is where the Player's playback and the export start (the audio before it is dimmed, never played, never
   exported; the files are not changed) and the reference of the first bar's offset readout. Read only on the segment that is
   first, as a finite number 0..1e9; dropped elsewhere. Without it (every file of schema ≤ 6) the track plays from 0:00 and
-  exports the original + 5 beats as before. The Player's automatic search runs at open only when the first segment starts at
+  exports the original + 4 beats (5 before 2026-10-26). The Player's automatic search runs at open only when the first segment starts at
   exactly 0.0 and has no `found_ms`; storing `found_ms` (also 0.0) is what makes it run once. This build reads 1-7 and
   writes 7; schema-6 builds treat the file as newer and never overwrite it (they would drop `found_ms`).
   **The track's one tempo map** (stems-beat-autodetect plan §2.2): `tempo` in `player.json` is also written by the Editor
@@ -451,10 +451,10 @@ the GUI crate, `src/calliope-gui/`.
   cannot be exported): read from the Player's tempo map at export time (`TempoStore::load`, so an open Player session is
   flushed first; nothing cached). At the output rate R: `beat = round(R·60/bpm)` (first section's BPM, speed and
   `beats_per_bar` ignored), `lead = 5·beat` (`LEAD_BEATS`), `first = round(segments[0].start_ms·R/1000)`; the file is `lead` frames of
-  silence + the original unchanged (original + 5 beats long) when the first beat is not set; with a set first beat
+  silence + the original unchanged (original + 4 beats long since 2026-10-26) when the first beat is not set; with a set first beat
   (`found_ms`, gui-first-beat) the first `skip = first` decoded frames are dropped, so the file is `lead` + the audio from the
   first beat on (`5·beat + frames − first`) and the ticks and the first beat below are counted with `first − skip = 0`; the Player's click (no accent) starts at output frames
-  `first + round(k·beat)`, k = 0, 1, 2, 2.5, 3, 3.5, so the last tick is at `first + 3.5·beat` and the first beat at `lead + first = first + 5·beat` (the 5th lead beat is silent); samples under a
+  `first + round(k·beat)`, k = 0, 1, 2, 2.5, 3, 3.5, so the last tick is at `first + 3.5·beat` and the first beat at `lead + first = first + 4·beat` (4 beats since 2026-10-26; 5 with a silent 5th before); samples under a
   tick are clamped to ±1, all others bit-exact. **Writes**: a `.<name>.calliope-<pid>-<n>.part` file in the
   destination folder (created with `create_new`; ffmpeg encoders write it with `-y`), fsync, `rename` over the target
   (an existing target only after the user confirmed; otherwise exists-check + rename, since FAT has no hard links),
@@ -754,7 +754,7 @@ the server out of the GUI.
   `tests/fixtures/first-beat/noisy-intro.flac`; the automatic run and Find start through the IPC bodies
   (`player_ipc_tests`), the floor and the count-in at the first beat with `ManualBackend` (exact frames), the trimmed export
   with the real local ffmpeg (bit-exact from the cut); the manager-level `PlayerManager::open` never runs the detector, so
-  older tests keep their maps. GUI: capture WAV (ticks, then the 440 Hz onset 5 beats after the first tick) and screenshots
+  older tests keep their maps. GUI: capture WAV (ticks, then the 440 Hz onset 4 beats after the first tick) and screenshots
   of the dimmed lead-in.
 - **First beat tuning** (gui-first-beat-tuning): frontend only. The keyboard readout's lifetime is tested with vitest fake
   timers (`KEY_READOUT_MS`); the field's clamp (`clampMoveSteps`) is checked against the Rust clamps' values; Prev / Next
@@ -1351,7 +1351,7 @@ Each tempo section can be named, silenced and given a count-in that plays while 
 settings live in the section's segment (`SectionMeta`, flattened, defaults not written) so they move with their change
 through every edit; the manager turns the map into the list of click frames (`metronome::section_clicks`: beats of
 sections whose metronome is on, then for each section with count-in three clicks at its tempo ending one beat before
-its first beat (six ticks over 5 beats since 2026-10-25), replacing the clicks in that span, skipped when a repeating loop ends there) and sends it with the
+its first beat (six ticks over 4 beats since 2026-10-26, 5 from 2026-10-25), replacing the clicks in that span, skipped when a repeating loop ends there) and sends it with the
 existing `Cmd::SetGrid`. The engine and its real-time rules are unchanged, and the engine's existing metronome flag
 (top-level `metronome.on`) becomes the master switch. `Count In` stays the pre-roll before Play and loop Play. Schema 4
 because the schema-3 parser drops unknown segment keys. Alternatives: per-beat flags evaluated in the audio callback
@@ -1648,7 +1648,7 @@ With a set first beat, every position the Player manager sets is clamped to the 
 of section 1, loop Prev/Next/Stop/Play, the restored position, the restart after the end, and after any tempo edit. Loop starts
 before it are clamped in the engine's `LoopSpec`, and the engine's own restart uses `Cmd::SetStart`. The UI needs no rule of
 its own beyond the dimming. The floor is the nearest frame to the first beat, so Play there with Count In has a zero lead: six
-ticks over 5 beats, then the first beat on the 6th beat position (2026-10-25 count-in entry). The Editor's stem-mix playback
+ticks over 4 beats, then the first beat on the 5th beat position (2026-10-26 count-in entry). The Editor's stem-mix playback
 is not restricted (plan open question 1). It shows the dimmed lead-in and the movable first bar.
 
 ### 2026-10-25: A set first beat makes the export drop the audio before it (lead + audio from the first beat)   (feature: gui-first-beat; plan §2.5; spec requirement 4)
@@ -1678,3 +1678,18 @@ row makes the controls about 20 px taller. The tablature placeholder (`flex-1`) 
 and Loops stays beside Sections. The waveform and everything below it move up, which is why the GUI tests' coordinates
 were measured again. Alternatives: Prev / Next in the new row (away from |◀ ▶|), a wrapping button row (taller still), and
 sharing the message line with the new row (too little room for the messages).
+
+### 2026-10-26: Count-in lead shortened from 5 to 4 beats, the silent 5th beat removed   (fix: count-in 4 beats; owner request)
+The first beat is now detected well, so the silent 5th beat of the 2026-10-24 / 2026-10-25 count-ins is dropped. `LEAD_BEATS` is 4:
+the same six ticks at 0, 1, 2, 2.5, 3, 3.5 beats, and the music's first beat lands at beat 4, half a beat after the last tick. This
+holds for every use of the pattern: Play and loop-wrap count-ins (`CountIn.start = 4·beat`), section count-ins inside the song
+(ticks at `first − (4−k)·beat`; the clicks in (first − 4.5 beats, first) are replaced and the loop-wrap skip uses the same
+4.5-beat span, down from 5.5), and the export (the file is the 4-beat lead + the audio from the first beat; the pane says
+"Count-in: 4 beats at <bpm> BPM before the first beat (adds <s> s...)"). Music always starts on a beat: `lead_in` and `CountIn.click_len` are gone. A count-in played from a position that is not on a beat
+(Play from paused or stopped, loop Play, loop wrap with count-in) starts the music at the NEXT beat of the grid at or after that
+position (the existing half-frame tolerance keeps a position on a beat), and the six ticks are placed with respect to that beat: they
+are at 0, 1, 2, 2.5, 3, 3.5 beats and the beat is beat 4, half a beat after the last tick, with no audio before it. The session moves the
+playhead there (`beat_lead`, song frames) before sending `Play` / `PlayLoop`, so the reported position jumps to that beat; a wrap
+adds the loop's `count_in_lead` to the loop start (`wrap_start`). The next beat is never before the playback floor (the playhead
+is at or after it). Section count-ins inside the song are unchanged. Supersedes the 5-beat values
+in the 2026-10-24 export entry and the 2026-10-25 Player entry above (history is left as written).
