@@ -27,7 +27,7 @@ const BLANK: (i32, i32) = (356, 47); // the "Play:" label: a click there only re
 const TRIGGER: (i32, i32) = (555, 47);
 const ITEM_X: i32 = 500;
 const ITEM_Y: [i32; 4] = [113, 167, 221, 275]; // Backing, Original mix, Vocals, Guitar
-const BPM: (i32, i32) = (534, 359);
+const BPM: (i32, i32) = (534, 341);
 const PLAY: (i32, i32) = (477, 629);
 const TIME: (i32, i32) = (669, 628);
 // Speed group (the Playback pane's second line) and the Loops group's training button ("Train...").
@@ -35,31 +35,34 @@ const SPEED_MINUS: (i32, i32) = (451, 696);
 const SPEED_BOX: (i32, i32) = (528, 696);
 const SPEED_PLUS: (i32, i32) = (633, 696);
 const SPEED_RESET: (i32, i32) = (713, 696);
-const TRAIN_OPEN: (i32, i32) = (1194, 503);
+const TRAIN_OPEN: (i32, i32) = (1194, 485);
 const TRAIN_OPEN_1024: (i32, i32) = (689, 175); // 1024x640, tree shown, the Player pane scrolled to its end
                                                 // Loops group: the label, `+` (line 1), `>` and `<` (line 2), Play, Loop On and Count-In (line 3).
-const LOOP_ADD: (i32, i32) = (1009, 368);
-const MARK_START: (i32, i32) = (881, 436);
-const MARK_END: (i32, i32) = (1219, 436);
-const LOOP_PLAY: (i32, i32) = (889, 503);
-const LOOP_ON: (i32, i32) = (981, 503);
-const LOOP_COUNT_IN: (i32, i32) = (1090, 503);
-// The Sections group (name box next to the BPM in the title row, six icon-sized buttons, then Click and
-// Count In), the waveform (section 0 | the change bar at 8500 ms | section 1) and its labels.
-const SEC_NAME: (i32, i32) = (723, 359);
-const SEC_ADD: (i32, i32) = (376, 413);
-const SEC_REMOVE: (i32, i32) = (438, 413);
-const SEC_DOUBLE: (i32, i32) = (501, 413);
-const SEC_START: (i32, i32) = (628, 413);
-const SEC_END: (i32, i32) = (691, 413);
-const SEC_CLICK: (i32, i32) = (384, 476);
-const SEC_COUNT_IN: (i32, i32) = (481, 476);
-const WAVE_BAR: (i32, i32) = (729, 270);
-const WAVE_SECTION0: (i32, i32) = (450, 270);
-const WAVE_SECTION1: (i32, i32) = (1000, 270);
-const WAVE_LABEL0: (i32, i32) = (370, 304);
+const LOOP_ADD: (i32, i32) = (1009, 350);
+const MARK_START: (i32, i32) = (881, 418);
+const MARK_END: (i32, i32) = (1219, 418);
+const LOOP_PLAY: (i32, i32) = (889, 485);
+const LOOP_ON: (i32, i32) = (981, 485);
+const LOOP_COUNT_IN: (i32, i32) = (1090, 485);
+// The Sections group (name box next to the BPM in the title row, eight buttons (+ - x2 /2 Prev |< >| Next),
+// then Click and Count In, then the Start row: the offset field and Find start), the waveform (section 0 | the change bar at 8500 ms | section 1) and its labels.
+const SEC_NAME: (i32, i32) = (723, 341);
+const SEC_ADD: (i32, i32) = (373, 394);
+const SEC_REMOVE: (i32, i32) = (432, 394);
+const SEC_DOUBLE: (i32, i32) = (490, 394);
+const SEC_PREV: (i32, i32) = (607, 394);
+const SEC_START: (i32, i32) = (666, 394);
+const SEC_END: (i32, i32) = (724, 394);
+const SEC_NEXT: (i32, i32) = (782, 394);
+const SEC_CLICK: (i32, i32) = (384, 458);
+const SEC_COUNT_IN: (i32, i32) = (481, 458);
+const SEC_OFFSET: (i32, i32) = (432, 511);
+const WAVE_BAR: (i32, i32) = (729, 252);
+const WAVE_SECTION0: (i32, i32) = (450, 252);
+const WAVE_SECTION1: (i32, i32) = (1000, 252);
+const WAVE_LABEL0: (i32, i32) = (370, 286);
 const REW: (i32, i32) = (400, 629);
-const FIND_START: (i32, i32) = (768, 413);
+const FIND_START: (i32, i32) = (694, 511);
 
 fn secs(s: u64) -> Duration {
     Duration::from_secs(s)
@@ -871,7 +874,7 @@ fn wave_box(w: u32, h: u32, collapsed: bool) -> (i32, i32, i32, i32) {
     let down = if !collapsed && w < 1280 { 35 } else { 0 };
     // at 800 px with the tree collapsed the tablature placeholder is as tall as the pane allows
     // and the waveform sits just above the Sections and Loops row
-    let tall = if collapsed && h >= 800 { 90 } else { 0 };
+    let tall = if collapsed && h >= 800 { 72 } else { 0 };
     (left, w as i32 - 19, 180 + down + tall, 216 + down + tall)
 }
 
@@ -1645,5 +1648,227 @@ fn player_first_beat() {
     pick(&mut app, &wid, &mut collapsed, "noisy intro", NOISY);
     ms(1200);
     shot("player-first-beat-light");
+    finish(&app);
+}
+
+/// `noisy_dirs` with a three-section `player.json` (schema 7): a found first start at 1200 ms, a detected
+/// section at 3000 ms and a plain one at 4200 ms. Nobody clicks, so the tone is all that is heard.
+fn tuning_dirs(test: &str) -> Dirs {
+    let dirs = noisy_dirs(test);
+    std::fs::write(
+        dirs.player_json(NOISY),
+        r#"{"schema_version":7,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":1200.0,"bpm":120.0,"found_ms":1200.0,"count_in":false,"metronome":false},{"start_ms":3000.0,"bpm":120.0,"detected_ms":3000.0,"count_in":true,"metronome":false},{"start_ms":4200.0,"bpm":120.0,"metronome":false}]}}"#,
+    )
+    .unwrap();
+    dirs
+}
+
+/// The layout assertion of the 1280x800 window with the tree folded: no overflow, Loops beside Sections.
+fn assert_tuning_layout(app: &App) {
+    let l = last_layout(app);
+    assert_eq!(field(&l, "overflow"), "0", "{l}");
+    assert_eq!(field(&l, "loops_beside"), "1", "{l}");
+    let w: i32 = field(&l, "sections_w").parse().unwrap();
+    assert!(w <= 496, "{l}");
+}
+
+/// The text of the frontend jump line for section `index` (waits for it).
+fn jumped(app: &mut App, index: usize, via: &str) -> String {
+    let l = app.wait_line(
+        |l| {
+            l.contains(&format!("player section jump index={index} edge=start"))
+                && l.contains(&format!("via={via}"))
+        },
+        secs(10),
+    );
+    assert!(l.contains("calliope-ui:"), "{l}");
+    l
+}
+
+/// Plays for a moment, jumps with `jump` while playing and pauses again: playback goes on through the
+/// jump (no pause line between), nothing but the tone is heard (no count-in clicks, no gap).
+fn jump_while_playing(
+    app: &mut App,
+    wid: &str,
+    cap: &std::path::Path,
+    jump: (i32, i32),
+    what: &str,
+) {
+    let m = mark(app, cap);
+    app.skip_seen();
+    at(app, wid, PLAY);
+    app.wait_contains("player play");
+    let rate = rate_of(app);
+    ms(300);
+    at(app, wid, jump);
+    app.wait_contains("calliope: player section jump");
+    ms(1500);
+    at(app, wid, PLAY);
+    app.wait_contains("player pause");
+    let lines = app.all_lines();
+    let from = lines
+        .iter()
+        .rposition(|l| l.contains("calliope: player section jump"))
+        .unwrap();
+    let stops = lines[from..]
+        .iter()
+        .filter(|l| l.contains("calliope: player transport playing=false"))
+        .count();
+    assert_eq!(stops, 1, "{what}: playback stopped at the jump: {lines:?}");
+    let heard = since(app, cap, m);
+    let tone = tone_power(&heard, rate, 440.0);
+    for hz in [1500.0, 2000.0] {
+        let d = db(tone_power(&heard, rate, hz), tone);
+        assert!(d < -30.0, "{what}: clicks were heard ({hz} Hz at {d} dB)");
+    }
+    // 100 ms pieces from the tone's start to the pause all hold the tone
+    // (what was captured before the first press of Play is not counted)
+    let t0 = tone_start_ms(&heard, rate, 440.0).expect("the tone starts");
+    let first = (t0 * rate / 1000.0) as usize;
+    let left: Vec<f32> = heard.chunks_exact(2).skip(first).map(|c| c[0]).collect();
+    let piece = (rate * 0.1) as usize;
+    let rms: Vec<f64> = left
+        .chunks_exact(piece)
+        .map(|c| (c.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>() / c.len() as f64).sqrt())
+        .collect();
+    assert!(rms.len() >= 10, "{what}: too little audio");
+    let top = rms.iter().cloned().fold(0.0, f64::max);
+    for (i, r) in rms[1..rms.len() - 1].iter().enumerate() {
+        assert!(
+            *r > top * 0.5,
+            "{what}: a gap in the tone at piece {i}: {rms:?}"
+        );
+    }
+}
+
+/// The first bar's start is typed in the Sections pane (steps of 1/64 beat from the found start), clamped,
+/// refused when it is not a number; Next / Prev go to the section starts and keep playing; the keys show the
+/// readout for a moment.
+#[test]
+#[ignore]
+fn player_first_beat_tuning() {
+    if !ready() {
+        return;
+    }
+    let dirs = tuning_dirs("player_first_beat_tuning");
+    let (mut app, wid) = start_player(&dirs);
+    let mut collapsed = false;
+    pick(&mut app, &wid, &mut collapsed, "noisy intro", NOISY);
+    let cap = dirs.capture();
+
+    // 1. The layout.
+    ms(600);
+    assert_tuning_layout(&app);
+    shot("player-tuning");
+
+    // 2. Keyboard readout: it shows after a key and is gone 1.5 s later.
+    let (x0, x1, y, _) = wave_box(1280, 800, true);
+    app.click(&wid, x0 + (x1 - x0) * 2000 / 5200, y);
+    app.skip_seen();
+    app.key(&wid, "Right");
+    let l = moved(&mut app);
+    assert_eq!(field(&l, "index"), "0", "{l}");
+    assert_eq!(field(&l, "steps"), "1", "{l}");
+    assert_eq!(field(&l, "applied"), "1", "{l}");
+    shot("player-tuning-key-readout");
+    ms(2000);
+    shot("player-tuning-key-readout-gone");
+
+    // 3. A typed offset.
+    app.skip_seen();
+    enter(&app, &wid, SEC_OFFSET, "+10");
+    app.wait_contains("calliope-ui: player section offset index=0 text=+10 steps=10");
+    let l = moved(&mut app);
+    assert_eq!(field(&l, "steps"), "10", "{l}");
+    assert_eq!(field(&l, "applied"), "10", "{l}");
+    let v = wait_json(&dirs, NOISY, |v| {
+        (change_start(v, 0) - 1278.125).abs() < 0.01
+    });
+    assert_eq!(
+        v["tempo"]["segments"][0]["found_ms"].as_f64(),
+        Some(1200.0),
+        "{v}"
+    );
+
+    // 4. Beyond the limit: the first bar stops at 0:00 and the field says how far it went.
+    app.skip_seen();
+    enter(&app, &wid, SEC_OFFSET, "-9999");
+    moved(&mut app);
+    wait_json(&dirs, NOISY, |v| change_start(v, 0).abs() < 0.01);
+    ms(300);
+    shot("player-tuning-clamped");
+    enter(&app, &wid, SEC_OFFSET, "+10");
+    wait_json(&dirs, NOISY, |v| {
+        (change_start(v, 0) - 1278.125).abs() < 0.01
+    });
+
+    // 5. Text that is no number is refused and nothing moves.
+    let before = std::fs::read(dirs.player_json(NOISY)).unwrap();
+    app.skip_seen();
+    enter(&app, &wid, SEC_OFFSET, "1.5");
+    app.wait_contains("calliope-ui: player section offset refused text=1.5");
+    ms(500);
+    assert_eq!(
+        std::fs::read(dirs.player_json(NOISY)).unwrap(),
+        before,
+        "player.json changed"
+    );
+    shot("player-tuning-invalid");
+    app.key(&wid, "Escape");
+    ms(200);
+
+    // 6. Next: the start of section 2. Find start is disabled there and the field shows its offset.
+    at(&app, &wid, BLANK);
+    app.skip_seen();
+    at(&app, &wid, SEC_NEXT);
+    let l = jumped(&mut app, 1, "next");
+    assert!((position_of(&l) - 3000).abs() <= 1, "{l}");
+    ms(300);
+    shot("player-tuning-section2");
+
+    // 7. An offset in section 2 moves only its bar.
+    app.skip_seen();
+    enter(&app, &wid, SEC_OFFSET, "-8");
+    let l = moved(&mut app);
+    assert_eq!(field(&l, "index"), "1", "{l}");
+    assert_eq!(field(&l, "steps"), "-8", "{l}");
+    assert_eq!(field(&l, "applied"), "-8", "{l}");
+    let v = wait_json(&dirs, NOISY, |v| (change_start(v, 1) - 2937.5).abs() < 0.01);
+    assert!((change_start(&v, 0) - 1278.125).abs() < 0.01, "{v}");
+    assert!((change_start(&v, 2) - 4200.0).abs() < 0.01, "{v}");
+
+    // 8. Prev from the middle of section 2 goes to the first beat.
+    enter(&app, &wid, TIME, "0:03.5");
+    ms(300);
+    app.skip_seen();
+    at(&app, &wid, SEC_PREV);
+    let l = jumped(&mut app, 0, "prev");
+    assert!((position_of(&l) - 1278).abs() <= 1, "{l}");
+
+    // 9. Next, Next: the last section, where Next is disabled.
+    app.skip_seen();
+    at(&app, &wid, SEC_NEXT);
+    let l = jumped(&mut app, 1, "next");
+    assert!((position_of(&l) - 2937).abs() <= 1, "{l}");
+    at(&app, &wid, SEC_NEXT);
+    let l = jumped(&mut app, 2, "next");
+    assert!((position_of(&l) - 4200).abs() <= 1, "{l}");
+    ms(300);
+    shot("player-tuning-last");
+
+    // 10. While playing, Next and |< keep the playback going (no count-in) and nothing but the tone is heard.
+    app.skip_seen();
+    at(&app, &wid, SEC_PREV);
+    jumped(&mut app, 1, "prev");
+    at(&app, &wid, SEC_PREV);
+    jumped(&mut app, 0, "prev");
+    ms(300);
+    jump_while_playing(&mut app, &wid, &cap, SEC_NEXT, "Next");
+    enter(&app, &wid, TIME, "0:03.5");
+    ms(300);
+    jump_while_playing(&mut app, &wid, &cap, SEC_START, "|<");
+
+    // 11. The layout again.
+    assert_tuning_layout(&app);
     finish(&app);
 }

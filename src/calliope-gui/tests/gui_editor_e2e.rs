@@ -715,11 +715,13 @@ fn editor_first_beat() {
     assert_eq!(field(&l, "index"), "0", "{l}");
     assert_eq!(field(&l, "steps"), "1", "{l}");
     assert_eq!(field(&l, "applied"), "1", "{l}");
+    // the readout "+1/64 beat (+0:00.008) from the found start" shows for 1.5 s after the key
+    shot("editor-first-beat-key-readout");
     let segs = wait_segments(&dirs, ED_FOUR, |s| {
         s.len() == 2 && (start_ms(&s[0]) - (500.0 + FINE_MS)).abs() < 0.01
     });
     assert_eq!(segs[0]["found_ms"].as_f64(), Some(500.0), "{segs:?}");
-    settle();
+    std::thread::sleep(secs(2));
     shot("editor-first-beat");
 
     // Twenty beats back stop at 0:00.
@@ -729,7 +731,7 @@ fn editor_first_beat() {
     let segs = wait_segments(&dirs, ED_FOUR, |s| s.len() == 2 && start_ms(&s[0]) == 0.0);
     assert_eq!(segs[0]["found_ms"].as_f64(), Some(500.0), "{segs:?}");
     assert_eq!(start_ms(&segs[1]), 4500.0, "{segs:?}");
-    settle();
+    std::thread::sleep(secs(2));
     shot("editor-first-beat-zero");
     finish(&app);
 }

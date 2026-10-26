@@ -349,6 +349,7 @@ impl App {
                 "type",
                 "--delay",
                 "40",
+                "--",
                 text,
             ])
             .status()

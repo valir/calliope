@@ -128,7 +128,8 @@ Ctrl+L folds it to a narrow rail).
 * Sections: the tempo can change along the song. Click a section in the waveform to select it (else the
   one at the playhead is used) and drag a change's bar to move it, or use the keys (see Keyboard). Click
   a label to type that section's BPM. The Sections group has Add (a new change at the playhead, you type its
-  BPM), Remove (joins the section to the previous one), x2 and /2 (for a half- or double-time detection).
+  BPM), Remove (joins the section to the previous one), x2 and /2 (for a half- or double-time detection), and Prev /
+  Next (go to the start of the previous / next section, like Start while playing: playback goes on).
   The metronome follows every edit from the next beat, also while playing. The sections are saved in
   `player.json` and shown in the Editor.
 * Per section (Sections group, for the selected section): the name box next to "Section 2 of 3 - 93 BPM"
@@ -140,10 +141,13 @@ Ctrl+L folds it to a narrow rail).
   first beat / its last frame, just before the next section; playing continues without a pause). There is no global
   metronome switch: a section clicks only when its Click is on.
 * First beat: the first section starts where the music starts. The first time a track is opened with its
-  first beat still at 0:00, the Player looks for the start by itself (the "Find start" button next to the
-  Start / End buttons does it again on demand: the line under the Sections shows "Finding the start..." and then
+  first beat still at 0:00, the Player looks for the start by itself (the "Find start" button in the Start row
+  does it again on demand: the line under the Sections shows "Finding the start..." and then
   "First beat at 0:01.200"). Drag the first bar or use the keys on it (Left / Right move it 1/64 beat, with Shift
-  1 beat) to fine-tune it, from 0:00 up to one beat before the next section. The audio before the first beat is
+  1 beat) to fine-tune it, from 0:00 up to one beat before the next section; the keys show the same readout as a drag for a
+  moment. The "Start" field under the section toggles takes the offset of the section under the playhead in 1/64 beats
+  (from the found start; for later sections from the detected position or the previous section's start), clamped like
+  a drag; "Find start" works in the first section. The audio before the first beat is
   dimmed in the waveform, is not played and is not exported (the Export pane says how much is left out). Tracks
   saved before this feature are unchanged until their start is found or the first bar is moved.
 * Playback: Rew / FF jump 5 s, the time field takes a time (the mouse wheel nudges by 100 ms), the

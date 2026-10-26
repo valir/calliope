@@ -182,12 +182,13 @@
   side, row 2 is Playback at the full width (Rew, Play/Pause, FF, the time box and the position slider), at the
   bottom where Play is easy to find. There is no master metronome, no global Count In and no Detect button; the
   disabled -/+/Reset BPM placeholders are hidden until that feature exists.
-- Sections group (3 rows). Title row: "Sections", the BPM input with its V box (the section's BPM; the
+- Sections group (4 rows). Title row: "Sections", the BPM input with its V box (the section's BPM; the
   target section is the one selected on the waveform, else the one at the playhead) and the name box (10 rem
-  wide, "Name this section"). Button row: six 48 px buttons, Add (+), Remove (-), x2, /2, "|<" (jump to the section
-  start) and ">|" (jump to its end: the last frame before the next section); each disabled one has a title that says why. Third row: Click
+  wide, "Name this section"). Button row: eight 2.75 rem buttons, Add (+), Remove (-), x2, /2, Prev, "|<" (jump to the
+  section start), ">|" (jump to its end: the last frame before the next section) and Next; each disabled one has a title that says why.
+  Third row: Click
   ("Metronome in this section"), Count In ("Count-in into this section") and the status ("Section 2 of 3 · 93 BPM", or
-  "No tempo"). The message line is an ordinary `min-h-5` span below (single line, truncated with the full text as tooltip);
+  "No tempo"). Fourth row: "Start" [offset field] "/64 beat" the offset's time, then the "Find start" button. The message line is an ordinary `min-h-5` span below (single line, truncated with the full text as tooltip);
   the BPM note can change the height of the BPM group.
 - Section toggles: Click and Count In are filled amber when on. A new tempo map starts with Click on in every
   section and Count In off. Count In is enabled for every section, the first included (a count-in before the
@@ -237,12 +238,14 @@
   the tree folded the pane is 965 px wide, Sections (496 px) and Loops (424 px) share row 1, Playback is the bottom
   row (two lines since the Speed group), and nothing scrolls (overflow 0; target at most 14 px; log
   `overflow=0 width=965 loops_beside=1 sections_w=496 loops_w=424`). Measured positions there (window coordinates):
-  Sections/Loops top edge y 325, Loops lines y 368 / 436 / 503 (Play/Stop x 889, Loop On 981, Count-In 1090,
-  Train... 1194), Rew/Play/FF row y 628, Speed row y 695 (`-` x 451, box 528, `+` 633, Reset 713, readout from 763).
-  With the tree shown (668 px wide) Loops wraps below Sections and the pane scrolls by about 189 px; at 1024x640 it
-  scrolls by about 304 px (tree folded) and 785 px (tree shown, 412 px wide, where the Sections row is clipped on
+  Sections/Loops top edge y 307, Loops lines y 350 / 418 / 485 (Play/Stop x 889, Loop On 981, Count-In 1090,
+  Train... 1194; with the Start row of Sections, task gui-first-beat-tuning; Sections rows y 341 / 394 / 458 / 511, buttons
+  `+ - x2 /2 Prev |< >| Next` at x 373 / 432 / 490 / 548 / 607 / 666 / 724 / 782, Start field x 432, Find start x 694),
+  Rew/Play/FF row y 628, Speed row y 695 (`-` x 451, box 528, `+` 633, Reset 713, readout from 763).
+  With the tree shown (668 px wide) Loops wraps below Sections and the pane scrolls by about 234 px; at 1024x640 it
+  scrolls by about 349 px (tree folded) and 879 px (tree shown, 412 px wide, where the Sections row is clipped on
   the right: the name box and the last button are cut). The groups never overflow sideways except in that last case.
-  The training popover at 1280x800 tree folded is at x 785-1142, y 109-532; at 1024x640 (tree folded or shown, the pane
+  The training popover at 1280x800 tree folded is at x 782-1142, y 86-515; at 1024x640 (tree folded or shown, the pane
   scrolled to its end) at x 283-636, y 15-434: inside the window in all four size/tree cases.
 - (gui-play-backing-track, task 17) Player layout. Left the shared track tree (20 rem, Ctrl+L folds it to
   a rail), right the pane: source row ("Play:" dropdown 15 rem wide, then the title), the dashed
@@ -285,7 +288,17 @@
 - (gui-first-beat) Player waveform: the part before the first beat is dimmed (the background colour at 60 % over
   it). The first bar is drawn like the other bars, also at 0:00, with its BPM label to its right; it is dragged
   and moved by keys like the others, and its readout reads "+N/64 beat (time) from the found start". The "Find
-  start" button sits after the "▶|" (Jump to the end) button in the Sections buttons row, in the same row as
-  the other buttons (a smaller text, so that Sections and Loops stay side by side at 1280x800); its message line
+  start" button sits at the end of the Sections group's fourth row (the Start row, a smaller text, so that Sections and
+  Loops stay side by side at 1280x800) and is disabled outside the first section ("Find start works in the first
+  section"); its message line
   says "Finding the start..." while it runs and then "First beat at 0:01.200" (the time found); errors use the
   destructive text colour.
+- (gui-first-beat-tuning) Keyboard readout: a key on the focused waveform (Left / Right, with Shift) shows the same
+  readout as a drag ("+N/64 beat (time) from the found start", top left of the waveform; in the Editor's Mix waveform
+  too) and keeps it 1.5 s after the last key; it is gone at once on blur. The "Start" field (Sections, row 4) takes the
+  offset of the section under the playhead in 1/64 beats, "+10", "-8" or "10": Enter applies it, clamped like a drag (the
+  field then shows the value really applied), Escape drops the edit, and leaving the field applies it; text that is not
+  a whole number is refused with "Type a whole number of 1/64 beats, like +10 or -8" in the message line (destructive
+  colour) and nothing moves. Prev / Next go to the start of the previous / next section and behave like "|<" while
+  playing (playback goes on, no count-in); Prev is disabled in the first section ("This is the first section") and Next
+  in the last ("This is the last section").

@@ -14,13 +14,13 @@ fn ready() -> bool {
 }
 const BLANK: (i32, i32) = (356, 47);
 const PLAY: (i32, i32) = (477, 629);
-const BPM: (i32, i32) = (534, 359);
+const BPM: (i32, i32) = (534, 341);
 const TIME: (i32, i32) = (669, 628);
-const SEC_CLICK: (i32, i32) = (384, 476);
-const SEC_COUNT_IN: (i32, i32) = (481, 476);
-const LOOP_ADD: (i32, i32) = (1009, 368);
-const MARK_END: (i32, i32) = (1219, 436);
-const LOOP_PLAY: (i32, i32) = (889, 503);
+const SEC_CLICK: (i32, i32) = (384, 458);
+const SEC_COUNT_IN: (i32, i32) = (481, 458);
+const LOOP_ADD: (i32, i32) = (1009, 350);
+const MARK_END: (i32, i32) = (1219, 418);
+const LOOP_PLAY: (i32, i32) = (889, 485);
 
 fn secs(s: u64) -> Duration {
     Duration::from_secs(s)
