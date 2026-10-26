@@ -7,3 +7,5 @@ task 5 | Sections pane: Prev / Next, Start row, Find start rule | implementer | 
 task 6 | Player GUI tests | implementer | done
 task 7 | Editor GUI test | implementer | done
 task 8 | Docs | implementer | done
+tester | 8 vitest acceptance tests, all criteria pass, no defects | tester | done
+reviewer | APPROVED, 5 minors | reviewer | done
