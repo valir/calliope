@@ -392,3 +392,57 @@ fn dejavu_guitar_muted_loses_the_blips() {
     // Still the lost intro and the burst at 37 s, plus the drifts at 149 and 166 s.
     assert!(d.sections.len() <= 12, "{:?}", d.sections);
 }
+
+fn steady(n: usize, first: f64, bpm: f64) -> Vec<f64> {
+    (0..n).map(|k| first + k as f64 * 60.0 / bpm).collect()
+}
+
+#[test]
+fn piece_bpm_steady_and_short() {
+    for n in [11, 5, 4] {
+        let r = piece_bpm(&steady(n, 0.25, 93.4)).unwrap();
+        assert_eq!(r.bpm, 93.4, "{n} beats");
+    }
+    assert_eq!(piece_bpm(&steady(4, 0.25, 120.0)).unwrap().bpm, 120.0);
+    assert_eq!(piece_bpm(&steady(11, 0.25, 93.4)).unwrap().beats, 11);
+}
+
+#[test]
+fn piece_bpm_too_few_and_irregular() {
+    assert_eq!(piece_bpm(&steady(3, 0.25, 120.0)), Err(TOO_FEW.to_string()));
+    assert_eq!(piece_bpm(&[]), Err(TOO_FEW.to_string()));
+    let mut t = vec![0.25];
+    for k in 0..10 {
+        let last = *t.last().unwrap();
+        t.push(last + if k % 2 == 0 { 0.40 } else { 0.70 });
+    }
+    assert_eq!(piece_bpm(&t), Err(NO_STEADY.to_string()));
+}
+
+#[test]
+fn piece_bpm_repairs_a_missed_beat_and_survives_jitter() {
+    let mut t = steady(12, 0.25, 110.0);
+    t.remove(6);
+    let r = piece_bpm(&t).unwrap();
+    assert_eq!((r.bpm, r.beats), (110.0, 12));
+
+    let mut rng = Lcg(7);
+    let j: Vec<f64> = steady(12, 0.25, 100.0)
+        .into_iter()
+        .map(|x| x + rng.next() * 0.005)
+        .collect();
+    let b = piece_bpm(&j).unwrap().bpm;
+    assert!((b - 100.0).abs() <= 0.1, "{b}");
+}
+
+#[test]
+fn piece_bpm_folds_and_cleans() {
+    assert_eq!(piece_bpm(&steady(8, 0.25, 400.0)).unwrap().bpm, 200.0);
+    assert_eq!(piece_bpm(&steady(6, 0.25, 15.0)).unwrap().bpm, 30.0);
+    let mut t = steady(8, 0.25, 90.0);
+    t.reverse();
+    t.push(t[0]);
+    t.push(f64::NAN);
+    t.push(-1.0);
+    assert_eq!(piece_bpm(&t).unwrap().bpm, 90.0);
+}

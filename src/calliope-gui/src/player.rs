@@ -1138,6 +1138,11 @@ pub enum PlayerEvent {
     Closed {
         id: String,
     },
+    /// A Detect BPM run changed phase.
+    BpmDetect {
+        id: String,
+        detect: crate::section_bpm::BpmDetectView,
+    },
 }
 
 pub type EventSink = Arc<dyn Fn(PlayerEvent) + Send + Sync>;

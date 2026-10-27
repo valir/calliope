@@ -39,6 +39,20 @@ const MAX_RULE_ROUNDS: usize = 200;
 pub(crate) const NO_BEAT_ERROR: &str =
     "No steady beat was found in this track; set the tempo by hand";
 
+/// Fewest beats of a piece (one bar of 4/4) that give a BPM.
+pub(crate) const MIN_PIECE_BEATS: usize = 4;
+pub(crate) const TOO_FEW: &str =
+    "Too few beats in this piece to measure the BPM; try another place in the section";
+pub(crate) const NO_STEADY: &str = "No steady beat in this piece; try another place in the section";
+
+/// The one BPM of a short piece (Detect BPM of a section).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PieceBpm {
+    pub bpm: f64,
+    /// Beats used, after the repair.
+    pub beats: usize,
+}
+
 /// One detected section, for the waveform labels and the log.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SectionInfo {
@@ -139,6 +153,25 @@ fn repair(beats: &[f64]) -> Vec<f64> {
         }
     }
     out
+}
+
+/// One BPM from the beats (seconds) of a piece inside one section: isolated missed or double beats
+/// are repaired, every interval must be within `GLITCH_TOL` of the median, and the least-squares
+/// period over all beats is folded into the BPM range and rounded to 0.1.
+pub(crate) fn piece_bpm(beats_s: &[f64]) -> Result<PieceBpm, String> {
+    let t = repair(&clean(beats_s));
+    if t.len() < MIN_PIECE_BEATS {
+        return Err(TOO_FEW.into());
+    }
+    let d: Vec<f64> = t.windows(2).map(|w| w[1] - w[0]).collect();
+    let m = median(&d);
+    if d.iter().any(|x| (x / m - 1.0).abs() > GLITCH_TOL) {
+        return Err(NO_STEADY.into());
+    }
+    Ok(PieceBpm {
+        bpm: quantise(slope(&t, 0, t.len() - 1)).0,
+        beats: t.len(),
+    })
 }
 
 /// Prefix sums of (x = index, y = time detrended by the global period), for O(1) line fits.

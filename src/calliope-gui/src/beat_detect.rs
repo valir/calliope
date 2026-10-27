@@ -138,14 +138,14 @@ impl Drop for PartGuard {
     }
 }
 
-enum Stop {
+pub(crate) enum Stop {
     Cancelled,
     Failed(String),
 }
 
-type R<T> = Result<T, Stop>;
+pub(crate) type R<T> = Result<T, Stop>;
 
-fn client_stop(e: ClientError, url: &str) -> Stop {
+pub(crate) fn client_stop(e: ClientError, url: &str) -> Stop {
     match e {
         ClientError::Cancelled => Stop::Cancelled,
         ClientError::Unreachable(_) => {
@@ -157,6 +157,75 @@ fn client_stop(e: ClientError, url: &str) -> Stop {
             message,
         } => Stop::Failed(format!("The server refused the mix: {message}")),
         other => Stop::Failed(other.to_string()),
+    }
+}
+
+/// Health check: the server must list the beats task.
+pub(crate) fn check_beats_server(client: &StemsClient, url: &str) -> R<()> {
+    let health = client.health().map_err(|e| client_stop(e, url))?;
+    if !StemsClient::supports_beats(&health) {
+        return Err(Stop::Failed(NO_BEATS_TASK.into()));
+    }
+    Ok(())
+}
+
+/// Uploads the part file (removed as soon as it is sent), waits for the tracker and checks the
+/// final state. `on` gets every phase (uploading, waiting, detecting) and progress update; the
+/// caller decides what is a new phase. `server_job` is set once the server has the job, so the
+/// caller can delete it on every exit. Returns the server job id once it is `Done`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn upload_and_wait(
+    client: &StemsClient,
+    url: &str,
+    part: &Path,
+    cancel: &AtomicBool,
+    poll: Duration,
+    stall: Duration,
+    server_job: &mut Option<String>,
+    on: &mut dyn FnMut(DetectPhase, Option<f32>),
+) -> R<String> {
+    let check_cancel = || {
+        if cancel.load(Ordering::SeqCst) {
+            Err(Stop::Cancelled)
+        } else {
+            Ok(())
+        }
+    };
+    on(DetectPhase::Uploading, Some(0.0));
+    let sent = client.submit_beats(part, cancel, |sent, total| {
+        on(
+            DetectPhase::Uploading,
+            Some(sent as f32 / total.max(1) as f32),
+        );
+    });
+    let _ = fs::remove_file(part);
+    let id = sent.map_err(|e| client_stop(e, url))?;
+    *server_job = Some(id.clone());
+    check_cancel()?;
+
+    on(DetectPhase::Waiting, None);
+    let st = client
+        .wait_final(&id, cancel, poll, stall, |st| {
+            if st.state == JobState::Running {
+                on(DetectPhase::Detecting, st.progress.map(|x| x as f32));
+            }
+        })
+        .map_err(|e| client_stop(e, url))?;
+    match st.state {
+        JobState::Done => Ok(id),
+        JobState::Failed => {
+            let m = st
+                .error
+                .map(|m| media::clean_text(&m, 300))
+                .filter(|m| !m.is_empty())
+                .unwrap_or_else(|| "no reason given".into());
+            Err(Stop::Failed(format!(
+                "Beat detection failed on the server: {m}"
+            )))
+        }
+        _ => Err(Stop::Failed(
+            "The job was cancelled on the edge-AI server".into(),
+        )),
     }
 }
 
@@ -191,6 +260,7 @@ struct Reporter<'a> {
     shared: &'a DetectShared,
     sink: &'a EventSink,
     throttle: Throttle,
+    current: Option<DetectPhase>,
 }
 
 impl Reporter<'_> {
@@ -208,9 +278,19 @@ impl Reporter<'_> {
             self.id,
             phase.name()
         );
+        self.current = Some(phase);
         self.throttle = Throttle::new(PROGRESS_INTERVAL);
         self.throttle.allow(Instant::now());
         self.emit(DetectState { phase, progress });
+    }
+
+    /// A phase when it differs from the current one, else a progress update.
+    fn on(&mut self, phase: DetectPhase, progress: Option<f32>) {
+        if self.current == Some(phase) {
+            self.progress(phase, progress);
+        } else {
+            self.phase(phase, progress);
+        }
     }
 
     /// A progress update inside a phase, at most every `PROGRESS_INTERVAL`.
@@ -260,13 +340,11 @@ fn run_inner(
         shared,
         sink,
         throttle: Throttle::new(PROGRESS_INTERVAL),
+        current: None,
     };
 
     rep.phase(DetectPhase::Checking, None);
-    let health = client.health().map_err(|e| client_stop(e, url))?;
-    if !StemsClient::supports_beats(&health) {
-        return Err(Stop::Failed(NO_BEATS_TASK.into()));
-    }
+    check_beats_server(client, url)?;
     check_cancel()?;
 
     rep.phase(DetectPhase::Mixing, Some(0.0));
@@ -282,51 +360,16 @@ fn run_inner(
     })?;
     check_cancel()?;
 
-    rep.phase(DetectPhase::Uploading, Some(0.0));
-    let sent = client.submit_beats(part, cancel, |sent, total| {
-        rep.progress(
-            DetectPhase::Uploading,
-            Some(sent as f32 / total.max(1) as f32),
-        );
-    });
-    let _ = fs::remove_file(part);
-    let id = sent.map_err(|e| client_stop(e, url))?;
-    *server_job = Some(id.clone());
-    check_cancel()?;
-
-    rep.phase(DetectPhase::Waiting, None);
-    let mut last: Option<JobState> = None;
-    let st = client
-        .wait_final(&id, cancel, p.poll, p.stall, |st| {
-            if st.state == JobState::Running {
-                let progress = st.progress.map(|x| x as f32);
-                if last != Some(JobState::Running) {
-                    rep.phase(DetectPhase::Detecting, progress);
-                } else {
-                    rep.progress(DetectPhase::Detecting, progress);
-                }
-            }
-            last = Some(st.state);
-        })
-        .map_err(|e| client_stop(e, url))?;
-    match st.state {
-        JobState::Done => {}
-        JobState::Failed => {
-            let m = st
-                .error
-                .map(|m| media::clean_text(&m, 300))
-                .filter(|m| !m.is_empty())
-                .unwrap_or_else(|| "no reason given".into());
-            return Err(Stop::Failed(format!(
-                "Beat detection failed on the server: {m}"
-            )));
-        }
-        _ => {
-            return Err(Stop::Failed(
-                "The job was cancelled on the edge-AI server".into(),
-            ))
-        }
-    }
+    let id = upload_and_wait(
+        client,
+        url,
+        part,
+        cancel,
+        p.poll,
+        p.stall,
+        server_job,
+        &mut |phase, progress| rep.on(phase, progress),
+    )?;
 
     // From here a cancel is too late: the job ends `Detected`.
     check_cancel()?;
