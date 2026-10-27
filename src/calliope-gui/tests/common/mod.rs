@@ -595,6 +595,23 @@ pub fn start_detect_app(dirs: &Dirs, tracker_mode: &str) -> (App, String) {
     (app, wid)
 }
 
+/// The Player on the `library-player` copy (`player_dirs`) with the capturing fake audio backend
+/// and a calliope-stems server (stub beat tracker in `tracker_mode`, timeout 3 s) in the same
+/// private network namespace as the app (127.0.0.1:8765 inside it, never the real server); opens
+/// the Player (Alt+5). The stub tracker keeps its last input in `stems-work/stub-tracker-last.flac`.
+pub fn start_player_stems(dirs: &Dirs, tracker_mode: &str) -> (App, String) {
+    if !cfg!(feature = "e2e-hooks") {
+        panic!("Player GUI tests need --features e2e-hooks; without it the app would open the real sound device");
+    }
+    std::fs::create_dir_all(dirs.base().join("stems-work")).unwrap();
+    std::fs::create_dir_all(dirs.base().join("home")).unwrap();
+    let (mut app, wid) =
+        start_stems_app(dirs, "ok", tracker_mode, false, &[], Some(dirs.capture()));
+    app.key(&wid, "alt+5");
+    app.wait_view("player");
+    (app, wid)
+}
+
 fn start_stems_app(
     dirs: &Dirs,
     stub_mode: &str,

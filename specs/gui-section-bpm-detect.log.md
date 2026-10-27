@@ -8,3 +8,6 @@ task 6 | IPC commands and registration | implementer | done
 task 7 | Detect status texts | local (duplicate test block removed by the lead) | done
 task 8 | IPC types and player state | implementer | done
 task 9 | The Detect BPM button on the Start row | implementer | done
+task 10 | Headless acceptance tests | implementer | done
+task 11 | Player GUI test and new positions | implementer (message line truncation fix) | done
+task 12 | Docs: README and UI guide | implementer | done

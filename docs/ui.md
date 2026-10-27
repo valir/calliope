@@ -180,15 +180,16 @@
   Escape or clicking away cancels, so nothing is added by accident.
 - The Player's control bar (gui-player-tempo-sections, phase 3) has two rows. Row 1 holds Sections and Loops side by
   side, row 2 is Playback at the full width (Rew, Play/Pause, FF, the time box and the position slider), at the
-  bottom where Play is easy to find. There is no master metronome, no global Count In and no Detect button; the
-  disabled -/+/Reset BPM placeholders are hidden until that feature exists.
+  bottom where Play is easy to find. There is no master metronome and no global Count In; the
+  disabled -/+/Reset BPM placeholders are hidden until that feature exists. The Player has a section Detect BPM
+  on the Start row (the whole-track detection stays in the Editor).
 - Sections group (4 rows). Title row: "Sections", the BPM input with its V box (the section's BPM; the
   target section is the one selected on the waveform, else the one at the playhead) and the name box (10 rem
   wide, "Name this section"). Button row: eight 2.75 rem buttons, Add (+), Remove (-), x2, /2, Prev, "|<" (jump to the
   section start), ">|" (jump to its end: the last frame before the next section) and Next; each disabled one has a title that says why.
   Third row: Click
   ("Metronome in this section"), Count In ("Count-in into this section") and the status ("Section 2 of 3 · 93 BPM", or
-  "No tempo"). Fourth row: "Start" [offset field] "/64 beat" the offset's time, then the "Find start" button. The message line is an ordinary `min-h-5` span below (single line, truncated with the full text as tooltip);
+  "No tempo"). Fourth row: "Start" [offset field] "/64" (`text-sm`, muted, tooltip "1/64 beat") the offset's time (`text-sm`), then the "Find start" button and the "Detect BPM" button (`w-[5.75rem]`, `text-sm`; it reads "Cancel" while a detection runs). The message line is an ordinary `min-h-5` span below (single line, `w-0 min-w-full truncate` so that a long text never widens the group, with the full text as tooltip; the priority is "Finding the start...", then the detecting text, then the error, then the note);
   the BPM note can change the height of the BPM group.
 - Section toggles: Click and Count In are filled amber when on. A new tempo map starts with Click on in every
   section and Count In off. Count In is enabled for every section, the first included (a count-in before the
@@ -240,7 +241,7 @@
   `overflow=0 width=965 loops_beside=1 sections_w=496 loops_w=424`). Measured positions there (window coordinates):
   Sections/Loops top edge y 307, Loops lines y 350 / 418 / 485 (Play/Stop x 889, Loop On 981, Count-In 1090,
   Train... 1194; with the Start row of Sections, task gui-first-beat-tuning; Sections rows y 341 / 394 / 458 / 511, buttons
-  `+ - x2 /2 Prev |< >| Next` at x 373 / 432 / 490 / 548 / 607 / 666 / 724 / 782, Start field x 432, Find start x 694),
+  `+ - x2 /2 Prev |< >| Next` at x 373 / 432 / 490 / 548 / 607 / 666 / 724 / 782, Start field x 432, Find start x 643, Detect BPM x 746),
   Rew/Play/FF row y 628, Speed row y 695 (`-` x 451, box 528, `+` 633, Reset 713, readout from 763).
   With the tree shown (668 px wide) Loops wraps below Sections and the pane scrolls by about 234 px; at 1024x640 it
   scrolls by about 349 px (tree folded) and 879 px (tree shown, 412 px wide, where the Sections row is clipped on
@@ -302,3 +303,17 @@
   colour) and nothing moves. Prev / Next go to the start of the previous / next section and behave like "|<" while
   playing (playback goes on, no count-in); Prev is disabled in the first section ("This is the first section") and Next
   in the last ("This is the last section").
+- (gui-section-bpm-detect) The "Detect BPM" button ends the Start row, after Find start; the row fits at 1280x800 with
+  the unit as "/64" and the time in `text-sm` (measured `overflow=0 width=965 loops_beside=1 sections_w=496
+  loops_w=424`, no fallback needed; the row's other positions did not move, Find start is at x 643 and Detect BPM at
+  x 746, y 511). It acts on the section the pane shows (the one under the playhead, or the one selected on the
+  waveform, from its start) and is never disabled because the playhead is elsewhere. Disabled titles, first that
+  applies: "Type a BPM first", "This track's Player settings are read-only", "Finding the start...". While it runs the
+  same button reads "Cancel" (title "Detecting the BPM...", enabled; the Detect action is unavailable meanwhile) and
+  the message line says "Detecting the BPM from 0:10.5 - 0:17.8..." (with "(waiting for the edge-AI server)" while the
+  server works). The status after a run has three forms: "BPM 100.0 -> 93.4, detected from 0:10.5 - 0:17.7", "BPM 93.4
+  -> 186.8 from 0:10.5 - 0:17.8, about twice: try /2" and "..., about half: try x2" (the real text uses the arrow and
+  the multiplication and division signs). A piece under 1 bar, a server that cannot be reached and "No steady beat" are
+  errors in the message line (destructive colour). Cancel is immediate: the section keeps its BPM and nothing is applied
+  later. A section moved, removed or retyped during the run, or another track opened, drops the result; for an edited
+  section the note says "The section changed during the detection; its BPM was left as it was".

@@ -119,7 +119,7 @@
   <Button
     variant="outline"
     class="h-9 w-[5.75rem] px-1 text-sm"
-    aria-label={pl.detect ? 'Cancel the BPM detection' : 'Detect the BPM of the section from 3 bars at the playhead'}
+    aria-label={pl.detect ? 'Cancel the BPM detection' : 'Detect the BPM of this section from 3 bars'}
     disabled={pl.detect ? false : noDetect}
     title={detectTitle}
     data-testid="detect-bpm"

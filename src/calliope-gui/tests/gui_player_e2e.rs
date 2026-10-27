@@ -62,7 +62,9 @@ const WAVE_SECTION0: (i32, i32) = (450, 252);
 const WAVE_SECTION1: (i32, i32) = (1000, 252);
 const WAVE_LABEL0: (i32, i32) = (370, 286);
 const REW: (i32, i32) = (400, 629);
-const FIND_START: (i32, i32) = (694, 511);
+const FIND_START: (i32, i32) = (643, 511);
+const SEC_DETECT: (i32, i32) = (746, 511);
+const SEC_HALVE: (i32, i32) = (549, 394);
 
 fn secs(s: u64) -> Duration {
     Duration::from_secs(s)
@@ -1868,6 +1870,310 @@ fn player_first_beat_tuning() {
     jump_while_playing(&mut app, &wid, &cap, SEC_START, "|<");
 
     // 11. The layout again.
+    assert_tuning_layout(&app);
+    finish(&app);
+}
+
+// ------------------------------------------------------------------ Detect BPM (gui-section-bpm-detect)
+
+/// Track 304 ("With Tempo": backing 330 Hz, vocals 440 Hz, guitar 660 Hz, 22 050 Hz): a Click-on 100 BPM
+/// section at 500 ms and a 120 BPM one at 17 800 ms, the backing selected.
+fn detect_dirs(test: &str) -> Dirs {
+    let dirs = player_dirs(test);
+    std::fs::write(
+        dirs.player_json(PL_TEMPO),
+        r#"{"schema_version":7,"source":"backing:backing","tempo":{"beats_per_bar":4,"segments":[{"start_ms":500,"bpm":100,"found_ms":500,"metronome":true},{"start_ms":17800,"bpm":120,"detected_ms":17800,"metronome":false}]}}"#,
+    )
+    .unwrap();
+    dirs
+}
+
+/// Enters `time` in the position field and waits for the seek.
+fn go_to(app: &mut App, wid: &str, time: &str) {
+    app.skip_seen();
+    enter(app, wid, TIME, time);
+    app.wait_contains("player seek position=");
+}
+
+/// Clicks the Detect BPM button and returns the backend's start line (or the refusal).
+fn press_detect(app: &mut App, wid: &str) -> String {
+    app.skip_seen();
+    at(app, wid, SEC_DETECT);
+    app.wait_line(
+        |l| {
+            l.contains("calliope: player detect refused")
+                || (l.contains("calliope: player detect id=") && l.contains("from_ms="))
+        },
+        secs(10),
+    )
+}
+
+/// The wait for the `player detected` line of the run, then the frontend's line for it.
+fn detected(app: &mut App) -> String {
+    let l = app.wait_line(|l| l.contains("calliope: player detected id="), secs(15));
+    app.wait_line(
+        |l| l.contains("calliope-ui: player detected index="),
+        secs(10),
+    );
+    l
+}
+
+fn wait_phase_uploading(app: &mut App) {
+    app.wait_line(
+        |l| {
+            l.contains("calliope: player detect id=")
+                && ["phase=uploading", "phase=waiting", "phase=detecting"]
+                    .iter()
+                    .any(|p| l.contains(p))
+        },
+        secs(10),
+    );
+}
+
+fn posts(dirs: &Dirs) -> usize {
+    dirs.stems_log()
+        .lines()
+        .filter(|l| l.contains("method=POST") && l.contains("path=/v1/beats"))
+        .count()
+}
+
+fn bpm0(v: &Value) -> Option<f64> {
+    v["tempo"]["segments"][0]["bpm"].as_f64()
+}
+
+/// What the stub tracker was sent last: (seconds, 330 Hz power, 660 Hz power).
+fn last_piece(dirs: &Dirs) -> (f64, f64, f64) {
+    let pcm = decode(&dirs.base().join("stems-work/stub-tracker-last.flac"));
+    let rate = 22050.0;
+    (
+        pcm.len() as f64 / 2.0 / rate,
+        tone_power(&pcm, rate, 330.0),
+        tone_power(&pcm, rate, 660.0),
+    )
+}
+
+/// Detect BPM on the Start row: the piece, the source, the result and its texts, Cancel, the
+/// result dropped by a removed section or another track, and a detection while playing with the Click on.
+#[test]
+#[ignore]
+fn player_section_bpm_detect() {
+    if !ready() {
+        return;
+    }
+    let dirs = detect_dirs("player_section_bpm_detect");
+    let (mut app, wid) = start_player_stems(&dirs, "bpm:93.4");
+    let mut collapsed = false;
+    pick(&mut app, &wid, &mut collapsed, "with tempo", PL_TEMPO);
+    let cap = dirs.capture();
+
+    // 1. The new button fits at 1280x800.
+    ms(1000);
+    assert_tuning_layout(&app);
+    shot("player-detect");
+
+    // 2. 7.2 s from the playhead, the backing; 93.4 BPM applied to section 0 only.
+    go_to(&mut app, &wid, "0:10.5");
+    let l = press_detect(&mut app, &wid);
+    assert!(
+        l.contains("index=0 source=backing:backing from_ms=10500 to_ms=17700"),
+        "{l}"
+    );
+    let l = detected(&mut app);
+    assert!(l.contains("new=93.4 hint=none applied=true"), "{l}");
+    let v = wait_json(&dirs, PL_TEMPO, |v| bpm0(v) == Some(93.4));
+    assert_eq!(
+        v["tempo"]["segments"][0]["start_ms"].as_f64(),
+        Some(500.0),
+        "{v}"
+    );
+    assert_eq!(
+        v["tempo"]["segments"][0]["found_ms"].as_f64(),
+        Some(500.0),
+        "{v}"
+    );
+    assert_eq!(
+        v["tempo"]["segments"][1]["start_ms"].as_f64(),
+        Some(17800.0),
+        "{v}"
+    );
+    assert_eq!(
+        v["tempo"]["segments"][1]["bpm"].as_f64(),
+        Some(120.0),
+        "{v}"
+    );
+    let (secs_sent, p330, p660) = last_piece(&dirs);
+    assert!(
+        (secs_sent - 7.2).abs() < 2.0 / 22050.0 + 0.001,
+        "{secs_sent} s sent"
+    );
+    assert!(db(p330, p660) >= 20.0, "330={p330} 660={p660}");
+    let parts: Vec<_> = std::fs::read_dir(dirs.track_dir(PL_TEMPO))
+        .unwrap()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(".calliope-beats-")
+        })
+        .collect();
+    assert!(parts.is_empty(), "left over: {parts:?}");
+    ms(300);
+    shot("player-detect-done");
+
+    // 3. Stops at the section's end.
+    go_to(&mut app, &wid, "0:14.8");
+    let l = press_detect(&mut app, &wid);
+    assert!(l.contains("from_ms=14800 to_ms=17800"), "{l}");
+    detected(&mut app);
+    let (secs_sent, ..) = last_piece(&dirs);
+    assert!((secs_sent - 3.0).abs() < 0.001, "{secs_sent} s sent");
+
+    // 4. Less than a bar before the end: refused, the server not called, nothing saved.
+    go_to(&mut app, &wid, "0:17.0");
+    ms(700);
+    let (before, saved) = (
+        posts(&dirs),
+        std::fs::read(dirs.player_json(PL_TEMPO)).unwrap(),
+    );
+    let l = press_detect(&mut app, &wid);
+    assert!(
+        l.contains("refused") && l.contains("reason=too-short"),
+        "{l}"
+    );
+    app.wait_contains("calliope-ui: player detect error");
+    ms(500);
+    assert_eq!(posts(&dirs), before, "the server was called");
+    assert_eq!(std::fs::read(dirs.player_json(PL_TEMPO)).unwrap(), saved);
+    shot("player-detect-short");
+
+    // 5. The selected source (Guitar), a result about twice the old one.
+    set_tracker_mode(&dirs, "bpm:186.8");
+    choose_source(&app, &wid, 2);
+    app.wait_contains("player source key=stem:guitar");
+    go_to(&mut app, &wid, "0:10.5");
+    let l = press_detect(&mut app, &wid);
+    assert!(l.contains("source=stem:guitar"), "{l}");
+    let l = detected(&mut app);
+    assert!(l.contains("new=186.8 hint=double applied=true"), "{l}");
+    wait_json(&dirs, PL_TEMPO, |v| bpm0(v) == Some(186.8));
+    let (_, p330, p660) = last_piece(&dirs);
+    assert!(db(p660, p330) >= 20.0, "330={p330} 660={p660}");
+    ms(300);
+    shot("player-detect-double");
+    at(&app, &wid, SEC_HALVE);
+    wait_json(&dirs, PL_TEMPO, |v| bpm0(v) == Some(93.4));
+
+    // 6. No steady beat: a message, the BPM stays.
+    set_tracker_mode(&dirs, "irregular");
+    press_detect(&mut app, &wid);
+    let l = app.wait_line(|l| l.contains("calliope: player detect failed"), secs(15));
+    assert!(l.contains("message=No steady beat"), "{l}");
+    ms(1000);
+    assert_eq!(bpm0(&wait_json(&dirs, PL_TEMPO, |_| true)), Some(93.4));
+    shot("player-detect-failed");
+
+    // 7. Cancel while it runs.
+    set_tracker_mode(&dirs, "slow-bpm:150");
+    press_detect(&mut app, &wid);
+    wait_phase_uploading(&mut app);
+    shot("player-detect-running");
+    app.skip_seen();
+    at(&app, &wid, SEC_DETECT);
+    let l = app.wait_line(
+        |l| l.contains("calliope: player detect cancelled"),
+        secs(10),
+    );
+    assert!(l.contains("reason=button"), "{l}");
+    ms(4000);
+    assert_eq!(
+        app.count("applied=true"),
+        3,
+        "only the three earlier results"
+    );
+    assert_eq!(bpm0(&wait_json(&dirs, PL_TEMPO, |_| true)), Some(93.4));
+    shot("player-detect-cancelled");
+
+    // 8. The section is removed during the run: the result is dropped.
+    go_to(&mut app, &wid, "0:17.9");
+    press_detect(&mut app, &wid);
+    wait_phase_uploading(&mut app);
+    app.skip_seen();
+    at(&app, &wid, SEC_REMOVE);
+    app.wait_contains("calliope: player section remove id=");
+    let l = app.wait_line(|l| l.contains("calliope: player detected id="), secs(15));
+    assert!(l.contains("applied=false reason=changed"), "{l}");
+    let v = wait_json(&dirs, PL_TEMPO, |v| {
+        v["tempo"]["segments"]
+            .as_array()
+            .is_some_and(|s| s.len() == 1)
+    });
+    assert_eq!(bpm0(&v), Some(93.4), "{v}");
+
+    // 9. Playing with the Click on: the clicks follow the new BPM, the tone and the transport go on.
+    set_tracker_mode(&dirs, "bpm:120");
+    go_to(&mut app, &wid, "0:02.0");
+    let m = mark(&app, &cap);
+    let stops = app.count("calliope: player transport playing=false");
+    app.skip_seen();
+    at(&app, &wid, PLAY);
+    app.wait_contains("player play");
+    let rate = rate_of(&app);
+    ms(1500);
+    press_detect(&mut app, &wid);
+    let l = detected(&mut app);
+    assert!(l.contains("new=120 ") && l.contains("applied=true"), "{l}");
+    ms(2000);
+    let end_stops = app.count("calliope: player transport playing=false");
+    at(&app, &wid, PLAY);
+    app.wait_contains("player pause");
+    assert_eq!(end_stops, stops, "playback stopped");
+    let heard = since(&app, &cap, m);
+    let on = click_onsets_ms(&heard, rate);
+    let gaps: Vec<f64> = on.windows(2).map(|w| w[1] - w[0]).collect();
+    let near = |g: f64, want: f64| (g - want).abs() <= 3.0;
+    let old = gaps.iter().take_while(|g| near(**g, 642.0)).count();
+    let new = gaps.iter().rev().take_while(|g| near(**g, 500.0)).count();
+    assert!(old >= 1 && new >= 2, "click gaps {gaps:?} (onsets {on:?})");
+    assert!(gaps.len() - old - new <= 1, "click gaps {gaps:?}");
+    // the tone goes on through the edit
+    let w = (rate / 100.0) as usize;
+    let left: Vec<f32> = heard.chunks_exact(2).map(|c| c[0]).collect();
+    // (the first 0.2 s and the pause at the end are left out)
+    let rms: Vec<f32> = left[(rate / 5.0) as usize..left.len() - (rate / 5.0) as usize]
+        .chunks_exact(w)
+        .map(|c| (c.iter().map(|v| v * v).sum::<f32>() / w as f32).sqrt())
+        .collect();
+    let mut sorted = rms.clone();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let median = sorted[sorted.len() / 2];
+    let low: Vec<usize> = (0..rms.len()).filter(|&i| rms[i] < 0.5 * median).collect();
+    assert!(
+        low.is_empty(),
+        "a gap in the tone: windows {low:?} of {} (median {median})",
+        rms.len()
+    );
+    wait_json(&dirs, PL_TEMPO, |v| bpm0(v) == Some(120.0));
+
+    // 10. Another track opened during a run: the result is dropped.
+    set_tracker_mode(&dirs, "slow-bpm:150");
+    go_to(&mut app, &wid, "0:10.5");
+    press_detect(&mut app, &wid);
+    wait_phase_uploading(&mut app);
+    pick(&mut app, &wid, &mut collapsed, "practice song", PL_PRACTICE);
+    assert_eq!(
+        app.count("calliope: player detect cancelled"),
+        2,
+        "the run is cancelled by the other track"
+    );
+    assert_eq!(app.count("reason=closed"), 1);
+    ms(4000);
+    assert_eq!(app.count("applied=true"), 4, "the run was dropped");
+    pick(&mut app, &wid, &mut collapsed, "with tempo", PL_TEMPO);
+    let v = wait_json(&dirs, PL_TEMPO, |_| true);
+    assert_eq!(bpm0(&v), Some(120.0), "{v}");
+
+    // 11. Still fits.
+    ms(1000);
     assert_tuning_layout(&app);
     finish(&app);
 }

@@ -144,5 +144,5 @@
     <span class="min-w-0 max-w-full text-base tabular-nums" data-testid="section-status">{status}</span>
   </div>
   <SectionOffset {target} />
-  <span class="min-h-5 min-w-0 truncate text-sm {pl.sectionError ? 'text-destructive' : 'text-muted-foreground'}" role={pl.sectionError ? 'alert' : undefined} title={message || undefined} data-testid="section-message">{pl.findingStart ? 'Finding the start...' : pl.detect ? detectRunning(pl.detect) : message}</span>
+  <span class="min-h-5 w-0 min-w-full truncate text-sm {pl.sectionError ? 'text-destructive' : 'text-muted-foreground'}" role={pl.sectionError ? 'alert' : undefined} title={message || undefined} data-testid="section-message">{pl.findingStart ? 'Finding the start...' : pl.detect ? detectRunning(pl.detect) : message}</span>
 </div>

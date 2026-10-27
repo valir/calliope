@@ -150,6 +150,12 @@ Ctrl+L folds it to a narrow rail).
   a drag; "Find start" works in the first section. The audio before the first beat is
   dimmed in the waveform, is not played and is not exported (the Export pane says how much is left out). Tracks
   saved before this feature are unchanged until their start is found or the first bar is moved.
+* Detect BPM (on the Start row, after "Find start"): sends up to 3 bars from the playhead to the end of the section
+  the pane shows (the one under the playhead, or the one selected on the waveform, from its start), from the source
+  selected in the dropdown, to the edge-AI server and sets the section's BPM to the result (playback goes on; the
+  button reads "Cancel" while it runs and Cancel stops it; an edit of the section meanwhile drops the result). Less
+  than 1 bar is refused. The status gives the old and the new BPM and the time range used; when the result is about
+  twice or half the old BPM, it suggests /2 or x2.
 * Playback: Rew / FF jump 5 s, the time field takes a time (the mouse wheel nudges by 100 ms), the
   slider seeks.
 * Loops: "+" starts a loop at the position and ends it where the next tempo section starts (or at the end of
