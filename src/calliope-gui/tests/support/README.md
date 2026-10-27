@@ -61,5 +61,8 @@ line of a `stub-tracker-mode` file in the current directory (or two levels up), 
 | `slow` | 1 s before each progress line, then as `ok` |
 | `hang` | sleeps until killed |
 | `bad-output` | writes `not json` |
+| `bpm:<v>` | steady `<v>` BPM (10-400) from 0.25 s |
+| `slow-bpm:<v>` | 1 s before each progress line, then as `bpm:<v>` |
+| `irregular` | alternating 0.40 s / 0.70 s intervals from 0.25 s |
 
-`$STUB_TRACKER_LOG` gets one tab-separated argv line per run.
+`$STUB_TRACKER_LOG` gets one tab-separated argv line per run. When the mode comes from a `stub-tracker-mode` file, the input is copied to `stub-tracker-last.flac` next to it (each run overwrites it).

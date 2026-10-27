@@ -16,16 +16,24 @@ levels up, else "ok":
   slow        1 s before each progress line, then as ok
   hang        sleep until killed
   bad-output  writes "not json"
+  bpm:<v>     steady <v> BPM (10-400) from 0.25 s
+  slow-bpm:<v> 1 s before each progress line, then as bpm:<v>
+  irregular   alternating 0.40 s / 0.70 s intervals from 0.25 s
+
+When the mode comes from a `stub-tracker-mode` file, the input is copied to `stub-tracker-last.flac`
+next to it (each run overwrites it).
+
 Downbeats are every 4th beat from the first. Prints `progress 0.5` and `progress 1`.
 $STUB_TRACKER_LOG, if set, gets the argv (one line, tab separated) appended.
 """
 import json
 import os
+import shutil
 import struct
 import sys
 import time
 
-MODES = ("ok", "steady", "bar-end", "few", "fail", "slow", "hang", "bad-output")
+MODES = ("ok", "steady", "bar-end", "few", "fail", "slow", "hang", "bad-output", "irregular")
 
 
 def duration_s(path):
@@ -44,14 +52,14 @@ def duration_s(path):
 def read_mode():
     mode = os.environ.get("STUB_TRACKER_MODE", "")
     if mode:
-        return mode
+        return mode, None
     cwd = os.getcwd()
     for d in (cwd, os.path.dirname(os.path.dirname(cwd))):
         p = os.path.join(d, "stub-tracker-mode")
         if os.path.isfile(p):
             with open(p) as f:
-                return f.readline().strip() or "ok"
-    return "ok"
+                return f.readline().strip() or "ok", d
+    return "ok", None
 
 
 def run(d, start, step):
@@ -63,18 +71,42 @@ def run(d, start, step):
     return out
 
 
+def bpm_of(mode):
+    """The tempo of a `bpm:<v>` / `slow-bpm:<v>` mode, None when it is not one (or not in 10..400)."""
+    kind, _, v = mode.partition(":")
+    if kind not in ("bpm", "slow-bpm"):
+        return None
+    try:
+        v = float(v)
+    except ValueError:
+        return None
+    return v if 10 <= v <= 400 else None
+
+
 def make_beats(mode, d):
     if mode == "ok":
         bars = max(0, int((d / 2 - 0.5) // 2))  # whole 2 s bars with 0.5 + 2n <= D/2
         first = [0.5 + 0.5 * i for i in range(4 * bars)]
         return first + run(d, 0.5 + 2.0 * bars, 60.0 / 90)
-    if mode == "steady":
+    elif mode == "steady":
         return run(d, 0.5, 0.5)
-    if mode == "bar-end":
+    elif mode == "bar-end":
         bars = max(1, int((d - 0.5) // 2))
         first = [0.5 + 0.5 * i for i in range(4 * (bars - 1))]
         return first + run(d, 0.5 + 2.0 * (bars - 1), 1.0)
-    return [0.5, 1.0, 1.5]  # few
+    elif mode == "few":
+        return [0.5, 1.0, 1.5]
+    elif bpm_of(mode) is not None:
+        return run(d, 0.25, 60.0 / bpm_of(mode))
+    elif mode == "irregular":
+        times, t, i = [], 0.25, 0
+        intervals = [0.40, 0.70]
+        while t < d:
+            times.append(t)
+            t += intervals[i % 2]
+            i += 1
+        return times
+    return [0.5, 1.0, 1.5]
 
 
 def main():
@@ -86,8 +118,8 @@ def main():
     if log:
         with open(log, "a") as f:
             f.write("\t".join(sys.argv[1:]) + "\n")
-    mode = read_mode()
-    if mode not in MODES:
+    mode, folder = read_mode()
+    if mode not in MODES and bpm_of(mode) is None:
         print(f"stub-beat-tracker: unknown mode '{mode}'", file=sys.stderr)
         return 64
     if mode == "fail":
@@ -101,8 +133,10 @@ def main():
         print("stub-beat-tracker: input not found", file=sys.stderr)
         return 2
     os.makedirs(out, exist_ok=True)
+    if folder:
+        shutil.copyfile(inp, os.path.join(folder, "stub-tracker-last.flac"))
     for p in ("0.5", "1"):
-        if mode == "slow":
+        if mode == "slow" or mode.startswith("slow-bpm:"):
             time.sleep(1)
         print(f"progress {p}", flush=True)
     path = os.path.join(out, "beats.json")
