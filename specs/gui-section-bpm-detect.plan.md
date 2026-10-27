@@ -67,10 +67,10 @@ end, the piece is those 3 s (≥ 2.4 s, so it is accepted). At 1 s before the en
 
 ### 2.3 One BPM from the beats (requirement 3)
 
-`tempo_detect::piece_bpm(beats_s: &[f64]) -> Result<PieceBpm { bpm: f64, beats: usize }, String>`:
+`tempo_detect::piece_bpm(beats_s: &[f64], beats_per_bar: u32) -> Result<PieceBpm { bpm: f64, beats: usize }, String>`:
 
 1. `t = repair(&clean(beats_s))`.
-2. If `t.len() < 4` (`MIN_PIECE_BEATS`, one bar of 4/4): return `Err(TOO_FEW)`.
+2. If `t.len() < min_piece_beats(beats_per_bar)` (one bar: `beats_per_bar` clamped to 3..=4): return `Err(TOO_FEW)`.
    TOO_FEW = "Too few beats in this piece to measure the BPM; try another place in the section".
 3. `d` = the intervals and `m = median(d)`. If any interval is outside `±GLITCH_TOL` (15 %) of `m`: return
    `Err(NO_STEADY)`. NO_STEADY = "No steady beat in this piece; try another place in the section".
@@ -367,7 +367,7 @@ Every task follows these rules:
 - files: `src/tempo_detect.rs`, `src/tempo_detect_tests.rs`.
 - does: §2.3:
   - `pub(crate) struct PieceBpm { pub bpm: f64, pub beats: usize }`;
-  - `pub(crate) const MIN_PIECE_BEATS: usize = 4`;
+  - `pub(crate) fn min_piece_beats(beats_per_bar: u32) -> usize` (clamp 3..=4);
   - `pub(crate) const TOO_FEW`, `pub(crate) const NO_STEADY` with the texts of §2.3;
   - `pub(crate) fn piece_bpm(beats_s: &[f64]) -> Result<PieceBpm, String>` reusing `clean`, `repair`, `median`, `slope`
     and `quantise`.

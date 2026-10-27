@@ -39,8 +39,10 @@ const MAX_RULE_ROUNDS: usize = 200;
 pub(crate) const NO_BEAT_ERROR: &str =
     "No steady beat was found in this track; set the tempo by hand";
 
-/// Fewest beats of a piece (one bar of 4/4) that give a BPM.
-pub(crate) const MIN_PIECE_BEATS: usize = 4;
+/// Fewest beats of a piece that give a BPM: one bar, at most 4 (4/4), at least 3 (3/4).
+pub(crate) fn min_piece_beats(beats_per_bar: u32) -> usize {
+    (beats_per_bar as usize).clamp(3, 4)
+}
 pub(crate) const TOO_FEW: &str =
     "Too few beats in this piece to measure the BPM; try another place in the section";
 pub(crate) const NO_STEADY: &str = "No steady beat in this piece; try another place in the section";
@@ -158,9 +160,9 @@ fn repair(beats: &[f64]) -> Vec<f64> {
 /// One BPM from the beats (seconds) of a piece inside one section: isolated missed or double beats
 /// are repaired, every interval must be within `GLITCH_TOL` of the median, and the least-squares
 /// period over all beats is folded into the BPM range and rounded to 0.1.
-pub(crate) fn piece_bpm(beats_s: &[f64]) -> Result<PieceBpm, String> {
+pub(crate) fn piece_bpm(beats_s: &[f64], beats_per_bar: u32) -> Result<PieceBpm, String> {
     let t = repair(&clean(beats_s));
-    if t.len() < MIN_PIECE_BEATS {
+    if t.len() < min_piece_beats(beats_per_bar) {
         return Err(TOO_FEW.into());
     }
     let d: Vec<f64> = t.windows(2).map(|w| w[1] - w[0]).collect();

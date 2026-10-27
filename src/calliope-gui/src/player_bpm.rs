@@ -62,7 +62,13 @@ impl PlayerManager {
             Some(s) if s.id == id => s,
             _ => return Err(format!("no player session for {id}")),
         };
-        if s.state.tempo.is_empty() {
+        if s.state.tempo.is_empty()
+            || s.state
+                .tempo
+                .segments
+                .get(index)
+                .is_some_and(|g| g.bpm <= 0.0)
+        {
             return refuse(id, "no-tempo", "Type a BPM first");
         }
         if s.state.read_only {
@@ -123,6 +129,7 @@ impl PlayerManager {
                 pcm: s.pcm.clone(),
                 from_f,
                 to_f,
+                beats_per_bar: s.state.tempo.beats_per_bar,
                 params,
             },
             shared.clone(),

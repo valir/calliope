@@ -85,6 +85,10 @@ let generation = 0;
 let sessionOpen = false;
 let key: string | null | undefined = undefined;
 let lastReadout = '';
+/** A Detect BPM start is in flight (its reply is not here yet); its result event may come first. */
+let detectStarting = false;
+/** Serial of the last run whose result event came; a start reply for it or an older run is stale. */
+let lastFinished = 0;
 const OPEN_ATTEMPTS = 3;
 
 function resetFields(): void {
@@ -103,6 +107,8 @@ function resetFields(): void {
   pl.sectionNote = '';
   pl.findingStart = false;
   pl.detect = null;
+  detectStarting = false;
+  lastFinished = 0;
   pl.nameEdit = null;
   pl.offsetEdit = null;
   movePending = null;
@@ -301,7 +307,8 @@ function onEvent(gen: number, e: PlayerEvent): void {
       break;
     case 'bpm-detected': {
       const r = e.result;
-      const mine = pl.detect?.serial === r.serial;
+      const mine = pl.detect?.serial === r.serial || (detectStarting && !pl.detect);
+      lastFinished = Math.max(lastFinished, r.serial);
       if (r.outcome === 'applied') {
         // The backend state changed, whichever run this was.
         if (e.snapshot) applySnapshot(e.snapshot);
@@ -574,20 +581,25 @@ export async function detectBpm(): Promise<void> {
   const id = pl.trackId;
   const index = targetSection();
   const at = index === null ? null : startOf(index);
-  if (pl.status !== 'active' || !id || index === null || at === null || pl.detect) return;
+  if (pl.status !== 'active' || !id || index === null || at === null || pl.detect || detectStarting) return;
   if ((pl.snap?.tempo.segments[0]?.bpm ?? 0) <= 0 || pl.snap?.read_only) return;
   const gen = generation;
   pl.sectionError = '';
   pl.sectionNote = '';
   log(`player detect start index=${index}`);
+  detectStarting = true;
   try {
     const s = await playerDetectBpm(id, index, at);
     if (gen !== generation) return;
+    // The result event may have come before this reply: its snapshot is newer, keep it.
+    if (s.bpm_detect && s.bpm_detect.serial <= lastFinished) return;
     applySnapshot(s);
   } catch (err) {
     if (gen !== generation) return;
     pl.sectionError = clean(err);
     log(`player detect error message=${pl.sectionError}`);
+  } finally {
+    detectStarting = false;
   }
 }
 

@@ -131,6 +131,7 @@ fn job(url: &str, dir: &Path, pcm: &Arc<Pcm>) -> BpmJob {
         pcm: pcm.clone(),
         from_f: FROM,
         to_f: TO,
+        beats_per_bar: 4,
         params: BpmParams {
             url: url.into(),
             poll: Duration::from_millis(50),

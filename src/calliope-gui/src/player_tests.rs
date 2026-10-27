@@ -3060,6 +3060,11 @@ fn bpm_detect_refusals_start_nothing() {
         "This track's Player settings were written by a newer Calliope; they can't be changed",
     );
 
+    // a section with BPM 0 is "no tempo", not "too short"
+    let (_t0, spec0, mut m0, _b0, _e0) = with_tempo_opened();
+    m0.session.as_mut().unwrap().state.tempo.segments[0].bpm = 0.0;
+    refused(&mut m0, &spec0.id, 0, 500.0, &url, "Type a BPM first");
+
     // busy, blank URL, stale
     let (_t3, spec3, mut m3, _b3, _e3) = with_tempo_opened();
     assert!(!m3.snapshot(&spec3.id).unwrap().read_only);

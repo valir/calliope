@@ -216,6 +216,8 @@ pub struct BpmJob {
     pub pcm: Arc<Pcm>,
     pub from_f: u64,
     pub to_f: u64,
+    /// The section map's beats per bar (sets the fewest beats of the piece).
+    pub beats_per_bar: u32,
     pub params: BpmParams,
 }
 
@@ -362,7 +364,7 @@ fn run_inner(
     let beats = client
         .fetch_beats(&id, duration_s)
         .map_err(|e| client_stop(e, url))?;
-    let piece = tempo_detect::piece_bpm(&beats.beats).map_err(Stop::Failed)?;
+    let piece = tempo_detect::piece_bpm(&beats.beats, job.beats_per_bar).map_err(Stop::Failed)?;
     Ok((piece.bpm, piece.beats))
 }
 

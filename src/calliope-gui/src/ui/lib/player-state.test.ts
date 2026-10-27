@@ -300,11 +300,37 @@ describe('player sections', () => {
       expect(pl.sectionError).toBe('No beats found');
       expect(pl.snap?.tempo.segments.map((g) => g.bpm)).toEqual([100, 120, 90]);
       expect(logs()).toContain('player detect error message=No beats found');
+      handlers.player_detect_bpm = (a) => running(a.id as string, view(2));
       await detectBpm();
-      send({ kind: 'bpm-detected', id: practice.id, result: result({ outcome: 'dropped', new_bpm: null, message: 'The section changed' }), snapshot: null });
+      send({ kind: 'bpm-detected', id: practice.id, result: result({ serial: 2, outcome: 'dropped', new_bpm: null, message: 'The section changed' }), snapshot: null });
       expect(pl.detect).toBeNull();
       expect(pl.sectionNote).toBe('The section changed');
       expect(logs()).toContain('player detect dropped index=1');
+    });
+
+    it('a result event before the start reply is kept and the stale start snapshot is ignored', async () => {
+      await open();
+      selectSection(1);
+      let release!: (s: PlayerSnapshot) => void;
+      handlers.player_detect_bpm = () => new Promise((res) => { release = res; });
+      let p = detectBpm();
+      send({ kind: 'bpm-detected', id: practice.id, result: result({ outcome: 'failed', new_bpm: null, message: 'No beats found' }), snapshot: null });
+      release(running(practice.id));
+      await p;
+      expect(pl.detect).toBeNull();
+      expect(pl.sectionError).toBe('No beats found');
+      expect(logs()).toContain('player detect error message=No beats found');
+
+      handlers.player_detect_bpm = () => new Promise((res) => { release = res; });
+      p = detectBpm();
+      const after = withSegs(practice.id, [seg(0, 100), seg(2000, 93.4), seg(5000, 90)]);
+      send({ kind: 'bpm-detected', id: practice.id, result: result({ serial: 2 }), snapshot: after });
+      release(running(practice.id, view(2)));
+      await p;
+      expect(pl.detect).toBeNull();
+      expect(pl.snap?.tempo.segments[1].bpm).toBe(93.4);
+      expect(pl.sectionError).toBe('');
+      expect(pl.sectionNote).toBe('BPM 120.0 → 93.4, detected from 0:10.5 – 0:17.7');
     });
 
     it('a refused start sets sectionError and no run', async () => {
