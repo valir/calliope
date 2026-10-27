@@ -14,3 +14,4 @@ task 12 | Docs: README and UI guide | implementer | done
 tester | 10 more acceptance tests (ac11-ac20), no defects | tester | done
 reviewer | APPROVED, 2 minors, 2 nits | reviewer | done
 fix round 1 | early result event kept, BPM 0 refused as no tempo, 3-beat minimum in 3/4 | implementer | done
+reviewer (fix round 1) | APPROVED, plan text fixed | reviewer | done

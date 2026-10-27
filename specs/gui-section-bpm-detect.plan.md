@@ -369,11 +369,12 @@ Every task follows these rules:
   - `pub(crate) struct PieceBpm { pub bpm: f64, pub beats: usize }`;
   - `pub(crate) fn min_piece_beats(beats_per_bar: u32) -> usize` (clamp 3..=4);
   - `pub(crate) const TOO_FEW`, `pub(crate) const NO_STEADY` with the texts of §2.3;
-  - `pub(crate) fn piece_bpm(beats_s: &[f64]) -> Result<PieceBpm, String>` reusing `clean`, `repair`, `median`, `slope`
+  - `pub(crate) fn piece_bpm(beats_s: &[f64], beats_per_bar: u32) -> Result<PieceBpm, String>` reusing `clean`, `repair`, `median`, `slope`
     and `quantise`.
 - tests:
   - Steady 93.4 BPM: 11 beats from 0.25 s gives 93.4, and so do 5 beats.
-  - 4 beats at 120 BPM give 120.0. 3 beats give `TOO_FEW`, and an empty list gives `TOO_FEW`.
+  - 4 beats at 120 BPM give 120.0. In 4/4, 3 beats give `TOO_FEW` (in 3/4 they are enough), and an empty list gives
+    `TOO_FEW`.
   - Alternating 0.40 / 0.70 s gives `NO_STEADY`.
   - One missed beat inside 12 beats is repaired and the result is the right BPM.
   - Jitter of ±5 ms on 12 beats at 100 BPM gives 100.0 (± 0.1).
