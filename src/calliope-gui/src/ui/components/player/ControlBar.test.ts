@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import type { Channel } from '@tauri-apps/api/core';
 import PlayerPane from './PlayerPane.svelte';
-import { pl, resetPlayer, syncSelection } from '$lib/player-state.svelte';
+import { pl, resetPlayer, selectSection, syncSelection } from '$lib/player-state.svelte';
 import { resetLibrary } from '$lib/library-state.svelte';
 import { PLAYER_FIXTURE_TRACKS } from '$lib/fixture-tracks';
 import type { PlayerEvent, PlayerLoop, PlayerSnapshot, PlayerTransport } from '$lib/ipc';
@@ -23,7 +23,7 @@ const withTempo = (): PlayerSnapshot => ({
   duration_ms: 20000, sample_rate: 44100, peaks: [], mode: 'bpm',
   tempo: { beats_per_bar: 4, segments: [{ start_ms: 0, bpm: 120 }], multi: true }, speed_pct: 100,
   loops: [loop1, { ...loop1, id: 'loop-2' }, loop3], current_loop: 0,
-  loop_message: null, transport: { ...idle, bpm: 120, tempo_index: 0 }, note: null,
+  loop_message: null, transport: { ...idle, bpm: 120, tempo_index: 0 }, note: null, read_only: false, bpm_detect: null,
 });
 const timestamps = (): PlayerSnapshot => ({
   ...withTempo(), mode: 'time', tempo: { beats_per_bar: 4, segments: [], multi: false },
@@ -35,6 +35,7 @@ let calls: [string, Record<string, unknown>][];
 let channel: Channel<PlayerEvent>;
 let snap: PlayerSnapshot;
 let tempoHook: (() => Promise<PlayerSnapshot>) | null;
+let detectHook: ((cmd: string) => PlayerSnapshot) | null;
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const of = (cmd: string) => calls.filter((c) => c[0] === cmd).map((c) => c[1]);
 const group = (name: string) => within(screen.getByRole('group', { name }));
@@ -56,10 +57,12 @@ async function type(el: HTMLInputElement, text: string) {
 beforeEach(() => {
   calls = [];
   tempoHook = null;
+  detectHook = null;
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
     calls.push([cmd, a]);
     if (cmd === 'open_player') { channel = a.events as Channel<PlayerEvent>; return snap; }
+    if ((cmd === 'player_detect_bpm' || cmd === 'player_cancel_detect') && detectHook) return detectHook(cmd);
     if (cmd === 'player_tempo' && tempoHook) return tempoHook();
     if (cmd === 'player_tempo' || cmd === 'player_loop') return snap;
     if (cmd.startsWith('player_')) return { ...idle };
@@ -652,6 +655,83 @@ describe('Sections group', () => {
       field().focus();
       await type(field(), '-8');
       expect(actions()).toEqual([{ kind: 'move-change', index: 1, at: 3000, steps: -8 }]);
+    });
+
+    describe('Detect BPM button', () => {
+      const detect = () => screen.getByTestId('detect-bpm') as HTMLButtonElement;
+      const msg = () => screen.getByTestId('section-message');
+      const view = { serial: 1, index: 2, at: 4200, from_ms: 10500, to_ms: 17700, source: 'backing:backing', phase: 'checking' as const };
+
+      it('follows Find start in the Start row, is enabled with a tempo and shows the unit /64', async () => {
+        await open(S(1));
+        const find = btn('Sections', 'Find where the music starts and put the first beat there');
+        expect(find.nextElementSibling).toBe(detect());
+        expect(detect().textContent).toBe('Detect BPM');
+        expect(detect().disabled).toBe(false);
+        expect(detect().title).toBe('');
+        expect(screen.getByText('/64').title).toBe('1/64 beat');
+      });
+
+      it('is disabled with its reason without a tempo', async () => {
+        await open(timestamps());
+        expect(detect().disabled).toBe(true);
+        expect(detect().title).toBe('Type a BPM first');
+      });
+
+      it('is disabled with the read-only reason when the settings are read-only', async () => {
+        await open({ ...S(0), read_only: true });
+        expect(detect().disabled).toBe(true);
+        expect(detect().title).toBe("This track's Player settings are read-only");
+      });
+
+      it('acts on the shown section, not the one at the playhead', async () => {
+        await open(S(0));
+        selectSection(2);
+        await flush();
+        expect(detect().disabled).toBe(false);
+        detectHook = () => ({ ...S(0), bpm_detect: view });
+        await fireEvent.click(detect());
+        await flush();
+        expect(of('player_detect_bpm')).toEqual([{ id: practice.id, index: 2, at: 4200 }]);
+      });
+
+      it('while running reads Cancel and shows the running text; Cancel sends the command and restores the button', async () => {
+        await open(S(2));
+        detectHook = (cmd) => ({ ...S(2), bpm_detect: cmd === 'player_detect_bpm' ? view : null });
+        await fireEvent.click(detect());
+        await flush();
+        expect(detect().textContent).toBe('Cancel');
+        expect(detect().disabled).toBe(false);
+        expect(msg().textContent).toBe('Detecting the BPM from 0:10.5 – 0:17.7...');
+        await fireEvent.click(detect());
+        await flush();
+        expect(of('player_cancel_detect')).toEqual([{ id: practice.id }]);
+        expect(detect().textContent).toBe('Detect BPM');
+        expect(detect().disabled).toBe(false);
+        expect(msg().textContent).toBe('BPM detection cancelled; the section is unchanged');
+      });
+
+      it('an applied result shows the status text and the new BPM; a failed one shows an alert', async () => {
+        await open(S(2));
+        detectHook = () => ({ ...S(2), bpm_detect: view });
+        await fireEvent.click(detect());
+        await flush();
+        const after = S(2);
+        after.tempo.segments[2].bpm = 93.4;
+        const r = { serial: 1, index: 2, outcome: 'applied' as const, old_bpm: 120, new_bpm: 93.4, from_ms: 10500, to_ms: 17700, hint: null, message: null };
+        channel.onmessage({ kind: 'bpm-detected', id: practice.id, result: r, snapshot: after });
+        await flush();
+        expect(msg().textContent).toBe('BPM 120.0 → 93.4, detected from 0:10.5 – 0:17.7');
+        expect(screen.getByTestId('section-status').textContent).toBe('Section 3 of 3 · 93.4 BPM');
+        detectHook = () => ({ ...S(2), bpm_detect: { ...view, serial: 2 } });
+        await fireEvent.click(detect());
+        await flush();
+        channel.onmessage({ kind: 'bpm-detected', id: practice.id, result: { ...r, serial: 2, outcome: 'failed', new_bpm: null, message: 'No beats found' }, snapshot: null });
+        await flush();
+        expect(msg().textContent).toBe('No beats found');
+        expect(msg().getAttribute('role')).toBe('alert');
+        expect(detect().textContent).toBe('Detect BPM');
+      });
     });
 
     it('Prev is disabled in section 1 and Next in section 3; both work in section 2', async () => {

@@ -27,7 +27,7 @@ const base = (): PlayerSnapshot => ({
   id: practice.id, title: 'T', sources: [{ key: 'backing:backing', label: 'Backing' }, { key: 'stem:guitar', label: 'Guitar' }],
   source: 'backing:backing', duration_ms: 20000, sample_rate: 22050, peaks: new Array(64).fill(0.5), mode: 'time',
   tempo: { beats_per_bar: 4, segments: [], multi: false }, speed_pct: 100,
-  loops: [], current_loop: null, loop_message: null, transport: { ...idle }, note: null,
+  loops: [], current_loop: null, loop_message: null, transport: { ...idle }, note: null, read_only: false, bpm_detect: null,
 });
 const bpmSnap = (): PlayerSnapshot => ({
   ...base(), mode: 'bpm', tempo: { beats_per_bar: 4, segments: [{ start_ms: 500, bpm: 120 }], multi: false },

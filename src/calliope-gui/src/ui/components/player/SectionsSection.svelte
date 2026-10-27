@@ -2,7 +2,7 @@
   import BpmSection from './BpmSection.svelte';
   import SectionOffset from './SectionOffset.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
-  import { formatBpm, scaleBpm } from '$lib/bpm-format';
+  import { detectRunning, formatBpm, scaleBpm } from '$lib/bpm-format';
   import { sectionClicks, sectionCountIn, MAX_SECTION_NAME } from '$lib/section-meta';
   import {
     pl, removeChange, scaleSection, startAdd, targetSection, setSectionFlags, jumpSection,
@@ -144,5 +144,5 @@
     <span class="min-w-0 max-w-full text-base tabular-nums" data-testid="section-status">{status}</span>
   </div>
   <SectionOffset {target} />
-  <span class="min-h-5 min-w-0 truncate text-sm {pl.sectionError ? 'text-destructive' : 'text-muted-foreground'}" role={pl.sectionError ? 'alert' : undefined} title={message || undefined} data-testid="section-message">{pl.findingStart ? 'Finding the start...' : message}</span>
+  <span class="min-h-5 min-w-0 truncate text-sm {pl.sectionError ? 'text-destructive' : 'text-muted-foreground'}" role={pl.sectionError ? 'alert' : undefined} title={message || undefined} data-testid="section-message">{pl.findingStart ? 'Finding the start...' : pl.detect ? detectRunning(pl.detect) : message}</span>
 </div>

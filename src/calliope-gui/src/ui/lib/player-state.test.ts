@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import type { Channel } from '@tauri-apps/api/core';
 import {
-  loop, beginNameEdit, cancelSectionBpm, cancelSectionName, commitSectionBpm, commitSectionName, commitSectionOffset, beginOffsetEdit, cancelOffsetEdit, stepSection, jumpSection, findStart, setSectionFlags, editSectionBpm, leavePlayer, moveChange, pl, removeChange, scaleSection,
+  loop, beginNameEdit, cancelSectionBpm, cancelSectionName, commitSectionBpm, commitSectionName, commitSectionOffset, beginOffsetEdit, cancelOffsetEdit, stepSection, jumpSection, findStart, detectBpm, cancelDetect, setSectionFlags, editSectionBpm, leavePlayer, moveChange, pl, removeChange, scaleSection,
   selectSection, startAdd, targetSection, playLabel, resetPlayer, seek, selectSource, syncSelection, togglePlay,
   speedStep, speedReset, speedSet, setTraining, speedLocked, shownSpeed } from './player-state.svelte';
 import { resetLibrary } from './library-state.svelte';
 import { PLAYER_FIXTURE_TRACKS } from './fixture-tracks';
-import type { PlayerEvent, PlayerSnapshot, PlayerTransport, TempoSegment } from './ipc';
+import type { BpmDetectView, BpmResult, PlayerEvent, PlayerSnapshot, PlayerTransport, TempoSegment } from './ipc';
 
 const [practice, stemsOnly] = PLAYER_FIXTURE_TRACKS;
 const noAudio = { ...PLAYER_FIXTURE_TRACKS[2], audio: null };
@@ -25,7 +25,7 @@ const snapshot = (id: string, source = 'backing:backing'): PlayerSnapshot => ({
   source, duration_ms: 10000, sample_rate: 44100, peaks: [], mode: 'bpm',
   tempo: { beats_per_bar: 4, segments: [], multi: false }, speed_pct: 100,
   loops: [], current_loop: null, loop_message: null,
-  transport: { ...idle }, note: null,
+  transport: { ...idle }, note: null, read_only: false, bpm_detect: null,
 });
 
 type Call = [string, Record<string, unknown>];
@@ -248,6 +248,114 @@ describe('player sections', () => {
     await late;
     expect(pl.sectionNote).toBe('');
     expect(pl.snap).toBeNull();
+  });
+
+  describe('BPM detection', () => {
+    const view = (serial = 1, phase: BpmDetectView['phase'] = 'checking'): BpmDetectView =>
+      ({ serial, index: 1, at: 2000, from_ms: 10500, to_ms: 17700, source: 'backing:backing', phase });
+    const running = (id: string, v: BpmDetectView | null = view()): PlayerSnapshot => ({ ...withSegs(id, three), bpm_detect: v });
+    const result = (over: Partial<BpmResult> = {}): BpmResult =>
+      ({ serial: 1, index: 1, outcome: 'applied', old_bpm: 120, new_bpm: 93.4, from_ms: 10500, to_ms: 17700, hint: null, message: null, ...over });
+    const send = (e: PlayerEvent) => channels[0].onmessage(e);
+    const detectCalls = (name = 'player_detect_bpm') => calls.filter((c) => c[0] === name).map((c) => c[1]);
+
+    it('start sends the target section and its start; the reply sets pl.detect; phases follow the serial', async () => {
+      await open();
+      pl.transport.tempo_index = 1;
+      handlers.player_detect_bpm = (a) => running(a.id as string);
+      await detectBpm();
+      expect(detectCalls()).toEqual([{ id: practice.id, index: 1, at: 2000 }]);
+      expect(pl.detect?.phase).toBe('checking');
+      expect(logs()).toContain('player detect start index=1');
+      await detectBpm(); // running: not sent twice
+      expect(detectCalls().length).toBe(1);
+      send({ kind: 'bpm-detect', id: practice.id, detect: view(2, 'detecting') });
+      expect(pl.detect?.phase).toBe('checking');
+      send({ kind: 'bpm-detect', id: practice.id, detect: view(1, 'waiting') });
+      expect(pl.detect?.phase).toBe('waiting');
+      expect(logs()).toContain('player detect phase=waiting');
+    });
+
+    it('applied applies its snapshot, notes the status and clears the run', async () => {
+      await open();
+      selectSection(1);
+      handlers.player_detect_bpm = (a) => running(a.id as string);
+      await detectBpm();
+      const after = withSegs(practice.id, [seg(0, 100), seg(2000, 93.4), seg(5000, 90)]);
+      send({ kind: 'bpm-detected', id: practice.id, result: result(), snapshot: after });
+      expect(pl.detect).toBeNull();
+      expect(pl.snap?.tempo.segments[1].bpm).toBe(93.4);
+      expect(pl.sectionError).toBe('');
+      expect(pl.sectionNote).toBe('BPM 120.0 → 93.4, detected from 0:10.5 – 0:17.7');
+      expect(logs()).toContain('player detected index=1 old=120 new=93.4 hint=none');
+    });
+
+    it('failed sets the error and keeps the segments; dropped sets the note', async () => {
+      await open();
+      selectSection(1);
+      handlers.player_detect_bpm = (a) => running(a.id as string);
+      await detectBpm();
+      send({ kind: 'bpm-detected', id: practice.id, result: result({ outcome: 'failed', new_bpm: null, message: 'No beats found' }), snapshot: null });
+      expect(pl.detect).toBeNull();
+      expect(pl.sectionError).toBe('No beats found');
+      expect(pl.snap?.tempo.segments.map((g) => g.bpm)).toEqual([100, 120, 90]);
+      expect(logs()).toContain('player detect error message=No beats found');
+      await detectBpm();
+      send({ kind: 'bpm-detected', id: practice.id, result: result({ outcome: 'dropped', new_bpm: null, message: 'The section changed' }), snapshot: null });
+      expect(pl.detect).toBeNull();
+      expect(pl.sectionNote).toBe('The section changed');
+      expect(logs()).toContain('player detect dropped index=1');
+    });
+
+    it('a refused start sets sectionError and no run', async () => {
+      await open();
+      selectSection(1);
+      handlers.player_detect_bpm = () => { throw new Error('The section is too short'); };
+      await detectBpm();
+      expect(pl.sectionError).toBe('The section is too short');
+      expect(pl.detect).toBeNull();
+      expect(logs()).toContain('player detect error message=The section is too short');
+    });
+
+    it('cancel sends the command, clears the run and ignores a late phase of that serial', async () => {
+      await open();
+      selectSection(1);
+      handlers.player_detect_bpm = (a) => running(a.id as string);
+      await detectBpm();
+      handlers.player_cancel_detect = (a) => running(a.id as string, null);
+      await cancelDetect();
+      expect(detectCalls('player_cancel_detect')).toEqual([{ id: practice.id }]);
+      expect(pl.detect).toBeNull();
+      expect(pl.sectionNote).toBe('BPM detection cancelled; the section is unchanged');
+      expect(logs()).toContain('player detect cancel');
+      send({ kind: 'bpm-detect', id: practice.id, detect: view(1, 'uploading') });
+      expect(pl.detect).toBeNull();
+    });
+
+    it('guards: no tempo, read-only; events of another track or generation are ignored', async () => {
+      await open([]);
+      await detectBpm();
+      expect(detectCalls()).toEqual([]);
+      await open();
+      handlers.open_player = (a) => ({ ...withSegs(a.id as string, three), read_only: true });
+      resetPlayer();
+      syncSelection(practice);
+      await flush();
+      selectSection(1);
+      await detectBpm();
+      expect(detectCalls()).toEqual([]);
+      handlers.open_player = (a) => running(a.id as string);
+      resetPlayer();
+      syncSelection(practice);
+      await flush();
+      expect(pl.detect?.serial).toBe(1);
+      send({ kind: 'bpm-detect', id: 'other', detect: view(1, 'waiting') });
+      expect(pl.detect?.phase).toBe('checking');
+      const old = channels[channels.length - 1];
+      resetPlayer();
+      old.onmessage({ kind: 'bpm-detect', id: practice.id, detect: view(1, 'waiting') });
+      expect(pl.detect).toBeNull();
+    });
   });
 
   it('playback carrying the playhead into another section hands the target to it; Start jumps there', async () => {

@@ -134,7 +134,7 @@ describe('Player keyboard shortcuts', () => {
       duration_ms: 20000, sample_rate: 44100, peaks: [], mode: 'bpm',
       tempo: { beats_per_bar: 4, segments: [{ start_ms: 0, bpm: 120 }], multi: false }, speed_pct: 100,
       loops, current_loop: 0, loop_message: null,
-      transport: { ...idle }, note: null,
+      transport: { ...idle }, note: null, read_only: false, bpm_detect: null,
     };
     lib.selectedId = practice.id;
     render(PlayerView);

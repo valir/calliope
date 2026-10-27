@@ -2,7 +2,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { formatOffset, offsetTime } from '$lib/section-meta';
   import { sectionOffset } from '$lib/waveform-geometry';
-  import { beginOffsetEdit, cancelOffsetEdit, commitSectionOffset, findStart, pl } from '$lib/player-state.svelte';
+  import { beginOffsetEdit, cancelOffsetEdit, cancelDetect, commitSectionOffset, detectBpm, findStart, pl } from '$lib/player-state.svelte';
 
   /** The section the row shows (the captured one while the field has the focus); null without sections. */
   let { target }: { target: number | null } = $props();
@@ -28,6 +28,19 @@
   const noFind = $derived(!hasTempo || target !== 0 || pl.findingStart);
   const findTitle = $derived(
     !hasTempo ? NEED_BPM : pl.findingStart ? 'Finding the start...' : target !== 0 ? 'Find start works in the first section' : undefined,
+  );
+
+  const noDetect = $derived(!hasTempo || !!pl.snap?.read_only || pl.findingStart);
+  const detectTitle = $derived(
+    pl.detect
+      ? 'Detecting the BPM...'
+      : !hasTempo
+        ? NEED_BPM
+        : pl.snap?.read_only
+          ? "This track's Player settings are read-only"
+          : pl.findingStart
+            ? 'Finding the start...'
+            : undefined,
   );
 
   function onfocus(): void {
@@ -93,8 +106,8 @@
     {onkeydown}
     {onblur}
   />
-  <span class="text-base text-muted-foreground">/64 beat</span>
-  <span class="text-base tabular-nums" data-testid="section-offset-time">{offsetTime(offset.ms)}</span>
+  <span class="text-sm text-muted-foreground" title="1/64 beat">/64</span>
+  <span class="text-sm tabular-nums" data-testid="section-offset-time">{offsetTime(offset.ms)}</span>
   <Button
     variant="outline"
     class="h-9 px-1.5 text-sm"
@@ -103,4 +116,13 @@
     title={findTitle}
     onclick={() => void findStart()}
   >Find start</Button>
+  <Button
+    variant="outline"
+    class="h-9 w-[5.75rem] px-1 text-sm"
+    aria-label={pl.detect ? 'Cancel the BPM detection' : 'Detect the BPM of the section from 3 bars at the playhead'}
+    disabled={pl.detect ? false : noDetect}
+    title={detectTitle}
+    data-testid="detect-bpm"
+    onclick={() => void (pl.detect ? cancelDetect() : detectBpm())}
+  >{pl.detect ? 'Cancel' : 'Detect BPM'}</Button>
 </div>

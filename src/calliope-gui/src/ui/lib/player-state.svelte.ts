@@ -3,6 +3,8 @@ import {
   EDITOR_SUPERSEDED,
   frontendLog,
   openPlayer,
+  playerCancelDetect,
+  playerDetectBpm,
   playerLeave,
   playerLoop,
   playerNudge,
@@ -13,6 +15,7 @@ import {
   playerSkip,
   playerTempo,
   watchPlayer,
+  type BpmDetectView,
   type LoopAction,
   type PlayerEvent,
   type PlayerSnapshot,
@@ -23,7 +26,7 @@ import {
   type TrackRecord,
 } from './ipc';
 import { selectTrack } from './library-state.svelte';
-import { scaleBpm } from './bpm-format';
+import { detectStatus, scaleBpm } from './bpm-format';
 import { MAX_SPEED, MIN_SPEED, parseSpeed, readoutText } from './speed-format';
 import { cleanSectionName, parseOffset, sectionClicks, sectionCountIn } from './section-meta';
 import { clampMoveSteps, sectionOffset } from './waveform-geometry';
@@ -63,6 +66,8 @@ export const pl = $state({
   sectionNote: '',
   /** The Find start call is running. */
   findingStart: false,
+  /** The running BPM detection (from the snapshot and the bpm-detect events), null when none. */
+  detect: null as BpmDetectView | null,
   /** The section whose name is being edited, captured on focus so the playhead can't move the edit. */
   nameEdit: null as { index: number; at: number; draft: string } | null,
   /** The section whose start offset field has the focus, captured on focus so the playhead can't move the edit. */
@@ -97,6 +102,7 @@ function resetFields(): void {
   pl.sectionError = '';
   pl.sectionNote = '';
   pl.findingStart = false;
+  pl.detect = null;
   pl.nameEdit = null;
   pl.offsetEdit = null;
   movePending = null;
@@ -211,6 +217,7 @@ function applySnapshot(s: PlayerSnapshot): void {
   const sameStarts = oldStarts.length === s.tempo.segments.length && oldStarts.every((v, i) => v === s.tempo.segments[i].start_ms);
   if (sameStarts) dropSelectionOnMove(transport.tempo_index);
   pl.transport = { ...transport };
+  pl.detect = s.bpm_detect ? { ...s.bpm_detect } : null;
   logReadout();
   const n = s.tempo.segments.length;
   if (pl.section !== null && pl.section >= n) pl.section = n === 0 ? null : n - 1;
@@ -286,6 +293,36 @@ function onEvent(gen: number, e: PlayerEvent): void {
     case 'state-error':
       pl.stateError = e.message;
       break;
+    case 'bpm-detect':
+      if (pl.detect?.serial === e.detect.serial) {
+        pl.detect = e.detect;
+        log(`player detect phase=${e.detect.phase}`);
+      }
+      break;
+    case 'bpm-detected': {
+      const r = e.result;
+      const mine = pl.detect?.serial === r.serial;
+      if (r.outcome === 'applied') {
+        // The backend state changed, whichever run this was.
+        if (e.snapshot) applySnapshot(e.snapshot);
+        if (!mine) break;
+        pl.detect = null;
+        pl.sectionError = '';
+        pl.sectionNote = detectStatus(r);
+        log(`player detected index=${r.index} old=${r.old_bpm} new=${r.new_bpm} hint=${r.hint ?? 'none'}`);
+        if (e.snapshot) logSections(e.snapshot);
+      } else if (mine) {
+        pl.detect = null;
+        if (r.outcome === 'failed') {
+          pl.sectionError = r.message ?? '';
+          log(`player detect error message=${r.message ?? ''}`);
+        } else {
+          pl.sectionNote = r.message ?? '';
+          log(`player detect dropped index=${r.index}`);
+        }
+      }
+      break;
+    }
     case 'closed':
       // The backend session is gone: forget the selection so the next sync opens the track again.
       key = null;
@@ -529,6 +566,44 @@ export async function findStart(): Promise<void> {
     fail('player_tempo', err);
   } finally {
     if (gen === generation) pl.findingStart = false;
+  }
+}
+
+/** Detects the BPM of the shown section from 3 bars; the result arrives as a bpm-detected event. */
+export async function detectBpm(): Promise<void> {
+  const id = pl.trackId;
+  const index = targetSection();
+  const at = index === null ? null : startOf(index);
+  if (pl.status !== 'active' || !id || index === null || at === null || pl.detect) return;
+  if ((pl.snap?.tempo.segments[0]?.bpm ?? 0) <= 0 || pl.snap?.read_only) return;
+  const gen = generation;
+  pl.sectionError = '';
+  pl.sectionNote = '';
+  log(`player detect start index=${index}`);
+  try {
+    const s = await playerDetectBpm(id, index, at);
+    if (gen !== generation) return;
+    applySnapshot(s);
+  } catch (err) {
+    if (gen !== generation) return;
+    pl.sectionError = clean(err);
+    log(`player detect error message=${pl.sectionError}`);
+  }
+}
+
+/** Cancels the running detection; the section stays as it was. */
+export async function cancelDetect(): Promise<void> {
+  const id = pl.trackId;
+  if (pl.status !== 'active' || !id) return;
+  const gen = generation;
+  log('player detect cancel');
+  try {
+    const s = await playerCancelDetect(id);
+    if (gen !== generation) return;
+    applySnapshot(s);
+    pl.sectionNote = 'BPM detection cancelled; the section is unchanged';
+  } catch (err) {
+    if (gen === generation) fail('player_cancel_detect', err);
   }
 }
 

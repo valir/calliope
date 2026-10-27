@@ -413,13 +413,40 @@ export interface PlayerSnapshot {
   transport: PlayerTransport;
   /** settings file note */
   note: string | null;
+  /** the track's Player settings were written by a newer Calliope; they can't be changed */
+  read_only: boolean;
+  /** the running BPM detection, null when none */
+  bpm_detect: BpmDetectView | null;
+}
+export type DetectPhase = 'checking' | 'uploading' | 'waiting' | 'detecting';
+export interface BpmDetectView {
+  serial: number;
+  index: number;
+  at: number;
+  from_ms: number;
+  to_ms: number;
+  source: string;
+  phase: DetectPhase;
+}
+export interface BpmResult {
+  serial: number;
+  index: number;
+  outcome: 'applied' | 'failed' | 'dropped';
+  old_bpm: number;
+  new_bpm: number | null;
+  from_ms: number;
+  to_ms: number;
+  hint: 'double' | 'half' | null;
+  message: string | null;
 }
 export type PlayerEvent =
   | { kind: 'loading'; id: string; progress: number }
   | ({ kind: 'transport'; id: string } & PlayerTransport)
   | { kind: 'audio-error'; id: string; message: string }
   | { kind: 'state-error'; id: string; message: string }
-  | { kind: 'closed'; id: string };
+  | { kind: 'closed'; id: string }
+  | { kind: 'bpm-detect'; id: string; detect: BpmDetectView }
+  | { kind: 'bpm-detected'; id: string; result: BpmResult; snapshot: PlayerSnapshot | null };
 export type TempoAction =
   | { kind: 'set-bpm'; bpm: number }
   | { kind: 'speed-step'; steps: number }
@@ -473,6 +500,10 @@ export const playerLeave = (id: string): Promise<PlayerTransport> =>
   invoke<PlayerTransport>('player_leave', { id });
 export const playerTempo = (id: string, action: TempoAction): Promise<PlayerSnapshot> =>
   invoke<PlayerSnapshot>('player_tempo', { id, action });
+export const playerDetectBpm = (id: string, index: number, at: number): Promise<PlayerSnapshot> =>
+  invoke<PlayerSnapshot>('player_detect_bpm', { id, index, at });
+export const playerCancelDetect = (id: string): Promise<PlayerSnapshot> =>
+  invoke<PlayerSnapshot>('player_cancel_detect', { id });
 export const playerLoop = (id: string, action: LoopAction): Promise<PlayerSnapshot> =>
   invoke<PlayerSnapshot>('player_loop', { id, action });
 
