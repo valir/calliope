@@ -11,7 +11,7 @@ use calliope_gui::player::{
 };
 use calliope_gui::player_source::{self, Pcm};
 use calliope_gui::repository::Repository;
-use calliope_gui::section_bpm::{BpmParams, BpmResult, Hint, ResultKind, TOO_SHORT};
+use calliope_gui::section_bpm::{self, BpmParams, BpmResult, Hint, ResultKind, TOO_SHORT};
 use serde_json::Value;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -177,6 +177,10 @@ fn spec_of(root: &Path, id: &str) -> OpenSpec {
 }
 
 fn rig(tracker_mode: &str) -> Rig {
+    rig_with(tracker_mode, 4)
+}
+
+fn rig_with(tracker_mode: &str, beats_per_bar: u32) -> Rig {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("lib");
     copy_tree(
@@ -189,6 +193,7 @@ fn rig(tracker_mode: &str) -> Rig {
         {"start_ms": 500, "bpm": 100, "found_ms": 500},
         {"start_ms": 17800, "bpm": 120, "detected_ms": 17800}
     ]);
+    v["tempo"]["beats_per_bar"] = serde_json::json!(beats_per_bar);
     fs::write(&p, v.to_string()).unwrap();
     let b = ManualBackend::new();
     let ev: Events = Arc::new(Mutex::new(Vec::new()));
@@ -620,4 +625,269 @@ impl Rig {
         let url = self.server.url.clone();
         self.detect_with(&url, 0).unwrap();
     }
+}
+
+// ================================================================ edge cases
+
+impl Rig {
+    fn detect_index(&mut self, index: usize) -> Result<PlayerSnapshot, String> {
+        let url = self.server.url.clone();
+        self.detect_with(&url, index)
+    }
+
+    fn track_end_ms(&self) -> f64 {
+        let p = self.pcm("backing:backing");
+        p.frames as f64 * 1000.0 / f64::from(p.rate)
+    }
+}
+
+#[test]
+fn ac11_playhead_in_the_lead_in_measures_from_the_section_start() {
+    let mut r = rig("bpm:93.4");
+    r.select("backing:backing");
+    r.seek(200); // before the first section (500 ms)
+    r.detect_index(0).unwrap();
+    let res = r.wait_result(1);
+    assert_eq!((res.from_ms, res.to_ms), (500.0, 7700.0));
+    let pcm = r.pcm("backing:backing");
+    let piece = r.server.last_piece();
+    let n = frames(&piece, &pcm);
+    assert_eq!(piece, slice(&pcm, 500.0, n), "nothing before the section");
+}
+
+#[test]
+fn ac12_a_section_away_from_the_playhead_is_measured_from_its_start() {
+    let mut r = rig("bpm:121.0");
+    r.seek(10500); // inside section 0, but the pane shows section 1
+    r.detect_index(1).unwrap(); // never refused because the playhead is elsewhere
+    let end = r.track_end_ms();
+    let res = r.wait_result(1);
+    assert_eq!(res.index, 1);
+    assert_eq!(res.from_ms, 17800.0);
+    assert!(
+        (res.to_ms - (17800.0_f64 + 6000.0).min(end)).abs() < 1.0,
+        "{res:?} end {end}"
+    );
+    assert_eq!(r.bpms(), vec![100.0, 121.0]);
+    assert_eq!(r.starts(), vec![500.0, 17800.0]);
+}
+
+#[test]
+fn ac13_three_four_time_uses_three_beats_per_bar() {
+    let mut r = rig_with("bpm:100", 3);
+    // 100 BPM in 3/4: a bar is 1.8 s, the piece 5.4 s
+    r.detect_at(10500).unwrap();
+    let res = r.wait_result(1);
+    assert_eq!((res.from_ms, res.to_ms), (10500.0, 15900.0));
+    // exactly one bar before the section's end is accepted ...
+    r.seek(16000);
+    let url = r.server.url.clone();
+    r.detect_with(&url, 0).unwrap();
+    let res = r.wait_result(2);
+    assert_eq!((res.from_ms, res.to_ms), (16000.0, 17800.0));
+    // ... a bit less is refused without calling the server
+    let posts = r.server.posts();
+    r.seek(16100);
+    assert_eq!(r.detect_with(&url, 0).unwrap_err(), TOO_SHORT);
+    r.idle(Duration::from_millis(200));
+    assert_eq!(r.server.posts(), posts);
+}
+
+#[test]
+fn ac14_the_last_section_ends_at_the_track_end() {
+    let mut r = rig("bpm:121.0");
+    r.select("backing:backing");
+    let end = r.track_end_ms();
+    assert!(end > 17800.0 + 2000.0, "fixture too short: {end}");
+    // 2 s bars at 120 BPM: the playhead 2.5 s before the end leaves 1.25 bars
+    r.seek((end - 2500.0).floor() as u64);
+    r.detect_index(1).unwrap();
+    let res = r.wait_result(1);
+    assert!((res.to_ms - end).abs() < 1.0, "to {} end {end}", res.to_ms);
+    assert!(res.from_ms >= 17800.0);
+    let pcm = r.pcm("backing:backing");
+    let piece = r.server.last_piece();
+    let n = frames(&piece, &pcm);
+    assert_eq!(piece, slice(&pcm, res.from_ms, n));
+    assert!(res.from_ms as usize * RATE / 1000 + n <= pcm.frames as usize);
+    // less than a bar before the track end is refused
+    let posts = r.server.posts();
+    r.seek((end - 1000.0).floor() as u64);
+    assert_eq!(r.detect_index(1).unwrap_err(), TOO_SHORT);
+    assert_eq!(r.server.posts(), posts);
+}
+
+#[test]
+fn ac15_typing_or_moving_the_section_meanwhile_drops_the_result_but_other_edits_do_not() {
+    let mut r = rig("slow-bpm:150");
+    r.select("backing:backing");
+    // typed BPM on the same section
+    r.detect_at(10500).unwrap();
+    r.wait_phase(DetectPhase::Uploading);
+    let e = SectionEdit::Bpm {
+        index: 0,
+        at: 500.0,
+        bpm: 110.0,
+    };
+    r.m.edit_sections(WITH_TEMPO, e, Instant::now()).unwrap();
+    assert_eq!(r.wait_result(1).outcome, ResultKind::Dropped);
+    assert_eq!(r.bpms(), vec![110.0, 120.0]);
+
+    // the section moved
+    r.detect_at(10500).unwrap();
+    r.wait_phase(DetectPhase::Uploading);
+    let e = SectionEdit::Move {
+        index: 0,
+        at: 500.0,
+        steps: 1,
+    };
+    r.m.edit_sections(WITH_TEMPO, e, Instant::now()).unwrap();
+    assert_eq!(r.wait_result(2).outcome, ResultKind::Dropped);
+    assert_eq!(r.bpms(), vec![110.0, 120.0]);
+    assert_ne!(r.starts()[0], 500.0);
+
+    // an edit of another section, a source change and a seek do not drop the result
+    let at0 = r.starts()[0];
+    r.server.set_mode("slow-bpm:93.4");
+    r.seek(10500);
+    r.detect_index(0).unwrap();
+    r.wait_phase(DetectPhase::Uploading);
+    let e = SectionEdit::Bpm {
+        index: 1,
+        at: 17800.0,
+        bpm: 125.0,
+    };
+    r.m.edit_sections(WITH_TEMPO, e, Instant::now()).unwrap();
+    r.select("stem:guitar");
+    r.seek(1000);
+    let res = r.wait_result(3);
+    assert_eq!(res.outcome, ResultKind::Applied, "{res:?}");
+    assert_eq!(r.bpms(), vec![93.4, 125.0]);
+    assert_eq!(r.starts()[0], at0);
+    // the piece is the one taken at the start
+    let pcm = r.pcm("backing:backing");
+    let piece = r.server.last_piece();
+    let n = frames(&piece, &pcm);
+    assert_eq!(
+        piece,
+        slice(&pcm, res.from_ms, n),
+        "the source at the start"
+    );
+}
+
+#[test]
+fn ac16_a_running_detection_shows_in_the_snapshot_for_a_reattaching_view() {
+    let mut r = rig("slow-bpm:93.4");
+    let started = r.detect_at(10500).unwrap();
+    let d = started
+        .bpm_detect
+        .expect("the start snapshot carries the run");
+    assert_eq!((d.index, d.from_ms, d.to_ms), (0, 10500.0, 17700.0));
+    r.wait_phase(DetectPhase::Uploading);
+    // a view that reloads asks for the snapshot and finds the same run
+    let again = r.snap().bpm_detect.expect("still running");
+    assert_eq!((again.serial, again.index, again.at), (d.serial, 0, 500.0));
+    assert_eq!(again.source, d.source);
+    // the result still arrives, with the serial the view knows
+    let res = r.wait_result(1);
+    assert_eq!(res.serial, d.serial);
+    assert!(r.snap().bpm_detect.is_none());
+    let phases: Vec<_> =
+        r.ev.lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                PlayerEvent::BpmDetect { detect, .. } => Some(detect.serial),
+                _ => None,
+            })
+            .collect();
+    assert!(phases.iter().all(|&s| s == d.serial));
+}
+
+#[test]
+fn ac17_other_refusals_start_nothing_and_do_not_call_the_server() {
+    let mut r = rig("bpm:93.4");
+    r.seek(10500);
+    // a stale section start
+    let url = r.server.url.clone();
+    let params = |url: &str| BpmParams {
+        url: url.to_string(),
+        poll: Duration::from_millis(50),
+        stall: Duration::from_secs(30),
+    };
+    let e =
+        r.m.start_bpm_detect(WITH_TEMPO, 0, 123.0, params(&url))
+            .unwrap_err();
+    assert!(e.contains("changed"), "{e}");
+    // a section that does not exist
+    assert!(r
+        .m
+        .start_bpm_detect(WITH_TEMPO, 5, 500.0, params(&url))
+        .is_err());
+    // no server set
+    let e =
+        r.m.start_bpm_detect(WITH_TEMPO, 0, 500.0, params("  "))
+            .unwrap_err();
+    assert!(e.contains("Settings"), "{e}");
+    // no session for another id
+    assert!(r.m.start_bpm_detect(OTHER, 0, 500.0, params(&url)).is_err());
+    r.idle(Duration::from_millis(200));
+    assert_eq!(r.server.posts(), 0);
+    assert!(r.snap().bpm_detect.is_none());
+    assert!(r.results().is_empty());
+}
+
+#[test]
+fn ac18_a_tempo_less_track_is_refused() {
+    let mut r = rig("bpm:93.4");
+    r.m.open(&spec_of(&r.root, OTHER)).unwrap();
+    assert!(
+        r.m.snapshot(OTHER).unwrap().tempo.segments.is_empty(),
+        "fixture has no tempo"
+    );
+    let err =
+        r.m.start_bpm_detect(
+            OTHER,
+            0,
+            0.0,
+            BpmParams {
+                url: r.server.url.clone(),
+                poll: Duration::from_millis(50),
+                stall: Duration::from_secs(30),
+            },
+        )
+        .unwrap_err();
+    assert!(err.contains("Type a BPM"), "{err}");
+    assert_eq!(r.server.posts(), 0);
+}
+
+#[test]
+fn ac19_hint_thresholds() {
+    let h = section_bpm::hint;
+    assert_eq!(h(100.0, 184.5), Some(Hint::Double));
+    assert_eq!(h(100.0, 215.5), Some(Hint::Double));
+    assert_eq!(h(100.0, 183.0), None);
+    assert_eq!(h(100.0, 217.0), None);
+    assert_eq!(h(100.0, 46.5), Some(Hint::Half));
+    assert_eq!(h(100.0, 53.5), Some(Hint::Half));
+    assert_eq!(h(100.0, 45.5), None);
+    assert_eq!(h(100.0, 54.5), None);
+    assert_eq!(h(100.0, 100.0), None);
+    assert_eq!(h(100.0, 150.0), None);
+}
+
+#[test]
+fn ac20_a_non_steady_or_too_few_beats_message_names_the_problem() {
+    let mut r = rig("few");
+    r.detect_at(10500).unwrap();
+    let a = r.wait_result(1);
+    assert_eq!(a.outcome, ResultKind::Failed);
+    assert!(a.message.unwrap().contains("Too few beats"));
+    assert_eq!(r.bpms(), vec![100.0, 120.0]);
+    r.server.set_mode("fail");
+    r.detect_at(10500).unwrap();
+    let b = r.wait_result(2);
+    assert_eq!(b.outcome, ResultKind::Failed);
+    assert!(b.message.unwrap().contains("failed on the server"));
+    assert_eq!(r.bpms(), vec![100.0, 120.0]);
 }

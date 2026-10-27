@@ -11,3 +11,5 @@ task 9 | The Detect BPM button on the Start row | implementer | done
 task 10 | Headless acceptance tests | implementer | done
 task 11 | Player GUI test and new positions | implementer (message line truncation fix) | done
 task 12 | Docs: README and UI guide | implementer | done
+tester | 10 more acceptance tests (ac11-ac20), no defects | tester | done
+reviewer | APPROVED, 2 minors, 2 nits | reviewer | done
