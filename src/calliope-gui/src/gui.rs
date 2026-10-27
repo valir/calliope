@@ -148,6 +148,8 @@ pub fn run() {
             player_ipc::player_skip,
             player_ipc::player_leave,
             player_ipc::player_tempo,
+            player_ipc::player_detect_bpm,
+            player_ipc::player_cancel_detect,
             player_ipc::player_loop,
             export_ipc::export_info,
             export_ipc::prepare_export,

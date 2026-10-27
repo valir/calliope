@@ -68,6 +68,8 @@ const COMMANDS: &[&str] = &[
     "player_skip",
     "player_leave",
     "player_tempo",
+    "player_detect_bpm",
+    "player_cancel_detect",
     "player_loop",
     "export_info",
     "prepare_export",

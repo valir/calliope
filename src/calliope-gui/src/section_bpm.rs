@@ -127,6 +127,29 @@ pub struct BpmDetectView {
     pub phase: DetectPhase,
 }
 
+/// How a run ended, as the UI sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResultKind {
+    Applied,
+    Failed,
+    Dropped,
+}
+
+/// The final result event of a run.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BpmResult {
+    pub serial: u64,
+    pub index: usize,
+    pub outcome: ResultKind,
+    pub old_bpm: f64,
+    pub new_bpm: Option<f64>,
+    pub from_ms: f64,
+    pub to_ms: f64,
+    pub hint: Option<Hint>,
+    pub message: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum BpmOutcome {
     Done { bpm: f64, beats: usize },

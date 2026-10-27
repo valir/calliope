@@ -264,6 +264,31 @@ fn do_find_start(host: &PlayerHost, id: &str) -> Result<PlayerSnapshot, String> 
     host.with(|m| m.place_first_beat(id, ms, FirstBeatVia::Button, Instant::now()))
 }
 
+/// Starts measuring the BPM of the section `index` (starting at `at`) from the playhead. `url` is
+/// the edge-AI server from the settings (empty = not set).
+pub(crate) fn do_player_detect_bpm(
+    host: &PlayerHost,
+    url: String,
+    poll: Duration,
+    id: &str,
+    index: usize,
+    at: f64,
+) -> Result<PlayerSnapshot, String> {
+    let params = crate::section_bpm::BpmParams {
+        url,
+        poll,
+        stall: calliope_lib::stems_client::STALL_TIMEOUT,
+    };
+    host.with(|m| m.start_bpm_detect(id, index, at, params))
+}
+
+pub(crate) fn do_player_cancel_detect(
+    host: &PlayerHost,
+    id: &str,
+) -> Result<PlayerSnapshot, String> {
+    host.with(|m| m.cancel_bpm_detect(id))
+}
+
 pub(crate) fn do_close_player(host: &PlayerHost) {
     host.with(|m| m.close());
 }
@@ -695,6 +720,39 @@ pub(crate) async fn player_tempo(
     action: TempoAction,
 ) -> Result<PlayerSnapshot, String> {
     blocking(move || do_player_tempo(&app.state::<Arc<PlayerHost>>(), &id, action)).await
+}
+
+#[tauri::command]
+pub(crate) async fn player_detect_bpm(
+    app: tauri::AppHandle,
+    id: String,
+    index: usize,
+    at: f64,
+) -> Result<PlayerSnapshot, String> {
+    blocking(move || {
+        let url = app
+            .state::<crate::settings::SettingsStore>()
+            .get()
+            .edge_ai_url
+            .unwrap_or_default();
+        do_player_detect_bpm(
+            &app.state::<Arc<PlayerHost>>(),
+            url,
+            crate::ipc::IMPORT_POLL,
+            &id,
+            index,
+            at,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn player_cancel_detect(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<PlayerSnapshot, String> {
+    blocking(move || do_player_cancel_detect(&app.state::<Arc<PlayerHost>>(), &id)).await
 }
 
 #[tauri::command]

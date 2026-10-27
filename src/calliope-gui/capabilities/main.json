@@ -52,6 +52,8 @@
     "allow-player-skip",
     "allow-player-leave",
     "allow-player-tempo",
+    "allow-player-detect-bpm",
+    "allow-player-cancel-detect",
     "allow-player-loop",
     "allow-export-info",
     "allow-prepare-export",

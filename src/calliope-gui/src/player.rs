@@ -1111,6 +1111,10 @@ pub struct PlayerSnapshot {
     pub loop_message: Option<String>,
     pub transport: PlayerTransport,
     pub note: Option<String>,
+    /// `player.json` was written by a newer Calliope: nothing can be changed.
+    pub read_only: bool,
+    /// The running Detect BPM, with its current phase.
+    pub bpm_detect: Option<crate::section_bpm::BpmDetectView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1142,6 +1146,12 @@ pub enum PlayerEvent {
     BpmDetect {
         id: String,
         detect: crate::section_bpm::BpmDetectView,
+    },
+    /// A Detect BPM run ended: applied, failed, or dropped because the section changed.
+    BpmDetected {
+        id: String,
+        result: crate::section_bpm::BpmResult,
+        snapshot: Option<Box<PlayerSnapshot>>,
     },
 }
 
@@ -1392,6 +1402,8 @@ struct Session {
     /// A loop Play with training started a run the callback has not shown yet (`Shared.pass` is still 0):
     /// the speed is refused until then (the run is seen, or this deadline passes).
     run_until: Option<Instant>,
+    /// The running Detect BPM of this session (dropping it cancels the job).
+    bpm_detect: Option<bpm::BpmRun>,
 }
 
 impl Session {
@@ -1686,6 +1698,8 @@ impl Session {
             loop_message: self.loop_message.clone(),
             transport: self.transport_state(),
             note: self.note.clone(),
+            read_only: st.read_only,
+            bpm_detect: self.bpm_detect.as_ref().map(bpm::BpmRun::view),
         }
     }
 }
@@ -1859,6 +1873,8 @@ pub struct PlayerManager {
     /// `defer_drops` is set they wait here until the caller has released the manager lock.
     trash: Vec<Box<dyn OutputHandle>>,
     defer_drops: bool,
+    /// Serial of the last Detect BPM run.
+    bpm_serial: u64,
 }
 
 impl PlayerManager {
@@ -1871,6 +1887,7 @@ impl PlayerManager {
             generation: 0,
             trash: Vec::new(),
             defer_drops: false,
+            bpm_serial: 0,
         }
     }
 
@@ -1996,6 +2013,7 @@ impl PlayerManager {
             last_pass_loop: None,
             grid_wrap: None,
             run_until: None,
+            bpm_detect: None,
         };
         session.state.position_ms = session.ms_of(frames); // what is on disk or equal to it
         let snap = session.snapshot();
@@ -2878,6 +2896,7 @@ impl PlayerManager {
             publish(&sink, s, now);
         }
         self.retire(retired);
+        self.reap_bpm_detect(now);
     }
 }
 
@@ -2896,6 +2915,9 @@ pub fn load_source(job: &SelectJob, sink: &EventSink) -> Result<LoadedSource, St
     let peaks = player_source::peaks(&pcm, PEAK_BUCKETS);
     Ok(LoadedSource { pcm, peaks })
 }
+
+#[path = "player_bpm.rs"]
+mod bpm;
 
 #[cfg(test)]
 #[path = "player_tests.rs"]

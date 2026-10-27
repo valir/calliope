@@ -2980,3 +2980,362 @@ fn first_beat_input_names_the_backing_and_refuses_without_a_tempo() {
     assert!(m.first_beat_input("nope").is_err());
     let _ = &mut m;
 }
+
+// ------------------------------------------------------------------ Detect BPM runs
+
+use crate::section_bpm::{BpmOutcome, BpmParams, BpmResult, Hint, ResultKind, TOO_SHORT};
+use crate::test_server::TestServer;
+
+fn bpm_params(url: &str) -> BpmParams {
+    BpmParams {
+        url: url.into(),
+        poll: ms(50),
+        stall: Duration::from_secs(5),
+    }
+}
+
+fn bpm_results(e: &Events) -> Vec<(BpmResult, Option<Box<PlayerSnapshot>>)> {
+    e.lock()
+        .unwrap()
+        .iter()
+        .filter_map(|x| match x {
+            PlayerEvent::BpmDetected {
+                result, snapshot, ..
+            } => Some((result.clone(), snapshot.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn bpms(m: &PlayerManager, id: &str) -> Vec<f64> {
+    let s = m.snapshot(id).unwrap();
+    s.tempo.segments.iter().map(|g| g.bpm).collect()
+}
+
+#[test]
+fn bpm_detect_refusals_start_nothing() {
+    let srv = TestServer::start_beats("bpm:93.4", &[]);
+    let url = srv.url.clone();
+    let t0 = Instant::now();
+    let refused = |m: &mut PlayerManager, id: &str, index, at, url: &str, want: &str| {
+        let err = m
+            .start_bpm_detect(id, index, at, bpm_params(url))
+            .unwrap_err();
+        assert_eq!(err, want);
+        assert!(m.snapshot(id).unwrap().bpm_detect.is_none());
+    };
+
+    // no tempo
+    let (_t, spec, mut m, _b, _e) = opened(PRACTICE);
+    refused(&mut m, &spec.id, 0, 0.0, &url, "Type a BPM first");
+    assert_eq!(
+        m.start_bpm_detect("nope", 0, 0.0, bpm_params(&url))
+            .unwrap_err(),
+        "no player session for nope"
+    );
+
+    // a newer schema file loads read-only with no tempo, so "Type a BPM first" comes first
+    let (_t2, spec2) = spec_of(WITH_TEMPO);
+    let p = spec2.dir.join("player.json");
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+    v["schema_version"] = serde_json::json!(99);
+    std::fs::write(&p, v.to_string()).unwrap();
+    let (mut m2, _b2, _e2) = manager();
+    m2.open(&spec2).unwrap();
+    assert!(m2.snapshot(&spec2.id).unwrap().read_only);
+    refused(&mut m2, &spec2.id, 0, 500.0, &url, "Type a BPM first");
+    // read-only with a tempo (forced): its own message
+    m2.session.as_mut().unwrap().state.tempo = {
+        let (_t, spec) = spec_of(WITH_TEMPO);
+        let (mut o, _, _) = manager();
+        o.open(&spec).unwrap();
+        o.session.as_ref().unwrap().state.tempo.clone()
+    };
+    refused(
+        &mut m2,
+        &spec2.id,
+        0,
+        500.0,
+        &url,
+        "This track's Player settings were written by a newer Calliope; they can't be changed",
+    );
+
+    // busy, blank URL, stale
+    let (_t3, spec3, mut m3, _b3, _e3) = with_tempo_opened();
+    assert!(!m3.snapshot(&spec3.id).unwrap().read_only);
+    refused(
+        &mut m3,
+        &spec3.id,
+        0,
+        500.0,
+        "  ",
+        "Set the edge-AI server in Settings first",
+    );
+    for (index, at) in [(0, 501.0), (5, 500.0), (1, 500.0)] {
+        refused(
+            &mut m3,
+            &spec3.id,
+            index,
+            at,
+            &url,
+            "The tempo sections changed; try again",
+        );
+    }
+    m3.test_fake_bpm_detect(&spec3.id, 0);
+    let err = m3
+        .start_bpm_detect(&spec3.id, 0, 500.0, bpm_params(&url))
+        .unwrap_err();
+    assert_eq!(err, "A BPM detection is already running");
+    assert!(m3.snapshot(&spec3.id).unwrap().bpm_detect.is_some());
+    m3.cancel_bpm_detect(&spec3.id).unwrap();
+
+    // too short: 1 s before the end of the 90 BPM section (bar 2.667 s); no server call
+    let (_t4, spec4, mut m4, _b4, _e4) = with_tempo_opened();
+    m4.seek(&spec4.id, 19000, t0).unwrap();
+    refused(&mut m4, &spec4.id, 1, 10500.0, &url, TOO_SHORT);
+    assert!(
+        !srv.log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|l| l.contains("/v1/beats")),
+        "no server call: {:?}",
+        srv.log.lock().unwrap()
+    );
+}
+
+fn with_tempo_opened() -> (
+    tempfile::TempDir,
+    OpenSpec,
+    PlayerManager,
+    ManualBackend,
+    Events,
+) {
+    opened(WITH_TEMPO)
+}
+
+#[test]
+fn bpm_detect_snapshot_and_piece_of_the_shown_section() {
+    // nothing is listening on port 1: the job fails at once, it does not matter here
+    let (_t, spec, mut m, _b, e) = with_tempo_opened();
+    // the playhead (4000 ms) is in section 0: the piece starts there, 3 bars of 2 s
+    let snap = m
+        .start_bpm_detect(&spec.id, 0, 500.0, bpm_params("http://127.0.0.1:1"))
+        .unwrap();
+    let d = snap.bpm_detect.unwrap();
+    assert_eq!(
+        (d.index, d.at, d.source.as_str()),
+        (0, 500.0, "stem:guitar")
+    );
+    assert!((d.from_ms - 4000.0).abs() < 0.1 && (d.to_ms - 10000.0).abs() < 0.1);
+    m.cancel_bpm_detect(&spec.id).unwrap();
+    // a section away from the playhead is measured from its start, never refused
+    let snap = m
+        .start_bpm_detect(&spec.id, 1, 10500.0, bpm_params("http://127.0.0.1:1"))
+        .unwrap();
+    let d = snap.bpm_detect.unwrap();
+    assert_eq!(d.index, 1);
+    assert!((d.from_ms - 10500.0).abs() < 0.1 && (d.to_ms - 18500.0).abs() < 0.1);
+    m.cancel_bpm_detect(&spec.id).unwrap();
+    assert!(
+        bpm_results(&e).is_empty(),
+        "a cancelled run reports nothing"
+    );
+}
+
+#[test]
+fn bpm_detect_applies_the_result_live_and_saves_it() {
+    let (_t, spec, mut m, _b, e) = with_tempo_opened();
+    let t0 = Instant::now();
+    let before = m.snapshot(&spec.id).unwrap();
+    let shared = m.test_fake_bpm_detect(&spec.id, 0);
+    m.tick(t0);
+    assert!(bpm_results(&e).is_empty(), "not before the job is done");
+    shared.finish(BpmOutcome::Done {
+        bpm: 93.4,
+        beats: 5,
+    });
+    m.tick(t0 + ms(20));
+    let got = bpm_results(&e);
+    assert_eq!(got.len(), 1);
+    let (r, snap) = &got[0];
+    assert_eq!(
+        (r.outcome, r.new_bpm, r.hint),
+        (ResultKind::Applied, Some(93.4), None)
+    );
+    assert_eq!((r.index, r.old_bpm), (0, 120.0));
+    let snap = snap.as_ref().unwrap();
+    assert!(snap.bpm_detect.is_none());
+    assert_eq!(bpms(&m, &spec.id), vec![93.4, 90.0]);
+    assert_eq!(starts(snap), starts(&before));
+    assert!(m.snapshot(&spec.id).unwrap().bpm_detect.is_none());
+    assert_eq!(disk(&spec).unwrap()["tempo"]["segments"][0]["bpm"], 120.0);
+    m.tick(t0 + ms(520));
+    assert_eq!(disk(&spec).unwrap()["tempo"]["segments"][0]["bpm"], 93.4);
+    // a later finish of nothing emits nothing more
+    m.tick(t0 + ms(540));
+    assert_eq!(bpm_results(&e).len(), 1);
+
+    // an octave error gets its hint, the value is applied as it is
+    let shared = m.test_fake_bpm_detect(&spec.id, 1);
+    shared.finish(BpmOutcome::Done {
+        bpm: 180.0,
+        beats: 9,
+    });
+    m.tick(t0 + ms(600));
+    let (r, _) = &bpm_results(&e)[1];
+    assert_eq!((r.new_bpm, r.hint), (Some(180.0), Some(Hint::Double)));
+    assert_eq!(bpms(&m, &spec.id), vec![93.4, 180.0]);
+}
+
+#[test]
+fn bpm_detect_drops_the_result_when_the_section_changed() {
+    let edits = [
+        SectionEdit::Move {
+            index: 1,
+            at: 10500.0,
+            steps: 384,
+        },
+        SectionEdit::Remove {
+            index: 1,
+            at: 10500.0,
+        },
+        SectionEdit::Bpm {
+            index: 1,
+            at: 10500.0,
+            bpm: 95.0,
+        },
+    ];
+    for edit in edits {
+        let (_t, spec, mut m, _b, e) = with_tempo_opened();
+        let t0 = Instant::now();
+        let shared = m.test_fake_bpm_detect(&spec.id, 1);
+        let after = m.edit_sections(&spec.id, edit.clone(), t0).unwrap();
+        shared.finish(BpmOutcome::Done {
+            bpm: 70.0,
+            beats: 5,
+        });
+        m.tick(t0 + ms(20));
+        let got = bpm_results(&e);
+        assert_eq!(got.len(), 1, "{edit:?}");
+        let (r, snap) = &got[0];
+        assert_eq!(r.outcome, ResultKind::Dropped, "{edit:?}");
+        assert!(r.message.as_deref().unwrap().contains("section changed"));
+        assert!(snap.is_none());
+        let now = m.snapshot(&spec.id).unwrap();
+        assert_eq!(
+            (starts(&now), bpms(&m, &spec.id)),
+            (starts(&after), {
+                after.tempo.segments.iter().map(|g| g.bpm).collect()
+            })
+        );
+    }
+}
+
+#[test]
+fn bpm_detect_failure_changes_nothing() {
+    let (_t, spec, mut m, _b, e) = with_tempo_opened();
+    let t0 = Instant::now();
+    m.test_fake_bpm_detect(&spec.id, 0)
+        .finish(BpmOutcome::Failed("x".into()));
+    m.tick(t0);
+    let (r, snap) = &bpm_results(&e)[0];
+    assert_eq!(
+        (r.outcome, r.message.as_deref()),
+        (ResultKind::Failed, Some("x"))
+    );
+    assert!(snap.is_none());
+    assert_eq!(bpms(&m, &spec.id), vec![120.0, 90.0]);
+    assert!(m.snapshot(&spec.id).unwrap().bpm_detect.is_none());
+}
+
+#[test]
+fn bpm_detect_is_cancelled_by_the_button_and_by_the_session_going() {
+    let (_t, spec, mut m, _b, e) = with_tempo_opened();
+    let t0 = Instant::now();
+    let shared = m.test_fake_bpm_detect(&spec.id, 0);
+    let snap = m.cancel_bpm_detect(&spec.id).unwrap();
+    assert!(snap.bpm_detect.is_none());
+    assert!(shared.cancel.load(Ordering::SeqCst));
+    shared.finish(BpmOutcome::Done {
+        bpm: 70.0,
+        beats: 5,
+    });
+    m.tick(t0);
+    assert!(bpm_results(&e).is_empty());
+    assert_eq!(bpms(&m, &spec.id), vec![120.0, 90.0]);
+    // without a run, cancel just returns the snapshot
+    assert!(m.cancel_bpm_detect(&spec.id).unwrap().bpm_detect.is_none());
+
+    // closing the session
+    let shared = m.test_fake_bpm_detect(&spec.id, 0);
+    m.close();
+    assert!(shared.cancel.load(Ordering::SeqCst));
+    shared.finish(BpmOutcome::Done {
+        bpm: 70.0,
+        beats: 5,
+    });
+    m.tick(t0);
+    assert!(bpm_results(&e).is_empty());
+
+    // opening another track
+    m.open(&spec).unwrap();
+    let shared = m.test_fake_bpm_detect(&spec.id, 0);
+    let (_t2, other) = spec_of(PRACTICE);
+    m.open(&other).unwrap();
+    assert!(shared.cancel.load(Ordering::SeqCst));
+
+    // the Editor's release
+    m.open(&spec).unwrap();
+    let shared = m.test_fake_bpm_detect(&spec.id, 0);
+    m.release(&spec.id).unwrap();
+    assert!(shared.cancel.load(Ordering::SeqCst));
+    m.tick(t0);
+    assert!(bpm_results(&e).is_empty());
+}
+
+#[test]
+fn bpm_detect_edit_while_playing_keeps_the_music_and_moves_the_clicks() {
+    let (_t, spec, mut m, b, _e, pcm) = with_tempo();
+    let t0 = Instant::now();
+    m.seek(&spec.id, 500, t0).unwrap();
+    m.play(&spec.id, t0).unwrap();
+    let mut got = b.pull(RATE * 900 / 1000);
+    // 120 BPM -> 100 BPM at the section start: beats every 600 ms from 500 ms
+    m.test_fake_bpm_detect(&spec.id, 0)
+        .finish(BpmOutcome::Done {
+            bpm: 100.0,
+            beats: 7,
+        });
+    m.tick(t0 + ms(900));
+    assert!(m.snapshot(&spec.id).unwrap().transport.playing);
+    got.extend(b.pull(RATE * 2100 / 1000));
+    let mut want = expected(&pcm, 500 * RATE / 1000, RATE * 3);
+    fade_in(&mut want, 0);
+    // before the edit 500 ms apart (500, 1000), after it 600 ms apart (1700, 2300, 2900)
+    for at in [500, 1000, 1700, 2300, 2900] {
+        add_click(&mut want, (at - 500) * RATE / 1000);
+    }
+    close(&got, &want);
+}
+
+#[test]
+fn bpm_detect_shutdown_of_the_session_cancels_a_slow_run() {
+    let srv = TestServer::start_beats("slow-bpm:120", &[]);
+    let (_t, spec, mut m, _b, e) = with_tempo_opened();
+    m.start_bpm_detect(&spec.id, 0, 500.0, bpm_params(&srv.url))
+        .unwrap();
+    let t0 = Instant::now();
+    for k in 0..100 {
+        m.tick(t0 + ms(k * 20));
+        if m.snapshot(&spec.id).unwrap().bpm_detect.unwrap().phase
+            != crate::beat_detect::DetectPhase::Checking
+        {
+            break;
+        }
+        std::thread::sleep(ms(20));
+    }
+    m.close();
+    std::thread::sleep(ms(200));
+    assert!(bpm_results(&e).is_empty());
+}

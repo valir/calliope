@@ -658,3 +658,174 @@ fn no_room_for_the_first_beat_does_not_fail_the_open() {
     let snap = open(&e, NOISY).unwrap();
     assert_eq!(first_of(&snap), (0.0, None));
 }
+
+// ------------------------------------------------------------------ Detect BPM
+
+use crate::player_source::Pcm;
+use crate::section_bpm::ResultKind;
+use crate::test_server::TestServer;
+
+const WITH_TEMPO: &str = "0199c0a0-0000-7000-8000-000000000304";
+const POLL: Duration = Duration::from_millis(50);
+
+type Seen = Arc<Mutex<Vec<PlayerEvent>>>;
+
+/// Track 304 with a 100 BPM section at 500 and a 120 BPM one at 17 800, opened with an event
+/// collector.
+fn detect_env() -> (Env, Seen) {
+    let e = env();
+    let p = state_path(&e, WITH_TEMPO);
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+    v["tempo"]["segments"] = serde_json::json!([
+        {"start_ms": 500, "bpm": 100, "found_ms": 500},
+        {"start_ms": 17800, "bpm": 120, "detected_ms": 17800}
+    ]);
+    std::fs::write(&p, v.to_string()).unwrap();
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    let s = seen.clone();
+    do_open_player(
+        &e.host,
+        &e.repo,
+        WITH_TEMPO,
+        Arc::new(move |ev| s.lock().unwrap().push(ev)),
+    )
+    .unwrap();
+    (e, seen)
+}
+
+fn decode_source(e: &Env, file: &str) -> Pcm {
+    let f = e.dir.path().join("lib/tracks").join(WITH_TEMPO).join(file);
+    player_source::decode(&f, None, &AtomicBool::new(false), &mut |_, _| {}).unwrap()
+}
+
+/// Ticks the host every 20 ms until a `bpm-detected` event (at most 10 s).
+fn wait_detected(e: &Env, seen: &Seen) -> crate::section_bpm::BpmResult {
+    let end = Instant::now() + Duration::from_secs(10);
+    loop {
+        e.host.tick(Instant::now());
+        for ev in seen.lock().unwrap().iter() {
+            if let PlayerEvent::BpmDetected { result, .. } = ev {
+                return result.clone();
+            }
+        }
+        assert!(Instant::now() < end, "no bpm-detected event");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn detect_at(e: &Env, url: &str, ms: u64) -> Result<PlayerSnapshot, String> {
+    e.host
+        .with(|m| m.seek(WITH_TEMPO, ms, Instant::now()))
+        .unwrap();
+    do_player_detect_bpm(&e.host, url.into(), POLL, WITH_TEMPO, 0, 500.0)
+}
+
+/// The piece the stub tracker saw: its samples and the source slice must be equal.
+fn assert_sent_is(server: &TestServer, pcm: &Pcm, from_ms: f64, frames: i64) {
+    let bytes = std::fs::read(server.outer.path().join("work/stub-tracker-last.flac")).unwrap();
+    let mut r = claxon::FlacReader::new(&bytes[..]).unwrap();
+    let got: Vec<i32> = r.samples().map(|s| s.unwrap()).collect();
+    let ch = pcm.channels as usize;
+    let from = (from_ms * f64::from(pcm.rate) / 1000.0).round() as usize;
+    let n = got.len() / ch;
+    assert!((n as i64 - frames).abs() <= 1, "{n} frames, want {frames}");
+    let want: Vec<i32> = pcm.samples[from * ch..(from + n) * ch]
+        .iter()
+        .map(|&s| i32::from(s))
+        .collect();
+    assert_eq!(got, want, "the sent audio is the slice of the source");
+}
+
+#[test]
+fn detect_bpm_sends_the_playhead_piece_of_the_selected_source_and_applies_it() {
+    let server = TestServer::start_beats("bpm:93.4", &[]);
+    let (e, seen) = detect_env();
+    let backing = decode_source(&e, "backings/backing.flac");
+    do_player_select_source(&e.host, WITH_TEMPO, "backing:backing").unwrap();
+
+    // playhead 10 500: 3 bars of 2.4 s, the backing
+    let snap = detect_at(&e, &server.url, 10500).unwrap();
+    assert!(snap.bpm_detect.is_some());
+    let r = wait_detected(&e, &seen);
+    assert_eq!((r.outcome, r.new_bpm), (ResultKind::Applied, Some(93.4)));
+    assert_sent_is(&server, &backing, 10500.0, 158_760);
+    let snap = e.host.with(|m| m.snapshot(WITH_TEMPO)).unwrap();
+    let bpms: Vec<f64> = snap.tempo.segments.iter().map(|g| g.bpm).collect();
+    assert_eq!(bpms, vec![93.4, 120.0]);
+    assert!(snap.bpm_detect.is_none());
+    do_close_player(&e.host);
+    let (st, _, _) = player_state::load(state_path(&e, WITH_TEMPO).parent().unwrap());
+    let starts: Vec<(f64, f64)> = st
+        .tempo
+        .segments
+        .iter()
+        .map(|g| (g.start_ms, g.bpm))
+        .collect();
+    assert_eq!(starts, vec![(500.0, 93.4), (17800.0, 120.0)]);
+}
+
+#[test]
+fn detect_bpm_uses_the_selected_source_and_stops_at_the_section_end() {
+    let server = TestServer::start_beats("bpm:100", &[]);
+    let (e, seen) = detect_env();
+    let guitar = decode_source(&e, "stems/guitar.flac");
+    do_player_select_source(&e.host, WITH_TEMPO, "stem:guitar").unwrap();
+    // 3 s to the next section: shorter than 3 bars, longer than 1
+    detect_at(&e, &server.url, 14800).unwrap();
+    wait_detected(&e, &seen);
+    assert_sent_is(&server, &guitar, 14800.0, 66_150);
+
+    // 800 ms before the end of the section: less than a bar, no server call
+    let posts = |s: &TestServer| {
+        s.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.contains("POST /v1/beats"))
+            .count()
+    };
+    let before = posts(&server);
+    let err = detect_at(&e, &server.url, 17000).unwrap_err();
+    assert!(err.starts_with("Less than 1 bar"), "{err}");
+    assert_eq!(posts(&server), before);
+    assert!(e
+        .host
+        .with(|m| m.snapshot(WITH_TEMPO))
+        .unwrap()
+        .bpm_detect
+        .is_none());
+}
+
+#[test]
+fn detect_bpm_cancel_and_shutdown_stop_the_run_and_delete_the_server_job() {
+    let server = TestServer::start_beats("slow-bpm:120", &["--beat-timeout-ms", "20000"]);
+    let jobs = server.outer.path().join("work/jobs");
+    let count = || std::fs::read_dir(&jobs).map(|d| d.count()).unwrap_or(0);
+    let wait = |want_some: bool| {
+        let end = Instant::now() + Duration::from_secs(10);
+        while (count() > 0) != want_some {
+            assert!(Instant::now() < end, "jobs on the server: {}", count());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let (e, seen) = detect_env();
+    detect_at(&e, &server.url, 2000).unwrap();
+    wait(true);
+    let snap = do_player_cancel_detect(&e.host, WITH_TEMPO).unwrap();
+    assert!(snap.bpm_detect.is_none());
+    wait(false);
+
+    detect_at(&e, &server.url, 2000).unwrap();
+    wait(true);
+    e.host.shutdown(Duration::from_secs(2));
+    wait(false);
+    e.host.tick(Instant::now());
+    assert!(
+        !seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|ev| matches!(ev, PlayerEvent::BpmDetected { .. })),
+        "a cancelled run reports nothing"
+    );
+}
