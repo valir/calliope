@@ -49,9 +49,9 @@ pub fn to_stereo_f32(stem: &StemPcm, start_frame: u64, frames: usize, scratch: &
     scratch[2 * available..2 * frames].fill(0.0);
 }
 
-/// Sums interleaved-stereo blocks with their gains into `out`, hard-clips to [-1, 1] and
-/// returns the number of clipped samples. Each input must be at least `out.len()` long.
-pub fn mix(inputs: &[&[f32]], gains: &[f32], out: &mut [f32]) -> u32 {
+/// Sums interleaved-stereo blocks with their gains into `out` without clipping (the loudness
+/// measurement sees the mix as it would be before the clip). Each input must be at least `out.len()` long.
+pub fn sum(inputs: &[&[f32]], gains: &[f32], out: &mut [f32]) {
     out.fill(0.0);
     for (input, &gain) in inputs.iter().zip(gains) {
         if gain == 0.0 {
@@ -61,6 +61,12 @@ pub fn mix(inputs: &[&[f32]], gains: &[f32], out: &mut [f32]) -> u32 {
             *o += s * gain;
         }
     }
+}
+
+/// Sums interleaved-stereo blocks with their gains into `out`, hard-clips to [-1, 1] and
+/// returns the number of clipped samples. Each input must be at least `out.len()` long.
+pub fn mix(inputs: &[&[f32]], gains: &[f32], out: &mut [f32]) -> u32 {
+    sum(inputs, gains, out);
     let mut clipped = 0;
     for o in out.iter_mut() {
         if *o > 1.0 {
@@ -172,5 +178,20 @@ mod tests {
         assert_eq!(quantise(1.0, 24), 8_388_607);
         assert_eq!(quantise(-1.0, 24), -8_388_608);
         assert_eq!(quantise(0.5, 24), 4_194_304);
+    }
+
+    #[test]
+    fn sum_does_not_clip() {
+        let a = [0.75f32, -0.75];
+        let b = [0.5f32, -0.5];
+        let gains = [1.0, 1.0];
+        let mut out = [0.0; 2];
+        sum(&[&a, &b], &gains, &mut out);
+        assert_eq!(out, [1.25, -1.25]);
+
+        let mut out_mix = [0.0; 2];
+        let clipped = mix(&[&a, &b], &gains, &mut out_mix);
+        assert_eq!(clipped, 2);
+        assert_eq!(out_mix, [1.0, -1.0]);
     }
 }
