@@ -8,3 +8,5 @@ task 6 | Frontend state and types | implementer | done
 task 7 | Export pane: To: row, Change..., notice, hscroll | implementer | done
 task 8 | GUI e2e and docs/ui.md | implementer | done
 task 9 | README | local (indentation fixed by the lead) | done
+tester | 6 more acceptance tests (ac_quick_*), no defects | tester | done
+reviewer | APPROVED, 2 minors, no fix needed | reviewer | done

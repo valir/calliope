@@ -2194,3 +2194,200 @@ fn ac_quick_mp3_always_asks() {
     assert_eq!(e.export.rc5_quick(), None);
     e.repo_unchanged_except_exports();
 }
+
+// ---- QA additions: edges of the quick RC-5 folder ----
+
+/// The webview can send any `reuse`: unless Rust holds exactly that folder, a dialog opens and
+/// nothing is ever written to the folder the webview named.
+#[test]
+fn ac_quick_reuse_not_held_by_rust_opens_the_dialog_and_writes_nothing() {
+    let e = Env::new();
+    let x = e.rc5("x");
+    let drive = tree(&x);
+    // Rust holds nothing yet.
+    std::fs::write(&e.answers, "export-rc5 CANCEL\n").unwrap();
+    let r = e.prepare_reuse(401, "1", Some(&x));
+    assert!(matches!(r, Ok(None)), "{r:?}");
+    assert_eq!(rc5_starts(&e).len(), 1);
+
+    // Rust holds B; the webview names X, or B with a trailing slash.
+    let b = e.rc5("b");
+    let (_, s) = e.export(401, rc5("1"), &b);
+    assert_eq!(s.phase, ExportPhase::Done);
+    let n = rc5_starts(&e).len();
+    for (i, other) in [
+        x.to_string_lossy().into_owned(),
+        format!("{}/", b.display()),
+    ]
+    .iter()
+    .enumerate()
+    {
+        std::fs::write(&e.answers, "export-rc5 CANCEL\n").unwrap();
+        let r = do_prepare_export(
+            &e.st,
+            &e.settings(),
+            &e.export,
+            &FileTempoStore,
+            Some(e.home.clone()),
+            &id(403),
+            TargetReq::Rc5 {
+                memory: "2".into(),
+                reuse: Some(other.clone()),
+            },
+        );
+        assert!(matches!(r, Ok(None)), "{other}: {r:?}");
+        assert_eq!(rc5_starts(&e).len(), n + i + 1, "{other}: a dialog opened");
+    }
+    assert!(tree(&x) == drive, "the named folder was never written");
+    assert!(!wav_path(&b, 2).exists());
+}
+
+/// A quick folder that is a symlink later pointed into the repository is refused (not written).
+#[test]
+fn ac_quick_symlink_retargeted_into_the_repository_is_refused() {
+    let e = Env::new();
+    let real = e.rc5("real");
+    let link = e.home.join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let (_, s) = e.export(401, rc5("1"), &link);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    assert_eq!(e.export.rc5_quick(), Some(link.clone()));
+
+    // Same path, now inside the repository.
+    let inside = e.repo.join("drive");
+    std::fs::create_dir_all(inside.join("ROLAND")).unwrap();
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&inside, &link).unwrap();
+    let before_repo = tree(&e.repo);
+    let starts = e.picker.starts().len();
+    let r = e.prepare_reuse(403, "2", Some(&link));
+    assert!(r.is_err(), "{r:?}");
+    assert_eq!(e.picker.starts().len(), starts, "skipped, then refused");
+    assert!(
+        tree(&e.repo) == before_repo,
+        "nothing written in the repository"
+    );
+}
+
+/// The skip needs the folder to be still there at the click: a ROLAND *file* or a missing folder
+/// opens the dialog; and a folder removed between the prepare and the start fails the job without
+/// touching the quick folder, so the next click asks.
+#[test]
+fn ac_quick_roland_file_and_removal_between_prepare_and_start() {
+    let e = Env::new();
+    let b = e.rc5("b");
+    let (_, s) = e.export(401, rc5("1"), &b);
+    assert_eq!(s.phase, ExportPhase::Done);
+
+    // Prepared by the skip, then the drive disappears.
+    let plan = e.prepare_reuse(403, "2", Some(&b)).unwrap().unwrap();
+    std::fs::remove_dir_all(&b).unwrap();
+    if e.start(&plan.token, plan.exists).is_ok() {
+        assert_eq!(e.wait().phase, ExportPhase::Failed);
+    }
+    assert!(!b.exists(), "nothing recreated on the unplugged drive");
+
+    // A drive with a ROLAND file instead of a folder.
+    std::fs::create_dir_all(&b).unwrap();
+    std::fs::write(b.join("ROLAND"), "x").unwrap();
+    std::fs::write(&e.answers, "export-rc5 CANCEL\n").unwrap();
+    let n = rc5_starts(&e).len();
+    let r = e.prepare_reuse(403, "2", Some(&b));
+    assert!(matches!(r, Ok(None)), "{r:?}");
+    assert_eq!(rc5_starts(&e).len(), n + 1);
+    assert!(b.join("ROLAND").is_file());
+}
+
+/// A busy export refuses a reuse prepare and "Change..." alike, and changes nothing.
+#[test]
+fn ac_quick_busy_refuses_prepare_and_change() {
+    let e = Env::with(ExportState::new(Box::new(real_tools)).with_pace(5.0));
+    let b = e.rc5("b");
+    let c = e.rc5("c");
+    e.answer(&rc5("7"), &b);
+    let plan = e.prepare(401, rc5("7")).unwrap().unwrap();
+    let snap = e.start(&plan.token, false).unwrap();
+    let starts = e.picker.starts().len();
+    std::fs::write(&e.answers, format!("export-rc5 {}\n", c.display())).unwrap();
+
+    let r = e.prepare_reuse(403, "8", Some(&b));
+    assert!(r.is_err(), "{r:?}");
+    let r = do_choose_rc5_folder(&e.st, &e.settings(), &e.export, Some(e.home.clone()));
+    assert!(r.is_err(), "{r:?}");
+    assert_eq!(e.picker.starts().len(), starts, "no dialog while busy");
+    assert_eq!(e.export.rc5_quick(), None);
+    assert!(e.export.cancel(&snap.job).is_some());
+    assert_eq!(e.wait().phase, ExportPhase::Cancelled);
+    assert_eq!(e.settings().get().rc5_dir, Some(b));
+    assert_eq!(e.export.rc5_quick(), None);
+}
+
+/// "Change..." cancelled or refused (no ROLAND, ROLAND a file, inside the repository) keeps the
+/// previous folder, in memory and in the settings, and writes nothing.
+#[test]
+fn ac_quick_change_cancelled_or_refused_keeps_the_folder() {
+    let e = Env::new();
+    let b = e.rc5("b");
+    let (_, s) = e.export(401, rc5("1"), &b);
+    assert_eq!(s.phase, ExportPhase::Done);
+    let drive = tree(&b);
+
+    let plain = e.folder("plain");
+    let rfile = e.folder("rfile");
+    std::fs::write(rfile.join("ROLAND"), "x").unwrap();
+    let inside = e.repo.join("drive");
+    std::fs::create_dir_all(inside.join("ROLAND")).unwrap();
+    let repo_now = tree(&e.repo);
+    let gone = e.home.join("gone");
+
+    std::fs::write(&e.answers, "export-rc5 CANCEL\n").unwrap();
+    let r = do_choose_rc5_folder(&e.st, &e.settings(), &e.export, Some(e.home.clone()));
+    assert!(matches!(r, Ok(None)), "{r:?}");
+    for bad in [&plain, &rfile, &inside, &gone] {
+        std::fs::write(&e.answers, format!("export-rc5 {}\n", bad.display())).unwrap();
+        let r = do_choose_rc5_folder(&e.st, &e.settings(), &e.export, Some(e.home.clone()));
+        assert!(r.is_err(), "{}: {r:?}", bad.display());
+        assert_eq!(e.export.rc5_quick(), Some(b.clone()), "{}", bad.display());
+        assert_eq!(
+            e.settings().get().rc5_dir,
+            Some(b.clone()),
+            "{}",
+            bad.display()
+        );
+    }
+    assert!(tree(&b) == drive);
+    assert!(tree(&e.repo) == repo_now);
+    // Every dialog started in the quick folder.
+    assert!(rc5_starts(&e)[1..]
+        .iter()
+        .all(|s| s.as_deref() == Some(b.as_path())));
+    // And B still skips.
+    let n = e.picker.starts().len();
+    assert!(e.prepare_reuse(403, "2", Some(&b)).unwrap().is_some());
+    assert_eq!(e.picker.starts().len(), n);
+}
+
+/// An MP3 export between two RC-5 exports changes neither the quick folder nor the RC-5 folder
+/// setting, and the second RC-5 export still skips; MP3 itself asks every time.
+#[test]
+fn ac_quick_mp3_between_rc5_exports_keeps_the_skip() {
+    let e = Env::new();
+    let b = e.rc5("b");
+    let out = e.folder("out");
+    let (_, s) = e.export(401, rc5("1"), &b);
+    assert_eq!(s.phase, ExportPhase::Done);
+    let (_, s) = e.export(403, TargetReq::Mp3, &out);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    assert_eq!(e.export.rc5_quick(), Some(b.clone()));
+    assert_eq!(e.settings().get().rc5_dir, Some(b.clone()));
+    let n = e.picker.starts().len();
+    let plan = e.prepare_reuse(403, "2", Some(&b)).unwrap().unwrap();
+    assert_eq!(e.picker.starts().len(), n, "no dialog for the RC-5");
+    e.start(&plan.token, plan.exists).unwrap();
+    assert_eq!(e.wait().phase, ExportPhase::Done);
+    assert!(wav_path(&b, 2).is_file());
+    // MP3 again still asks.
+    let (_, s) = e.export(401, TargetReq::Mp3, &out);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    assert_eq!(e.picker.starts().len(), n + 1);
+}
