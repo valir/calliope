@@ -126,6 +126,21 @@ describe('player state', () => {
     expect(pl.status).toBe('active');
   });
 
+  it('an open cancelled by a backing write (superseded, no closed event) is retried and ends active', async () => {
+    let n = 0;
+    handlers.open_player = (a) => {
+      if (++n === 1) throw 'superseded';
+      return snapshot(a.id as string);
+    };
+    syncSelection(practice);
+    await flush();
+    await flush();
+    expect(n).toBe(2);
+    expect(pl.status).toBe('active');
+    expect(pl.message).not.toContain('Could not open');
+    expect(logs()).toContain(`player open superseded, retrying id=${practice.id}`);
+  });
+
   it('selectSource calls the command and the button reads Play', async () => {
     syncSelection(practice);
     await flush();

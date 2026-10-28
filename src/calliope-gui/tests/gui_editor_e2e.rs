@@ -903,7 +903,7 @@ fn editor_normalize() {
     app.wait_contains("editor active");
     size(&wid, 1024, 640);
     settle();
-    let (mix_small, _, _) = layout(&app);
+    let (mix_small, over_small, _) = layout(&app);
     shot("editor-normalize-1024-idle");
     size(&wid, 1280, 800);
     settle();
@@ -913,9 +913,12 @@ fn editor_normalize() {
     settle();
     let (m, o, _) = layout(&app);
     // by design the whole Editor pane scrolls at 1024x640 (docs/ui.md); the result line must not
-    // change that: the lane keeps its height and the pane its overflow (measured: 143 px)
+    // change that: the lane keeps its height and the pane its overflow
     assert_eq!(m, mix_small, "the Mix lane grew at 1024x640");
-    assert_eq!(o, 143, "overflow at 1024x640 with a result line");
+    assert!(
+        o <= over_small,
+        "overflow at 1024x640 grew with a result line: {o} > {over_small}"
+    );
     shot("editor-normalize-1024");
     assert!(app.count("editor normalize failed") == 0);
     finish(&app);

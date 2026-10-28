@@ -167,11 +167,11 @@
   disabled; there is no separate Cancel button. Normalize is disabled without a backing file (title
   "Save the backing first"), during a job and during a beat detection. The two-line slot shows the
   result: "Saved, normalized to -14.0 LUFS (gain +3.2 dB).", "Saved at -15.6 LUFS (gain -1.0 dB,
-  limited by the -1 dBTP peak ceiling).", "Saved. Too quiet to normalize (below -70 LUFS).",
+  limited by the -1 dBTP peak ceiling).", "Saved. Too quiet to normalize.",
   "Normalized to -14.0 LUFS (gain +3.2 dB).", "Normalized to -15.6 LUFS (gain -1.0 dB, limited by the
   -1 dBTP peak ceiling).", "Already at the target (-14.0 LUFS); the file was not changed.",
-  "Already at the -1 dBTP peak ceiling (-15.6 LUFS); the file was not changed.", "Too quiet to
-  normalize (below -70 LUFS); the file was not changed.", "Normalize cancelled; the file was not
+  "Already at the -1 dBTP peak ceiling (-15.6 LUFS); the file was not changed.", "Too quiet or too short to
+  normalize; the file was not changed.", "Normalize cancelled; the file was not
   changed.". A save no longer clips, so the clipped warning does not appear (the mix is summed without clipping and
   the gain keeps the true peak at or below -1 dBTP). At 1024x640 the pane scrolls as before (about
   143 px) and the result line does not change that.

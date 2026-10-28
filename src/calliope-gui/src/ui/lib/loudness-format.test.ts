@@ -11,7 +11,7 @@ describe('loudnessText', () => {
     expect(loudnessText(r('normalized', -14, 3.2), 'save')).toBe('Saved, normalized to -14.0 LUFS (gain +3.2 dB).');
     expect(loudnessText(r('limited', -15.6, -1), 'save')).toBe(
       'Saved at -15.6 LUFS (gain -1.0 dB, limited by the -1 dBTP peak ceiling).');
-    expect(loudnessText(r('too-quiet', null, 0), 'save')).toBe('Saved. Too quiet to normalize (below -70 LUFS).');
+    expect(loudnessText(r('too-quiet', null, 0), 'save')).toBe('Saved. Too quiet or too short to normalize.');
     expect(loudnessText(r('at-target', -14, 0), 'save')).toBe('Saved, normalized to -14.0 LUFS (gain +0.0 dB).');
     expect(loudnessText(r('at-ceiling', -15.6, 0), 'save')).toBe('Saved, normalized to -15.6 LUFS (gain +0.0 dB).');
   });
@@ -25,7 +25,7 @@ describe('loudnessText', () => {
     expect(loudnessText(r('at-ceiling', -15.6, 0), 'normalize')).toBe(
       'Already at the -1 dBTP peak ceiling (-15.6 LUFS); the file was not changed.');
     expect(loudnessText(r('too-quiet', null, 0), 'normalize')).toBe(
-      'Too quiet to normalize (below -70 LUFS); the file was not changed.');
+      'Too quiet or too short to normalize; the file was not changed.');
   });
 
   it('never shows -0.0', () => {

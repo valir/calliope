@@ -424,14 +424,14 @@ pub struct NoPlayer; // runs f directly (default; tests)
 - Save:
   - normalized: `Saved, normalized to -14.0 LUFS (gain +3.2 dB).`
   - limited: `Saved at -15.6 LUFS (gain -1.0 dB, limited by the -1 dBTP peak ceiling).`
-  - too-quiet: `Saved. Too quiet to normalize (below -70 LUFS).`
+  - too-quiet: `Saved. Too quiet or too short to normalize.`
   - (at-target and at-ceiling do not happen on Save; they read like normalized.)
 - Normalize:
   - normalized: `Normalized to -14.0 LUFS (gain +3.2 dB).`
   - limited: `Normalized to -15.6 LUFS (gain -1.0 dB, limited by the -1 dBTP peak ceiling).`
   - at-target: `Already at the target (-14.0 LUFS); the file was not changed.`
   - at-ceiling: `Already at the -1 dBTP peak ceiling (-15.6 LUFS); the file was not changed.`
-  - too-quiet: `Too quiet to normalize (below -70 LUFS); the file was not changed.`
+  - too-quiet: `Too quiet or too short to normalize; the file was not changed.`
 
 **`editor-state.svelte.ts`**:
 

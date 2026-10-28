@@ -26,8 +26,8 @@ export function loudnessText(r: LoudnessResult, job: JobKind): string {
       return `${save ? 'Saved at' : 'Normalized to'} ${lufs} LUFS (gain ${gain} dB, limited by the ${ceiling} dBTP peak ceiling).`;
     case 'too-quiet':
       return save
-        ? 'Saved. Too quiet to normalize (below -70 LUFS).'
-        : 'Too quiet to normalize (below -70 LUFS); the file was not changed.';
+        ? 'Saved. Too quiet or too short to normalize.'
+        : 'Too quiet or too short to normalize; the file was not changed.';
     case 'at-target':
       if (!save) return `Already at the target (${lufs || target} LUFS); the file was not changed.`;
       break;
