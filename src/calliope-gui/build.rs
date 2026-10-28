@@ -74,6 +74,7 @@ const COMMANDS: &[&str] = &[
     "player_loop",
     "export_info",
     "prepare_export",
+    "choose_rc5_folder",
     "start_export",
     "cancel_export",
     "get_export",

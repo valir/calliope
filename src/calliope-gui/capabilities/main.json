@@ -58,6 +58,7 @@
     "allow-player-loop",
     "allow-export-info",
     "allow-prepare-export",
+    "allow-choose-rc5-folder",
     "allow-start-export",
     "allow-cancel-export",
     "allow-get-export",
