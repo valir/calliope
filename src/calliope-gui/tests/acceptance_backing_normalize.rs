@@ -698,3 +698,361 @@ fn ac9_the_player_plays_the_normalized_file_after_normalize() {
     }
     assert!(got.iter().any(|v| v.abs() > 0.01));
 }
+
+// ====================================================================== QA extensions
+
+fn write_flac_ch(path: &Path, samples: &[i32], channels: usize, bits: usize, rate: u32) {
+    use flacenc::component::BitRepr;
+    use flacenc::error::Verify;
+    let config = flacenc::config::Encoder::default().into_verified().unwrap();
+    let src = flacenc::source::MemSource::from_samples(samples, channels, bits, rate as usize);
+    let stream = flacenc::encode_with_fixed_block_size(&config, src, config.block_size).unwrap();
+    let mut sink = flacenc::bitsink::ByteSink::new();
+    stream.write(&mut sink).unwrap();
+    fs::write(path, sink.as_slice()).unwrap();
+}
+
+/// FOUR with all four stems rewritten at `rate`/`bits`: `vocals` (stereo) carries `pcm`, `bass`
+/// is a mono silence, `drums` and `guitar` stereo silence. Vocals checked at 0 dB.
+fn open_four_custom(
+    pcm: &[f32],
+    rate: u32,
+    bits: u32,
+) -> (
+    tempfile::TempDir,
+    Repository,
+    EditorManager,
+    ManualBackend,
+    Events,
+) {
+    let (tmp, repo) = fixture_repo();
+    let frames = pcm.len() / 2;
+    let stems = dir_of(&repo, FOUR).join("stems");
+    write_flac_ch(
+        &stems.join("vocals.flac"),
+        &quantise(pcm, bits),
+        2,
+        bits as usize,
+        rate,
+    );
+    write_flac_ch(
+        &stems.join("bass.flac"),
+        &vec![0; frames],
+        1,
+        bits as usize,
+        rate,
+    );
+    for n in ["drums", "guitar"] {
+        write_flac_ch(
+            &stems.join(format!("{n}.flac")),
+            &vec![0; frames * 2],
+            2,
+            bits as usize,
+            rate,
+        );
+    }
+    let (mut m, b, ev) = manager();
+    m.open(&spec(&repo, FOUR)).unwrap();
+    m.set_stem(FOUR, "vocals", Some(0.0), true, Instant::now())
+        .unwrap();
+    (tmp, repo, m, b, ev)
+}
+
+#[test]
+fn qa_save_normalizes_at_other_sample_rates_with_a_mono_stem_present() {
+    for rate in [8000u32, 11025, 44100, 48000, 96000] {
+        let pcm = at_lufs(
+            rate,
+            tone(rate, 8.0, -19.0, Some((2.0, 10.0, -12.0))),
+            -22.0,
+        );
+        let (_t, repo, mut m, _b, ev) = open_four_custom(&pcm, rate, 16);
+        let (file, result, clipped, _w) = save(&mut m, &repo, &ev);
+        assert_eq!(result.outcome, Outcome::Normalized, "rate {rate}");
+        let (info, _) = read_flac(&file);
+        assert_eq!(info.sample_rate, rate);
+        assert_eq!(info.channels, 2);
+        near(
+            measure_file(&file).lufs.unwrap(),
+            -14.0,
+            0.1,
+            &format!("loudness at {rate} Hz"),
+        );
+        assert_eq!(clipped, 0);
+    }
+}
+
+#[test]
+fn qa_save_keeps_24_bits_and_hits_the_target_precisely() {
+    let pcm = at_lufs(RATE, tone(RATE, 8.0, -19.0, None), -25.0);
+    let (_t, repo, mut m, _b, ev) = open_four_custom(&pcm, RATE, 24);
+    let (file, result, _c, _w) = save(&mut m, &repo, &ev);
+    let (info, _) = read_flac(&file);
+    assert_eq!(info.bits_per_sample, 24);
+    near(
+        measure_file(&file).lufs.unwrap(),
+        -14.0,
+        0.02,
+        "24 bit loudness",
+    );
+    near(result.gain_db, 11.0, 0.1, "gain");
+}
+
+#[test]
+fn qa_save_of_a_track_shorter_than_400_ms_is_written_untouched_as_too_quiet() {
+    let pcm = tone(RATE, 0.3, -20.0, None);
+    let (_t, repo, mut m, _b, ev) = open_four_custom(&pcm, RATE, 16);
+    let (file, result, clipped, _w) = save(&mut m, &repo, &ev);
+    assert_eq!(result.outcome, Outcome::TooQuiet);
+    assert_eq!(result.gain_db, 0.0);
+    let (info, samples) = read_flac(&file);
+    assert_eq!(info.samples.unwrap(), (0.3 * RATE as f64) as u64);
+    // unchanged level: the file holds the mix as it is
+    let want = quantise(&pcm, 16);
+    assert_eq!(samples, want);
+    assert_eq!(clipped, 0);
+    // and Normalize on it leaves it untouched, too
+    let bytes = fs::read(&file).unwrap();
+    let (r, changed, _) = normalize(&mut m, &repo, &ev, FOUR);
+    assert!(!changed);
+    assert_eq!(r.outcome, Outcome::TooQuiet);
+    assert_eq!(fs::read(&file).unwrap(), bytes);
+}
+
+#[test]
+fn qa_save_of_digital_silence_is_too_quiet_and_writes_silence() {
+    let pcm = vec![0.0f32; RATE as usize * 2 * 2];
+    let (_t, repo, mut m, _b, ev) = open_four_custom(&pcm, RATE, 16);
+    let (file, result, _c, _w) = save(&mut m, &repo, &ev);
+    assert_eq!(result.outcome, Outcome::TooQuiet);
+    assert!(read_flac(&file).1.iter().all(|&s| s == 0));
+}
+
+#[test]
+fn qa_a_record_whose_md5_no_longer_matches_is_measured_again() {
+    let (_t, repo) = fixture_repo();
+    let dir = dir_of(&repo, MIXED);
+    let file = dir.join("backings/backing.flac");
+    let (mut m, _b, ev) = manager();
+    m.open(&spec(&repo, MIXED)).unwrap();
+    let (_r, changed, _) = normalize(&mut m, &repo, &ev, MIXED);
+    assert!(changed);
+    // the file is replaced by something quieter behind the app's back; the record still says -14
+    let (info, samples) = read_flac(&file);
+    let quiet: Vec<i32> = samples.iter().map(|s| s / 4).collect();
+    write_flac(
+        &file,
+        &quiet,
+        info.bits_per_sample as usize,
+        info.sample_rate,
+    );
+    let before = measure_file(&file).lufs.unwrap();
+    assert!(before < -16.0, "{before}");
+    // a fresh session (the file changed on disk)
+    let (mut m2, _b2, ev2) = manager();
+    m2.open(&spec(&repo, MIXED)).unwrap();
+    let (r, changed, _) = normalize(&mut m2, &repo, &ev2, MIXED);
+    assert!(changed, "the stale record must not be trusted: {r:?}");
+    near(measure_file(&file).lufs.unwrap(), -14.0, 0.1, "loudness");
+}
+
+#[test]
+fn qa_a_hand_edited_record_that_claims_the_target_is_checked_against_the_md5() {
+    let (_t, repo) = fixture_repo();
+    let dir = dir_of(&repo, MIXED);
+    let file = dir.join("backings/backing.flac");
+    let bytes = fs::read(&file).unwrap();
+    let mut j = json_of(&dir);
+    j["backings"][0]["loudness"] = serde_json::json!({
+        "lufs": -14.0, "true_peak": -3.0, "gain_db": 0.0, "target": -14.0,
+        "ceiling": -1.0, "md5": "00000000000000000000000000000000"
+    });
+    fs::write(
+        dir.join("track.json"),
+        serde_json::to_vec_pretty(&j).unwrap(),
+    )
+    .unwrap();
+    let (mut m, _b, ev) = manager();
+    m.open(&spec(&repo, MIXED)).unwrap();
+    let (_r, changed, _) = normalize(&mut m, &repo, &ev, MIXED);
+    assert!(changed, "a lying record must not skip the measurement");
+    assert_ne!(fs::read(&file).unwrap(), bytes);
+    near(measure_file(&file).lufs.unwrap(), -14.0, 0.1, "loudness");
+}
+
+#[test]
+fn qa_unknown_keys_in_the_loudness_record_are_ignored_and_other_variants_stay_untouched() {
+    let (_t, repo) = fixture_repo();
+    let dir = dir_of(&repo, MIXED);
+    // a second variant with its own file and a loudness record with a future key
+    let first = dir.join("backings/backing.flac");
+    let second = dir.join("backings/other.flac");
+    fs::copy(&first, &second).unwrap();
+    let mut j = json_of(&dir);
+    let mut v2 = j["backings"][0].clone();
+    v2["id"] = "other".into();
+    v2["name"] = "Other".into();
+    v2["file"] = "backings/other.flac".into();
+    v2["loudness"] = serde_json::json!({
+        "lufs": -30.0, "true_peak": -20.0, "gain_db": 0.0, "target": -14.0,
+        "ceiling": -1.0, "md5": "0123456789abcdef0123456789abcdef", "future_key": {"x": 1}
+    });
+    j["backings"].as_array_mut().unwrap().push(v2.clone());
+    fs::write(
+        dir.join("track.json"),
+        serde_json::to_vec_pretty(&j).unwrap(),
+    )
+    .unwrap();
+    let second_bytes = fs::read(&second).unwrap();
+
+    let rec = repo.load_record(MIXED).expect("loads with a future key");
+    assert_eq!(rec.backings.len(), 2);
+
+    let (mut m, _b, ev) = manager();
+    m.open(&spec(&repo, MIXED)).unwrap();
+    let (_r, changed, _) = normalize(&mut m, &repo, &ev, MIXED);
+    assert!(changed);
+    assert_eq!(
+        fs::read(&second).unwrap(),
+        second_bytes,
+        "other variant file"
+    );
+    let after = json_of(&dir);
+    assert_eq!(after["backings"][1]["file"], v2["file"]);
+    assert_eq!(after["backings"][1]["mix"], v2["mix"]);
+    assert_eq!(
+        after["backings"][1]["loudness"]["lufs"], -30.0,
+        "other variant's record"
+    );
+    assert!(after["backings"][0]["loudness"].is_object());
+}
+
+#[test]
+fn qa_normalize_puts_the_old_file_in_the_trash_byte_for_byte() {
+    let (_t, repo) = fixture_repo();
+    let dir = dir_of(&repo, MIXED);
+    let old = fs::read(dir.join("backings/backing.flac")).unwrap();
+    let (mut m, _b, ev) = manager();
+    m.open(&spec(&repo, MIXED)).unwrap();
+    let (_r, changed, _) = normalize(&mut m, &repo, &ev, MIXED);
+    assert!(changed);
+    let trash = trash_files(&repo);
+    assert!(
+        trash
+            .iter()
+            .any(|p| fs::read(p).map(|b| b == old).unwrap_or(false)),
+        "old backing not found in the trash: {trash:?}"
+    );
+}
+
+fn wait_for_progress(ev: &Events, max: f32) {
+    let end = Instant::now() + Duration::from_secs(30);
+    loop {
+        let seen = ev.lock().unwrap().iter().any(
+            |e| matches!(e, EditorEvent::Saving { progress, job, .. } if *progress > 0.0 && *progress <= max && *job == JobKind::Normalize),
+        );
+        if seen {
+            return;
+        }
+        assert!(Instant::now() < end, "no progress");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn qa_cancel_in_the_measuring_phase_leaves_everything_as_it_was() {
+    let (_t, repo) = fixture_repo();
+    let dir = dir_of(&repo, MIXED);
+    let file = dir.join("backings/backing.flac");
+    let bytes = fs::read(&file).unwrap();
+    let json = fs::read(dir.join("track.json")).unwrap();
+    let (mut m, _b, ev) = manager();
+    m.set_job_pace(Some(Duration::from_millis(30)));
+    m.open(&spec(&repo, MIXED)).unwrap();
+    m.start_normalize(MIXED, repo.clone(), no_lock()).unwrap();
+    wait_for_progress(&ev, 0.3);
+    m.cancel_save(MIXED).unwrap();
+    assert!(matches!(
+        final_event(&ev),
+        EditorEvent::SaveCancelled {
+            job: JobKind::Normalize,
+            ..
+        }
+    ));
+    assert_eq!(fs::read(&file).unwrap(), bytes);
+    assert_eq!(fs::read(dir.join("track.json")).unwrap(), json);
+    assert!(stray_parts(&dir).is_empty());
+    assert!(trash_files(&repo).is_empty());
+    // and a new Normalize works afterwards
+    m.set_job_pace(None);
+    let (_r, changed, _) = normalize(&mut m, &repo, &ev, MIXED);
+    assert!(changed);
+}
+
+#[test]
+fn qa_a_file_changed_between_measure_and_swap_is_a_conflict_and_is_kept() {
+    let (_t, repo) = fixture_repo();
+    let dir = dir_of(&repo, MIXED);
+    let file = dir.join("backings/backing.flac");
+    let (mut m, _b, ev) = manager();
+    m.set_job_pace(Some(Duration::from_millis(20)));
+    m.open(&spec(&repo, MIXED)).unwrap();
+    m.start_normalize(MIXED, repo.clone(), no_lock()).unwrap();
+    wait_for_progress(&ev, 0.3);
+    // somebody else rewrites the file during the job
+    let (info, samples) = read_flac(&file);
+    let other: Vec<i32> = samples.iter().map(|s| s / 2).collect();
+    let tmp = dir.join("backings/elsewhere.flac");
+    write_flac(
+        &tmp,
+        &other,
+        info.bits_per_sample as usize,
+        info.sample_rate,
+    );
+    fs::rename(&tmp, &file).unwrap();
+    let theirs = fs::read(&file).unwrap();
+    match final_event(&ev) {
+        EditorEvent::SaveFailed { message, job, .. } => {
+            assert_eq!(job, JobKind::Normalize);
+            assert!(
+                message.contains("conflict") || message.contains("changed"),
+                "{message}"
+            );
+        }
+        e => panic!("expected a conflict, got {e:?}"),
+    }
+    assert_eq!(fs::read(&file).unwrap(), theirs, "their file is kept");
+    assert!(stray_parts(&dir).is_empty());
+}
+
+#[test]
+fn qa_normalize_with_the_player_playing_closes_it_once_and_the_audio_stays_valid() {
+    // ac9 covers the reopened file; here the Player is mid-playback with the gate and a second
+    // Normalize (no change) must not close it again.
+    let (_t, repo) = fixture_repo();
+    let pbackend = ManualBackend::new();
+    let pevents: Arc<Mutex<Vec<PlayerEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let pe = pevents.clone();
+    let psink: player::EventSink = Arc::new(move |e| pe.lock().unwrap().push(e));
+    let pm = Arc::new(Mutex::new(PlayerManager::new(
+        Arc::new(pbackend.clone()),
+        psink,
+    )));
+    {
+        let mut p = pm.lock().unwrap();
+        p.open(&player_spec(&repo, MIXED)).unwrap();
+        p.play(MIXED, Instant::now()).unwrap();
+    }
+    let (mut m, _b, ev) = manager();
+    m.set_player_gate(Arc::new(TestGate(pm.clone())));
+    m.open(&spec(&repo, MIXED)).unwrap();
+    normalize(&mut m, &repo, &ev, MIXED);
+    assert_eq!(closed_count(&pevents, MIXED), 1);
+    // the Player reopens and plays; the second Normalize changes nothing and leaves it open
+    pm.lock().unwrap().open(&player_spec(&repo, MIXED)).unwrap();
+    pm.lock().unwrap().play(MIXED, Instant::now()).unwrap();
+    let (_r, changed, _) = normalize(&mut m, &repo, &ev, MIXED);
+    assert!(!changed);
+    assert_eq!(closed_count(&pevents, MIXED), 1, "no second close");
+    assert!(pm.lock().unwrap().is_open(MIXED));
+}
