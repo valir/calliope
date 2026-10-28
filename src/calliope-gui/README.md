@@ -196,6 +196,12 @@ Editor); a plain backing track is exported as it is.
   The Memory box (1 to 99) is the RC-5 memory number; it shows the track's remembered memory, else
   the last one used plus one (1 at first). The dialog starts in the drive you chose last.
   Eject the RC-5 before unplugging it.
+* Several tracks in a row: once an RC-5 export has succeeded, the next "to BOSS RC-5" presses
+  in the Export view write to the same drive without asking, as long as it is still mounted
+  there (it still holds `ROLAND/`); otherwise the folder dialog opens again. The line
+  "To: <folder>" under the button shows that drive, and "Change..." picks another one. The
+  overwrite question is still asked. Leaving the Export view or closing the app forgets it, and
+  the next RC-5 export asks again.
 * "MP3 file" / "OGG file": choose a folder; the file is named `Band - Title.mp3` (or `.ogg`) and
   carries the title, band, album, track number and year as tags.
 * Count-in: every export starts with 4 beats of lead at the track's tempo, with six ticks
