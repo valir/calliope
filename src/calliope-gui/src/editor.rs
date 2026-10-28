@@ -15,9 +15,13 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::audio_out::{OutputBackend, OutputHandle};
-use crate::backing_render::{self, RenderInput, RenderStem, SaveParams, SaveShared};
+use crate::backing_normalize::{self, NormalizeParams};
+use crate::backing_render::{
+    self, NoPlayer, PlayerGate, RenderInput, RenderStem, SaveParams, SaveShared,
+};
 use crate::beat_detect::{self, DetectJob, DetectOutcome, DetectParams, DetectShared, DetectState};
 use crate::import_job::RepoLock;
+use crate::loudness::LoudnessResult;
 use crate::mix_waveform::{self, Debounce};
 use crate::mixer;
 use crate::player::SnapTempo;
@@ -65,6 +69,14 @@ pub struct VariantTarget {
     pub exists: bool,
 }
 
+/// The kind of the Editor's one background job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JobKind {
+    Save,
+    Normalize,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EditorSnapshot {
     pub id: String,
@@ -76,6 +88,8 @@ pub struct EditorSnapshot {
     pub variant: VariantTarget,
     /// Save progress 0..1 while a save runs (task 9).
     pub saving: Option<f32>,
+    /// The kind of the running save or normalize job, if any.
+    pub job: Option<JobKind>,
     /// Peaks of the checked-stem mix (`mix_waveform::BUCKETS` values); empty until the first
     /// computation is installed. The UI keeps the old ones while new ones are computed.
     pub peaks: Vec<f32>,
@@ -106,11 +120,13 @@ pub enum EditorEvent {
     Saving {
         id: String,
         progress: f32,
+        job: JobKind,
     },
     Saved {
         id: String,
         file: String,
         clipped_samples: u64,
+        loudness: LoudnessResult,
         track: TrackRecord,
         warnings: Vec<String>,
     },
@@ -119,12 +135,22 @@ pub enum EditorEvent {
         gen: u64,
         peaks: Vec<f32>,
     },
+    Normalized {
+        id: String,
+        file: String,
+        loudness: LoudnessResult,
+        changed: bool,
+        track: Option<TrackRecord>,
+        warnings: Vec<String>,
+    },
     SaveFailed {
         id: String,
         message: String,
+        job: JobKind,
     },
     SaveCancelled {
         id: String,
+        job: JobKind,
     },
     Detect {
         id: String,
@@ -412,6 +438,7 @@ impl Session {
             transport: self.state(),
             variant: self.variant.clone(),
             saving: None,
+            job: None,
             peaks: self.wave.peaks.clone(),
             tempo: SnapTempo {
                 beats_per_bar: self.tempo.beats_per_bar,
@@ -484,6 +511,10 @@ pub struct EditorManager {
     /// The running save's shared state, readable without the manager lock (app exit).
     live_save: Arc<Mutex<Option<Arc<SaveShared>>>>,
     peaks_fn: PeaksFn,
+    /// Where a save or normalize commit releases the Player first (plan 2.8).
+    gate: Arc<dyn PlayerGate>,
+    /// Test knob: slept per progress call of both jobs.
+    job_pace: Option<Duration>,
 }
 
 /// What it takes to open the device for a session; `open` blocks and must run without the
@@ -517,6 +548,7 @@ impl OutputRequest {
 /// The running (or just finished, not yet reaped) save job.
 struct SaveRun {
     id: String,
+    kind: JobKind,
     shared: Arc<SaveShared>,
     handle: JoinHandle<()>,
 }
@@ -559,6 +591,8 @@ impl EditorManager {
             trash: Vec::new(),
             defer_drops: false,
             live_save: Arc::new(Mutex::new(None)),
+            gate: Arc::new(NoPlayer),
+            job_pace: None,
             peaks_fn: Arc::new(|stems, gains, frames, buckets, cancel| {
                 mix_waveform::mix_peaks(stems, gains, frames, buckets, cancel)
             }),
@@ -569,6 +603,17 @@ impl EditorManager {
     #[doc(hidden)]
     pub fn set_peaks_fn(&mut self, f: PeaksFn) {
         self.peaks_fn = f;
+    }
+
+    /// Sets the gate the save and normalize commits go through (default: no Player).
+    pub fn set_player_gate(&mut self, gate: Arc<dyn PlayerGate>) {
+        self.gate = gate;
+    }
+
+    /// Test knob: time slept per progress call of the save and normalize jobs.
+    #[doc(hidden)]
+    pub fn set_job_pace(&mut self, pace: Option<Duration>) {
+        self.job_pace = pace;
     }
 
     /// Keep closed output handles until `take_trash` (see `trash`).
@@ -797,6 +842,7 @@ impl EditorManager {
                 }
             } else {
                 snap.saving = Some(run.shared.progress());
+                snap.job = Some(run.kind);
             }
         }
         if let Some(run) = self
@@ -833,10 +879,9 @@ impl EditorManager {
         lock: Arc<dyn RepoLock>,
     ) -> Result<EditorSnapshot, String> {
         self.reap();
-        if self.save.is_some() {
-            return Err("A save is already running".into());
-        }
+        self.refuse_if_job_running()?;
         let sink = self.sink.clone();
+        let (gate, pace) = (self.gate.clone(), self.job_pace);
         let s = self.session(id)?;
         if !s.lanes.iter().any(|l| l.unmuted) {
             return Err("Check a stem first".into());
@@ -870,16 +915,73 @@ impl EditorManager {
             mix,
             repo,
             lock,
+            gate,
+            pace,
         };
         let shared = SaveShared::new();
         let handle = backing_render::spawn(params, shared.clone(), sink);
+        self.install_job(id, JobKind::Save, shared, handle)
+    }
+
+    /// The error for a second job while one runs (after `reap`).
+    fn refuse_if_job_running(&self) -> Result<(), String> {
+        match self.save.as_ref().map(|r| r.kind) {
+            None => Ok(()),
+            Some(JobKind::Save) => Err("A save is already running".into()),
+            Some(JobKind::Normalize) => Err("Normalize is already running".into()),
+        }
+    }
+
+    fn install_job(
+        &mut self,
+        id: &str,
+        kind: JobKind,
+        shared: Arc<SaveShared>,
+        handle: JoinHandle<()>,
+    ) -> Result<EditorSnapshot, String> {
         *self.live_save.lock().unwrap_or_else(|e| e.into_inner()) = Some(shared.clone());
         self.save = Some(SaveRun {
             id: id.to_string(),
+            kind,
             shared,
             handle,
         });
         self.snapshot(id)
+    }
+
+    /// Starts the normalize job for the session's backing file (plan 2.6): the file is
+    /// measured and rewritten to -14 LUFS with the -1 dBTP ceiling.
+    pub fn start_normalize(
+        &mut self,
+        id: &str,
+        repo: Repository,
+        lock: Arc<dyn RepoLock>,
+    ) -> Result<EditorSnapshot, String> {
+        self.reap();
+        self.refuse_if_job_running()?;
+        let busy = self.detect_running(id);
+        let sink = self.sink.clone();
+        let (gate, pace) = (self.gate.clone(), self.job_pace);
+        let s = self.session(id)?;
+        if busy {
+            return Err("Wait for the beat detection to finish".into());
+        }
+        if !s.variant.exists || !s.dir.join(&s.variant.file).is_file() {
+            return Err("Save the backing first".into());
+        }
+        let params = NormalizeParams {
+            id: s.id.clone(),
+            dir: s.dir.clone(),
+            variant: s.variant.id.clone(),
+            file: s.variant.file.clone(),
+            repo,
+            lock,
+            gate,
+            pace,
+        };
+        let shared = SaveShared::new();
+        let handle = backing_normalize::spawn(params, shared.clone(), sink);
+        self.install_job(id, JobKind::Normalize, shared, handle)
     }
 
     /// Asks the running save of `id` to stop; the job answers with `save-cancelled`.

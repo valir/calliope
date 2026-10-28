@@ -39,6 +39,7 @@
     "allow-editor-cancel-detect",
     "allow-editor-tempo",
     "allow-save-backing",
+    "allow-normalize-backing",
     "allow-cancel-backing-save",
     "allow-open-player",
     "allow-close-player",

@@ -151,6 +151,32 @@ impl TempoStore for PlayerTempoStore {
     }
 }
 
+/// The Editor's gate for backing writes (plan 2.8): the Player's session for the track is
+/// released and `f` runs under the same lock of the manager, so the Player cannot reopen the
+/// old file in between. Lock order: this host, then the repository lock.
+pub(crate) struct PlayerFileGate {
+    host: Arc<PlayerHost>,
+}
+
+impl PlayerFileGate {
+    pub(crate) fn new(host: Arc<PlayerHost>) -> Self {
+        Self { host }
+    }
+}
+
+impl crate::backing_render::PlayerGate for PlayerFileGate {
+    fn without_player(
+        &self,
+        id: &str,
+        f: &mut dyn FnMut() -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.host.with(|m| {
+            m.release_for_audio(id)?;
+            f()
+        })
+    }
+}
+
 // ---- command bodies ----
 
 pub(crate) fn do_open_player(
@@ -163,7 +189,7 @@ pub(crate) fn do_open_player(
     // arrival here and the newest one owns the event sink.
     let (ticket, events) = host.with(|m| {
         host.set_sink(sink);
-        (m.begin_open(), m.sink())
+        (m.begin_open_for(id), m.sink())
     });
     let result = (|| {
         let spec = {

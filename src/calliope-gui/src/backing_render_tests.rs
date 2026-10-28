@@ -311,3 +311,58 @@ fn a_stem_that_changed_rate_or_depth_fails_the_render_naming_it() {
     fs::remove_file(&part).unwrap();
     assert!(run(16, RATE, 24).is_ok());
 }
+
+#[test]
+fn measure_mix_equals_a_meter_over_the_unclipped_sum_and_is_not_clipped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = Stem::new(tmp.path(), "a.flac", 2, 16, 20_000, 0.9, 21);
+    let b = Stem::new(tmp.path(), "b.flac", 1, 16, 15_000, 0.9, 22);
+    let g = mixer::gain_factor(Some(12.0), true);
+    let stems = [(&a, g), (&b, g)];
+    let mut seen = Vec::new();
+    let got = measure_mix(
+        &input(&stems, 20_000, 16),
+        &AtomicBool::new(false),
+        &mut |p| seen.push(p),
+    )
+    .unwrap();
+    let mut meter = Meter::new(RATE as u32).unwrap();
+    for start in (0..20_000).step_by(4096) {
+        let n = 4096.min(20_000 - start);
+        let blocks: Vec<Vec<f32>> = [&a, &b]
+            .iter()
+            .map(|s| (start..start + n).flat_map(|i| s.at(i)).collect())
+            .collect();
+        let inputs: Vec<&[f32]> = blocks.iter().map(|b| b.as_slice()).collect();
+        let mut out = vec![0.0; n * 2];
+        mixer::sum(&inputs, &[g, g], &mut out);
+        meter.add(&out).unwrap();
+    }
+    assert_eq!(got, meter.finish());
+    // +12 dB on loud noise passes full scale: the measurement sees it unclipped
+    assert!(got.true_peak.unwrap() > 0.0, "{got:?}");
+    assert!(seen.windows(2).all(|w| w[0] <= w[1]) && seen.iter().all(|&p| p < 1.0));
+    assert_eq!(seen.len(), 5);
+}
+
+#[test]
+fn measure_mix_cancel_returns_cancelled() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = Stem::new(tmp.path(), "a.flac", 2, 16, 20_000, 0.5, 1);
+    let cancel = AtomicBool::new(false);
+    let r = measure_mix(&input(&[(&a, 1.0)], 20_000, 16), &cancel, &mut |_| {
+        cancel.store(true, Ordering::Relaxed)
+    });
+    assert_eq!(r, Err(CANCELLED.to_string()));
+}
+
+#[test]
+fn render_stats_md5_is_the_streaminfo_md5_of_the_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = Stem::new(tmp.path(), "a.flac", 2, 16, 9_000, 0.5, 1);
+    let part = tmp.path().join("out.part");
+    let stats = render(&input(&[(&a, 1.0)], 9_000, 16), &part).unwrap();
+    let (info, _) = decode(&part);
+    assert_eq!(stats.md5, info.md5sum);
+    assert_ne!(stats.md5, [0; 16]);
+}

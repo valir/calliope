@@ -65,6 +65,19 @@ pub enum Outcome {
     TooQuiet,
 }
 
+impl Outcome {
+    /// The kebab-case name (log lines, the same as the serialised form).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Outcome::Normalized => "normalized",
+            Outcome::Limited => "limited",
+            Outcome::AtTarget => "at-target",
+            Outcome::AtCeiling => "at-ceiling",
+            Outcome::TooQuiet => "too-quiet",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Decision {
     pub outcome: Outcome,

@@ -2,6 +2,7 @@
 //! integration tests in `tests/` import it as `calliope_gui` (so the unit tests run once, here).
 
 pub mod audio_out;
+pub mod backing_normalize;
 pub mod backing_render;
 pub mod beat_detect;
 pub mod cli;

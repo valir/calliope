@@ -55,6 +55,7 @@ const COMMANDS: &[&str] = &[
     "editor_cancel_detect",
     "editor_tempo",
     "save_backing",
+    "normalize_backing",
     "cancel_backing_save",
     "open_player",
     "close_player",

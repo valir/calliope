@@ -1872,6 +1872,64 @@ fn release_refuses_a_newer_schema_file_and_keeps_the_session() {
 }
 
 #[test]
+fn release_for_audio_flushes_a_dirty_position_and_closes() {
+    let (_t, spec, mut m, _b, e) = opened(PRACTICE);
+    assert!(!m.release_for_audio("other").unwrap());
+    assert_eq!(closed(&e, &spec.id), 0);
+    m.seek(&spec.id, 3000, Instant::now()).unwrap();
+    assert!(m.release_for_audio(&spec.id).unwrap());
+    assert!(!m.is_open(&spec.id));
+    assert_eq!(closed(&e, &spec.id), 1);
+    assert_eq!(disk(&spec).unwrap()["position_ms"], 3000);
+}
+
+#[test]
+fn release_for_audio_closes_a_read_only_session_without_writing() {
+    let (_t, spec) = spec_of(PRACTICE);
+    let newer = br#"{"schema_version": 9}"#;
+    std::fs::write(spec.dir.join("player.json"), newer).unwrap();
+    let (mut m, _b, e) = manager();
+    m.open(&spec).unwrap();
+    m.seek(&spec.id, 3000, Instant::now()).unwrap();
+    assert!(m.release_for_audio(&spec.id).unwrap());
+    assert!(!m.is_open(&spec.id));
+    assert_eq!(closed(&e, &spec.id), 1);
+    assert_eq!(std::fs::read(spec.dir.join("player.json")).unwrap(), newer);
+}
+
+#[test]
+fn release_for_audio_refuses_when_the_flush_fails_and_keeps_the_session() {
+    let (_t, spec, mut m, _b, e) = opened(PRACTICE);
+    m.seek(&spec.id, 3000, Instant::now()).unwrap();
+    std::fs::remove_dir_all(&spec.dir).unwrap();
+    let err = m.release_for_audio(&spec.id).unwrap_err();
+    assert!(
+        err.starts_with("The Player could not save its state:")
+            && err.ends_with("the backing was not changed"),
+        "{err}"
+    );
+    assert!(m.is_open(&spec.id));
+    assert_eq!(closed(&e, &spec.id), 0);
+}
+
+#[test]
+fn release_for_audio_cancels_a_pending_open_of_the_same_track_only() {
+    let (_t, spec) = spec_of(PRACTICE);
+    let (mut m, _b, _e) = manager();
+    let ticket = m.begin_open_for(&spec.id);
+    let loaded = load(&spec, &ticket, &m.sink()).unwrap();
+    assert!(!m.release_for_audio("other").unwrap());
+    assert!(!ticket.cancel.load(Ordering::Relaxed));
+    assert!(!m.release_for_audio(&spec.id).unwrap());
+    assert!(ticket.cancel.load(Ordering::Relaxed));
+    // the load that finished meanwhile is not installed
+    assert_eq!(
+        m.finish_open(&ticket, &spec, loaded).unwrap_err(),
+        SUPERSEDED
+    );
+}
+
+#[test]
 fn flush_if_open_saves_a_dirty_session_and_leaves_it_open() {
     let (_t, spec, mut m, _b, e) = opened(PRACTICE);
     m.flush_if_open("other").unwrap();

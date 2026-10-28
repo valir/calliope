@@ -6,7 +6,7 @@ use crate::{
     import_job::ImportState,
     ipc::{self, RepoState},
     picker::{Picker, TauriPicker},
-    player_ipc::{self, PlayerHost, PlayerTempoStore},
+    player_ipc::{self, PlayerFileGate, PlayerHost, PlayerTempoStore},
     settings::{self, SettingsStore},
     tempo_store::TempoStore,
     tools::Tools,
@@ -64,13 +64,25 @@ pub fn run() {
             app.manage(new_export_state(discover));
             let backend = crate::audio_out::select_backend();
             // One backend for both engines: only one of them sounds at a time.
-            let editor = ipc::EditorState::new(backend.clone());
+            let host = Arc::new(PlayerHost::new(backend.clone(), discover().ffmpeg));
+            let editor = ipc::EditorState::new(backend);
             let h = app.handle().clone();
             editor.set_before_play(std::sync::Arc::new(move || {
                 h.state::<Arc<PlayerHost>>().pause_current()
             }));
+            // Saving or normalizing a backing releases the Player's session of the track first.
+            editor.with(|m| {
+                m.set_player_gate(Arc::new(PlayerFileGate::new(host.clone())));
+                #[cfg(feature = "e2e-hooks")]
+                if let Some(ms) = std::env::var("CALLIOPE_E2E_BACKING_PACE")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .filter(|ms| *ms > 0)
+                {
+                    m.set_job_pace(Some(std::time::Duration::from_millis(ms)));
+                }
+            });
             app.manage(editor);
-            let host = Arc::new(PlayerHost::new(backend, discover().ffmpeg));
             // Editor tempo writes go through the Player: flush on read, release on write.
             let store: Arc<dyn TempoStore> = Arc::new(PlayerTempoStore::new(host.clone()));
             app.manage(store);
@@ -135,6 +147,7 @@ pub fn run() {
             ipc::editor_cancel_detect,
             ipc::editor_tempo,
             ipc::save_backing,
+            ipc::normalize_backing,
             ipc::cancel_backing_save,
             player_ipc::open_player,
             player_ipc::close_player,

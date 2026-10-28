@@ -948,6 +948,15 @@ pub fn do_save_backing(
     st.with(|m| m.start_save(id, r, repo.repo_lock()))
 }
 
+pub fn do_normalize_backing(
+    st: &EditorState,
+    repo: &RepoState,
+    id: &str,
+) -> Result<EditorSnapshot, String> {
+    let r = Repository::new(repo.current_root());
+    st.with(|m| m.start_normalize(id, r, repo.repo_lock()))
+}
+
 fn event_sink(events: tauri::ipc::Channel<EditorEvent>) -> EventSink {
     Arc::new(move |ev| {
         let _ = events.send(ev);
@@ -1393,6 +1402,17 @@ pub async fn editor_tempo(
 pub async fn save_backing(app: tauri::AppHandle, id: String) -> Result<EditorSnapshot, String> {
     blocking(move || do_save_backing(&app.state::<EditorState>(), &app.state::<RepoState>(), &id))
         .await
+}
+
+#[tauri::command]
+pub async fn normalize_backing(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<EditorSnapshot, String> {
+    blocking(move || {
+        do_normalize_backing(&app.state::<EditorState>(), &app.state::<RepoState>(), &id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -2216,6 +2236,9 @@ mod tests {
         assert!(do_save_backing(&st, &e.st, "x")
             .unwrap_err()
             .contains("no editor session"));
+        assert!(do_normalize_backing(&st, &e.st, "x")
+            .unwrap_err()
+            .contains("no editor session"));
     }
 
     #[test]
@@ -2225,11 +2248,17 @@ mod tests {
         let g = got.clone();
         do_watch_editor(&st, Arc::new(move |_| *g.lock().unwrap() += 1));
         let sink = st.mgr().sink();
-        sink(EditorEvent::SaveCancelled { id: "x".into() });
+        sink(EditorEvent::SaveCancelled {
+            id: "x".into(),
+            job: crate::editor::JobKind::Save,
+        });
         assert_eq!(*got.lock().unwrap(), 1);
         let g2 = got.clone();
         do_watch_editor(&st, Arc::new(move |_| *g2.lock().unwrap() += 10));
-        sink(EditorEvent::SaveCancelled { id: "x".into() });
+        sink(EditorEvent::SaveCancelled {
+            id: "x".into(),
+            job: crate::editor::JobKind::Save,
+        });
         assert_eq!(*got.lock().unwrap(), 11);
     }
 }

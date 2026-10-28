@@ -21,6 +21,7 @@ use calliope_gui::import_tmp;
 use calliope_gui::ipc;
 #[allow(dead_code)]
 use calliope_gui::local_source;
+use calliope_gui::loudness;
 use calliope_gui::media;
 use calliope_gui::mixer;
 use calliope_gui::picker;
@@ -572,6 +573,7 @@ fn ac16_ac17_save_writes_one_backing_variant_with_volumes_applied() {
         file,
         clipped_samples,
         track,
+        loudness: result,
         ..
     } = final_event(&ev)
     else {
@@ -579,6 +581,8 @@ fn ac16_ac17_save_writes_one_backing_variant_with_volumes_applied() {
     };
     assert_eq!(file, "backings/backing.flac");
     assert_eq!(track.backings.len(), 1);
+    assert_eq!(clipped_samples, 0);
+    let g = loudness::db_to_gain(result.gain_db);
     let (v, b) = (decode(&sp.dir, "vocals"), decode(&sp.dir, "bass"));
     let (gv, gb) = (
         mixer::gain_factor(Some(-6.0), true),
@@ -587,7 +591,7 @@ fn ac16_ac17_save_writes_one_backing_variant_with_volumes_applied() {
     let frames = v.frames.max(b.frames) as usize;
     let (sv, sb) = (stereo(&v, 0, frames), stereo(&b, 0, frames));
     let want: Vec<i32> = (0..frames * 2)
-        .map(|i| mixer::quantise((sv[i] * gv + sb[i] * gb).clamp(-1.0, 1.0), 16))
+        .map(|i| mixer::quantise((sv[i] * (gv * g) + sb[i] * (gb * g)).clamp(-1.0, 1.0), 16))
         .collect();
     let (info, got) = read_flac(&sp.dir.join(&file));
     assert_eq!(
@@ -596,6 +600,24 @@ fn ac16_ac17_save_writes_one_backing_variant_with_volumes_applied() {
     );
     assert_eq!(info.samples, Some(frames as u64));
     assert!(got == want, "saved samples differ from the configured mix");
+    // the file is at -14 LUFS (or at the ceiling) and the record says so
+    let mut meter = loudness::Meter::new(22050).unwrap();
+    let floats: Vec<f32> = got.iter().map(|&x| x as f32 / 32768.0).collect();
+    meter.add(&floats).unwrap();
+    let measured = meter.finish();
+    match result.outcome {
+        loudness::Outcome::Normalized => {
+            assert!((measured.lufs.unwrap() + 14.0).abs() <= 0.1, "{measured:?}")
+        }
+        loudness::Outcome::Limited => {
+            assert!(measured.lufs.unwrap() < -13.9, "{measured:?}");
+            assert!(
+                (measured.true_peak.unwrap() + 1.0).abs() <= 0.1,
+                "{measured:?}"
+            );
+        }
+        o => panic!("unexpected outcome {o:?}"),
+    }
     // unchecked stems are not in the file: only vocals+bass contribute (checked above exactly)
     let meta = json_of(&sp.dir);
     assert_eq!(meta["type"], "stem");
@@ -604,6 +626,7 @@ fn ac16_ac17_save_writes_one_backing_variant_with_volumes_applied() {
     assert_eq!(meta["backings"][0]["id"], "backing");
     assert_eq!(meta["backings"][0]["name"], "Backing");
     assert_eq!(meta["backings"][0]["file"], "backings/backing.flac");
+    assert_eq!(meta["backings"][0]["loudness"]["target"], -14.0);
     assert_eq!(
         meta["backings"][0]["mix"]["stems"][2],
         json!({"name": "bass", "gain_db": 3.5, "unmuted": true})
@@ -889,6 +912,8 @@ fn safety_cancel_mid_save_keeps_the_existing_backing_and_track_json() {
         mix: json!({}),
         repo: repo.clone(),
         lock: no_lock(),
+        gate: Arc::new(backing_render::NoPlayer),
+        pace: None,
     };
     backing_render::spawn(params, shared, sink).join().unwrap();
     assert!(matches!(

@@ -242,6 +242,7 @@ pub struct StemReader {
     sample_rate: u32,
     bits: u32,
     md5: [u8; 16],
+    frames: Option<u64>,
     scale: f32,
     buf: Vec<i32>,
     /// Current block as interleaved source samples, and the read position in frames.
@@ -266,6 +267,7 @@ impl StemReader {
             sample_rate: si.sample_rate,
             bits: si.bits_per_sample,
             md5: si.md5sum,
+            frames: si.samples,
             scale: 1.0 / (1u64 << (si.bits_per_sample - 1)) as f32,
             reader,
             buf: Vec::new(),
@@ -290,6 +292,11 @@ impl StemReader {
     /// Channels of the file (1 or 2).
     pub fn channels(&self) -> u32 {
         self.channels
+    }
+
+    /// The frame count from STREAMINFO, when the header has one.
+    pub fn frames(&self) -> Option<u64> {
+        self.frames
     }
 
     /// The STREAMINFO MD5 of the audio (all zeros when the encoder did not write one).

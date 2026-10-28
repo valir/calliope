@@ -1175,6 +1175,8 @@ pub struct OpenSpec {
 pub struct OpenTicket {
     gen: u64,
     cancel: Arc<AtomicBool>,
+    /// The track being opened, when the caller said (`begin_open_for`).
+    id: Option<String>,
 }
 
 impl OpenTicket {
@@ -1917,11 +1919,21 @@ impl PlayerManager {
 
     /// Closes (and flushes) the current session and cancels any load in progress.
     pub fn begin_open(&mut self) -> OpenTicket {
+        self.begin_open_tagged(None)
+    }
+
+    /// `begin_open` that records the track, so `release_for_audio` can cancel this open.
+    pub fn begin_open_for(&mut self, id: &str) -> OpenTicket {
+        self.begin_open_tagged(Some(id.to_string()))
+    }
+
+    fn begin_open_tagged(&mut self, id: Option<String>) -> OpenTicket {
         self.close();
         self.generation += 1;
         let ticket = OpenTicket {
             gen: self.generation,
             cancel: Arc::new(AtomicBool::new(false)),
+            id,
         };
         self.pending = Some(ticket.clone());
         ticket
@@ -2090,6 +2102,35 @@ impl PlayerManager {
         s.halt();
         self.retire(s.output.take().map(|o| o.handle));
         eprintln!("calliope: player released id={id}");
+        (self.sink)(PlayerEvent::Closed { id: id.to_string() });
+        Ok(true)
+    }
+
+    /// Hands the track over to a writer of its backing audio (plan 2.8): like `release`, but
+    /// without the newer-`player.json` refusal (the flush of a read-only session is skipped),
+    /// and an open of the same track still loading is cancelled too. Returns whether a
+    /// session was closed.
+    pub fn release_for_audio(&mut self, id: &str) -> Result<bool, String> {
+        if let Some(t) = self
+            .pending
+            .as_ref()
+            .filter(|t| t.id.as_deref().is_none_or(|i| i == id))
+        {
+            t.cancel.store(true, Ordering::Relaxed);
+        }
+        match self.session.as_mut() {
+            Some(s) if s.id == id => try_flush(s).map_err(|e| {
+                format!("The Player could not save its state: {e}; the backing was not changed")
+            })?,
+            _ => return Ok(false),
+        }
+        let mut s = self.session.take().expect("checked above");
+        if let Some(c) = &s.select_cancel {
+            c.store(true, Ordering::Relaxed);
+        }
+        s.halt();
+        self.retire(s.output.take().map(|o| o.handle));
+        eprintln!("calliope: player released id={id} reason=backing");
         (self.sink)(PlayerEvent::Closed { id: id.to_string() });
         Ok(true)
     }

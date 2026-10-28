@@ -652,6 +652,7 @@ fn final_event(events: &Events) -> EditorEvent {
                 matches!(
                     e,
                     EditorEvent::Saved { .. }
+                        | EditorEvent::Normalized { .. }
                         | EditorEvent::SaveFailed { .. }
                         | EditorEvent::SaveCancelled { .. }
                 )
@@ -703,6 +704,7 @@ fn save_ignores_solo_and_replaces_the_variant() {
     let EditorEvent::Saved {
         file,
         clipped_samples,
+        loudness,
         ..
     } = final_event(&ev)
     else {
@@ -710,7 +712,12 @@ fn save_ignores_solo_and_replaces_the_variant() {
     };
     assert_eq!(file, "backings/backing.flac");
 
-    // exactly vocals(-6 dB) + drums(0 dB), as 16 bits
+    // exactly vocals(-6 dB) + drums(0 dB), both times the normalizing gain, as 16 bits
+    assert!(matches!(
+        loudness.outcome,
+        crate::loudness::Outcome::Normalized | crate::loudness::Outcome::Limited
+    ));
+    let g = crate::loudness::db_to_gain(loudness.gain_db);
     let (v, d) = (decoded(&spec, "vocals"), decoded(&spec, "drums"));
     let (gv, gd) = (
         mixer::gain_factor(Some(-6.0), true),
@@ -721,7 +728,7 @@ fn save_ignores_solo_and_replaces_the_variant() {
     let mut clipped = 0;
     let want: Vec<i32> = (0..frames * 2)
         .map(|i| {
-            let x = sv[i] * gv + sd[i] * gd;
+            let x = sv[i] * (gv * g) + sd[i] * (gd * g);
             clipped += u64::from(x.abs() > 1.0);
             mixer::quantise(x.clamp(-1.0, 1.0), 16)
         })
@@ -732,7 +739,7 @@ fn save_ignores_solo_and_replaces_the_variant() {
         (22050, 16, 2)
     );
     assert!(got == want, "saved mix differs");
-    assert_eq!(clipped_samples, clipped);
+    assert_eq!((clipped_samples, clipped), (0, 0));
     assert!(parts_in(&spec.dir).is_empty());
 
     // the session now points at the saved variant and the save is over
@@ -766,6 +773,176 @@ fn save_ignores_solo_and_replaces_the_variant() {
     let meta: Value =
         serde_json::from_slice(&fs::read(spec.dir.join("track.json")).unwrap()).unwrap();
     assert_eq!(meta["backings"].as_array().unwrap().len(), 1);
+}
+
+/// A gate that records its calls and can refuse.
+struct RecGate {
+    calls: Mutex<Vec<String>>,
+    refuse: Option<String>,
+}
+
+impl crate::backing_render::PlayerGate for RecGate {
+    fn without_player(
+        &self,
+        id: &str,
+        f: &mut dyn FnMut() -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.calls.lock().unwrap().push(id.to_string());
+        match &self.refuse {
+            Some(m) => Err(m.clone()),
+            None => f(),
+        }
+    }
+}
+
+#[test]
+fn save_commits_through_the_player_gate_once_and_a_refusal_changes_nothing() {
+    let (_t, repo, spec) = repo_spec(FOUR);
+    let (mut m, _b, ev) = manager();
+    let ok = Arc::new(RecGate {
+        calls: Mutex::new(Vec::new()),
+        refuse: None,
+    });
+    m.set_player_gate(ok.clone());
+    m.open(&spec).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now())
+        .unwrap();
+    m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
+    assert!(matches!(final_event(&ev), EditorEvent::Saved { .. }));
+    assert_eq!(*ok.calls.lock().unwrap(), vec![FOUR.to_string()]);
+
+    // a gate that refuses fails the save with its message; the old file and track.json stay
+    let file = spec.dir.join("backings/backing.flac");
+    let (old_file, old_json) = (
+        fs::read(&file).unwrap(),
+        fs::read(spec.dir.join("track.json")).unwrap(),
+    );
+    ev.lock().unwrap().clear();
+    m.tick(Clock::now()); // reap
+    m.set_player_gate(Arc::new(RecGate {
+        calls: Mutex::new(Vec::new()),
+        refuse: Some("The Player could not save its state: boom".into()),
+    }));
+    m.set_stem(FOUR, "drums", Some(0.0), true, Instant::now())
+        .unwrap();
+    m.start_save(FOUR, repo, no_lock()).unwrap();
+    let EditorEvent::SaveFailed { message, job, .. } = final_event(&ev) else {
+        panic!("{:?}", ev.lock().unwrap())
+    };
+    assert_eq!(message, "The Player could not save its state: boom");
+    assert_eq!(job, JobKind::Save);
+    assert!(parts_in(&spec.dir).is_empty());
+    assert_eq!(fs::read(&file).unwrap(), old_file);
+    assert_eq!(fs::read(spec.dir.join("track.json")).unwrap(), old_json);
+}
+
+const WITH_BACKING: &str = MIXED;
+
+#[test]
+fn start_normalize_refuses_without_a_file_during_a_detection_and_while_a_job_runs() {
+    let (_t, repo, spec) = repo_spec(FOUR);
+    let (mut m, _b, _ev) = manager();
+    m.open(&spec).unwrap();
+    assert_eq!(
+        m.start_normalize("other", repo.clone(), no_lock())
+            .unwrap_err(),
+        "no editor session for other"
+    );
+    assert_eq!(
+        m.start_normalize(FOUR, repo.clone(), no_lock())
+            .unwrap_err(),
+        "Save the backing first"
+    );
+    m.test_fake_detect(FOUR);
+    assert_eq!(
+        m.start_normalize(FOUR, repo, no_lock()).unwrap_err(),
+        "Wait for the beat detection to finish"
+    );
+    assert!(parts_in(&spec.dir).is_empty());
+
+    // a save running refuses a normalize, with the save's message
+    let (_t, repo, spec) = repo_spec(FOUR);
+    let (mut m, _b, ev) = manager();
+    m.set_job_pace(Some(Duration::from_millis(20)));
+    m.open(&spec).unwrap();
+    m.set_stem(FOUR, "bass", Some(0.0), true, Instant::now())
+        .unwrap();
+    let snap = m.start_save(FOUR, repo.clone(), no_lock()).unwrap();
+    assert_eq!(snap.job, Some(JobKind::Save));
+    assert_eq!(
+        m.start_normalize(FOUR, repo, no_lock()).unwrap_err(),
+        "A save is already running"
+    );
+    m.cancel_save(FOUR).unwrap();
+    assert!(matches!(
+        final_event(&ev),
+        EditorEvent::SaveCancelled {
+            job: JobKind::Save,
+            ..
+        }
+    ));
+    m.shutdown_save(Duration::from_secs(2));
+}
+
+#[test]
+fn a_running_normalize_shows_in_the_snapshot_and_cancel_stops_it() {
+    let (_t, repo, spec) = repo_spec(WITH_BACKING);
+    let file = spec.dir.join("backings/backing.flac");
+    let (old_file, old_json) = (
+        fs::read(&file).unwrap(),
+        fs::read(spec.dir.join("track.json")).unwrap(),
+    );
+    let (mut m, _b, ev) = manager();
+    m.set_job_pace(Some(Duration::from_millis(20)));
+    m.open(&spec).unwrap();
+    let snap = m
+        .start_normalize(WITH_BACKING, repo.clone(), no_lock())
+        .unwrap();
+    assert_eq!(snap.job, Some(JobKind::Normalize));
+    assert!(snap.saving.is_some());
+    assert_eq!(
+        m.start_normalize(WITH_BACKING, repo.clone(), no_lock())
+            .unwrap_err(),
+        "Normalize is already running"
+    );
+    assert_eq!(
+        m.start_save(WITH_BACKING, repo, no_lock()).unwrap_err(),
+        "Normalize is already running"
+    );
+    m.cancel_save(WITH_BACKING).unwrap();
+    let EditorEvent::SaveCancelled { job, .. } = final_event(&ev) else {
+        panic!("{:?}", ev.lock().unwrap())
+    };
+    assert_eq!(job, JobKind::Normalize);
+    // the finished job is reaped and the session's variant is as it was
+    m.tick(Clock::now());
+    let snap = m.snapshot(WITH_BACKING).unwrap();
+    assert_eq!((snap.job, snap.saving), (None, None));
+    assert!(snap.variant.exists);
+    assert!(parts_in(&spec.dir).is_empty());
+    assert_eq!(fs::read(&file).unwrap(), old_file);
+    assert_eq!(fs::read(spec.dir.join("track.json")).unwrap(), old_json);
+    m.shutdown_save(Duration::from_secs(2));
+}
+
+#[test]
+fn shutdown_cancels_a_running_normalize_within_the_cap_and_leaves_no_part() {
+    let (_t, repo, spec) = repo_spec(WITH_BACKING);
+    let (mut m, _b, ev) = manager();
+    m.set_job_pace(Some(Duration::from_millis(20)));
+    m.open(&spec).unwrap();
+    m.start_normalize(WITH_BACKING, repo, no_lock()).unwrap();
+    let t0 = Clock::now();
+    m.shutdown_save(Duration::from_secs(5));
+    assert!(t0.elapsed() < Duration::from_secs(4));
+    assert!(matches!(
+        final_event(&ev),
+        EditorEvent::SaveCancelled {
+            job: JobKind::Normalize,
+            ..
+        }
+    ));
+    assert!(parts_in(&spec.dir).is_empty());
 }
 
 #[test]
@@ -848,6 +1025,8 @@ fn save_cancel_leaves_track_json_unchanged() {
         mix: serde_json::json!({}),
         repo,
         lock: no_lock(),
+        gate: Arc::new(crate::backing_render::NoPlayer),
+        pace: None,
     };
     crate::backing_render::spawn(params, shared, sink)
         .join()
