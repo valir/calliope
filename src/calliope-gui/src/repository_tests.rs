@@ -2011,6 +2011,7 @@ mod backing {
                 mix: serde_json::json!({"stems": [{"name": "vocals", "gain_db": -3.5, "unmuted": true}]}),
                 sample_rate: 44100,
                 bits: 16,
+                loudness: None,
             });
             if r.is_err() {
                 let _ = fs::remove_file(&part); // the caller's job on failure
@@ -2178,6 +2179,7 @@ mod backing {
             mix: serde_json::Value::Null,
             sample_rate: 44100,
             bits: 16,
+            loudness: None,
         });
         assert!(r.unwrap_err().starts_with("conflict:"));
         assert_eq!(snapshot(&e.repo.root), snap);
@@ -2191,6 +2193,7 @@ mod backing {
             mix: serde_json::Value::Null,
             sample_rate: 44100,
             bits: 16,
+            loudness: None,
         });
         assert!(r.unwrap_err().starts_with("conflict:"));
     }
@@ -2273,6 +2276,178 @@ mod backing {
         crate::fsutil::FAIL_WRITE_OF.with(|f| *f.borrow_mut() = None);
         assert!(r.is_err());
         assert_eq!(snapshot(&e.dir(MIXED)), snap);
+    }
+
+    const BACKING: &str = "backings/backing.flac";
+
+    fn rec(lufs: f64) -> LoudnessRecord {
+        LoudnessRecord {
+            lufs: Some(lufs),
+            true_peak: Some(-4.0),
+            gain_db: 6.0,
+            target: -14.0,
+            ceiling: -1.0,
+            md5: "9e107d9d372bb6826bd81d3542a419d6".into(),
+        }
+    }
+
+    fn stamp(e: &Ed, id: &str) -> crate::fsutil::FileStamp {
+        crate::fsutil::FileStamp::of(&e.dir(id).join(BACKING)).unwrap()
+    }
+
+    fn replace(
+        e: &Ed,
+        variant: &str,
+        file: &str,
+        before: crate::fsutil::FileStamp,
+        content: &[u8],
+    ) -> Result<SaveResult, String> {
+        let part = e.part(MIXED, content);
+        let r = e.repo.replace_backing_audio(BackingReplace {
+            id: MIXED,
+            variant,
+            file,
+            part: &part,
+            before,
+            loudness: rec(-14.0),
+        });
+        if r.is_err() {
+            // the job's cleanup (after a failed track.json write the part was already renamed)
+            let _ = fs::remove_file(&part);
+        }
+        r
+    }
+
+    fn trash_dirs(e: &Ed) -> Vec<String> {
+        match fs::read_dir(e.repo.root.join("trash")) {
+            Ok(d) => d
+                .flatten()
+                .map(|x| x.file_name().to_string_lossy().into_owned())
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// A second variant and unknown fields, so the "kept" checks have something to keep.
+    fn decorate(e: &Ed) {
+        e.save(MIXED, Some("other"), b"OTHER").unwrap();
+        let tj = e.dir(MIXED).join("track.json");
+        let mut j = e.json(MIXED);
+        j["modified"] = serde_json::json!("2026-10-07T10:00:00Z");
+        j["x_future"] = serde_json::json!({"a": [1, 2]});
+        j["exports"] = serde_json::json!({"rc5": {"memory": 3, "at": "2026-10-08T10:00:00Z"}});
+        fs::write(&tj, serde_json::to_vec_pretty(&j).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn replace_puts_the_part_in_place_and_the_old_file_in_the_trash() {
+        let e = Ed::new();
+        decorate(&e);
+        let old = fs::read(e.dir(MIXED).join(BACKING)).unwrap();
+        let before = e.json(MIXED);
+        let st = stamp(&e, MIXED);
+        let r =
+            replace(&e, "backing", BACKING, st, b"NORMALIZED").unwrap_or_else(|x| panic!("{x}"));
+        assert_eq!(fs::read(e.dir(MIXED).join(BACKING)).unwrap(), b"NORMALIZED");
+        assert!(!e.dir(MIXED).join(".calliope-backing-test.part").exists());
+        let dirs = trash_dirs(&e);
+        assert_eq!(dirs.len(), 1, "{dirs:?}");
+        assert!(dirs[0].ends_with(&format!("-{MIXED}-backing")), "{dirs:?}");
+        let kept = e
+            .repo
+            .root
+            .join("trash")
+            .join(&dirs[0])
+            .join("backing.flac");
+        assert_eq!(fs::read(kept).unwrap(), old);
+        assert_eq!(r.track.id, MIXED);
+        let after = e.json(MIXED);
+        assert_eq!(after["backings"][0]["loudness"]["md5"], rec(0.0).md5);
+        assert_eq!(after["backings"][0]["loudness"]["lufs"], -14.0);
+        assert_ne!(
+            after["backings"][0]["modified"],
+            before["backings"][0]["modified"]
+        );
+        assert_ne!(after["modified"], before["modified"]);
+        // everything else is as it was
+        let strip = |mut v: serde_json::Value| {
+            v["modified"] = serde_json::Value::Null;
+            let b = &mut v["backings"][0];
+            b["modified"] = serde_json::Value::Null;
+            b.as_object_mut().unwrap().remove("loudness");
+            v
+        };
+        assert_eq!(strip(after), strip(before));
+        assert_eq!(
+            fs::read(e.dir(MIXED).join("backings/other.flac")).unwrap(),
+            b"OTHER"
+        );
+    }
+
+    #[test]
+    fn replace_conflicts_change_nothing() {
+        let e = Ed::new();
+        let st = stamp(&e, MIXED);
+        let snap = snapshot(&e.repo.root);
+        // the variant's file differs, or the variant is gone
+        for (v, f) in [("backing", "backings/other.flac"), ("nope", BACKING)] {
+            let err = replace(&e, v, f, st, b"X").unwrap_err();
+            assert!(err.starts_with("conflict:"), "{err}");
+            assert_eq!(snapshot(&e.repo.root), snap);
+        }
+        // the file was rewritten after the stamp was taken
+        fs::write(e.dir(MIXED).join(BACKING), b"REWRITTEN BY SOMEONE ELSE").unwrap();
+        let snap = snapshot(&e.repo.root);
+        let err = replace(&e, "backing", BACKING, st, b"X").unwrap_err();
+        assert!(err.starts_with("conflict:"), "{err}");
+        assert_eq!(snapshot(&e.repo.root), snap);
+        assert!(trash_dirs(&e).is_empty());
+    }
+
+    #[test]
+    fn replace_with_a_failing_track_json_write_restores_the_old_file() {
+        let e = Ed::new();
+        let st = stamp(&e, MIXED);
+        let snap = snapshot(&e.repo.root);
+        crate::fsutil::FAIL_WRITE_OF.with(|f| *f.borrow_mut() = Some("track.json".into()));
+        let r = replace(&e, "backing", BACKING, st, b"NEW");
+        crate::fsutil::FAIL_WRITE_OF.with(|f| *f.borrow_mut() = None);
+        assert!(r.unwrap_err().contains("track.json"));
+        // the old bytes are under the name, track.json is unchanged, no trash folder of this save
+        // (the empty `trash/` parent may remain)
+        assert!(trash_dirs(&e).is_empty());
+        let mut after = snapshot(&e.repo.root);
+        after.remove("trash/");
+        assert_eq!(after, snap);
+    }
+
+    #[test]
+    fn record_backing_loudness_writes_only_the_record() {
+        let e = Ed::new();
+        let before = e.json(MIXED);
+        let audio = fs::read(e.dir(MIXED).join(BACKING)).unwrap();
+        let st = stamp(&e, MIXED);
+        let t = e
+            .repo
+            .record_backing_loudness(MIXED, "backing", BACKING, st, rec(-14.02))
+            .unwrap();
+        assert_eq!(t.backings[0].loudness, Some(rec(-14.02)));
+        assert_eq!(stamp(&e, MIXED), st);
+        assert_eq!(fs::read(e.dir(MIXED).join(BACKING)).unwrap(), audio);
+        assert!(trash_dirs(&e).is_empty());
+        let mut after = e.json(MIXED);
+        assert_eq!(after["backings"][0]["loudness"]["lufs"], -14.02);
+        after["backings"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("loudness");
+        assert_eq!(after, before);
+        // the same checks as a replace
+        let err = e
+            .repo
+            .record_backing_loudness(MIXED, "nope", BACKING, st, rec(-1.0))
+            .unwrap_err();
+        assert!(err.starts_with("conflict:"), "{err}");
     }
 }
 

@@ -39,6 +39,59 @@ pub struct BackingVariant {
     pub bits: u32,
     #[serde(default)]
     pub mix: Value,
+    /// Loudness of the file as it is now (plan 2.5). Additive; unreadable values read as `None`.
+    #[serde(
+        default,
+        deserialize_with = "lenient_loudness",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub loudness: Option<LoudnessRecord>,
+}
+
+/// What the last normalize or save measured and did to a backing file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoudnessRecord {
+    /// Integrated loudness of the file, LUFS (None = too quiet to measure).
+    pub lufs: Option<f64>,
+    /// True peak of the file, dBTP (None = digital silence).
+    pub true_peak: Option<f64>,
+    /// The gain the last write applied, dB.
+    pub gain_db: f64,
+    pub target: f64,
+    pub ceiling: f64,
+    /// STREAMINFO MD5 of the audio: 32 lowercase hex digits.
+    pub md5: String,
+}
+
+/// 32 lowercase hex digits.
+pub fn md5_hex(md5: [u8; 16]) -> String {
+    md5.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Reads any JSON value: an object whose numbers are finite and in range becomes `Some`, anything
+/// else (including a record with a missing field) `None`, never an error.
+fn lenient_loudness<'de, D>(d: D) -> Result<Option<LoudnessRecord>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Option::<Value>::deserialize(d)?;
+    Ok(
+        v.and_then(|v| serde_json::from_value::<LoudnessRecord>(v).ok())
+            .filter(loudness_in_range),
+    )
+}
+
+fn loudness_in_range(r: &LoudnessRecord) -> bool {
+    let opt = |v: Option<f64>, lo: f64, hi: f64| v.is_none_or(|v| (lo..=hi).contains(&v));
+    opt(r.lufs, -200.0, 20.0)
+        && opt(r.true_peak, -200.0, 40.0)
+        && (-200.0..=200.0).contains(&r.gain_db)
+        && (-100.0..=0.0).contains(&r.target)
+        && (-100.0..=0.0).contains(&r.ceiling)
+        && r.md5.len() == 32
+        && r.md5
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Largest track or album position (plan 2.2).
@@ -1137,6 +1190,70 @@ mod tests {
                 parse(stem_with_backings(&format!("[{v}]")).as_bytes(), ID).is_ok(),
                 "{mix}"
             );
+        }
+    }
+
+    fn with_loudness(l: &str) -> String {
+        let v = variant("backing", "Backing", "backings/backing.flac")
+            .replace("\"bits\":16,", &format!("\"bits\":16,\"loudness\":{l},"));
+        stem_with_backings(&format!("[{v}]"))
+    }
+
+    const GOOD: &str = r#"{"lufs":-14.0,"true_peak":-4.02,"gain_db":6.013,"target":-14.0,"ceiling":-1.0,"md5":"9e107d9d372bb6826bd81d3542a419d6"}"#;
+
+    #[test]
+    fn a_loudness_record_round_trips_and_is_absent_when_none() {
+        let m = parse(with_loudness(GOOD).as_bytes(), ID).unwrap();
+        let r = m.backings[0].loudness.clone().unwrap();
+        assert_eq!(
+            (r.lufs, r.true_peak, r.gain_db),
+            (Some(-14.0), Some(-4.02), 6.013)
+        );
+        let bytes = [
+            0x9e, 0x10, 0x7d, 0x9d, 0x37, 0x2b, 0xb6, 0x82, 0x6b, 0xd8, 0x1d, 0x35, 0x42, 0xa4,
+            0x19, 0xd6,
+        ];
+        assert_eq!(md5_hex(bytes), r.md5);
+        let text = to_json_pretty(&m);
+        assert_eq!(to_json_pretty(&parse(text.as_bytes(), ID).unwrap()), text);
+        // null values (too quiet) are valid
+        let q = GOOD.replace("-14.0,\"true_peak\":-4.02", "null,\"true_peak\":null");
+        let m = parse(with_loudness(&q).as_bytes(), ID).unwrap();
+        assert_eq!(m.backings[0].loudness.as_ref().unwrap().lufs, None);
+        // none: no key on write
+        let plain = parse(
+            stem_with_backings(&format!("[{}]", variant("backing", "B", "backings/b.flac")))
+                .as_bytes(),
+            ID,
+        )
+        .unwrap();
+        assert!(!to_json_pretty(&plain).contains("loudness"));
+        // unknown keys inside the record are dropped
+        let extra = GOOD.replace("{\"lufs\"", "{\"future\":1,\"lufs\"");
+        let m = parse(with_loudness(&extra).as_bytes(), ID).unwrap();
+        assert!(m.backings[0].loudness.is_some());
+        assert!(!to_json_pretty(&m).contains("future"));
+    }
+
+    #[test]
+    fn a_bad_loudness_record_reads_as_none_and_is_no_problem() {
+        let bad = [
+            "\"loud\"".to_string(),
+            "42".into(),
+            GOOD.replace("\"gain_db\":6.013,", ""),
+            GOOD.replace("6.013", "\"NaN\""),
+            GOOD.replace("-14.0,\"true", "50,\"true"),
+            GOOD.replace("-4.02", "41"),
+            GOOD.replace("\"target\":-14.0", "\"target\":3"),
+            GOOD.replace("9e107d9d372bb6826bd81d3542a419d6", "9e107d"),
+            GOOD.replace(
+                "9e107d9d372bb6826bd81d3542a419d6",
+                "9E107D9D372BB6826BD81D3542A419D6",
+            ),
+        ];
+        for b in bad {
+            let m = parse(with_loudness(&b).as_bytes(), ID).unwrap_or_else(|e| panic!("{b}: {e}"));
+            assert_eq!(m.backings[0].loudness, None, "{b}");
         }
     }
 }

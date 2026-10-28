@@ -27,6 +27,12 @@ thread_local! {
     pub(crate) static FAIL_WRITE_OF: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test hook: when true, `FileTrash::link_in` finds hard links unsupported.
+    pub(crate) static FAIL_HARD_LINK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// A temp name unique to this process and call: `.<name>.<pid>.<n>.tmp`. Two instances (or a
@@ -157,6 +163,42 @@ pub fn copy_replace(src: &Path, dest: &Path) -> io::Result<()> {
         sync_dir(p);
     }
     Ok(())
+}
+
+/// Identity of a regular file at a moment: length, modification time and, on unix, device and
+/// inode. Two stamps are equal when the file was not rewritten or replaced in between.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileStamp {
+    pub len: u64,
+    pub modified: Option<std::time::SystemTime>,
+    pub dev: u64,
+    pub ino: u64,
+}
+
+impl FileStamp {
+    /// Reads the stamp of a regular file; a symlink, a folder or a missing file is an error.
+    pub fn of(path: &Path) -> io::Result<FileStamp> {
+        let m = fs::symlink_metadata(path)?;
+        if !m.is_file() {
+            return Err(bad_input(format!(
+                "{} is not a regular file",
+                path.display()
+            )));
+        }
+        #[cfg(unix)]
+        let (dev, ino) = {
+            use std::os::unix::fs::MetadataExt;
+            (m.dev(), m.ino())
+        };
+        #[cfg(not(unix))]
+        let (dev, ino) = (0, 0);
+        Ok(FileStamp {
+            len: m.len(),
+            modified: m.modified().ok(),
+            dev,
+            ino,
+        })
+    }
 }
 
 /// Rules for a plain file name in track metadata (plan section 2.2).
@@ -306,6 +348,50 @@ impl FileTrash {
 
     /// Renames the file `src` into the trash folder and returns its new path.
     pub fn move_in(&mut self, src: &Path) -> io::Result<PathBuf> {
+        self.put_in(src, |from, to| fs::rename(from, to))
+    }
+
+    /// Puts the file `src` into the trash folder without removing it: a hard link, or a copy
+    /// where links are not supported. Returns the trash path.
+    pub fn link_in(&mut self, src: &Path) -> io::Result<PathBuf> {
+        self.put_in(src, |from, to| {
+            #[cfg(test)]
+            let linked = if FAIL_HARD_LINK.with(|f| f.get()) {
+                Err(io::Error::from(io::ErrorKind::Unsupported))
+            } else {
+                fs::hard_link(from, to)
+            };
+            #[cfg(not(test))]
+            let linked = fs::hard_link(from, to);
+            match linked {
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
+                    ) =>
+                {
+                    copy_no_clobber(from, to)
+                }
+                other => other,
+            }
+        })
+    }
+
+    /// Removes the trash folder again when it is empty (after the file in it was moved back or
+    /// removed). A folder with anything in it is left alone.
+    pub fn remove_if_empty(&mut self) {
+        if let Some(d) = &self.dir {
+            if fs::remove_dir(d).is_ok() {
+                self.dir = None;
+            }
+        }
+    }
+
+    fn put_in(
+        &mut self,
+        src: &Path,
+        place: impl Fn(&Path, &Path) -> io::Result<()>,
+    ) -> io::Result<PathBuf> {
         let (_, src_c, trash) = trash_guard(&self.root, src)?;
         let name = src_c
             .file_name()
@@ -351,7 +437,7 @@ impl FileTrash {
             if dest.symlink_metadata().is_ok() {
                 continue;
             }
-            fs::rename(&src_c, &dest)?;
+            place(&src_c, &dest)?;
             sync_dir(&dir);
             return Ok(dest);
         }
@@ -571,6 +657,60 @@ mod tests {
         let mut t2 = FileTrash::new(root, "S", "abc", "tablatures");
         t2.move_in(&t.join("c.gp5")).unwrap();
         assert!(root.join("trash/S-abc-tablatures-2/c.gp5").exists());
+    }
+
+    #[test]
+    fn link_in_keeps_the_source_and_falls_back_to_a_copy() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        let t = root.join("tracks/abc");
+        fs::create_dir_all(&t).unwrap();
+        fs::write(t.join("a.flac"), b"audio").unwrap();
+        let mut tt = FileTrash::new(root, "S", "abc", "backing");
+        let linked = tt.link_in(&t.join("a.flac")).unwrap();
+        assert_eq!(fs::read(&linked).unwrap(), b"audio");
+        assert_eq!(fs::read(t.join("a.flac")).unwrap(), b"audio");
+        #[cfg(unix)]
+        assert_eq!(
+            FileStamp::of(&linked).unwrap().ino,
+            FileStamp::of(&t.join("a.flac")).unwrap().ino
+        );
+        // links not supported: a copy with its own inode
+        FAIL_HARD_LINK.with(|f| f.set(true));
+        let mut t2 = FileTrash::new(root, "S", "abc", "backing");
+        let copied = t2.link_in(&t.join("a.flac"));
+        FAIL_HARD_LINK.with(|f| f.set(false));
+        let copied = copied.unwrap();
+        assert_eq!(fs::read(&copied).unwrap(), b"audio");
+        assert_eq!(fs::read(t.join("a.flac")).unwrap(), b"audio");
+        #[cfg(unix)]
+        assert_ne!(
+            FileStamp::of(&copied).unwrap().ino,
+            FileStamp::of(&t.join("a.flac")).unwrap().ino
+        );
+        assert!(!copied.parent().unwrap().join(".a.flac.part").exists());
+        // an empty folder is removed again; a used one stays
+        fs::remove_file(&copied).unwrap();
+        t2.remove_if_empty();
+        assert!(t2.dir().is_none());
+        tt.remove_if_empty();
+        assert!(linked.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_stamp_refuses_symlinks_folders_and_missing_files() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("real"), b"x").unwrap();
+        std::os::unix::fs::symlink(d.path().join("real"), d.path().join("link")).unwrap();
+        fs::create_dir(d.path().join("dir")).unwrap();
+        assert!(FileStamp::of(&d.path().join("real")).is_ok());
+        for n in ["link", "dir", "gone"] {
+            assert!(FileStamp::of(&d.path().join(n)).is_err(), "{n}");
+        }
+        let a = FileStamp::of(&d.path().join("real")).unwrap();
+        fs::write(d.path().join("real"), b"longer").unwrap();
+        assert_ne!(FileStamp::of(&d.path().join("real")).unwrap(), a);
     }
 
     #[test]

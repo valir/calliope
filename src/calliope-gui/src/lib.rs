@@ -19,6 +19,7 @@ pub mod import_job;
 pub mod import_tmp;
 pub mod ipc;
 pub mod local_source;
+pub mod loudness;
 pub mod media;
 pub mod metronome;
 pub mod mix_waveform;

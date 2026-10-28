@@ -241,6 +241,7 @@ pub struct StemReader {
     channels: u32,
     sample_rate: u32,
     bits: u32,
+    md5: [u8; 16],
     scale: f32,
     buf: Vec<i32>,
     /// Current block as interleaved source samples, and the read position in frames.
@@ -264,6 +265,7 @@ impl StemReader {
             channels: si.channels,
             sample_rate: si.sample_rate,
             bits: si.bits_per_sample,
+            md5: si.md5sum,
             scale: 1.0 / (1u64 << (si.bits_per_sample - 1)) as f32,
             reader,
             buf: Vec::new(),
@@ -283,6 +285,16 @@ impl StemReader {
 
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// Channels of the file (1 or 2).
+    pub fn channels(&self) -> u32 {
+        self.channels
+    }
+
+    /// The STREAMINFO MD5 of the audio (all zeros when the encoder did not write one).
+    pub fn md5(&self) -> [u8; 16] {
+        self.md5
     }
 
     /// Fills `out` (interleaved stereo, `frames` frames) and returns the number of frames
@@ -507,6 +519,20 @@ mod tests {
             assert_eq!(out[i * 2 + 1], want);
         }
         assert!(out[9000 * 2..].iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn stem_reader_channels_and_md5_equal_the_streaminfo() {
+        let dir = tempfile::tempdir().unwrap();
+        for (ch, name) in [(1usize, "m.flac"), (2, "s.flac")] {
+            let p = dir.path().join(name);
+            write_flac(&p, &ramp(3000 * ch, 9), ch, 16, 22050);
+            let r = StemReader::open(&p).unwrap();
+            let si = open(&p).unwrap().streaminfo();
+            assert_eq!(r.channels(), ch as u32);
+            assert_eq!(r.md5(), si.md5sum);
+            assert_ne!(r.md5(), [0u8; 16]);
+        }
     }
 
     #[test]

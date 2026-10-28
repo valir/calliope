@@ -374,6 +374,7 @@ fn run(
             mix: p.mix.clone(),
             sample_rate: p.input.sample_rate,
             bits: p.input.bits,
+            loudness: None,
         }));
     });
     let result = saved

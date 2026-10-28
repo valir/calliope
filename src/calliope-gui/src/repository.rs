@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::export_record::{self, ExportEntry, TrackExports, EXPORTS_KEY};
 use crate::fsutil;
-use crate::track_meta::{self, BackingVariant, StemEntry, TrackEdits, TrackMeta, TrackType};
+use crate::track_meta::{
+    self, BackingVariant, LoudnessRecord, StemEntry, TrackEdits, TrackMeta, TrackType,
+};
 
 pub const MARKER: &str = "calliope-repository.json";
 pub const REPO_SCHEMA: u64 = 1;
@@ -206,7 +208,28 @@ pub struct BackingSave<'a> {
     pub mix: serde_json::Value,
     pub sample_rate: u32,
     pub bits: u32,
+    /// Measured loudness of the rendered file, stored on the variant.
+    pub loudness: Option<LoudnessRecord>,
 }
+
+/// What the normalize job hands to `Repository::replace_backing_audio`: a finished part file
+/// that replaces the audio of an existing variant.
+pub struct BackingReplace<'a> {
+    pub id: &'a str,
+    pub variant: &'a str,
+    /// The variant's `backings/<x>.flac`; must still be the variant's file.
+    pub file: &'a str,
+    /// The rendered FLAC, inside the track folder.
+    pub part: &'a Path,
+    /// The file's stamp when the job read it; the file must not have changed since.
+    pub before: fsutil::FileStamp,
+    pub loudness: LoudnessRecord,
+}
+
+const VARIANT_CONFLICT: &str =
+    "conflict: the backing variant changed on disk; select the track again";
+const FILE_CONFLICT: &str =
+    "conflict: the backing file changed on disk while normalizing; nothing was changed";
 
 /// Hard-links `src` to `dest` (fails with `AlreadyExists` if `dest` exists). Where links are
 /// unsupported, copies without clobbering instead.
@@ -916,6 +939,7 @@ impl Repository {
                     sample_rate: save.sample_rate,
                     bits: save.bits,
                     mix: save.mix.clone(),
+                    loudness: save.loudness.clone(),
                 });
                 (meta.backings.len() - 1, format!("backings/{id}.flac"))
             }
@@ -926,6 +950,7 @@ impl Repository {
             b.sample_rate = save.sample_rate;
             b.bits = save.bits;
             b.mix = save.mix.clone();
+            b.loudness = save.loudness.clone();
         }
         meta.modified = now;
         track_meta::validate_for_read(&meta)?;
@@ -985,6 +1010,108 @@ impl Repository {
             updated: Vec::new(),
             failed: Vec::new(),
         })
+    }
+
+    /// Checks 1-3 of the normalize commits: the track loads, the variant still has `file`, and
+    /// the file is still the one that was read. Returns the track folder and its metadata.
+    fn check_backing_file(
+        &self,
+        id: &str,
+        variant: &str,
+        file: &str,
+        before: fsutil::FileStamp,
+    ) -> Result<(PathBuf, TrackMeta, usize), String> {
+        let (dir, loaded) = self.load(id)?;
+        let meta = loaded.meta;
+        let index = meta
+            .backings
+            .iter()
+            .position(|b| b.id == variant && b.file == file)
+            .ok_or_else(|| VARIANT_CONFLICT.to_string())?;
+        match fsutil::FileStamp::of(&dir.join(file)) {
+            Ok(now) if now == before => Ok((dir, meta, index)),
+            _ => Err(FILE_CONFLICT.into()),
+        }
+    }
+
+    /// Replaces the audio of an existing backing variant with `r.part` (plan 2.7): the old file
+    /// goes to the trash as a hard link and the part is renamed over the name, so the name
+    /// always holds a whole file. The part file is left for the caller to remove on failure.
+    pub fn replace_backing_audio(&self, r: BackingReplace) -> Result<SaveResult, String> {
+        let (dir, mut meta, index) = self.check_backing_file(r.id, r.variant, r.file, r.before)?;
+        let part_ok = fs::symlink_metadata(r.part)
+            .map(|m| m.is_file())
+            .unwrap_or(false);
+        if !part_ok || r.part.parent() != Some(dir.as_path()) {
+            return Err("the rendered backing file is missing".into());
+        }
+        let dest = dir.join(r.file);
+        let mut trash = fsutil::FileTrash::new(&self.root, &stamp_now(), r.id, "backing");
+        let trashed = trash.link_in(&dest).map_err(|e| {
+            io_err(
+                "could not keep the old file in the trash (nothing was changed)",
+                e,
+            )
+        })?;
+        if let Err(e) = fs::rename(r.part, &dest) {
+            let _ = fs::remove_file(&trashed);
+            trash.remove_if_empty();
+            return Err(io_err(
+                "cannot put the normalized file in place (nothing was changed)",
+                e,
+            ));
+        }
+        if let Some(p) = dest.parent() {
+            fsutil::sync_dir(p);
+        }
+        let now = track_meta::now_rfc3339();
+        {
+            let b = &mut meta.backings[index];
+            b.loudness = Some(r.loudness);
+            b.modified = now.clone();
+        }
+        meta.modified = now;
+        let written = track_meta::validate_for_read(&meta).and_then(|()| {
+            fsutil::write_atomic(
+                &dir.join(TRACK_FILE),
+                track_meta::to_json_pretty(&meta).as_bytes(),
+            )
+            .map_err(|e| io_err("cannot write track.json (nothing was changed)", e))
+        });
+        if let Err(e) = written {
+            // put the old inode back under the name (atomic), then drop the empty trash folder
+            let _ = fs::rename(&trashed, &dest);
+            fsutil::sync_dir(&dir);
+            trash.remove_if_empty();
+            return Err(e);
+        }
+        let track = self.load_record(r.id)?;
+        Ok(SaveResult {
+            track,
+            warnings: Vec::new(),
+            updated: Vec::new(),
+            failed: Vec::new(),
+        })
+    }
+
+    /// Stores a loudness record on a variant whose audio did not change (`modified` stays).
+    pub fn record_backing_loudness(
+        &self,
+        id: &str,
+        variant: &str,
+        file: &str,
+        before: fsutil::FileStamp,
+        rec: LoudnessRecord,
+    ) -> Result<TrackRecord, String> {
+        let (dir, mut meta, index) = self.check_backing_file(id, variant, file, before)?;
+        meta.backings[index].loudness = Some(rec);
+        track_meta::validate_for_read(&meta)?;
+        fsutil::write_atomic(
+            &dir.join(TRACK_FILE),
+            track_meta::to_json_pretty(&meta).as_bytes(),
+        )
+        .map_err(|e| io_err("cannot write track.json (nothing was changed)", e))?;
+        self.load_record(id)
     }
 
     /// Moves the whole track folder to `trash/`.

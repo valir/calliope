@@ -286,6 +286,7 @@ mod tests {
             sample_rate: 44100,
             bits: 16,
             mix: serde_json::Value::Null,
+            loudness: None,
         }
     }
 
