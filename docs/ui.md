@@ -167,7 +167,7 @@
   disabled; there is no separate Cancel button. Normalize is disabled without a backing file (title
   "Save the backing first"), during a job and during a beat detection. The two-line slot shows the
   result: "Saved, normalized to -14.0 LUFS (gain +3.2 dB).", "Saved at -15.6 LUFS (gain -1.0 dB,
-  limited by the -1 dBTP peak ceiling).", "Saved. Too quiet to normalize.",
+  limited by the -1 dBTP peak ceiling).", "Saved. Too quiet or too short to normalize.",
   "Normalized to -14.0 LUFS (gain +3.2 dB).", "Normalized to -15.6 LUFS (gain -1.0 dB, limited by the
   -1 dBTP peak ceiling).", "Already at the target (-14.0 LUFS); the file was not changed.",
   "Already at the -1 dBTP peak ceiling (-15.6 LUFS); the file was not changed.", "Too quiet or too short to

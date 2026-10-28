@@ -14,3 +14,4 @@ task 12 | GUI tests: Save limited/normalized, editor_normalize, editor_normalize
 task 13 | README and docs/ui.md | implementer | done
 tester | 11 more acceptance tests (qa_*), no defects | tester | done
 fix round 1 | relative overflow check, too-quiet/too-short text, superseded open retried (test) | implementer | done
+reviewer (fix round 1) | APPROVED, docs/ui.md wording fixed | reviewer | done
