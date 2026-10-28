@@ -243,6 +243,16 @@ export interface TransportState {
   solo: string | null;
   clipping: boolean;
 }
+export type JobKind = 'save' | 'normalize';
+export type LoudnessOutcome = 'normalized' | 'limited' | 'at-target' | 'at-ceiling' | 'too-quiet';
+export interface LoudnessResult {
+  outcome: LoudnessOutcome;
+  lufs: number | null;
+  true_peak: number | null;
+  gain_db: number;
+  target: number;
+  ceiling: number;
+}
 export interface EditorSnapshot {
   id: string;
   title: string;
@@ -253,6 +263,8 @@ export interface EditorSnapshot {
   variant: { id: string; name: string; file: string; exists: boolean };
   /** 0..1 while a save runs */
   saving: number | null;
+  /** the running save or normalize job, if any */
+  job?: JobKind | null;
   /** peaks of the checked-stem mix; empty until computed */
   peaks: number[];
   tempo: TempoSnap;
@@ -289,10 +301,11 @@ export type TempoEdit = { kind: 'move'; index: number; steps: number } | { kind:
 export type EditorEvent =
   | { kind: 'loading'; id: string; done: number; total: number }
   | ({ kind: 'transport'; id: string } & TransportState)
-  | { kind: 'saving'; id: string; progress: number }
-  | { kind: 'saved'; id: string; file: string; clipped_samples: number; track: TrackRecord; warnings: string[] }
-  | { kind: 'save-failed'; id: string; message: string }
-  | { kind: 'save-cancelled'; id: string }
+  | { kind: 'saving'; id: string; progress: number; job?: JobKind }
+  | { kind: 'saved'; id: string; file: string; clipped_samples: number; loudness?: LoudnessResult; track: TrackRecord; warnings: string[] }
+  | { kind: 'normalized'; id: string; file: string; loudness: LoudnessResult; changed: boolean; track: TrackRecord | null; warnings: string[] }
+  | { kind: 'save-failed'; id: string; message: string; job?: JobKind }
+  | { kind: 'save-cancelled'; id: string; job?: JobKind }
   | { kind: 'audio-error'; id: string; message: string }
   | { kind: 'peaks'; id: string; peaks: number[] }
   | ({ kind: 'detect'; id: string } & DetectState)
@@ -345,6 +358,8 @@ export const editorTempo = (id: string, action: TempoEdit): Promise<EditorSnapsh
   invoke<EditorSnapshot>('editor_tempo', { id, action });
 export const saveBacking = (id: string): Promise<EditorSnapshot> =>
   invoke<EditorSnapshot>('save_backing', { id });
+export const normalizeBacking = (id: string): Promise<EditorSnapshot> =>
+  invoke<EditorSnapshot>('normalize_backing', { id });
 export const cancelBackingSave = (id: string): Promise<void> =>
   invoke<void>('cancel_backing_save', { id });
 

@@ -151,11 +151,37 @@ describe('controls', () => {
     await fireEvent.click(btn('Save'));
     send({ kind: 'saving', id: stemTrack.id, progress: 0.4 });
     await waitFor(() => expect(screen.getByTestId('save-percent').textContent).toBe('40%'));
-    expect(btn('Save').disabled).toBe(true);
+    expect(screen.getByRole('progressbar').getAttribute('aria-label')).toBe('Saving progress');
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    expect(btn('Normalize').disabled).toBe(true);
     await fireEvent.click(btn('Cancel'));
     expect(names()).toContain('cancel_backing_save');
-    send({ kind: 'save-failed', id: stemTrack.id, message: 'disk full' });
+    send({ kind: 'save-failed', id: stemTrack.id, message: 'disk full', job: 'save' });
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('disk full'));
+    expect(btn('Save')).toBeTruthy();
+  });
+
+  it('Normalize: disabled without a file, runs, its button reads Cancel, the result shows', async () => {
+    await active();
+    expect(btn('Normalize').disabled).toBe(true);
+    expect(btn('Normalize').title).toBe('Save the backing first');
+    send({ kind: 'saved', id: stemTrack.id, file: 'backings/backing.flac', clipped_samples: 0, track: stemTrack, warnings: [] });
+    await waitFor(() => expect(btn('Normalize').disabled).toBe(false));
+    expect(btn('Normalize').title).toBe('');
+    handlers.normalize_backing = () => ({ ...snapshot(stemTrack.id), saving: 0, job: 'normalize' });
+    await fireEvent.click(btn('Normalize'));
+    expect(names()).toContain('normalize_backing');
+    send({ kind: 'saving', id: stemTrack.id, progress: 0.4, job: 'normalize' });
+    await waitFor(() => expect(screen.getByTestId('save-percent').textContent).toBe('40%'));
+    expect(screen.getByRole('progressbar').getAttribute('aria-label')).toBe('Normalizing progress');
+    expect(btn('Save').disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Normalize' })).toBeNull();
+    await fireEvent.click(btn('Cancel'));
+    expect(names()).toContain('cancel_backing_save');
+    send({ kind: 'save-cancelled', id: stemTrack.id, job: 'normalize' });
+    await waitFor(() =>
+      expect(screen.getByTestId('save-message').textContent).toBe('Normalize cancelled; the file was not changed.'));
+    expect(btn('Normalize')).toBeTruthy();
   });
 });
 

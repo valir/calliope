@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Progress } from '$lib/components/ui/progress/index.js';
   import TimeField from './TimeField.svelte';
   import { Slider } from '$lib/components/ui/slider/index.js';
   import WaveformView from '../player/WaveformView.svelte';
   import {
-    canDetect, canPlay, cancelDetect, cancelSave, detect, detectHint, ed, moveChange, nudge, positionText, save, saveEnabled, seek, stop, stopEnabled, togglePlay,
+    canDetect, canNormalize, canPlay, cancelDetect, cancelSave, detect, detectHint, ed, logEditor, moveChange, normalize, nudge, positionText, save, saveEnabled, seek, stop, stopEnabled, togglePlay,
   } from '$lib/editor-state.svelte';
 
   const active = $derived(ed.status === 'active');
@@ -44,6 +45,39 @@
     dragValue = v;
     seek(v);
   }
+  let laneEl: HTMLElement | undefined = $state();
+  function logLayout(): void {
+    if (!laneEl) return;
+    const pane = laneEl.closest('[data-testid="editor-pane"]');
+    const overflow = pane ? pane.scrollHeight - pane.clientHeight : 0;
+    logEditor(`editor layout mix=${laneEl.offsetHeight} overflow=${overflow} width=${laneEl.offsetWidth}`);
+  }
+  onMount(() => {
+    let raf = 0;
+    const later = (): void => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(logLayout);
+    };
+    later();
+    let ro: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined' && laneEl) {
+      ro = new ResizeObserver(later);
+      ro.observe(laneEl);
+    }
+    return () => {
+      cancelAnimationFrame(raf);
+      ro?.disconnect();
+    };
+  });
+  // Once after each result message (the slot must not grow the lane).
+  let lastMessage = ed.saveMessage;
+  $effect(() => {
+    const m = ed.saveMessage;
+    if (m === lastMessage) return;
+    lastMessage = m;
+    requestAnimationFrame(logLayout);
+  });
+  const jobLabel = $derived(ed.job === 'normalize' ? 'Normalizing progress' : 'Saving progress');
   function endDrag(): void {
     dragging = false;
   }
@@ -51,7 +85,7 @@
 
 <svelte:window onpointerup={endDrag} onpointercancel={endDrag} />
 
-<div class="flex shrink-0 flex-col gap-1.5 rounded-lg border-2 border-border bg-card p-2" data-testid="mix-lane" role="group" aria-label="Mix">
+<div class="flex shrink-0 flex-col gap-1.5 rounded-lg border-2 border-border bg-card p-2" data-testid="mix-lane" bind:this={laneEl} role="group" aria-label="Mix">
   <WaveformView
     testid="mix-waveform"
     label="Mix waveform"
@@ -113,12 +147,20 @@
   </div>
 
   <div class="flex items-center gap-3">
-    <Button class="h-[3.25rem] w-28 shrink-0 text-lg" disabled={!saveEnabled()} onclick={() => void save()}>Save</Button>
+    {#if ed.saving !== null && ed.job !== 'normalize'}
+      <Button class="h-[3.25rem] w-28 shrink-0 text-lg" onclick={() => void cancelSave()}>Cancel</Button>
+    {:else}
+      <Button class="h-[3.25rem] w-28 shrink-0 text-lg" disabled={!saveEnabled()} onclick={() => void save()}>Save</Button>
+    {/if}
+    {#if ed.saving !== null && ed.job === 'normalize'}
+      <Button variant="outline" class="h-[3.25rem] w-[7.5rem] shrink-0 text-lg" onclick={() => void cancelSave()}>Cancel</Button>
+    {:else}
+      <Button variant="outline" class="h-[3.25rem] w-[7.5rem] shrink-0 text-lg" disabled={!canNormalize()} title={ed.variant && !ed.variant.exists ? 'Save the backing first' : undefined} onclick={() => void normalize()}>Normalize</Button>
+    {/if}
     {#if ed.saving !== null}
       <div class="flex min-w-0 flex-1 items-center gap-3" role="status">
-        <Progress value={Math.round(ed.saving * 100)} aria-label="Saving progress" />
+        <Progress value={Math.round(ed.saving * 100)} aria-label={jobLabel} />
         <span class="w-12 shrink-0 text-right tabular-nums" data-testid="save-percent">{Math.round(ed.saving * 100)}%</span>
-        <Button variant="outline" class="h-[3.25rem] shrink-0 px-5 text-lg" onclick={() => void cancelSave()}>Cancel</Button>
       </div>
     {:else}
       <span class="min-w-0 flex-1 truncate text-base text-muted-foreground" title={saveTarget} data-testid="save-target">Save as: {saveTarget}</span>

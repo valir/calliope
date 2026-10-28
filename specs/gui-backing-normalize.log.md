@@ -7,3 +7,5 @@ task 5 | Repository: replace_backing_audio, record_backing_loudness, FileStamp, 
 task 6 | Save normalizes | implementer | done
 task 7 | The Normalize job | implementer | done
 task 8 | release_for_audio, Player gate, start_normalize, normalize_backing command | implementer | done
+task 9 | Frontend: ipc.ts types and loudness-format.ts | implementer | done
+task 10 | Frontend: editor state and the Normalize button | implementer | done

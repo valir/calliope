@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import type { Channel } from '@tauri-apps/api/core';
 import {
-  cancelDetect, canDetect, canPlay, detect, detectHint, ed, lanePlay, moveChange, reloadTempo, leaveEditor, resetEditor, save, saveEnabled, seek, setGain, setUnmuted, stopEnabled,
+  cancelDetect, canDetect, canNormalize, canPlay, detect, detectHint, ed, lanePlay, moveChange, normalize, reloadTempo, leaveEditor, resetEditor, save, saveEnabled, seek, setGain, setUnmuted, stopEnabled,
   syncSelection, togglePlay,
 } from './editor-state.svelte';
 import { ui } from './app-state.svelte';
 import { resetLibrary } from './library-state.svelte';
 import { FIXTURE_TRACKS } from './fixture-tracks';
-import type { EditorEvent, EditorSnapshot, TempoSnap, TrackRecord, TransportState } from './ipc';
+import type { EditorEvent, EditorSnapshot, LoudnessResult, TempoSnap, TrackRecord, TransportState } from './ipc';
 
 const plainTrack = FIXTURE_TRACKS[0];
 const stemTrack = FIXTURE_TRACKS[FIXTURE_TRACKS.length - 1];
@@ -23,6 +23,10 @@ const snapshot = (id: string, unmuted = false): EditorSnapshot => ({
     { name: 'guitar', gain_db: 0, unmuted },
     { name: 'drums', gain_db: 0, unmuted: false },
   ],
+});
+
+const loud = (outcome: LoudnessResult['outcome'], lufs: number, gain_db: number): LoudnessResult => ({
+  outcome, lufs, true_peak: -3, gain_db, target: -14, ceiling: -1,
 });
 
 type Call = [string, Record<string, unknown>];
@@ -352,14 +356,91 @@ describe('events and save', () => {
     expect(ed.saving).toBe(0.1);
     channels[0].onmessage({
       kind: 'saved', id: stemTrack.id, file: 'backings/backing.flac', clipped_samples: 88200,
-      track: stemTrack, warnings: [],
+      loudness: loud('normalized', -14, 3.2), track: stemTrack, warnings: ['w1.'],
     });
     await flush();
     expect(ed.saving).toBeNull();
-    expect(ed.saveMessage).toContain('88200 samples were clipped');
+    expect(ed.saveMessage).toMatch(/^Saved, normalized to -14\.0 LUFS \(gain \+3\.2 dB\)\. 88200 samples were clipped/);
+    expect(ed.saveMessage).toMatch(/save again\. w1\.$/);
     expect(ed.saveMessage).toContain('about 1.0 s');
     expect(names()).toContain('list_tracks');
-    expect(logs()).toContain(`editor saved id=${stemTrack.id} file=backings/backing.flac clipped=88200`);
+    expect(logs()).toContain(`editor saved id=${stemTrack.id} file=backings/backing.flac clipped=88200 outcome=normalized gain=3.2`);
+  });
+
+  it('an old saved event without loudness shows Saved. and logs none', async () => {
+    syncSelection(stemTrack);
+    await flush();
+    channels[0].onmessage({ kind: 'saved', id: stemTrack.id, file: 'f', clipped_samples: 0, track: stemTrack, warnings: [] });
+    expect(ed.saveMessage).toBe('Saved.');
+    expect(logs()).toContain(`editor saved id=${stemTrack.id} file=f clipped=0 outcome=none gain=none`);
+  });
+
+  it('canNormalize needs a file and no running job or detection', async () => {
+    syncSelection(stemTrack);
+    await flush();
+    expect(canNormalize()).toBe(false);
+    ed.variant = { ...ed.variant!, exists: true };
+    expect(canNormalize()).toBe(true);
+    ed.saving = 0.2;
+    expect(canNormalize()).toBe(false);
+    ed.saving = null;
+    ed.detect = { phase: 'detecting', progress: null };
+    expect(canNormalize()).toBe(false);
+    ed.detect = null;
+    ed.status = 'loading';
+    expect(canNormalize()).toBe(false);
+  });
+
+  it('normalize starts the job, then the events end it', async () => {
+    syncSelection(stemTrack);
+    await flush();
+    ed.variant = { ...ed.variant!, exists: true };
+    ed.saveMessage = 'old';
+    handlers.normalize_backing = () => ({ ...snapshot(stemTrack.id), saving: 0, job: 'normalize' });
+    await normalize();
+    expect(calls.find((c) => c[0] === 'normalize_backing')![1]).toEqual({ id: stemTrack.id });
+    expect(ed.saving).toBe(0);
+    expect(ed.job).toBe('normalize');
+    expect(ed.saveMessage).toBe('');
+    expect(logs()).toContain(`editor normalize start id=${stemTrack.id}`);
+    channels[0].onmessage({ kind: 'saving', id: stemTrack.id, progress: 0.5, job: 'normalize' });
+    expect(ed.saving).toBe(0.5);
+    channels[0].onmessage({
+      kind: 'normalized', id: stemTrack.id, file: 'backings/backing.flac', loudness: loud('limited', -15.6, -1),
+      changed: true, track: stemTrack, warnings: ['w.'],
+    });
+    await flush();
+    expect(ed.saving).toBeNull();
+    expect(ed.job).toBeNull();
+    expect(ed.saveMessage).toBe('Normalized to -15.6 LUFS (gain -1.0 dB, limited by the -1 dBTP peak ceiling). w.');
+    expect(logs()).toContain(`editor normalized id=${stemTrack.id} outcome=limited gain=-1.0 changed=true`);
+    expect(names()).toContain('list_tracks');
+  });
+
+  it('an unchanged normalize does not reload; cancel and failure end the job', async () => {
+    syncSelection(stemTrack);
+    await flush();
+    const before = names().filter((n) => n === 'list_tracks').length;
+    channels[0].onmessage({
+      kind: 'normalized', id: stemTrack.id, file: 'f', loudness: loud('at-target', -14, 0), changed: false,
+      track: null, warnings: [],
+    });
+    await flush();
+    expect(ed.saveMessage).toBe('Already at the target (-14.0 LUFS); the file was not changed.');
+    expect(names().filter((n) => n === 'list_tracks')).toHaveLength(before);
+    ed.saving = 0.3;
+    ed.job = 'normalize';
+    channels[0].onmessage({ kind: 'save-cancelled', id: stemTrack.id, job: 'normalize' });
+    expect(ed.saving).toBeNull();
+    expect(ed.job).toBeNull();
+    expect(ed.saveMessage).toBe('Normalize cancelled; the file was not changed.');
+    channels[0].onmessage({ kind: 'save-cancelled', id: stemTrack.id, job: 'save' });
+    expect(ed.saveMessage).toBe('Save cancelled.');
+    ed.saving = 0.3;
+    ed.job = 'normalize';
+    channels[0].onmessage({ kind: 'save-failed', id: stemTrack.id, message: 'boom', job: 'normalize' });
+    expect(ed.saveError).toBe('boom');
+    expect(ed.job).toBeNull();
   });
 
   it('save-failed shows the message', async () => {

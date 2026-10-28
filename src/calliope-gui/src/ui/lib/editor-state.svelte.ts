@@ -1,3 +1,4 @@
+import { loudnessText } from './loudness-format';
 import {
   cancelBackingSave,
   closeEditor,
@@ -15,9 +16,11 @@ import {
   frontendLog,
   openEditor,
   saveBacking,
+  normalizeBacking,
   EDITOR_SUPERSEDED,
   type EditorEvent,
   type DetectState,
+  type JobKind,
   type EditorSnapshot,
   type LaneState,
   type TrackRecord,
@@ -52,6 +55,8 @@ export const ed = $state({
   variant: null as Variant | null,
   /** 0..1 while a save runs. */
   saving: null as number | null,
+  /** Which job `saving` is the progress of. */
+  job: null as JobKind | null,
   saveMessage: '',
   saveError: '',
   /** Playback stopped by an audio error. */
@@ -66,6 +71,8 @@ export const ed = $state({
 });
 
 const log = (m: string): void => void frontendLog(m);
+/** For the Mix lane's layout line. */
+export const logEditor = log;
 const fail = (command: string, err: unknown): void => log(`error editor ${command}: ${String(err)}`);
 
 /** Identifies the current open; late snapshots and events of an older one are dropped. */
@@ -84,6 +91,7 @@ function resetFields(): void {
   ed.transport = { ...STOPPED };
   ed.variant = null;
   ed.saving = null;
+  ed.job = null;
   ed.saveMessage = '';
   ed.saveError = '';
   ed.audioError = '';
@@ -183,6 +191,7 @@ function applySnapshot(s: EditorSnapshot): void {
   ed.transport = { ...s.transport };
   ed.variant = { ...s.variant };
   ed.saving = s.saving;
+  ed.job = s.saving === null ? null : (s.job ?? 'save');
   ed.peaks = s.peaks;
   ed.tempo = s.tempo;
   ed.detect = s.detect ? { ...s.detect } : null;
@@ -261,33 +270,52 @@ function onEvent(gen: number, e: EditorEvent): void {
     }
     case 'saving':
       ed.saving = e.progress;
+      ed.job = e.job ?? ed.job ?? 'save';
       break;
     case 'saved': {
       ed.saving = null;
+      ed.job = null;
       clearDetectMessages();
       ed.saveError = '';
       const secs = ed.sampleRate > 0 ? e.clipped_samples / (ed.sampleRate * 2) : 0;
-      ed.saveMessage =
-        e.clipped_samples > 0
-          ? `Saved. ${e.clipped_samples} samples were clipped (about ${secs.toFixed(1)} s); lower some volumes and save again.`
-          : 'Saved.';
+      ed.saveMessage = e.loudness ? loudnessText(e.loudness, 'save') : 'Saved.';
+      if (e.clipped_samples > 0) {
+        ed.saveMessage += ` ${e.clipped_samples} samples were clipped (about ${secs.toFixed(1)} s); lower some volumes and save again.`;
+      }
       if (e.warnings.length > 0) ed.saveMessage += ` ${e.warnings.join(' ')}`;
       if (ed.variant) ed.variant = { ...ed.variant, file: e.file, exists: true };
-      log(`editor saved id=${e.id} file=${e.file} clipped=${e.clipped_samples}`);
+      log(
+        `editor saved id=${e.id} file=${e.file} clipped=${e.clipped_samples} outcome=${e.loudness?.outcome ?? 'none'} gain=${e.loudness ? e.loudness.gain_db.toFixed(1) : 'none'}`,
+      );
       void load();
+      break;
+    }
+    case 'normalized': {
+      ed.saving = null;
+      ed.job = null;
+      clearDetectMessages();
+      ed.saveError = '';
+      ed.saveMessage = loudnessText(e.loudness, 'normalize');
+      if (e.warnings.length > 0) ed.saveMessage += ` ${e.warnings.join(' ')}`;
+      log(
+        `editor normalized id=${e.id} outcome=${e.loudness.outcome} gain=${e.loudness.gain_db.toFixed(1)} changed=${e.changed}`,
+      );
+      if (e.track !== null) void load();
       break;
     }
     case 'save-failed':
       ed.saving = null;
+      ed.job = null;
       clearDetectMessages();
       ed.saveMessage = '';
       ed.saveError = e.message;
       break;
     case 'save-cancelled':
       ed.saving = null;
+      ed.job = null;
       clearDetectMessages();
       ed.saveError = '';
-      ed.saveMessage = 'Save cancelled.';
+      ed.saveMessage = e.job === 'normalize' ? 'Normalize cancelled; the file was not changed.' : 'Save cancelled.';
       break;
     case 'peaks':
       ed.peaks = e.peaks;
@@ -337,6 +365,9 @@ export const stopEnabled = (): boolean =>
   ed.status === 'active' && (ed.transport.playing || ed.transport.position_ms > 0);
 export const saveEnabled = (): boolean =>
   ed.status === 'active' && ed.saving === null && ed.stems.some((s) => s.unmuted);
+
+export const canNormalize = (): boolean =>
+  ed.status === 'active' && !!ed.variant?.exists && ed.saving === null && ed.detect === null;
 
 /** The edge-AI address is set (the footer status is 'not-configured' exactly then). */
 export const edgeAiSet = (): boolean => ui.edgeAi !== 'not-configured';
@@ -515,6 +546,7 @@ export async function save(): Promise<void> {
   clearDetectMessages();
   ed.audioError = '';
   ed.saving = 0;
+  ed.job = 'save';
   try {
     const s = await saveBacking(id);
     if (gen !== generation) return;
@@ -523,8 +555,32 @@ export async function save(): Promise<void> {
   } catch (err) {
     if (gen !== generation) return;
     ed.saving = null;
+    ed.job = null;
     ed.saveError = String(err).replace(/^Error: /, '');
     fail('save_backing', err);
+  }
+}
+
+export async function normalize(): Promise<void> {
+  const id = ed.trackId;
+  if (!canNormalize() || !id) return;
+  const gen = generation;
+  clearSaveMessages();
+  clearDetectMessages();
+  ed.audioError = '';
+  ed.saving = 0;
+  ed.job = 'normalize';
+  log(`editor normalize start id=${id}`);
+  try {
+    const s = await normalizeBacking(id);
+    if (gen !== generation) return;
+    if (ed.saving !== null) ed.saving = s.saving;
+  } catch (err) {
+    if (gen !== generation) return;
+    ed.saving = null;
+    ed.job = null;
+    ed.saveError = String(err).replace(/^Error: /, '');
+    fail('normalize_backing', err);
   }
 }
 

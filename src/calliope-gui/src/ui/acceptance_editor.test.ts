@@ -210,6 +210,13 @@ describe('through the whole app', () => {
     await waitFor(() => expect(names().filter((n) => n === 'save_backing')).toHaveLength(1));
   });
 
+  it('Normalize sits beside Save and stays disabled until the backing file exists', async () => {
+    await openEditorOn(stemA);
+    await waitFor(() => expect(ed.status).toBe('active'));
+    expect(btn('Normalize').disabled).toBe(true);
+    expect(btn('Normalize').title).toBe('Save the backing first');
+  });
+
   it('Autodetect BPM in the Mix lane: disabled without an edge-AI URL, click calls editor_detect once enabled', async () => {
     await openEditorOn(stemA);
     await waitFor(() => expect(ed.status).toBe('active'));
