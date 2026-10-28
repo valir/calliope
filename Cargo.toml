@@ -9,11 +9,15 @@ default-members = ["src/calliope-gui"]
 package.license = "MPL-2.0"  # inherited by every crate (license.workspace = true)
 resolver = "2"
 
-# Decoding/encoding FLAC is slow at opt-level 0; keep these hot crates optimised in dev and test builds.
+# Decoding/encoding FLAC and measuring loudness are slow at
+# opt-level 0; keep these hot crates optimised in dev and test builds.
 [profile.dev.package.claxon]
 opt-level = 3
 
 [profile.dev.package.flacenc]
+opt-level = 3
+
+[profile.dev.package.ebur128]
 opt-level = 3
 
 # Signalsmith Stretch is C++ compiled by the crate's build script; unoptimised it is too slow for the tests.

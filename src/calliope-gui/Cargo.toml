@@ -22,6 +22,7 @@ tauri-plugin-dialog = "2"
 url = "2"
 claxon = "0.4"
 flacenc = { version = "0.5", default-features = false }
+ebur128 = "=0.1.10"
 cpal = "0.18"
 signalsmith-stretch = "=0.1.3"
 calliope-lib = { path = "../calliope-lib", features = ["client"] }

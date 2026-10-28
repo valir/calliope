@@ -50,6 +50,7 @@ you do.
 | `url` | dependency | `2` | 2.5.8 | MIT OR Apache-2.0 | URL validation and normalisation for the yt-dlp download |
 | `claxon` | dependency | `0.4` | 0.4.3 | Apache-2.0 | FLAC decoding of stems; stem audible-time scan in calliope-lib (app and server) |
 | `flacenc` | dependency | `0.5` (no default features) | 0.5.1 | Apache-2.0 | FLAC encoding of backing tracks |
+| `ebur128` | dependency | `=0.1.10` | 0.1.10 | MIT | loudness (ITU-R BS.1770-4 / EBU R128) and true peak of backing tracks |
 | `cpal` | dependency | `0.18` | 0.18.2 | Apache-2.0 | audio output (ALSA on Linux) |
 | `signalsmith-stretch` | dependency | `0.1.3` | 0.1.3 | MIT | time-stretch with the pitch kept (Player speed); Rust binding of the vendored Signalsmith Stretch C++ library |
 | `tauri-build` | build-dependency | `2` | 2.7.1 | Apache-2.0 OR MIT | Tauri build script |
