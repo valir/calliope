@@ -33,7 +33,13 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum TargetReq {
-    Rc5 { memory: String },
+    Rc5 {
+        memory: String,
+        /// The folder the frontend shows as "To:"; the dialog is skipped only if it is the one
+        /// Rust remembers (and it is still a usable RC-5 folder).
+        #[serde(default)]
+        reuse: Option<String>,
+    },
     Mp3,
     Ogg,
 }
@@ -54,6 +60,8 @@ pub struct ExportPlan {
     /// The file that will be written (for display; the frontend never sends it back).
     pub path: String,
     pub exists: bool,
+    /// The folder the plan writes into (for display).
+    pub base: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -179,6 +187,8 @@ struct Inner {
     job: Option<Job>,
     next_token: u64,
     next_job: u64,
+    /// The base folder of the last successful RC-5 export (or accepted by "Change...").
+    rc5_quick: Option<PathBuf>,
 }
 
 impl Inner {
@@ -276,20 +286,16 @@ fn probe(ffprobe: &Path, src: &Path) -> Result<StreamInfo, String> {
     export_rules::parse_stream_info(&json).ok_or_else(|| format!("Cannot read the audio of {name}"))
 }
 
-/// The destination checks of plan 2.5, in order. `Err((reason, message))`.
-fn check_destination(
-    kind: ExportKind,
-    base: &Path,
-    repo_root: &Path,
-    target: &Path,
-) -> Result<(), (&'static str, String)> {
+/// The checks of an RC-5 base folder, in order: it is a folder, it holds `ROLAND`, and it is not
+/// inside the repository. `Err((reason, message))`.
+pub fn check_rc5_base(base: &Path, repo_root: &Path) -> Result<(), (&'static str, String)> {
     if !base.is_dir() {
         return Err((
             "not-folder",
             format!("{} is not an existing folder", base.display()),
         ));
     }
-    if kind == ExportKind::Rc5 && !base.join("ROLAND").is_dir() {
+    if !base.join("ROLAND").is_dir() {
         return Err((
             "no-roland",
             format!(
@@ -303,6 +309,32 @@ fn check_destination(
             "inside-repo",
             "Cannot export into the repository folder".into(),
         ));
+    }
+    Ok(())
+}
+
+/// The destination checks of plan 2.5, in order. `Err((reason, message))`.
+fn check_destination(
+    kind: ExportKind,
+    base: &Path,
+    repo_root: &Path,
+    target: &Path,
+) -> Result<(), (&'static str, String)> {
+    if kind == ExportKind::Rc5 {
+        check_rc5_base(base, repo_root)?;
+    } else {
+        if !base.is_dir() {
+            return Err((
+                "not-folder",
+                format!("{} is not an existing folder", base.display()),
+            ));
+        }
+        if inside_root(repo_root, base) {
+            return Err((
+                "inside-repo",
+                "Cannot export into the repository folder".into(),
+            ));
+        }
     }
     if kind == ExportKind::Rc5 {
         let dirs = [
@@ -409,6 +441,7 @@ impl ExportState {
             token: token.clone(),
             path: target.display().to_string(),
             exists: target.exists(),
+            base: p.chosen.to_string_lossy().into_owned(),
         };
         g.planned = Some(Planned {
             token,
@@ -435,6 +468,15 @@ impl ExportState {
             (Some(a), Some(b)) => Ok((a, b)),
             _ => refuse(kind, "tools", TOOLS_MESSAGE),
         }
+    }
+
+    /// The RC-5 folder the next export may use without the dialog (in memory only).
+    pub fn rc5_quick(&self) -> Option<PathBuf> {
+        lock(&self.inner).rc5_quick.clone()
+    }
+
+    pub fn set_rc5_quick(&self, dir: PathBuf) {
+        lock(&self.inner).rc5_quick = Some(dir);
     }
 
     /// True while an export runs.
@@ -690,6 +732,9 @@ impl Work {
                     "calliope: export done job={} path={path} frames={} clipped={}",
                     self.job, stats.frames, stats.clipped
                 );
+                if self.pl.kind == ExportKind::Rc5 {
+                    lock(&self.inner).rc5_quick = Some(self.pl.base.clone());
+                }
                 // Before `done` is published, so that whoever reacts to it (the pane reloads the
                 // memory suggestion) sees what `on_done` saved.
                 let rec = on_done(&Finished {

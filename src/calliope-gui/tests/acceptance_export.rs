@@ -224,7 +224,10 @@ impl Env {
 }
 
 fn rc5(m: &str) -> TargetReq {
-    TargetReq::Rc5 { memory: m.into() }
+    TargetReq::Rc5 {
+        memory: m.into(),
+        reuse: None,
+    }
 }
 
 fn wav_path(base: &Path, n: u32) -> PathBuf {

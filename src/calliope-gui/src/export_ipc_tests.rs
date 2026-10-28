@@ -102,8 +102,13 @@ impl Rig {
     }
 
     fn rc5(memory: &str) -> TargetReq {
+        Self::rc5_reuse(memory, None)
+    }
+
+    fn rc5_reuse(memory: &str, reuse: Option<&Path>) -> TargetReq {
         TargetReq::Rc5 {
             memory: memory.into(),
+            reuse: reuse.map(|p| p.to_string_lossy().into_owned()),
         }
     }
 
@@ -591,4 +596,186 @@ fn the_recorded_mp3_folder_is_the_dialog_start() {
         starts[starts.len() - 1],
         (DialogKind::ExportAudio, Some(second))
     );
+}
+
+#[test]
+fn target_without_reuse_deserializes() {
+    let t: TargetReq = serde_json::from_str(r#"{"kind":"rc5","memory":"7"}"#).unwrap();
+    assert_eq!(Rig::rc5("7"), t);
+    let t: TargetReq =
+        serde_json::from_str(r#"{"kind":"rc5","memory":"7","reuse":"/m/B"}"#).unwrap();
+    assert_eq!(Rig::rc5_reuse("7", Some(Path::new("/m/B"))), t);
+}
+
+#[test]
+fn quick_prepare_skips_the_dialog_after_a_success() {
+    let rig = Rig::new();
+    let b = rig.base("B");
+    // Nothing remembered yet: reuse alone opens the dialog, at the remembered folder.
+    rig.answer(&["export-rc5 CANCEL".into()]);
+    assert_eq!(
+        rig.prepare(401, Rig::rc5_reuse("3", Some(&b))).unwrap(),
+        None
+    );
+    assert_eq!(rig.picker.starts().len(), 1);
+    assert_eq!(rig.export.rc5_quick(), None);
+
+    let s = rig.export_to(401, Rig::rc5("3"), "export-rc5", &b);
+    assert_eq!(s.phase, ExportPhase::Done);
+    assert_eq!(rig.export.rc5_quick(), Some(b.clone()));
+    let starts = rig.picker.starts().len();
+    let settings_before = std::fs::read(rig.settings_path()).unwrap();
+    std::fs::write(&rig.answers, "export-rc5 CANCEL\n").unwrap();
+
+    let plan = rig
+        .prepare(403, Rig::rc5_reuse("4", Some(&b)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(rig.picker.starts().len(), starts);
+    assert_eq!(
+        std::fs::read_to_string(&rig.answers).unwrap(),
+        "export-rc5 CANCEL\n",
+        "no answer was consumed"
+    );
+    assert_eq!(
+        plan.path,
+        b.join("ROLAND/WAVE/004_1/004_1.WAV").display().to_string()
+    );
+    assert_eq!(plan.base, b.to_string_lossy());
+    assert!(!plan.exists);
+    assert_eq!(std::fs::read(rig.settings_path()).unwrap(), settings_before);
+
+    // The memory file of the first export exists: the overwrite question is still there.
+    let plan = rig
+        .prepare(403, Rig::rc5_reuse("3", Some(&b)))
+        .unwrap()
+        .unwrap();
+    assert!(plan.exists);
+    assert_eq!(rig.picker.starts().len(), starts);
+
+    // A bad memory is refused before anything, reuse or not.
+    assert_eq!(
+        rig.prepare(403, Rig::rc5_reuse("abc", Some(&b)))
+            .unwrap_err(),
+        "Enter a memory number from 1 to 99"
+    );
+    assert_eq!(rig.picker.starts().len(), starts);
+}
+
+#[test]
+fn quick_prepare_falls_back_to_the_dialog() {
+    let rig = Rig::new();
+    let b = rig.base("B");
+    // Rust has no quick folder (first export), so `reuse` is ignored.
+    rig.export_to(401, Rig::rc5_reuse("3", Some(&b)), "export-rc5", &b);
+    let mut n = rig.picker.starts().len();
+    let cancel = || std::fs::write(&rig.answers, "export-rc5 CANCEL\n").unwrap();
+    let mut expect_dialog = |target: TargetReq| {
+        cancel();
+        assert_eq!(rig.prepare(403, target).unwrap(), None);
+        let starts = rig.picker.starts();
+        n += 1;
+        assert_eq!(starts.len(), n);
+        assert_eq!(
+            starts[n - 1],
+            (DialogKind::ExportRc5, Some(b.clone())),
+            "starts at the remembered rc5_dir"
+        );
+    };
+    // A different string.
+    expect_dialog(Rig::rc5_reuse("4", Some(&rig.home.join("other"))));
+    // ROLAND removed.
+    std::fs::rename(b.join("ROLAND"), b.join("R_OLD")).unwrap();
+    expect_dialog(Rig::rc5_reuse("4", Some(&b)));
+    assert_eq!(rig.export.rc5_quick(), Some(b.clone()), "kept in Rust");
+    std::fs::rename(b.join("R_OLD"), b.join("ROLAND")).unwrap();
+    // The reuse is honoured again once ROLAND is back.
+    assert!(rig
+        .prepare(403, Rig::rc5_reuse("4", Some(&b)))
+        .unwrap()
+        .is_some());
+    assert_eq!(rig.picker.starts().len(), n);
+    // The folder removed: the dialog starts at home (the remembered folder is gone).
+    std::fs::remove_dir_all(&b).unwrap();
+    cancel();
+    assert_eq!(
+        rig.prepare(403, Rig::rc5_reuse("4", Some(&b))).unwrap(),
+        None
+    );
+    assert_eq!(
+        rig.picker.starts()[n],
+        (DialogKind::ExportRc5, Some(rig.home.clone()))
+    );
+}
+
+#[test]
+fn choose_rc5_folder_cases() {
+    let rig = Rig::new();
+    let choose = |rig: &Rig| {
+        do_choose_rc5_folder(&rig.st, &rig.settings, &rig.export, Some(rig.home.clone()))
+    };
+    let b = rig.base("B");
+    // Cancel changes nothing; the dialog starts at home (nothing remembered).
+    rig.answer(&["export-rc5 CANCEL".into()]);
+    assert_eq!(choose(&rig), Ok(None));
+    assert_eq!(rig.export.rc5_quick(), None);
+    assert_eq!(rig.settings.get().rc5_dir, None);
+    assert_eq!(
+        rig.picker.starts(),
+        [(DialogKind::ExportRc5, Some(rig.home.clone()))]
+    );
+    // A folder without ROLAND is refused with the export's message; nothing changes.
+    let plain = rig.home.join("plain");
+    std::fs::create_dir(&plain).unwrap();
+    rig.export_to(401, Rig::rc5("3"), "export-rc5", &b);
+    rig.answer(&[format!("export-rc5 {}", plain.display())]);
+    let e = choose(&rig).unwrap_err();
+    assert_eq!(
+        e,
+        format!(
+            "No ROLAND folder in {}: is the RC-5 mounted?",
+            plain.display()
+        )
+    );
+    assert_eq!(rig.export.rc5_quick(), Some(b.clone()));
+    assert_eq!(rig.settings.get().rc5_dir, Some(b.clone()));
+    // The dialog started in the quick folder.
+    assert_eq!(
+        rig.picker.starts().last().unwrap(),
+        &(DialogKind::ExportRc5, Some(b.clone()))
+    );
+    // A valid folder is taken, remembered, and used by the next skip.
+    let c = rig.base("C");
+    rig.answer(&[format!("export-rc5 {}", c.display())]);
+    assert_eq!(choose(&rig), Ok(Some(c.to_string_lossy().into_owned())));
+    assert_eq!(rig.export.rc5_quick(), Some(c.clone()));
+    assert_eq!(rig.settings.get().rc5_dir, Some(c.clone()));
+    let starts = rig.picker.starts().len();
+    let plan = rig
+        .prepare(403, Rig::rc5_reuse("4", Some(&c)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(rig.picker.starts().len(), starts);
+    assert_eq!(
+        plan.path,
+        c.join("ROLAND/WAVE/004_1/004_1.WAV").display().to_string()
+    );
+    // Nothing was written on the drives by choosing.
+    assert!(!c.join("ROLAND/WAVE").exists());
+}
+
+#[test]
+fn choose_rc5_folder_is_busy_during_an_export() {
+    let rig = Rig::with(ExportState::new(Box::new(real_tools)).with_pace(5.0));
+    let b = rig.base("B");
+    rig.answer(&[format!("export-rc5 {}", b.display())]);
+    let plan = rig.prepare(401, Rig::rc5("3")).unwrap().unwrap();
+    rig.start(&plan.token, false).unwrap();
+    let starts = rig.picker.starts().len();
+    let e = do_choose_rc5_folder(&rig.st, &rig.settings, &rig.export, None).unwrap_err();
+    assert_eq!(e, BUSY_MESSAGE);
+    assert_eq!(rig.picker.starts().len(), starts);
+    let job = rig.export.snapshot().unwrap().job;
+    rig.export.cancel(&job);
+    rig.wait();
 }

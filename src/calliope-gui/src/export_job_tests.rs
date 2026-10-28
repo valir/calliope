@@ -258,8 +258,13 @@ fn tags_of(p: &Path) -> BTreeMap<String, String> {
 fn rc5_writes_the_memory_file() {
     let rig = Rig::new();
     let base = rig.rc5("rc5");
+    assert_eq!(rig.state.rc5_quick(), None);
+    let plan = rig.plan(401, ExportKind::Rc5, Some(7), &base).unwrap();
+    assert_eq!(plan.base, base.to_string_lossy());
+    assert_eq!(rig.state.rc5_quick(), None, "a plan sets nothing");
     let (s, ev, done) = rig.run(401, ExportKind::Rc5, Some(7), &base);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    assert_eq!(rig.state.rc5_quick(), Some(base.clone()));
     let target = base.join("ROLAND/WAVE/007_1/007_1.WAV");
     assert_eq!(s.path, target.display().to_string());
     let (head, samples) = wav_samples(&target);
@@ -404,6 +409,7 @@ fn mp3_and_ogg_names_and_tags() {
     assert_eq!(t["title"], "Stem Mix");
     assert_eq!(t["track"], "3");
     assert_eq!(t["date"], "2021");
+    assert_eq!(rig.state.rc5_quick(), None, "MP3 sets no quick folder");
     let (s, _, _) = rig.run(409, ExportKind::Ogg, None, &rig.dest);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     let ogg = rig.dest.join("AC_DC_ - Live_ A_B_.ogg");
@@ -437,6 +443,7 @@ fn cancel_leaves_nothing() {
     assert_eq!(s.phase, ExportPhase::Cancelled);
     assert!(!base.join("ROLAND/WAVE").exists());
     assert!(base.join("ROLAND").is_dir());
+    assert_eq!(rig.state.rc5_quick(), None, "a cancelled job sets nothing");
     assert!(ev.lock().unwrap().contains(&ExportEvent::Cancelled));
     assert_eq!(done.load(Ordering::SeqCst), 0);
     assert!(rig.finished.lock().unwrap().is_empty());
@@ -519,8 +526,45 @@ fn failure_leaves_nothing() {
     );
     assert_eq!(done.load(Ordering::SeqCst), 0);
     assert!(snapshot(&out).is_empty());
+    // A failed job and a refused start leave an earlier quick folder as it was.
+    let kept = rig2.rc5("kept");
+    rig2.state.set_rc5_quick(kept.clone());
+    assert_eq!(rig2.state.rc5_quick(), Some(kept.clone()));
+    let gone = rig2.rc5("gone");
+    let plan = rig2.plan(401, ExportKind::Rc5, Some(7), &gone).unwrap();
+    std::fs::remove_dir(gone.join("ROLAND")).unwrap();
+    let (r, _, _) = rig2.start(&plan.token, false, &rig2.tempo(401));
+    assert!(r.unwrap_err().contains("No ROLAND folder"));
+    assert_eq!(rig2.state.rc5_quick(), Some(kept));
     rig.assert_repo_untouched();
     rig2.assert_repo_untouched();
+}
+
+#[test]
+fn check_rc5_base_reasons() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(repo.join("ROLAND")).unwrap();
+    let reason = |b: &Path| check_rc5_base(b, &repo).unwrap_err().0;
+    assert_eq!(reason(&tmp.path().join("missing")), "not-folder");
+    let file = tmp.path().join("file");
+    std::fs::write(&file, b"x").unwrap();
+    assert_eq!(reason(&file), "not-folder");
+    let bare = tmp.path().join("bare");
+    std::fs::create_dir(&bare).unwrap();
+    let (r, m) = check_rc5_base(&bare, &repo).unwrap_err();
+    assert_eq!(r, "no-roland");
+    assert_eq!(
+        m,
+        format!(
+            "No ROLAND folder in {}: is the RC-5 mounted?",
+            bare.display()
+        )
+    );
+    assert_eq!(reason(&repo), "inside-repo");
+    let ok = tmp.path().join("ok");
+    std::fs::create_dir_all(ok.join("ROLAND")).unwrap();
+    assert!(check_rc5_base(&ok, &repo).is_ok());
 }
 
 #[test]

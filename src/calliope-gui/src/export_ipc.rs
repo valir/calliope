@@ -10,8 +10,8 @@ use tauri::Manager;
 
 use crate::export_audio::LEAD_BEATS;
 use crate::export_job::{
-    ExportEvent, ExportPlan, ExportSnapshot, ExportState, Finished, OnDone, PlanInput, Recorded,
-    Sink, TargetReq, BUSY_MESSAGE, STALE_MESSAGE,
+    check_rc5_base, ExportEvent, ExportPlan, ExportSnapshot, ExportState, Finished, OnDone,
+    PlanInput, Recorded, Sink, TargetReq, BUSY_MESSAGE, STALE_MESSAGE,
 };
 use crate::export_record::{ExportEntry, TrackExports};
 use crate::export_rules::{self, ExportKind, NO_TEMPO_REASON};
@@ -102,6 +102,30 @@ pub fn do_export_info(
     Ok(info)
 }
 
+const RC5_TITLE: &str = "Choose the RC-5 drive (its root folder)";
+
+/// Logs the dialog start and opens the folder dialog.
+fn pick(
+    repo: &RepoState,
+    kind: DialogKind,
+    title: &str,
+    from: &str,
+    start_dir: Option<PathBuf>,
+) -> Option<PathBuf> {
+    eprintln!(
+        "calliope: dialog start kind={} from={from} dir={}",
+        kind.as_str(),
+        start_dir
+            .as_ref()
+            .map_or("none".to_string(), |d| d.display().to_string())
+    );
+    repo.picker.pick_folder(&FolderReq {
+        kind,
+        title: title.into(),
+        start_dir,
+    })
+}
+
 fn refused<T>(kind: ExportKind, reason: &str, message: impl Into<String>) -> Result<T, String> {
     eprintln!(
         "calliope: export refused target={} reason={reason}",
@@ -127,7 +151,7 @@ pub fn do_prepare_export(
         return refused(kind, "busy", BUSY_MESSAGE);
     }
     let memory = match &target {
-        TargetReq::Rc5 { memory } => match export_rules::parse_memory(memory) {
+        TargetReq::Rc5 { memory, .. } => match export_rules::parse_memory(memory) {
             Ok(n) => Some(n),
             Err(e) => return refused(kind, "memory", e),
         },
@@ -144,46 +168,59 @@ pub fn do_prepare_export(
         return refused(kind, "no-tempo", NO_TEMPO_REASON);
     }
 
-    let (dialog, title) = match kind {
-        ExportKind::Rc5 => (
-            DialogKind::ExportRc5,
-            "Choose the RC-5 drive (its root folder)",
-        ),
-        _ => (
-            DialogKind::ExportAudio,
-            "Choose a folder for the MP3/OGG file",
-        ),
-    };
-    let s = settings.get();
-    let remembered = if kind == ExportKind::Rc5 {
-        s.rc5_dir
-    } else {
-        s.export_dir
-    };
-    let (from, start_dir) = match kind {
-        ExportKind::Rc5 => export_rules::start_dir(remembered.as_deref(), home.as_deref()),
-        _ => {
-            let recorded = match kind {
-                ExportKind::Mp3 => rec.exports.mp3.as_ref(),
-                _ => rec.exports.ogg.as_ref(),
-            };
-            let recorded = recorded.map(|e| Path::new(&e.path));
-            export_rules::file_start_dir(recorded, remembered.as_deref(), home.as_deref())
+    // RC-5 only: the folder of the last success, when the frontend asks for it and it is still
+    // a usable RC-5 folder; otherwise the dialog, as the first time.
+    let mut quick: Option<PathBuf> = None;
+    if let TargetReq::Rc5 {
+        reuse: Some(reuse), ..
+    } = &target
+    {
+        match export_rules::quick_rc5_dir(Some(reuse), export.rc5_quick().as_deref()) {
+            Ok(dir) => {
+                eprintln!(
+                    "calliope: dialog skipped kind=export-rc5 dir={}",
+                    dir.display()
+                );
+                quick = Some(dir);
+            }
+            Err(reason) => {
+                eprintln!("calliope: export quick unavailable reason={reason} dir={reuse}");
+            }
         }
-    };
-    eprintln!(
-        "calliope: dialog start kind={} from={from} dir={}",
-        dialog.as_str(),
-        start_dir
-            .as_ref()
-            .map_or("none".to_string(), |d| d.display().to_string())
-    );
-    let Some(chosen) = repo.picker.pick_folder(&FolderReq {
-        kind: dialog,
-        title: title.into(),
-        start_dir,
-    }) else {
-        return Ok(None);
+    }
+    let skipped = quick.is_some();
+    let chosen = match quick {
+        Some(dir) => dir,
+        None => {
+            let (dialog, title) = match kind {
+                ExportKind::Rc5 => (DialogKind::ExportRc5, RC5_TITLE),
+                _ => (
+                    DialogKind::ExportAudio,
+                    "Choose a folder for the MP3/OGG file",
+                ),
+            };
+            let s = settings.get();
+            let remembered = if kind == ExportKind::Rc5 {
+                s.rc5_dir
+            } else {
+                s.export_dir
+            };
+            let (from, start_dir) = match kind {
+                ExportKind::Rc5 => export_rules::start_dir(remembered.as_deref(), home.as_deref()),
+                _ => {
+                    let recorded = match kind {
+                        ExportKind::Mp3 => rec.exports.mp3.as_ref(),
+                        _ => rec.exports.ogg.as_ref(),
+                    };
+                    let recorded = recorded.map(|e| Path::new(&e.path));
+                    export_rules::file_start_dir(recorded, remembered.as_deref(), home.as_deref())
+                }
+            };
+            let Some(chosen) = pick(repo, dialog, title, from, start_dir) else {
+                return Ok(None);
+            };
+            chosen
+        }
     };
 
     let root = repo.current_root();
@@ -197,7 +234,7 @@ pub fn do_prepare_export(
         repo_root: &root,
         tempo: &tempo,
     })?;
-    if chosen.is_absolute() {
+    if !skipped && chosen.is_absolute() {
         let saved = if kind == ExportKind::Rc5 {
             settings.set_rc5_dir(Some(chosen.clone()))
         } else {
@@ -217,6 +254,42 @@ pub fn do_prepare_export(
         }
     }
     Ok(Some(plan))
+}
+
+/// "Change..." on the RC-5 row: asks for a folder (starting in the quick folder when there is
+/// one), checks it like an export would, and remembers it for the next exports. Never exports.
+/// `Ok(None)` = the dialog was cancelled.
+pub fn do_choose_rc5_folder(
+    repo: &RepoState,
+    settings: &SettingsStore,
+    export: &ExportState,
+    home: Option<PathBuf>,
+) -> Result<Option<String>, String> {
+    if export.is_running() {
+        return refused(ExportKind::Rc5, "busy", BUSY_MESSAGE);
+    }
+    let (from, start_dir) = match export.rc5_quick().filter(|q| q.is_dir()) {
+        Some(q) => ("quick", Some(q)),
+        None => export_rules::start_dir(settings.get().rc5_dir.as_deref(), home.as_deref()),
+    };
+    let Some(chosen) = pick(repo, DialogKind::ExportRc5, RC5_TITLE, from, start_dir) else {
+        return Ok(None);
+    };
+    if let Err((reason, message)) = check_rc5_base(&chosen, &repo.current_root()) {
+        return refused(ExportKind::Rc5, reason, message);
+    }
+    export.set_rc5_quick(chosen.clone());
+    if chosen.is_absolute() {
+        match settings.set_rc5_dir(Some(chosen.clone())) {
+            Ok(_) => eprintln!(
+                "calliope: export remembered kind=rc5 dir={}",
+                chosen.display()
+            ),
+            Err(e) => eprintln!("calliope: could not save settings: {e}"),
+        }
+    }
+    eprintln!("calliope: export quick dir={}", chosen.display());
+    Ok(Some(chosen.to_string_lossy().into_owned()))
 }
 
 /// Saves the RC-5 memory of a finished export (a save error is only logged).
@@ -348,6 +421,19 @@ pub async fn prepare_export(
             app.path().home_dir().ok(),
             &id,
             target,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn choose_rc5_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    blocking(move || {
+        do_choose_rc5_folder(
+            &app.state::<RepoState>(),
+            &app.state::<SettingsStore>(),
+            &app.state::<ExportState>(),
+            app.path().home_dir().ok(),
         )
     })
     .await

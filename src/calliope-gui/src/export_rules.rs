@@ -271,6 +271,28 @@ pub fn file_start_dir(
     start_dir(remembered, home)
 }
 
+/// The folder an RC-5 export may use without the dialog, or why not:
+/// "none" (no reuse asked or nothing remembered), "other" (reuse != remembered),
+/// "gone" (not a directory any more), "no-roland" (no ROLAND directory in it).
+pub fn quick_rc5_dir(
+    reuse: Option<&str>,
+    remembered: Option<&Path>,
+) -> Result<PathBuf, &'static str> {
+    let (Some(reuse), Some(remembered)) = (reuse, remembered) else {
+        return Err("none");
+    };
+    if remembered.to_string_lossy() != reuse {
+        return Err("other");
+    }
+    if !remembered.is_dir() {
+        return Err("gone");
+    }
+    if !remembered.join("ROLAND").is_dir() {
+        return Err("no-roland");
+    }
+    Ok(remembered.to_path_buf())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -599,6 +621,26 @@ mod tests {
         );
         assert_eq!(file_start_dir(None, Some(&last), Some(&home)).0, "last");
         assert_eq!(file_start_dir(Some(&gone), None, None), ("none", None));
+    }
+
+    #[test]
+    fn quick_rc5_folder_rules() {
+        let d = tempfile::tempdir().unwrap();
+        let b = d.path().join("b");
+        std::fs::create_dir_all(b.join("ROLAND")).unwrap();
+        let bs = b.to_string_lossy().into_owned();
+        assert_eq!(quick_rc5_dir(None, Some(&b)), Err("none"));
+        assert_eq!(quick_rc5_dir(Some(&bs), None), Err("none"));
+        assert_eq!(quick_rc5_dir(None, None), Err("none"));
+        assert_eq!(quick_rc5_dir(Some("/elsewhere"), Some(&b)), Err("other"));
+        assert_eq!(quick_rc5_dir(Some(&bs), Some(&b)), Ok(b.clone()));
+        // A ROLAND file is not a folder; neither is a missing ROLAND.
+        std::fs::remove_dir(b.join("ROLAND")).unwrap();
+        assert_eq!(quick_rc5_dir(Some(&bs), Some(&b)), Err("no-roland"));
+        std::fs::write(b.join("ROLAND"), "x").unwrap();
+        assert_eq!(quick_rc5_dir(Some(&bs), Some(&b)), Err("no-roland"));
+        std::fs::remove_dir_all(&b).unwrap();
+        assert_eq!(quick_rc5_dir(Some(&bs), Some(&b)), Err("gone"));
     }
 
     #[test]
