@@ -1,5 +1,6 @@
 import {
   cancelExport,
+  chooseRc5Folder,
   exportInfo,
   frontendLog,
   prepareExport,
@@ -26,6 +27,10 @@ export const ex = $state({
   preparing: false,
   /** The overwrite confirmation, while it is open. */
   confirm: null as { plan: ExportPlan; target: ExportKind } | null,
+  /** The folder the next RC-5 exports use without the dialog (the "To:" line); null = ask. */
+  rc5Quick: null as string | null,
+  /** A "Change..." refusal, shown on the result line. */
+  notice: '',
 });
 
 let infoSeq = 0;
@@ -37,6 +42,21 @@ let refillPending = false;
 let targetId: string | null = null;
 /** Events that arrived before the command's snapshot did. */
 let pending: ExportEvent[] = [];
+/** The base folder of the RC-5 plan being started (becomes `ex.rc5Quick` when its job is done). */
+let startedBase: string | null = null;
+
+function setQuick(v: string | null): void {
+  if (ex.rc5Quick === v) return;
+  ex.rc5Quick = v;
+  void frontendLog(`export quick dir=${v ?? 'none'}`);
+}
+
+/** A new visit of the Export view: nothing is remembered from an earlier one. */
+export function beginExportVisit(): void {
+  setQuick(null);
+  startedBase = null;
+  ex.notice = '';
+}
 
 export function resetExport(): void {
   ex.info = null;
@@ -45,6 +65,9 @@ export function resetExport(): void {
   ex.message = '';
   ex.preparing = false;
   ex.confirm = null;
+  ex.rc5Quick = null;
+  ex.notice = '';
+  startedBase = null;
   infoSeq = 0;
   filledFor = null;
   refillPending = false;
@@ -105,9 +128,16 @@ export function applyEvent(e: ExportEvent): void {
     mergeTracks(e.root, e.records ?? []);
     // Only the track the pane shows needs its info reloaded; another one is loaded when selected.
     if (targetId === s.id) void loadInfo(s.id, true);
+    if (s.target === 'rc5' && startedBase !== null) setQuick(startedBase);
   } else if (e.phase === 'failed') {
     s.message = e.message;
     void frontendLog(`export failed message=${e.message}`);
+    if (s.target === 'rc5') setQuick(null);
+  } else if (e.phase === 'cancelled' && s.target === 'rc5') {
+    setQuick(null);
+  }
+  if ((e.phase === 'done' || e.phase === 'failed' || e.phase === 'cancelled') && s.target === 'rc5') {
+    startedBase = null;
   }
   if (e.phase === 'done' && e.info_error) void frontendLog(`export info-error message=${e.info_error}`);
 }
@@ -120,8 +150,9 @@ function takeSnapshot(snap: ExportSnapshot): void {
   for (const e of early) applyEvent(e);
 }
 
-async function start(plan: ExportPlan): Promise<void> {
+async function start(plan: ExportPlan, kind: ExportKind): Promise<void> {
   ex.message = '';
+  startedBase = kind === 'rc5' ? plan.base : null;
   ex.snap = null;
   pending = [];
   try {
@@ -130,6 +161,10 @@ async function start(plan: ExportPlan): Promise<void> {
   } catch (e) {
     ex.message = String(e);
     void frontendLog(`export failed message=${ex.message}`);
+    if (kind === 'rc5') {
+      setQuick(null);
+      startedBase = null;
+    }
   }
 }
 
@@ -137,8 +172,9 @@ export async function exportTo(kind: ExportKind, track: TrackRecord | null): Pro
   if (!track || ex.preparing || isRunning()) return;
   // Same rule as the buttons: nothing is asked or sent unless the track's info says it can be exported.
   if (!ex.info || ex.info.id !== track.id || !ex.info.available) return;
-  const target: ExportTargetReq = kind === 'rc5' ? { kind, memory: ex.memory.trim() } : { kind };
+  const target: ExportTargetReq = kind === 'rc5' ? { kind, memory: ex.memory.trim(), reuse: ex.rc5Quick } : { kind };
   ex.message = '';
+  ex.notice = '';
   ex.preparing = true;
   let plan: ExportPlan | null;
   try {
@@ -152,6 +188,8 @@ export async function exportTo(kind: ExportKind, track: TrackRecord | null): Pro
   }
   if (!plan) {
     void frontendLog(`export prepare target=${kind} result=cancelled exists=false`);
+    // Only a dialog that was cancelled returns nothing: ask again next time.
+    if (kind === 'rc5') setQuick(null);
     return;
   }
   void frontendLog(`export prepare target=${kind} result=plan exists=${plan.exists}`);
@@ -159,7 +197,7 @@ export async function exportTo(kind: ExportKind, track: TrackRecord | null): Pro
     ex.confirm = { plan, target: kind };
     return;
   }
-  await start(plan);
+  await start(plan, kind);
 }
 
 export async function answerConfirm(yes: boolean): Promise<void> {
@@ -167,7 +205,29 @@ export async function answerConfirm(yes: boolean): Promise<void> {
   ex.confirm = null;
   if (!c) return;
   void frontendLog(`export confirm answer=${yes ? 'yes' : 'no'} path=${c.plan.path}`);
-  if (yes) await start(c.plan);
+  if (yes) await start(c.plan, c.target);
+}
+
+/** "Change...": picks the folder of the next RC-5 exports; exports nothing. */
+export async function changeRc5Folder(): Promise<void> {
+  if (isRunning() || ex.preparing) return;
+  ex.preparing = true;
+  ex.notice = '';
+  ex.message = '';
+  let result = 'cancelled';
+  try {
+    const r = await chooseRc5Folder();
+    if (r !== null) {
+      setQuick(r);
+      result = 'picked';
+    }
+  } catch (e) {
+    ex.notice = `Folder not changed: ${e}`;
+    result = 'refused';
+  } finally {
+    void frontendLog(`export change result=${result}`);
+    ex.preparing = false;
+  }
 }
 
 export async function cancel(): Promise<void> {

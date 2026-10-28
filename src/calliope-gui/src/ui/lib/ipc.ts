@@ -524,7 +524,10 @@ export const playerLoop = (id: string, action: LoopAction): Promise<PlayerSnapsh
 
 // Export: mirrors src/export_job.rs and src/export_ipc.rs.
 export type ExportKind = 'rc5' | 'mp3' | 'ogg';
-export type ExportTargetReq = { kind: 'rc5'; memory: string } | { kind: 'mp3' } | { kind: 'ogg' };
+export type ExportTargetReq =
+  | { kind: 'rc5'; memory: string; reuse: string | null }
+  | { kind: 'mp3' }
+  | { kind: 'ogg' };
 export interface CountInInfo { bpm: number; first_beat_ms: number; lead_ms: number; skip_ms: number }
 export interface ExportInfo {
   id: string;
@@ -535,7 +538,8 @@ export interface ExportInfo {
   memory: number;
   last: TrackExports;
 }
-export interface ExportPlan { token: string; path: string; exists: boolean }
+/** `base` is the folder an RC-5 plan writes into (the destination folder for the others). */
+export interface ExportPlan { token: string; path: string; exists: boolean; base: string }
 export type ExportPhase = 'writing' | 'finishing' | 'done' | 'failed' | 'cancelled';
 export interface ExportSnapshot {
   job: string;
@@ -568,6 +572,8 @@ function exportChannel(onEvent: (e: ExportEvent) => void): Channel<ExportEvent> 
 export const exportInfo = (id: string): Promise<ExportInfo> => invoke<ExportInfo>('export_info', { id });
 export const prepareExport = (id: string, target: ExportTargetReq): Promise<ExportPlan | null> =>
   invoke<ExportPlan | null>('prepare_export', { id, target });
+/** The "Change..." dialog of the RC-5 folder: the accepted folder, or null when cancelled. */
+export const chooseRc5Folder = (): Promise<string | null> => invoke<string | null>('choose_rc5_folder');
 export const startExport = (
   token: string,
   overwrite: boolean,

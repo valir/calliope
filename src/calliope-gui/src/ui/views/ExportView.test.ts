@@ -17,6 +17,9 @@ let plan: ExportPlan | null;
 let prepareError: string | null;
 let channelId = 0;
 let lastTarget = 'mp3';
+let targets: Record<string, unknown>[];
+let chooseResult: string | null | Error;
+let startError: string | null;
 
 const snapshot = (o: Partial<ExportSnapshot> = {}): ExportSnapshot => ({
   job: 'j1', id: TRACK.id, title: TRACK.title, target: 'mp3', path: '/out/a.mp3', phase: 'writing',
@@ -35,9 +38,12 @@ beforeEach(() => {
   resetLibrary();
   resetExport();
   calls = [];
+  targets = [];
+  chooseResult = null;
+  startError = null;
   sendIndex = 0;
   prepareError = null;
-  plan = { token: 'tok', path: '/out/a.mp3', exists: false };
+  plan = { token: 'tok', path: '/out/a.mp3', exists: false, base: '/out' };
   info = {
     id: TRACK.id, available: true, reason: null, source: 'backings/backing.flac',
     count_in: { bpm: 120, first_beat_ms: 0, lead_ms: 2000, skip_ms: 0 }, memory: 7,
@@ -50,13 +56,20 @@ beforeEach(() => {
     if (cmd === 'list_tracks') return { root: '/tmp/repo', tracks: structuredClone(FIXTURE_TRACKS), problems: [] };
     if (cmd === 'export_info') return { ...info, id: a.id };
     if (cmd === 'prepare_export') {
+      targets.push(a.target as Record<string, unknown>);
       if (prepareError) throw prepareError;
       lastTarget = (a.target as { kind: string }).kind;
       return plan;
     }
     if (cmd === 'start_export') {
+      if (startError) throw startError;
       channelId = (a.events as { id: number }).id;
+      sendIndex = 0;
       return snapshot({ target: (lastTarget as 'rc5' | 'mp3' | 'ogg') });
+    }
+    if (cmd === 'choose_rc5_folder') {
+      if (chooseResult instanceof Error) throw chooseResult.message;
+      return chooseResult;
     }
     if (cmd === 'cancel_export') return snapshot({ phase: 'cancelled' });
     return null;
@@ -136,7 +149,7 @@ describe('Export view', () => {
     await fireEvent.click(btn('to BOSS RC-5'));
     await waitFor(() => expect(names()).toContain('prepare_export'));
     const c = calls.find((x) => x[0] === 'prepare_export')!;
-    expect(c[1]).toEqual({ id: TRACK.id, target: { kind: 'rc5', memory: '7' } });
+    expect(c[1]).toEqual({ id: TRACK.id, target: { kind: 'rc5', memory: '7', reuse: null } });
   });
 
   it('does nothing when the folder dialog is cancelled', async () => {
@@ -159,7 +172,7 @@ describe('Export view', () => {
   });
 
   it('asks before replacing: No writes nothing, Yes overwrites', async () => {
-    plan = { token: 'tok', path: '/out/a.mp3', exists: true };
+    plan = { token: 'tok', path: '/out/a.mp3', exists: true, base: '/out' };
     await renderWithTrack();
     await fireEvent.click(btn('MP3 file'));
     const dlg = await screen.findByRole('alertdialog');
@@ -226,10 +239,10 @@ describe('Export view', () => {
       await fireEvent.input(box, { target: { value: text } });
       await fireEvent.click(btn('to BOSS RC-5'));
       await waitFor(() => expect(names()).toContain('prepare_export'));
-      expect(calls.find((x) => x[0] === 'prepare_export')![1]).toEqual({ id: TRACK.id, target: { kind: 'rc5', memory: text } });
+      expect(calls.find((x) => x[0] === 'prepare_export')![1]).toEqual({ id: TRACK.id, target: { kind: 'rc5', memory: text, reuse: null } });
       await tick();
     }
-    plan = { token: 'tok', path: '/out/a.ogg', exists: false };
+    plan = { token: 'tok', path: '/out/a.ogg', exists: false, base: '/out' };
     calls.length = 0;
     await fireEvent.click(btn('OGG file'));
     await waitFor(() => expect(names()).toContain('start_export'));
@@ -250,7 +263,7 @@ describe('Export view', () => {
   });
 
   it('declined confirmation by Escape or No never starts; the RC-5 done text says to eject', async () => {
-    plan = { token: 'tok', path: '/rc5/ROLAND/WAVE/007_1/007_1.WAV', exists: true };
+    plan = { token: 'tok', path: '/rc5/ROLAND/WAVE/007_1/007_1.WAV', exists: true, base: '/rc5' };
     await renderWithTrack();
     await fireEvent.click(btn('to BOSS RC-5'));
     await screen.findByRole('alertdialog');
@@ -341,5 +354,159 @@ describe('Export view', () => {
       .toBe('The export info wasn\'t saved: disk full'));
     expect(screen.getByTestId('export-result').textContent).toBe('Written to /out/a.mp3.');
     expect(lib.library!.tracks.find((t) => t.id === TRACK.id)!.exports!.mp3!.path).toBe('/out/a.mp3');
+  });
+
+  describe('quick RC-5 exports', () => {
+    const rc5Plan = (base: string, exists = false): ExportPlan => ({
+      token: 'tok', path: `${base}/ROLAND/WAVE/007_1/007_1.WAV`, exists, base,
+    });
+    const reuseOf = (i: number) => (targets[i] as { reuse?: string | null }).reuse;
+    const row = () => screen.getByTestId('export-rc5-to');
+    const folderText = () => screen.queryByTestId('export-rc5-folder')?.textContent ?? '';
+    const change = () => screen.getByTestId('export-rc5-change') as HTMLButtonElement;
+
+    /** One RC-5 click that starts a job, then the end of that job. */
+    async function rc5Job(base: string, end: Record<string, unknown> = {}): Promise<void> {
+      plan = rc5Plan(base);
+      const n = names().filter((x) => x === 'start_export').length;
+      await fireEvent.click(btn('to BOSS RC-5'));
+      await waitFor(() => expect(names().filter((x) => x === 'start_export').length).toBe(n + 1));
+      send({ phase: 'done', path: plan.path, clipped: 0, root: '/tmp/repo', records: [], info_error: null, ...end });
+      await waitFor(() => expect(screen.getByTestId('export-result').textContent).not.toBe(''));
+    }
+    /** A click that only prepares: the plan asks to overwrite, which is declined. `base` null = no plan. */
+    async function clickRc5(base: string | null = '/media/B'): Promise<void> {
+      const n = targets.length;
+      if (base !== null && !prepareError) plan = rc5Plan(base, true);
+      await fireEvent.click(btn('to BOSS RC-5'));
+      await waitFor(() => expect(targets.length).toBe(n + 1));
+      if (base !== null && !prepareError) await fireEvent.click(await screen.findByRole('button', { name: 'No' }));
+      await tick();
+    }
+
+    it('the first click sends no reuse and the row is empty but present', async () => {
+      await renderWithTrack();
+      await clickRc5();
+      expect(reuseOf(0)).toBeNull();
+      expect(row().textContent!.trim()).toBe('');
+      expect(screen.queryByTestId('export-rc5-change')).toBeNull();
+    });
+
+    it('a finished export shows the folder and the next clicks reuse it, also for another track', async () => {
+      await renderWithTrack();
+      await rc5Job('/media/B');
+      await waitFor(() => expect(folderText()).toBe('To: /media/B'));
+      await clickRc5();
+      expect(reuseOf(targets.length - 1)).toBe('/media/B');
+      const other = FIXTURE_TRACKS[5];
+      selectTrack(other.id);
+      lib.treeFocus = `t:${other.id}`;
+      await waitFor(() => expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(other.title));
+      await waitFor(() => expect(btn('to BOSS RC-5').disabled).toBe(false));
+      await clickRc5();
+      expect(reuseOf(targets.length - 1)).toBe('/media/B');
+    });
+
+    it('failed, cancelled and a cancelled dialog make the next click ask again', async () => {
+      await renderWithTrack();
+      for (const end of [{ phase: 'failed', message: 'boom' }, { phase: 'cancelled' }]) {
+        await rc5Job('/media/B');
+        await waitFor(() => expect(folderText()).toBe('To: /media/B'));
+        await rc5Job('/media/B', end);
+        await waitFor(() => expect(folderText()).toBe(''));
+        await clickRc5();
+        expect(reuseOf(targets.length - 1)).toBeNull();
+      }
+      await rc5Job('/media/B');
+      await waitFor(() => expect(folderText()).toBe('To: /media/B'));
+      plan = null;
+      await clickRc5(null);
+      expect(reuseOf(targets.length - 1)).toBe('/media/B');
+      await waitFor(() => expect(folderText()).toBe(''));
+      await clickRc5(null);
+      expect(reuseOf(targets.length - 1)).toBeNull();
+    });
+
+    it('a start error ends the skip', async () => {
+      await renderWithTrack();
+      await rc5Job('/media/B');
+      await waitFor(() => expect(folderText()).toBe('To: /media/B'));
+      startError = 'cannot start';
+      plan = rc5Plan('/media/B');
+      await fireEvent.click(btn('to BOSS RC-5'));
+      await waitFor(() => expect(folderText()).toBe(''));
+    });
+
+    it('a refusal and a declined overwrite keep the folder', async () => {
+      await renderWithTrack();
+      await rc5Job('/media/B');
+      await waitFor(() => expect(folderText()).toBe('To: /media/B'));
+      prepareError = 'Memory must be a number from 1 to 99';
+      await clickRc5();
+      await waitFor(() => expect(screen.getByTestId('export-result').textContent).toContain('Export failed'));
+      expect(folderText()).toBe('To: /media/B');
+      prepareError = null;
+      await clickRc5();
+      expect(reuseOf(targets.length - 1)).toBe('/media/B');
+      expect(folderText()).toBe('To: /media/B');
+      await clickRc5();
+      expect(reuseOf(targets.length - 1)).toBe('/media/B');
+    });
+
+    it('leaving the view and coming back starts a new visit', async () => {
+      await renderWithTrack();
+      await rc5Job('/media/B');
+      await waitFor(() => expect(folderText()).toBe('To: /media/B'));
+      cleanup();
+      await renderWithTrack();
+      expect(folderText()).toBe('');
+      expect(row()).toBeTruthy();
+      await clickRc5();
+      expect(reuseOf(targets.length - 1)).toBeNull();
+    });
+
+    it('Change... picks a folder, keeps it on cancel, shows a refusal, and is disabled while running', async () => {
+      await renderWithTrack();
+      await rc5Job('/media/B');
+      await waitFor(() => expect(folderText()).toBe('To: /media/B'));
+
+      chooseResult = '/media/C';
+      await fireEvent.click(change());
+      await waitFor(() => expect(folderText()).toBe('To: /media/C'));
+      await clickRc5();
+      expect(reuseOf(targets.length - 1)).toBe('/media/C');
+
+      chooseResult = null;
+      await fireEvent.click(change());
+      await waitFor(() => expect(names().filter((n) => n === 'choose_rc5_folder').length).toBe(2));
+      await tick();
+      expect(folderText()).toBe('To: /media/C');
+
+      chooseResult = new Error('No ROLAND folder in /x: is the RC-5 mounted?');
+      await fireEvent.click(change());
+      await waitFor(() => expect(screen.getByTestId('export-result').textContent)
+        .toBe('Folder not changed: No ROLAND folder in /x: is the RC-5 mounted?'));
+      expect(folderText()).toBe('To: /media/C');
+      expect(screen.getByTestId('export-result').getAttribute('role')).toBe('alert');
+
+      plan = { token: 'tok', path: '/out/a.mp3', exists: false, base: '/out' };
+      await fireEvent.click(btn('MP3 file'));
+      await waitFor(() => expect(names()).toContain('start_export'));
+      send({ phase: 'writing', progress: 0.2 });
+      await waitFor(() => expect(change().disabled).toBe(true));
+    });
+
+    it('MP3 after an RC-5 success sends no reuse and leaves the folder', async () => {
+      await renderWithTrack();
+      await rc5Job('/media/B');
+      await waitFor(() => expect(folderText()).toBe('To: /media/B'));
+      plan = { token: 'tok', path: '/out/a.mp3', exists: false, base: '/out' };
+      await fireEvent.click(btn('MP3 file'));
+      await waitFor(() => expect(names().filter((n) => n === 'start_export').length).toBe(2));
+      send({ phase: 'done', path: '/out/a.mp3', clipped: 0, root: '/tmp/repo', records: [], info_error: null });
+      await waitFor(() => expect(screen.getByTestId('export-result').textContent).toBe('Written to /out/a.mp3.'));
+      expect(targets[targets.length - 1]).toEqual({ kind: 'mp3' });
+      expect(folderText()).toBe('To: /media/B');
+    });
   });
 });

@@ -7,7 +7,7 @@
   import { lib, selectedTrack } from '$lib/library-state.svelte';
   import { frontendLog } from '$lib/ipc';
   import {
-    ex, answerConfirm, cancel, exportTo, isRunning, loadInfo,
+    ex, answerConfirm, cancel, changeRc5Folder, exportTo, isRunning, loadInfo,
   } from '$lib/export-state.svelte';
   import {
     confirmText, countInText, disabledReason, exportTarget, lastText, progressText, resultText,
@@ -19,8 +19,10 @@
   const reason = $derived(disabledReason(target, ex.info, running));
   const disabled = $derived(reason !== null || ex.preparing);
   const info = $derived(track && ex.info && ex.info.id === track.id ? ex.info : null);
-  const resultLine = $derived(ex.message !== '' ? `Export failed: ${ex.message}` : resultText(ex.snap));
-  const resultIsError = $derived(ex.message !== '' || ex.snap?.phase === 'failed');
+  const resultLine = $derived(
+    ex.message !== '' ? `Export failed: ${ex.message}` : ex.notice !== '' ? ex.notice : resultText(ex.snap),
+  );
+  const resultIsError = $derived(ex.message !== '' || ex.notice !== '' || ex.snap?.phase === 'failed');
 
   let confirmOpen = $state(false);
   let confirmMessage = $state('');
@@ -70,7 +72,10 @@
     const ro = new ResizeObserver(() => {
       clearTimeout(timer);
       timer = setTimeout(() => {
-        void frontendLog(`export layout overflow=${el.scrollHeight - el.clientHeight} width=${el.clientWidth}`);
+        void frontendLog(
+          `export layout overflow=${el.scrollHeight - el.clientHeight} width=${el.clientWidth} ` +
+            `hscroll=${el.scrollWidth - el.clientWidth}`,
+        );
       }, 300);
     });
     ro.observe(el);
@@ -119,6 +124,20 @@
             disabled={running || ex.preparing}
           />
         </div>
+      </div>
+      <!-- Reserved row: it keeps its height with or without a folder, so nothing below it moves. -->
+      <div class="flex min-h-8 min-w-0 items-center gap-2" data-testid="export-rc5-to">
+        {#if ex.rc5Quick}
+          <p class="min-w-0 break-all text-sm" data-testid="export-rc5-folder">To: {ex.rc5Quick}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            class="shrink-0"
+            data-testid="export-rc5-change"
+            disabled={running || ex.preparing}
+            onclick={() => void changeRc5Folder()}
+          >Change...</Button>
+        {/if}
       </div>
       <p class="min-h-5 min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-rc5">{lastText('rc5', info?.last)}</p>
     </div>

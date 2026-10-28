@@ -3,13 +3,14 @@
   import TrackBrowser from '../components/library/TrackBrowser.svelte';
   import ExportPane from '../components/export/ExportPane.svelte';
   import { lib, load } from '$lib/library-state.svelte';
-  import { attachExport } from '$lib/export-state.svelte';
+  import { attachExport, beginExportVisit } from '$lib/export-state.svelte';
 
   let searchRef = $state<HTMLInputElement | null>(null);
 
   onMount(() => {
     // An unfinished Library edit keeps its data; otherwise rescan.
     if (lib.mode !== 'edit') void load();
+    beginExportVisit();
     void attachExport();
   });
 

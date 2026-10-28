@@ -11,7 +11,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use calliope_gui::export_ipc::{
-    do_export_info, do_prepare_export, do_start_export, remember_memory, ExportInfo,
+    do_choose_rc5_folder, do_export_info, do_prepare_export, do_start_export, remember_memory,
+    ExportInfo,
 };
 use calliope_gui::export_job::{
     ExportPhase, ExportPlan, ExportSnapshot, ExportState, Sink, TargetReq,
@@ -184,6 +185,22 @@ impl Env {
             Some(self.home.clone()),
             &id(n),
             target,
+        )
+    }
+
+    /// An RC-5 prepare that asks to reuse the folder `reuse` (what the frontend echoes).
+    fn prepare_reuse(
+        &self,
+        n: u32,
+        memory: &str,
+        reuse: Option<&Path>,
+    ) -> Result<Option<ExportPlan>, String> {
+        self.prepare(
+            n,
+            TargetReq::Rc5 {
+                memory: memory.into(),
+                reuse: reuse.map(|p| p.to_string_lossy().into_owned()),
+            },
         )
     }
 
@@ -2007,4 +2024,173 @@ fn ac_first_beat_newer_schema_file_is_refused_not_trimmed_nor_written() {
     assert!(err.contains("tempo"), "{err}");
     assert!(!wav_path(&base, 7).exists());
     e.repo_unchanged();
+}
+
+// ---- quicker RC-5 exports (specs/gui-export-rc5-quick.md) ----
+
+fn rc5_starts(e: &Env) -> Vec<Option<PathBuf>> {
+    use calliope_gui::picker::DialogKind;
+    e.picker
+        .starts()
+        .into_iter()
+        .filter(|(k, _)| *k == DialogKind::ExportRc5)
+        .map(|(_, d)| d)
+        .collect()
+}
+
+#[test]
+fn ac_quick_first_export_asks_at_the_remembered_folder() {
+    let e = Env::new();
+    let last = e.rc5("last");
+    e.settings().set_rc5_dir(Some(last.clone())).unwrap();
+    let b = e.rc5("b");
+    e.answer(&rc5("5"), &b);
+    let plan = e.prepare_reuse(401, "5", None).unwrap().unwrap();
+    assert_eq!(rc5_starts(&e), [Some(last)]);
+    assert_eq!(plan.base, b.to_string_lossy());
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_quick_next_export_skips_the_dialog() {
+    let e = Env::new();
+    let b = e.rc5("b");
+    let (plan, s) = e.export(401, rc5("1"), &b);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    assert_eq!(e.export.rc5_quick(), Some(b.clone()));
+    let dir_before = e.settings().get().rc5_dir;
+    let starts = e.picker.starts().len();
+
+    let plan2 = e
+        .prepare_reuse(403, "2", Some(Path::new(&plan.base)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(e.picker.starts().len(), starts, "no dialog");
+    assert_eq!(std::fs::read_to_string(&e.answers).unwrap(), "");
+    assert_eq!(PathBuf::from(&plan2.path), wav_path(&b, 2));
+    assert!(!plan2.exists);
+    e.start(&plan2.token, false).unwrap();
+    assert_eq!(e.wait().phase, ExportPhase::Done);
+    assert!(wav_path(&b, 2).is_file());
+    assert_eq!(e.picker.starts().len(), starts);
+    // Only the remembered memory is saved; the folder is as the first export left it.
+    assert_eq!(e.settings().get().rc5_dir, dir_before);
+    assert_eq!(dir_before, Some(b));
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_quick_overwrite_still_asks_and_no_writes_nothing() {
+    let e = Env::new();
+    let b = e.rc5("b");
+    let (_, s) = e.export(401, rc5("1"), &b);
+    assert_eq!(s.phase, ExportPhase::Done);
+    let drive = tree(&b);
+    let repo_now = tree(&e.repo);
+    let starts = e.picker.starts().len();
+
+    let plan = e.prepare_reuse(403, "1", Some(&b)).unwrap().unwrap();
+    assert_eq!(e.picker.starts().len(), starts, "no dialog");
+    assert!(plan.exists, "the confirmation is still asked");
+    assert_eq!(PathBuf::from(&plan.path), wav_path(&b, 1));
+    // "No": the plan is never started.
+    assert!(tree(&b) == drive, "the drive is byte-identical");
+    assert!(tree(&e.repo) == repo_now, "the repository is untouched");
+}
+
+#[test]
+fn ac_quick_rc5_gone_opens_the_dialog() {
+    let e = Env::new();
+    let b = e.rc5("b");
+    let (plan, s) = e.export(401, rc5("1"), &b);
+    assert_eq!(s.phase, ExportPhase::Done);
+    assert_eq!(e.settings().get().rc5_dir, Some(b.clone()));
+
+    // ROLAND removed: the dialog opens at the remembered folder; CANCEL gives no plan.
+    std::fs::remove_dir_all(b.join("ROLAND")).unwrap();
+    std::fs::write(&e.answers, "export-rc5 CANCEL\n").unwrap();
+    let r = e.prepare_reuse(403, "2", Some(Path::new(&plan.base)));
+    assert!(matches!(r, Ok(None)), "{r:?}");
+    assert_eq!(rc5_starts(&e).len(), 2);
+    assert_eq!(rc5_starts(&e)[1], Some(b.clone()));
+
+    // The folder removed: the dialog opens again (rc5_dir is gone, so it falls back).
+    std::fs::remove_dir_all(&b).unwrap();
+    std::fs::write(&e.answers, "export-rc5 CANCEL\n").unwrap();
+    let r = e.prepare_reuse(403, "2", Some(Path::new(&plan.base)));
+    assert!(matches!(r, Ok(None)), "{r:?}");
+    assert_eq!(rc5_starts(&e).len(), 3);
+    assert_eq!(std::fs::read_to_string(&e.answers).unwrap(), "");
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_quick_change_folder_is_used() {
+    let e = Env::new();
+    let b = e.rc5("b");
+    let c = e.rc5("c");
+    let (_, s) = e.export(401, rc5("1"), &b);
+    assert_eq!(s.phase, ExportPhase::Done);
+
+    std::fs::write(&e.answers, format!("export-rc5 {}\n", c.display())).unwrap();
+    let r = do_choose_rc5_folder(&e.st, &e.settings(), &e.export, Some(e.home.clone())).unwrap();
+    assert_eq!(r, Some(c.to_string_lossy().into_owned()));
+    assert_eq!(
+        rc5_starts(&e).last().unwrap(),
+        &Some(b.clone()),
+        "starts in the quick folder"
+    );
+    assert_eq!(e.export.rc5_quick(), Some(c.clone()));
+    assert_eq!(e.settings().get().rc5_dir, Some(c.clone()));
+
+    let starts = e.picker.starts().len();
+    let plan = e.prepare_reuse(403, "4", Some(&c)).unwrap().unwrap();
+    assert_eq!(e.picker.starts().len(), starts, "no dialog");
+    e.start(&plan.token, plan.exists).unwrap();
+    assert_eq!(e.wait().phase, ExportPhase::Done);
+    assert!(wav_path(&c, 4).is_file());
+    assert!(!wav_path(&b, 4).exists());
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_quick_failed_or_cancelled_sets_nothing() {
+    let e = Env::with(ExportState::new(Box::new(real_tools)).with_pace(5.0));
+    let b = e.rc5("b");
+    assert_eq!(e.export.rc5_quick(), None);
+
+    // Cancelled while writing.
+    e.answer(&rc5("7"), &b);
+    let plan = e.prepare(401, rc5("7")).unwrap().unwrap();
+    let snap = e.start(&plan.token, false).unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(e.export.cancel(&snap.job).is_some());
+    assert_eq!(e.wait().phase, ExportPhase::Cancelled);
+    assert_eq!(e.export.rc5_quick(), None);
+
+    // ROLAND removed between the plan and the start: it does not start, or it fails.
+    e.answer(&rc5("7"), &b);
+    let plan = e.prepare(401, rc5("7")).unwrap().unwrap();
+    std::fs::remove_dir_all(b.join("ROLAND")).unwrap();
+    if e.start(&plan.token, false).is_ok() {
+        assert_eq!(e.wait().phase, ExportPhase::Failed);
+    }
+    assert_eq!(e.export.rc5_quick(), None);
+    assert!(!b.join("ROLAND/WAVE").exists());
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_quick_mp3_always_asks() {
+    use calliope_gui::picker::DialogKind;
+    let e = Env::new();
+    let out = e.folder("out");
+    for n in [401, 403] {
+        let (_, s) = e.export(n, TargetReq::Mp3, &out);
+        assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    }
+    let kinds: Vec<_> = e.picker.starts().into_iter().map(|(k, _)| k).collect();
+    assert_eq!(kinds, [DialogKind::ExportAudio, DialogKind::ExportAudio]);
+    assert_eq!(e.export.rc5_quick(), None);
+    e.repo_unchanged_except_exports();
 }
