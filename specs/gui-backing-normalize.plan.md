@@ -43,7 +43,7 @@ MIT-licensed `ebur128` crate behind a small `loudness.rs` module.
 
 ### 2.2 The meter: the `ebur128` crate behind `src/loudness.rs` (requirement 1)
 
-**Choice: the `ebur128` crate**, version `0.1.11` (MIT, Sebastian Dröge; a pure-Rust port of libebur128, the meter used
+**Choice: the `ebur128` crate**, version `0.1.10` pinned exactly (`=0.1.10`; the lead chose it on 2026-10-28 over 0.1.11, released only two days before) (MIT, Sebastian Dröge; a pure-Rust port of libebur128, the meter used
 by GStreamer and ffmpeg's `ebur128` filter family). Checked on 2026-10-28:
 
 - **Licence and maintenance.** MIT. 0.1.11 was released on 2026-10-26, 0.1.10 on 2024-10-26, with steady releases since
@@ -510,7 +510,7 @@ Every task follows these rules:
 - files: `src/calliope-gui/Cargo.toml`, `Cargo.toml` (workspace root), `docs/licences.md`.
 - does:
   1. In `src/calliope-gui/Cargo.toml` `[dependencies]`, after the `flacenc` line, add exactly
-     `ebur128 = "0.1.11"`.
+     `ebur128 = "=0.1.10"`.
   2. In the root `Cargo.toml`, after the `[profile.dev.package.flacenc]` block, add:
      ```
      [profile.dev.package.ebur128]
@@ -519,7 +519,7 @@ Every task follows these rules:
      Also change the comment above the claxon block to "Decoding/encoding FLAC and measuring loudness are slow at
      opt-level 0; keep these hot crates optimised in dev and test builds."
   3. In `docs/licences.md`, in the "Rust crates of calliope-gui" table, add a row after `flacenc`:
-     `| \`ebur128\` | dependency | \`0.1.11\` | <locked version from Cargo.lock> | MIT | loudness (ITU-R BS.1770-4 / EBU R128) and true peak of backing tracks |`.
+     `| \`ebur128\` | dependency | \`=0.1.10\` | <locked version from Cargo.lock> | MIT | loudness (ITU-R BS.1770-4 / EBU R128) and true peak of backing tracks |`.
      Read the licence from `cargo metadata --format-version 1 | python3 -c 'import json,sys;
      print([p["license"] for p in json.load(sys.stdin)["packages"] if p["name"]=="ebur128"])'`. If it is not `MIT`,
      stop and report.

@@ -1796,7 +1796,7 @@ Alternatives considered:
 - a shorter "Detect" label: the spec names the button "Detect BPM".
 
 ### 2026-10-28: Loudness is measured with the `ebur128` crate (MIT), behind `loudness.rs`   (feature: gui-backing-normalize; plan §2.2)
-Backing tracks are normalized by ITU-R BS.1770-4 integrated loudness and true peak. The meter is `ebur128` 0.1.11, a
+Backing tracks are normalized by ITU-R BS.1770-4 integrated loudness and true peak. The meter is `ebur128` 0.1.10 (pinned `=0.1.10`; 0.1.11 was two days old when chosen), a
 pure-Rust port of libebur128 by Sebastian Dröge. It covers:
 - K-weighting computed for any sample rate;
 - 400 ms blocks with 75 % overlap;
