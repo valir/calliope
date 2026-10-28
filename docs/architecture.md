@@ -21,9 +21,9 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (GUI shell) | Laptop | Tauri 2 app: main window, plugins, managed state, IPC handler registration | Rust + Tauri 2 (webkit2gtk-4.1 on Linux), `tauri-plugin-window-state` | `src/gui.rs`, `tauri.conf.json` |
 | calliope-gui (IPC commands) | Laptop | All `#[tauri::command]` functions; thin wrappers over pure modules. The Player's and the Export view's commands are in their own files | Rust | `src/ipc.rs`, `src/player_ipc.rs`, `src/export_ipc.rs` |
 | calliope-gui (settings) | Laptop | Loads/saves user settings (theme, repository root, edge-AI server URL, keep-original switch, the last local import folder, the RC-5 root and the MP3/OGG folder of the last exports, the last RC-5 memory; MIDI/audio later) as JSON | Rust + serde | `src/settings.rs` |
-| calliope-gui (fs helpers) | Laptop | Atomic writes, no-clobber copies, file-name validation, moving to the repository trash, FNV-1a revisions | Rust, std only | `src/fsutil.rs` |
-| calliope-gui (track metadata) | Laptop | `track.json` schema (version 2: track type, stems, optional `position` / `album_position` read leniently), validation, v1→v2 migration in memory, `apply_patch` (band/album/positions), ids (UUIDv7), RFC 3339 timestamps, the content `revision` (FNV-1a of the canonical JSON without `exports`) | Rust + serde, `uuid` | `src/track_meta.rs` |
-| calliope-gui (track repository) | Laptop | Repository layout, scan, save transaction (incl. the main track's positions), delete-to-trash, batch delete (`delete_tracks`: each track on its own, failures reported), revision-checked field patches in two phases (`prepare_patches` refuses the whole batch on any conflict, `commit_patches` writes only changed tracks, one after the other: a track whose write fails is reported in `failed` with its reason and the rest are still written, with no rollback, so a failure can leave mixed old/new positions; the frontend reloads the library after a reported failure so the user sees the real state; `apply_patch` holds only the fields the patch sets to the strict text rules and the rest of the track to the read-level rules, so hand-edited padded names do not block a reorder), export, staged (atomic) creation of new tracks, the export info: `TrackRecord.exports`, `record_export` (one kind's entry, written at the JSON level) and `clear_rc5_holders` (the other tracks naming an RC-5 memory; each on its own, failures reported) | Rust, pure (no Tauri) | `src/repository.rs` (+ `src/repository_tests.rs`) |
+| calliope-gui (fs helpers) | Laptop | Atomic writes, no-clobber copies, file-name validation, moving to the repository trash (`FileTrash::move_in`) or keeping a hard link (copy where links fail) of a file about to be replaced (`FileTrash::link_in`), `FileStamp` (len, mtime, dev+ino of a regular file: "unchanged since" checks), FNV-1a revisions | Rust, std only | `src/fsutil.rs` |
+| calliope-gui (track metadata) | Laptop | `track.json` schema (version 2: track type, stems, optional `position` / `album_position` read leniently, a backing variant's optional `loudness` record read leniently), validation, v1→v2 migration in memory, `apply_patch` (band/album/positions), ids (UUIDv7), RFC 3339 timestamps, the content `revision` (FNV-1a of the canonical JSON without `exports`) | Rust + serde, `uuid` | `src/track_meta.rs` |
+| calliope-gui (track repository) | Laptop | Repository layout, scan, save transaction (incl. the main track's positions), delete-to-trash, batch delete (`delete_tracks`: each track on its own, failures reported), revision-checked field patches in two phases (`prepare_patches` refuses the whole batch on any conflict, `commit_patches` writes only changed tracks, one after the other: a track whose write fails is reported in `failed` with its reason and the rest are still written, with no rollback, so a failure can leave mixed old/new positions; the frontend reloads the library after a reported failure so the user sees the real state; `apply_patch` holds only the fields the patch sets to the strict text rules and the rest of the track to the read-level rules, so hand-edited padded names do not block a reorder), export, staged (atomic) creation of new tracks, the export info: `TrackRecord.exports`, `record_export` (one kind's entry, written at the JSON level) and `clear_rc5_holders` (the other tracks naming an RC-5 memory; each on its own, failures reported); the backing writes: `save_backing` (with the variant's `loudness` record), `replace_backing_audio` (Normalize: variant and `FileStamp` checks, old file hard-linked into the trash, part renamed over the name, `track.json` written, undone by renaming the trash link back) and `record_backing_loudness` (record only, `modified` kept) | Rust, pure (no Tauri) | `src/repository.rs` (+ `src/repository_tests.rs`) |
 | calliope-gui (file dialogs) | Laptop | Native open/folder/save dialogs opened from Rust (tablatures, repository root, exports (track folder, RC-5 root, MP3/OGG folder), import audio/video/directory); pick tokens; scripted picker for e2e (`e2e-hooks` feature) that also records each request's start folder | Rust + `tauri-plugin-dialog` | `src/picker.rs` |
 | calliope-gui (local source paths) | Laptop | Typed/pasted local paths for the import (trim, quotes, `~/`, `file://`), the file and folder checks with exact messages, the audio/video extension lists, the dialog's start folder (`browse_start`: typed path's folder > last import folder > home) and the audio files directly inside a folder (`list_audio_files`, name order) | Rust, pure (std + `url`) | `src/local_source.rs` |
 | calliope-gui (import temp space) | Laptop | `<root>/import-tmp/` job folders, resume lookup, safe cleanup | Rust, pure | `src/import_tmp.rs` |
@@ -31,19 +31,21 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (media) | Laptop | ffprobe JSON → audio check/duration/tags → `TrackEdits`, track-number tag → album position (`position_from_tags`); ffmpeg → FLAC 44.1 kHz stereo | Rust, pure | `src/media.rs` |
 | calliope-gui (download) | Laptop | URL validation/normalisation (`url` crate), yt-dlp args, progress/error parsing, `info.json` mapping | Rust | `src/download.rs` |
 | calliope-gui (import job) | Laptop | The single import job: state machine, events, cancel, shutdown; the directory batch (one job in the same slot that runs each file's preparation + extraction in turn, without the edit pane) | Rust, pure (std threads) | `src/import_job.rs`, `src/import_batch.rs` (child module) |
-| calliope-gui (stem audio) | Laptop | FLAC stem probing/compatibility rules, decoding into memory as 16-bit for playback, full-precision streaming reader for rendering, the empty-stem decision for imports (`check_stem` over `calliope_lib::flac_level` with early stop at 15 s, `check_reported` for server-reported audible time, `EMPTY_STEM_MIN_AUDIBLE_MS = 15_000`) | Rust, `claxon`, `calliope-lib` | `src/stem_audio.rs` |
-| calliope-gui (mixer) | Laptop | Pure mixing shared by playback and Save: dB gains (-60 = Off .. +12), unmuted, mono->stereo, sum, hard clip with clipped-sample count, quantise | Rust, std only | `src/mixer.rs` |
+| calliope-gui (stem audio) | Laptop | FLAC stem probing/compatibility rules, decoding into memory as 16-bit for playback, full-precision streaming reader for rendering (also reads a backing for Normalize; `channels()`, `md5()` from STREAMINFO), the empty-stem decision for imports (`check_stem` over `calliope_lib::flac_level` with early stop at 15 s, `check_reported` for server-reported audible time, `EMPTY_STEM_MIN_AUDIBLE_MS = 15_000`) | Rust, `claxon`, `calliope-lib` | `src/stem_audio.rs` |
+| calliope-gui (mixer) | Laptop | Pure mixing shared by playback and Save: dB gains (-60 = Off .. +12), unmuted, mono->stereo, `sum` (unclipped, for the loudness measurement), `mix` (= sum + hard clip with clipped-sample count), quantise | Rust, std only | `src/mixer.rs` |
 | calliope-gui (transport) | Laptop | Play/pause/stop/seek state machine with the 0.3 s scrub-resume rule; time injected | Rust, pure | `src/transport.rs` |
 | calliope-gui (audio output) | Laptop | `OutputBackend` trait: `CpalBackend` (default device), `NullBackend` (paced, optional WAV capture; the only backend in `e2e-hooks` builds), `ManualBackend` (unit tests) | Rust, `cpal` (ALSA on Linux) | `src/audio_out.rs` |
 | calliope-gui (WAV writer) | Laptop | Float32 stereo WAV with exactly a 16-byte `fmt ` and a `data` chunk (44-byte header patched on finish); used by the capture backend and the RC-5 export | Rust, std only | `src/wav.rs` |
-| calliope-gui (editor engine) | Laptop | Editor sessions: load stems, lock-free render callback, transport, transient solo, clip indicator, events, remembered mixes, the backing save job, the mix waveform (0.3 s debounce, worker thread), the session's tempo map, the beat-detection job's start/cancel/outcome | Rust (std threads) | `src/editor.rs` (+ `src/editor_tests.rs`) |
+| calliope-gui (editor engine) | Laptop | Editor sessions: load stems, lock-free render callback, transport, transient solo, clip indicator, events, remembered mixes, one backing job slot (Save or Normalize, `JobKind`; shared cancel/shutdown; the `PlayerGate` and the test pace it passes to the jobs), the mix waveform (0.3 s debounce, worker thread), the session's tempo map, the beat-detection job's start/cancel/outcome | Rust (std threads) | `src/editor.rs` (+ `src/editor_tests.rs`) |
 | calliope-gui (mix waveform) | Laptop | `mix_peaks` (2048 max-abs buckets of the checked stems' mix, the playback mixer's maths, cancellable) and `Debounce` (restartable 300 ms deadline, injected `Instant`s) | Rust, pure | `src/mix_waveform.rs` |
 | calliope-gui (tempo detection) | Laptop | Beats + downbeats (from the edge-AI server) → tempo sections: glitch repair, optimal segmentation (sections ≥ 1 bar, > 4 % apart), absorbing glitch sections and folding 2x/0.5x octave errors into the neighbour's tempo, BPM per section (0.1), anchor on the first downbeat, each change snapped to the previous section's 1/64-beat step and recorded as detected; `piece_bpm` (gui-section-bpm-detect): one BPM from the beats of a short piece (≥ 1 bar of beats, 4 at most and 3 at least, every interval within 15 % of the median, least-squares period, 0.1, folded into 20..300) | Rust, pure | `src/tempo_detect.rs` |
 | calliope-gui (first beat) | Laptop | Finds where the music starts (`find_start`: 10 ms power envelope, threshold 30 dB below the loudest 50 ms, 3 of 5 windows above it, 1 ms refinement 6 dB lower; 0.0 when nothing rises) and which file to analyse (`analysis_source`: first backing variant, else `audio`, else `original`, else the loaded source) | Rust, pure | `src/first_beat.rs` |
 | calliope-gui (tempo store) | Laptop | `TempoStore` (load/replace a track's tempo map): `FileTempoStore` on `player.json`; the app's `PlayerTempoStore` works under the `PlayerHost` lock: `load` flushes an open Player session first, `replace` flushes and closes it (`PlayerManager::release`) before writing the file | Rust | `src/tempo_store.rs`, `src/player_ipc.rs` |
 | calliope-gui (beat detection job) | Laptop | Renders the drums + bass + guitar stems (`other` without a guitar, else all stems) at unity gain to a part file, uploads it to `POST /v1/beats`, waits, fetches and validates the beats, derives the sections, saves them through the `TempoStore`; phases, cancel, cleanup. Its server part (`check_beats_server`, `upload_and_wait`, `client_stop`) is shared with the section BPM job | Rust (own std thread) | `src/beat_detect.rs` (+ `src/beat_detect_tests.rs`) |
 | calliope-gui (section BPM detection) | Laptop | gui-section-bpm-detect: the piece (`piece`: from the playhead, 3 bars at the section's BPM, cut at the section's end, refused under 1 bar), the ×2/÷2 hint (`hint`, ±8 %), `encode_piece` (a slice of the Player's in-memory PCM of the selected source → 16-bit FLAC with `flacenc`), the job thread (health, part file in the track folder, `POST /v1/beats`, wait, fetch, `piece_bpm`; phases, cancel); never touches the manager | Rust (own std thread) | `src/section_bpm.rs` (+ `src/section_bpm_tests.rs`) |
-| calliope-gui (backing render) | Laptop | Offline render of the mix to FLAC | Rust, `flacenc` | `src/backing_render.rs` |
+| calliope-gui (backing render) | Laptop | Offline render of the mix to FLAC and the save job: pass 1 `measure_mix` (unclipped sum → loudness meter), the normalization gain folded into the stem gains, pass 2 `render_flac` (clip, quantise, encode, STREAMINFO MD5), commit through the `PlayerGate` and the repository lock; the `PlayerGate` trait (`NoPlayer` default) | Rust, `flacenc` | `src/backing_render.rs` (+ `src/backing_render_tests.rs`) |
+| calliope-gui (loudness) | Laptop | gui-backing-normalize: ITU-R BS.1770-4 integrated loudness and true peak (`Meter` over `ebur128`, the only module naming it), target -14 LUFS / ceiling -1 dBTP / 0.1 LU tolerance, `decide` (gain = min(target - L, ceiling - TP); untouched / too-quiet rules), `db_to_gain`, the IPC `LoudnessResult` and the `track.json` record builder | Rust, pure, `ebur128` (MIT) | `src/loudness.rs` (+ `src/loudness_tests.rs`) |
+| calliope-gui (backing normalize) | Laptop | gui-backing-normalize: the Normalize job for the variant shown in "Save as": file checks, the record shortcut (same target/ceiling and STREAMINFO MD5), measure, scaled copy to a part file with `render_flac`, atomic swap through the `PlayerGate` and the repository lock, or a record-only write; cancel, pace | Rust (own std thread) | `src/backing_normalize.rs` (+ `src/backing_normalize_tests.rs`) |
 | calliope-gui (export rules) | Laptop | Which file a track exports (first backing variant, else `audio`) or why not, RC-5 memory numbers and paths, MP3/OGG file names, output rate/channels per target, tags, ffprobe stream info, ffmpeg encoder list, memory suggestion (`memory_for`: the track's recorded memory, else last used + 1), dialog start folder (`file_start_dir`: the recorded file's folder for MP3/OGG, else the remembered one) | Rust, pure | `src/export_rules.rs` |
 | calliope-gui (export record) | Laptop | The `track.json` `exports` object: `TrackExports` (`rc5` {memory, at}, `mp3`/`ogg` {path, at}), lenient read, JSON-level `set` / `clear_rc5` that touch nothing else | Rust, pure (serde_json) | `src/export_record.rs` |
 | calliope-gui (export audio) | Laptop | The export count-in in exact frames (a 4-beat lead before the original, 6 ticks at the first beat + 0, 1, 2, 2.5, 3, 3.5 beats of the output, the first beat half a beat after the last tick (lead shortened from 5 beats on 2026-10-26); with a set first beat the decoded audio before it is dropped (`skip_frames`), so the file is the lead + the audio from the first beat), tick mixing, ffmpeg decoder/encoder argv, the pipeline ffmpeg decode → Rust lead + ticks → WAV writer or ffmpeg encoder stdin, cancel | Rust (std threads), external `ffmpeg` | `src/export_audio.rs` |
@@ -54,8 +56,8 @@ the GUI crate, `src/calliope-gui/`.
 | calliope-gui (time-stretch) | Laptop | `Stretcher`: real-time time-stretch with the pitch kept (stereo f32), latencies, the alignment rule (seek pre-roll ending at target + input latency, discard the output latency); no allocation after `new` | Rust over `signalsmith-stretch` (MIT; vendored Signalsmith Stretch C++, MIT) | `src/stretch.rs` |
 | calliope-gui (player sources) | Laptop | Dropdown entries of a track (backing variants, `audio`, `original`, stems), decoding one into memory (FLAC: `claxon`; other formats: external `ffmpeg` piped to memory), waveform peaks (2048) | Rust | `src/player_source.rs` |
 | calliope-gui (metronome) | Laptop | Synthesised click (own sound), count-in plan (at `bpm × speed`), placing clicks in an output block, `section_clicks` (the song's click list: beats of sections whose metronome is on, with each section count-in replacing the clicks before that section; skipped at the end of a repeating loop) | Rust, pure | `src/metronome.rs` |
-| calliope-gui (player engine) | Laptop | Player sessions: one decoded source, a callback-owned `Engine` (playback, count-in, loop repeats, metronome, fades; bypass mode at 100 % and stretch mode otherwise: song-time timeline delayed by the stretcher latency, clicks and wraps placed at the heard song position, crossfade into stretch mode; the speed-training run with per-pass speeds switched at the loop start) fed by a bounded command channel, the track speed (`speed` actions, refused during a training run), transport + scrub rule, events, debounced `player.json` writes, `edit_sections(id, SectionEdit)` (Player tempo-section edits, section flags and names applied live: new click grid, loops re-snapped, debounced write; stale-index guard), `jump_section` (instant jump to a section's start or last bar), the grid sent to the engine is `section_clicks` (re-sent when the repeating loop changes; the engine's metronome flag only means "has a tempo" since gui-player-tempo-sections phase 3), the Play pre-roll comes from the Count In of the section under the playhead and loop Play's from the loop's Count-In, `release(id)` (flush + close + `closed` event when the Editor writes the tempo), `finish_open` re-reads a `player.json` changed since its off-lock load; the playback floor (gui-first-beat): every position the manager sets is clamped to the first beat when it is set (`Session::floor`, loop starts too, the end-of-track restart; the engine gets it as `Cmd::SetStart`), `place_first_beat(id, ms, Auto|Button)`, `first_beat_input`, the first bar's move (`SectionEdit::Move` index 0); the section BPM detection run (gui-section-bpm-detect, child module `player_bpm`): owned by the session (dropped = cancelled with it), started with refusals checked under the lock, cancelled at once, reaped in `tick` and applied through `edit_sections(SectionEdit::Bpm)` only when the section is unchanged; snapshot `read_only` and `bpm_detect` | Rust (std threads) | `src/player.rs`, `src/player_bpm.rs` (+ `src/player_tests.rs`) |
-| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree (album / track order, "3. Title" labels; Library only: pointer drag and drop and Alt+Up/Down reordering, a Delete icon button and the Delete key for tracks and albums) + track pane (read-only Position; read-only export rows "RC-5" / "MP3" / "OGG" for the kinds recorded; band/album edits rename the whole band/album after a confirmation, planned by `library-rename.ts`); Import: stem extraction steps; Editor: shared track tree + stem mixer + Mix lane with the mix waveform (tempo sections, draggable changes) and Autodetect BPM; Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform (loops + editable tempo sections incl. the first bar: drag, keys (the drag readout also shows for key moves, 1.5 s after the last key), BPM label overlay; the lead-in before a set first beat dimmed, also in the Editor), under the waveform two full-width rows: Sections (the BPM group and the section name box; Add, Remove, ×2, ÷2, Prev, Start, End, Next (gui-first-beat-tuning: Prev / Next jump to the neighbouring section's start); the section's Click / Count In toggles and the status; a "Start" row with the target section's offset field (1/64 beats from the drag readout's reference, unit "/64", with the time), Find start (first section only) and Detect BPM (gui-section-bpm-detect: the section under the playhead; it reads Cancel while running; status in the message line); no global metronome) beside Loops (a "Training…" button on its third line opens the speed-training popover; the training progress shows in its status line; Loops wraps below in narrow windows), then Playback at the bottom (transport, then the Speed group: `-`, % box, `+`, Reset and the played-BPM readout, wrapping to a second line in narrow panes); Home/End and `[`/`]` keys); Export: shared track tree (read-only) + export pane (band/album/title, source and count-in lines, the "Export..." group: to BOSS RC-5 with the memory box (filled from the track's recorded memory), MP3 file, OGG file, each with its "Last: ..." line; progress + Cancel, result line, the "export info wasn't saved" line, overwrite confirmation); Settings), theme, keyboard shortcuts (Alt+1..Alt+7) | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
+| calliope-gui (player engine) | Laptop | Player sessions: one decoded source, a callback-owned `Engine` (playback, count-in, loop repeats, metronome, fades; bypass mode at 100 % and stretch mode otherwise: song-time timeline delayed by the stretcher latency, clicks and wraps placed at the heard song position, crossfade into stretch mode; the speed-training run with per-pass speeds switched at the loop start) fed by a bounded command channel, the track speed (`speed` actions, refused during a training run), transport + scrub rule, events, debounced `player.json` writes, `edit_sections(id, SectionEdit)` (Player tempo-section edits, section flags and names applied live: new click grid, loops re-snapped, debounced write; stale-index guard), `jump_section` (instant jump to a section's start or last bar), the grid sent to the engine is `section_clicks` (re-sent when the repeating loop changes; the engine's metronome flag only means "has a tempo" since gui-player-tempo-sections phase 3), the Play pre-roll comes from the Count In of the section under the playhead and loop Play's from the loop's Count-In, `release(id)` (flush + close + `closed` event when the Editor writes the tempo), `release_for_audio(id)` (the same before a backing file is replaced: no newer-schema refusal, read-only sessions close without a flush, a pending open of the id is cancelled; the app's `PlayerFileGate` in `player_ipc.rs` runs the file swap inside the same `PlayerHost` lock), `finish_open` re-reads a `player.json` changed since its off-lock load; the playback floor (gui-first-beat): every position the manager sets is clamped to the first beat when it is set (`Session::floor`, loop starts too, the end-of-track restart; the engine gets it as `Cmd::SetStart`), `place_first_beat(id, ms, Auto|Button)`, `first_beat_input`, the first bar's move (`SectionEdit::Move` index 0); the section BPM detection run (gui-section-bpm-detect, child module `player_bpm`): owned by the session (dropped = cancelled with it), started with refusals checked under the lock, cancelled at once, reaped in `tick` and applied through `edit_sections(SectionEdit::Bpm)` only when the section is unchanged; snapshot `read_only` and `bpm_detect` | Rust (std threads) | `src/player.rs`, `src/player_bpm.rs` (+ `src/player_tests.rs`) |
+| calliope-gui (frontend) | Laptop (embedded webview) | Navigation shell, views (Library: track tree (album / track order, "3. Title" labels; Library only: pointer drag and drop and Alt+Up/Down reordering, a Delete icon button and the Delete key for tracks and albums) + track pane (read-only Position; read-only export rows "RC-5" / "MP3" / "OGG" for the kinds recorded; band/album edits rename the whole band/album after a confirmation, planned by `library-rename.ts`); Import: stem extraction steps; Editor: shared track tree + stem mixer + Mix lane with the mix waveform (tempo sections, draggable changes), Autodetect BPM, and the Save row (Save, Normalize (gui-backing-normalize), the target or the progress; the running job's button reads Cancel; the loudness result line); Player: shared track tree (Ctrl+L rail) + source dropdown, tablature placeholder, canvas waveform (loops + editable tempo sections incl. the first bar: drag, keys (the drag readout also shows for key moves, 1.5 s after the last key), BPM label overlay; the lead-in before a set first beat dimmed, also in the Editor), under the waveform two full-width rows: Sections (the BPM group and the section name box; Add, Remove, ×2, ÷2, Prev, Start, End, Next (gui-first-beat-tuning: Prev / Next jump to the neighbouring section's start); the section's Click / Count In toggles and the status; a "Start" row with the target section's offset field (1/64 beats from the drag readout's reference, unit "/64", with the time), Find start (first section only) and Detect BPM (gui-section-bpm-detect: the section under the playhead; it reads Cancel while running; status in the message line); no global metronome) beside Loops (a "Training…" button on its third line opens the speed-training popover; the training progress shows in its status line; Loops wraps below in narrow windows), then Playback at the bottom (transport, then the Speed group: `-`, % box, `+`, Reset and the played-BPM readout, wrapping to a second line in narrow panes); Home/End and `[`/`]` keys); Export: shared track tree (read-only) + export pane (band/album/title, source and count-in lines, the "Export..." group: to BOSS RC-5 with the memory box (filled from the track's recorded memory), MP3 file, OGG file, each with its "Last: ..." line; progress + Cancel, result line, the "export info wasn't saved" line, overwrite confirmation); Settings), theme, keyboard shortcuts (Alt+1..Alt+7) | Svelte 5 + TypeScript + Vite 8, shadcn-svelte (bits-ui, Tailwind v4), Inter font; built to `dist/` and embedded at compile time | `src/ui/` |
 | calliope-lib (shared lib) | Laptop + archserver | "calliope-stems API v1" types, validation (incl. the beats document, `check_beats`), FLAC STREAMINFO parser, FLAC audible-time scan (`flac_level`: 100 ms windows, RMS of the loudest channel above `AUDIBLE_LEVEL_DBFS = -40`, integer sum-of-squares comparison, peak for display; no 15 s decision), HTTP client (feature `client`), child-process runner (argv only, process group, PDEATHSIG, cancel; stdin closed, or piped with `spawn_with_stdin`). No Tauri/GTK | Rust; `serde`, `libc`, `claxon`, `ureq` 3 without TLS (feature) | `src/calliope-lib/` |
 | calliope-stems (edge-AI stems service) | archserver (LAN), deployed by hand as a systemd user unit | HTTP server for "calliope-stems API v1": validates FLAC uploads (≤ 15 min), queues jobs (1 running), runs a configurable separator command, measures each stem's audible time, serves the stems, cleans up; beat jobs (`POST /v1/beats`) run a configurable beat-tracker command in the same queue; `--measure FILE...` prints audible times without starting a server. No Tauri/GTK; the GUI doesn't depend on it | Rust; `tiny_http`, `calliope-lib` | `src/calliope-stems/` |
 | separator adapter | archserver | `<sep> <input.flac> <out_dir> <model>` → `<out_dir>/<stem>.flac`; the real one runs the owner's audio-separator venv with `htdemucs_6s` (frees VRAM from Ollama first) | bash | `src/calliope-stems/separators/audio-separator.sh` |
@@ -120,7 +122,10 @@ the GUI crate, `src/calliope-gui/`.
     `editor_lane_play(id, name)` (check + solo + play), `editor_end_solo(id)`, `editor_pause(id)`,
     `editor_stop(id)`, `editor_seek(id, position)`, `editor_nudge(id, delta)` (ms),
     `editor_set_stem(id, name, gain, unmuted)` (gain in dB or null = Off), `save_backing(id)`,
-    `cancel_backing_save(id)`, beat detection and tempo (stems-beat-autodetect plan §2.11): `editor_detect(id)` (renders the
+    `cancel_backing_save(id)` (stops the running Save or Normalize), `normalize_backing(id) -> EditorSnapshot` (gui-backing-normalize plan §2.9: the variant shown in
+    "Save as"; refused without its file, during a job or a beat detection; the snapshot carries `job: save|normalize|null` while one runs; events `saving {progress, job}`,
+    `saved {.., loudness}`, `normalized {file, loudness, changed, track|null, warnings}`, `save-failed {message, job}`, `save-cancelled {job}`; `loudness` =
+    `{outcome: normalized|limited|at-target|at-ceiling|too-quiet, lufs|null, true_peak|null, gain_db, target, ceiling}`), beat detection and tempo (stems-beat-autodetect plan §2.11): `editor_detect(id)` (renders the
     drums, bass and guitar stems at unity gain and starts the detection job), `editor_cancel_detect(id)`, `editor_tempo(id, action)` (`move` {index, steps: absolute
     offset from the detected position, -256..256; index 0 = the first beat, steps from `found_ms` (else its start), limited to 0 .. one beat before the next section} | `reload`); player (gui-play-backing-track plan §2.9, in `src/player_ipc.rs`):
     `open_player(id, events)`, `close_player()`, `get_player()`, `watch_player(events)`,
@@ -199,7 +204,8 @@ the GUI crate, `src/calliope-gui/`.
   Editor: `editor active id=<id> stems=<n>`, `editor inactive id=<id|none>`,
   `editor play|pause|stop position=<ms>`, `editor solo name=<n|none>`, `editor leave stop`,
   `editor seek position=<ms>`, `editor nudge delta=<ms>`,
-  `editor stem name=<n> gain=<db|off> unmuted=<b>`, `editor saved id=<id> file=<f> clipped=<n>`,
+  `editor stem name=<n> gain=<db|off> unmuted=<b>`, `editor saved id=<id> file=<f> clipped=<n> outcome=<o|none> gain=<g|none>`,
+  `editor normalize start`, `editor normalized id=<id> outcome=<o> gain=<g> changed=<b>`, `editor layout mix=<px> overflow=<px> width=<px>`,
   `editor waveform peaks=<count> max=<0..1>`, `editor detect start|cancel`, `editor detect phase=<p>`,
   `editor detected segments=<k> bpm=<a,b,..>`, `editor detect error message=<m>`,
   `editor tempo move index=<i> steps=<s> applied=<s'>`, `editor tempo reload segments=<k>`, `player reopen id=<id>`.
@@ -229,7 +235,9 @@ the GUI crate, `src/calliope-gui/`.
   `tracks deleted deleted=<n> failed=<k>`, `tracks updated written=<n> unchanged=<u> failed=<k>`, `track update failed id=<id> message=<m>`,
   `audio backend=<cpal|null|capture> rate=<hz>`, `editor open id=<id> stems=<n> duration_ms=<ms>`,
   `editor transport playing=<b> audible=<b> position_ms=<ms> solo=<n|none> clipping=<b>` (changes only),
-  `editor saved id=<id> file=<f> bits=<b> clipped=<n>`, `editor peaks id=<id> gen=<n> ms=<ms>`,
+  `editor saved id=<id> file=<f> bits=<b> clipped=<n> outcome=<o> lufs=<x|none> tp=<x|none> gain=<g>`,
+  `editor measured id=<id> job=<save|normalize> lufs=<x|none> tp=<x|none>`, `editor normalized id=<id> file=<f> outcome=<o> lufs=<x|none> tp=<x|none> gain=<g> changed=<b> via=<record|measure>`,
+  `editor normalize failed id=<id> message=<m>`, `editor normalize cancelled id=<id>`, `player released id=<id> reason=backing`, `editor peaks id=<id> gen=<n> ms=<ms>`,
   `editor detect id=<id> phase=<checking|mixing|uploading|waiting|detecting|applying>`,
   `editor detected id=<id> beats=<n> downbeats=<m> bar_beats=<b> sigma_ms=<s> segments=<k> bpm=<..> starts_ms=<..>`,
   `editor detect failed id=<id> message=<m>`, `editor detect cancelled id=<id>`, `player released id=<id> flushed=<b>`,
@@ -277,7 +285,7 @@ the GUI crate, `src/calliope-gui/`.
       backings/<variant-id>.flac  backing-track variants of a stem track made in the Editor (listed in
                                   `backings`); this feature writes `backings/backing.flac` (`backing-2`..
                                   if a user file already has the name)
-      .calliope-backing-<uuid>.part  a backing being rendered (removed on success/failure/cancel)
+      .calliope-backing-<uuid>.part  a backing being rendered or normalized (removed on success/failure/cancel)
       player.json                 the Player's settings for this track (reserved name; see below)
     tracks/.staging-<id>/         a new track being assembled (marker .calliope-staging);
                                   renamed to tracks/<id> in one step; scan skips dot names
@@ -304,6 +312,14 @@ the GUI crate, `src/calliope-gui/`.
   `backing`, name "Backing"), changes only `backings` and `modified`, refuses (`conflict:`) if the stems
   list changed on disk since the Editor loaded it, and moves a replaced file to
   `trash/<stamp>-<id>-backing/`.
+  **Loudness** (gui-backing-normalize plan §2.5): a variant may carry `"loudness": {"lufs": <number|null>, "true_peak":
+  <number|null>, "gain_db", "target", "ceiling", "md5": "<32 lowercase hex>"}`: the file's integrated loudness (LUFS) and
+  true peak (dBTP) as written (null = too quiet to measure), the gain the last write applied, the rule's target/ceiling
+  and the STREAMINFO MD5 of the audio it describes. Written by Save (every save is normalized) and by Normalize; additive,
+  no schema bump; read leniently (a bad record = no record, never a problem); older builds ignore it on read and drop it
+  when they rewrite `track.json`, which is harmless because it is only a shortcut (Normalize measures without it).
+  Normalize replaces `backings/<id>.flac` by `rename` of a part file after hard-linking the old file into
+  `trash/<stamp>-<id>-backing/`, then writes `track.json` (variant `loudness` + `modified`); it changes nothing else.
   **Order** (gui-library-album-order plan §2.2): `position` = the track's place in its album and `album_position` = its album's
   place among the band's albums (1..9999, omitted when unset; additive, no schema bump, so schema-2 builds keep them in
   unknown fields). Read leniently (any other value = unset, never a problem), validated on write. The album's place is the
@@ -501,7 +517,8 @@ src/                      ALL source (owner requirement), one folder per crate
     src/*.rs              Rust modules (cli, version, gui, ipc, settings, fsutil,
                           track_meta, repository (+ repository_tests), picker, local_source, import_tmp,
                           tools, media, download, import_job (+ import_batch), stem_audio, mixer, transport,
-                          audio_out, editor (+ editor_tests), backing_render, tempo_map,
+                          audio_out, editor (+ editor_tests), backing_render (+ backing_render_tests), loudness (+ loudness_tests),
+                          backing_normalize (+ backing_normalize_tests), tempo_map,
                           player_state, player_source, metronome, player (+ player_tests),
                           player_ipc, mix_waveform, tempo_detect, tempo_store,
                           beat_detect (+ beat_detect_tests), section_bpm (+ section_bpm_tests), player_bpm,
@@ -525,11 +542,11 @@ src/                      ALL source (owner requirement), one folder per crate
                           library-order.ts (reorder patches, drop gaps, neighbour after delete),
                           library-rename.ts (band/album rename plans), library-ops.svelte.ts (reorder/delete actions),
                           url-check.ts, import-state.svelte.ts, editor-state.svelte.ts, time-format.ts,
-                          player-state.svelte.ts, export-state.svelte.ts, export-format.ts, bar-format.ts, bpm-format.ts, speed-format.ts, waveform-geometry.ts,
+                          player-state.svelte.ts, export-state.svelte.ts, export-format.ts, loudness-format.ts, bar-format.ts, bpm-format.ts, speed-format.ts, waveform-geometry.ts,
                           utils.ts, components/ui/ = shadcn components owned by us),
                           *.test.ts next to the code
     dist/                 generated by `vite build`, gitignored, embedded into the binary
-    tests/                cargo integration tests (cli, frontend, acceptance_* (incl. acceptance_export, acceptance_section_bpm), gui_smoke, gui_e2e,
+    tests/                cargo integration tests (cli, frontend, acceptance_* (incl. acceptance_export, acceptance_section_bpm, acceptance_backing_normalize), gui_smoke, gui_e2e,
                           gui_library_e2e, gui_import_e2e, gui_editor_e2e, gui_player_e2e, gui_export_e2e, player_realtime); fixtures/library-sample/ = sample
                           repository (v1), library-v2/ = mixed v1/v2 incl. a stem track,
                           import/ = generated audio/video/stem fixtures (make-fixtures.sh),
@@ -579,9 +596,9 @@ the server out of the GUI.
   release build fails (naming `npm run build:app`).
   Vite/Vitest cache lives in the GUI crate's `node_modules/.vite` (`cacheDir`), not in `src/ui/`,
   because build.rs watches `src/ui`.
-- The workspace `Cargo.toml` builds `claxon`, `flacenc` and `signalsmith-stretch` (its vendored C++ is compiled by the
+- The workspace `Cargo.toml` builds `claxon`, `flacenc`, `ebur128` and `signalsmith-stretch` (its vendored C++ is compiled by the
   crate's build script with the package's opt-level) with `opt-level = 3` even in the dev profile, so debug builds and
-  tests decode/encode/stretch audio at a usable speed.
+  tests decode/encode/measure/stretch audio at a usable speed.
 - Dev: `npm run dev:app` (= `tauri dev --config tauri.dev.conf.json`, with `@tauri-apps/cli`
   as an npm dev-dependency). It starts the Vite dev server on `http://localhost:5173` (hot
   reload), then `cargo run` with the dev overlay passed in `TAURI_CONFIG`. The overlay has a
@@ -786,6 +803,16 @@ the server out of the GUI.
   is checked with ManualBackend click onsets; `tests/acceptance_section_bpm.rs` holds one test per acceptance criterion;
   GUI: `gui_player_e2e::player_section_bpm_detect` (`common::start_player_stems`). The Start row did not change height,
   so only `FIND_START` and the new `SEC_DETECT` positions were measured again.
+- **Loudness and Normalize** (gui-backing-normalize): no external test files. `loudness_tests.rs` synthesises the EBU
+  Tech 3341 signals: cases 1-5 (stereo 1 kHz tones and level sequences, ±0.1 LU) at 48 and 44.1 kHz (case 1 also at
+  22.05 kHz), a left-only tone (channel weights, -26.0), and the true-peak cases 15-19 (sines at fs/4, fs/6, fs/8 with phase
+  offsets, ±0.1 dB) with 20 ms raised-cosine fades: an abrupt tone start makes any band-limited interpolator overshoot (up to
+  +0.65 dB on case 18), which is a property of the signal, not of the meter. Tech 3342 (loudness range) is not used. Files are
+  written with `flacenc`, decoded with claxon and compared sample by sample against `quantise(x · db_to_gain(gain_db))`
+  (the gain is folded into the stem gains in f32, so tests rebuild it in the same order). Cancel during the write pass uses
+  the job pace (`EditorManager::set_job_pace`; GUI: `CALLIOPE_E2E_BACKING_PACE=<ms per block>`, `e2e-hooks` only). The Player
+  reopen is checked with `ManualBackend` samples (headless) and the capture WAV's tone power (GUI). The Mix lane logs
+  `editor layout mix=<px> overflow=<px> width=<px>`, so GUI tests assert the lane never grows.
 - MIDI: no fake yet. Each feature that adds hardware must also add a simulator/fake and list it here.
 
 ## Decision log
@@ -1767,3 +1794,98 @@ Alternatives considered:
 - a fifth row: the Player gets taller and every coordinate moves;
 - Cancel in the message line: a taller line;
 - a shorter "Detect" label: the spec names the button "Detect BPM".
+
+### 2026-10-28: Loudness is measured with the `ebur128` crate (MIT), behind `loudness.rs`   (feature: gui-backing-normalize; plan §2.2)
+Backing tracks are normalized by ITU-R BS.1770-4 integrated loudness and true peak. The meter is `ebur128` 0.1.11, a
+pure-Rust port of libebur128 by Sebastian Dröge. It covers:
+- K-weighting computed for any sample rate;
+- 400 ms blocks with 75 % overlap;
+- the -70 LUFS absolute and -10 LU relative gates;
+- the BS.1770 channel weights;
+- true peak by 4x polyphase oversampling below 96 kHz, never below the sample peak.
+
+Why this crate:
+- **Licence and upkeep.** MIT; released 2026-10-26, maintained since 2020.
+- **No new transitive crates.** Its dependencies (`bitflags` 1, `smallvec`, `dasp_frame`, `dasp_sample`) were already
+  in the lock. No C code.
+- **Tested.** It passes EBU Tech 3341/3342 in its own suite. Its K-weighting and interpolator were also checked
+  numerically against our stricter 0.1 dB criterion (plan §2.2).
+
+`loudness.rs` is the only module that names it, so it can be swapped.
+
+Alternatives considered:
+- our own implementation: about 300 lines to write and validate, for no gain;
+- ffmpeg's filters: the Editor would depend on ffmpeg, with text parsing;
+- `symphonia`: forbidden, and not a meter.
+
+### 2026-10-28: Normalization = one constant gain to -14 LUFS, stopped at -1 dBTP; folded into the stem gains before the clip; two passes   (feature: gui-backing-normalize; plan §2.3-2.4; owner accepted the spec defaults 2026-10-28)
+**The rule.** `gain = min(-14 - L, -1 - TP)`. There is no limiter or compression; the ceiling-limited case ends
+quieter than the target. Target and ceiling are fixed constants, not settings.
+
+**Normalize leaves a file alone** when `|gain| <= 0.1`. The outcome is "at the target" or "at the ceiling", whichever
+limit binds. A file with no gated loudness (silence, below -70 LUFS, under 400 ms) is "too quiet" and is never scaled.
+Save always applies the gain.
+
+**Save makes two streaming passes over the stems.**
+1. The unclipped mix (`mixer::sum`) is measured.
+2. The file is rendered with every stem gain multiplied by the linear gain. The normalization therefore happens before
+   `mixer::mix`'s hard clip and the quantisation.
+
+With the true peak at or below -1 dBTP every sample stays at or below -1 dBFS, so a normalized Save never clips. This
+supersedes "Save reports clipped samples" in practice: the count is still computed, but it is 0.
+
+**Why not render to float and scale:** 15 minutes of stereo float at 48 kHz is about 690 MB, so that was rejected.
+**Why not normalize Editor playback:** the Editor still plays at the lane gains, and its CLIP badge still shows a hot
+mix.
+
+**Normalize** uses the same two functions over the existing file as the single input, at the file's own rate and bit
+depth, with no dither.
+
+### 2026-10-28: Normalize swaps the file atomically: part file, hard link of the old file into the trash, rename; the record lives in `backings[].loudness`   (feature: gui-backing-normalize; plan §2.5-2.7; spec constraint "replaced atomically")
+**The write.** Normalize writes `.calliope-backing-<uuid>.part` in the track folder. Then, under the Player gate and
+the repository lock, it:
+1. checks that the variant is unchanged and the file is unchanged (`FileStamp`: len, mtime, dev+ino);
+2. hard-links the old file into `trash/<stamp>-<id>-backing/` (or copies it where links are not supported);
+3. renames the part file over `backings/<id>.flac`;
+4. writes `track.json`.
+
+**Failure and cancel.** A failure after the rename is undone by renaming the trash link back. Cancel and every earlier
+failure only remove the part file. The name therefore always holds either the whole old file or the whole new one, and
+Calliope still never deletes a file. Save's own sequence (move to trash, then link) is unchanged.
+
+**The record.** `backings[].loudness` holds `{lufs, true_peak, gain_db, target, ceiling, md5}` of the file as written.
+It is additive, read leniently and has no schema bump; older builds read past it and may drop it. The STREAMINFO MD5
+ties the record to the audio. A later Normalize with an equal MD5 and the same target and ceiling answers "already
+there" without decoding. Otherwise it measures, and it never takes a gain from the record.
+
+Alternatives considered:
+- rewriting in place: not atomic;
+- Save's move-then-link: the name is briefly missing;
+- a sidecar file: one more file per variant, and `track.json` already lists the variants.
+
+### 2026-10-28: Replacing a backing file releases the Player session of the track (Save too)   (feature: gui-backing-normalize; plan §2.8; spec requirement 7)
+`PlayerGate::without_player(id, f)` runs the commit of Save and of Normalize. The app's gate does
+`PlayerHost::with(|m| { m.release_for_audio(id)?; f() })`:
+- an open session of the track is flushed (unless read-only) and closed, and a pending open is cancelled;
+- the Player view reopens the track when it is shown, with a new decode and new waveform peaks;
+- loops, tempo and position come from `player.json`, which is unchanged.
+
+The swap runs inside the same lock, so the Player cannot reopen the old file in between. The lock order is PlayerHost,
+then the repository lock, as for the Editor's tempo writes.
+
+The Player is released only at the commit, so it plays on while the measuring and writing run. A failed flush refuses
+the commit and leaves the old file. Save uses the gate too: before this, a re-save left the Player playing the old PCM.
+Exports read the file when they start, so they use the new one. An export already running keeps the old inode, which
+the trash link keeps alive.
+
+### 2026-10-28: The Save row holds Save, Normalize and the target; the running job's button becomes Cancel   (feature: gui-backing-normalize; plan §2.10; spec requirement 4)
+At 1024x640 the Editor pane is about 380 px wide. Save (7 rem) and Normalize (7.5 rem) leave about 124 px for the
+"Save as" text or the progress bar with its percent.
+
+There is no room for a third Cancel button, so the running job's own button reads Cancel and the other is disabled,
+as Autodetect BPM and Detect BPM do. The separate Cancel button of the save progress was removed. No row is added and
+the two-line message slot is unchanged, so the Mix lane's height and the GUI tests' coordinates stay. Only the new
+`NORMALIZE` point was measured.
+
+Normalize is disabled without a file (title "Save the backing first"), during a Save or Normalize, and during a beat
+detection. The lane logs `editor layout mix=… overflow=…`, so tests check that it never grows.
