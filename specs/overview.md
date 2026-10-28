@@ -156,7 +156,7 @@ tester for the features.
 - [x] `gui-export-info.md`: adds export-related metadata
 - [x] `gui-first-beat.md`: find and set the first track beat
 - [x] `gui-section-bpm-detect.md`: reset section's bpm
-- [ ] `gui-backing-normalize.md`: normalize the backing track level
+- [x] `gui-backing-normalize.md`: normalize the backing track level
 - [ ] `gui-tablatures.md`: associate tablature to backing track
 - [ ] `gui-manipulate-backing-track.md`: associate tempo and MIDI commands into the backing track
 - [ ] `stems-empty-detection.md`: better detection of the empty resulting stems
