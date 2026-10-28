@@ -808,13 +808,20 @@ pub fn editor_dirs(test: &str) -> Dirs {
 /// Starts the e2e app on the editor fixture with the capturing fake audio backend (never a real
 /// device), floats the window at 1280x800 and opens the Editor (Alt+3).
 pub fn start_editor(dirs: &Dirs) -> (App, String) {
+    start_editor_with(dirs, &[])
+}
+
+/// `start_editor` with more environment variables for the app (e.g. `CALLIOPE_E2E_BACKING_PACE`).
+pub fn start_editor_with(dirs: &Dirs, env: &[(&str, &str)]) -> (App, String) {
     if !cfg!(feature = "e2e-hooks") {
         panic!("Editor GUI tests need --features e2e-hooks; without it the app would open the real sound device");
     }
     let cap = dirs.capture();
     let audio = format!("capture:{}", cap.display());
     // Offline too: nothing in the editor needs a network.
-    let mut app = App::start_with(dirs, true, &[("CALLIOPE_E2E_AUDIO", Path::new(&audio))]);
+    let mut vars = vec![("CALLIOPE_E2E_AUDIO", Path::new(&audio))];
+    vars.extend(env.iter().map(|(k, v)| (*k, Path::new(*v))));
+    let mut app = App::start_with(dirs, true, &vars);
     app.wait_ready();
     app.wait_line(|l| l.contains("library root="), Duration::from_secs(20));
     let wid = app.wid();

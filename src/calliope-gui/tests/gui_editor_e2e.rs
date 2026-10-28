@@ -27,6 +27,8 @@ const SLIDER_END_X: i32 = 1120;
 const MIX_PLAY: (i32, i32) = (834, 520);
 const TIME: (i32, i32) = (1178, 580);
 const SAVE: (i32, i32) = (704, 640);
+const PLAYER_PLAY: (i32, i32) = (477, 629); // Player Play/Pause, tree collapsed
+const NORMALIZE: (i32, i32) = (848, 640); // centre of the Normalize button, right of Save (measured)
 
 fn select(app: &mut App, wid: &str, query: &str, id: &str) {
     app.key(wid, "ctrl+f ctrl+a");
@@ -275,8 +277,9 @@ fn play_solo_nudge_save_clip() {
         "first save trashed something"
     );
 
-    // Second Save: vocals, drums and bass pushed to +12 dB. The CLIP badge lights and the old
-    // file goes to the trash.
+    // Second Save: vocals, drums and bass pushed to +12 dB. The CLIP badge lights (the playback
+    // clips), but the saved file is normalized without a clipped sample. The old file goes to
+    // the trash.
     app.click(&wid, CHECK_X, LANE_Y[2]);
     app.wait_line(|l| l.contains("editor stem name=bass"), secs(10));
     for y in [LANE_Y[0], LANE_Y[1], LANE_Y[2]] {
@@ -303,10 +306,22 @@ fn play_solo_nudge_save_clip() {
     let old = std::fs::read(&flac).unwrap();
     app.click(&wid, SAVE.0, SAVE.1);
     let l = app.wait_line(|l| l.contains("editor saved"), secs(60));
-    let clipped: u64 = field(&l, "clipped").parse().unwrap();
-    assert!(clipped > 0, "{l}");
+    assert_eq!(field(&l, "clipped"), "0", "{l}");
+    let rust = app
+        .all_lines()
+        .into_iter()
+        .rev()
+        .find(|l| l.contains("calliope: editor saved"))
+        .expect("the Rust saved line");
+    assert_eq!(field(&rust, "clipped"), "0", "{rust}");
+    // The +12 dB mix is far louder than -14 LUFS, so Save turns it down (it is not limited by
+    // the peak ceiling: that needs a quiet, peaky mix, see acceptance_backing_normalize).
+    assert_eq!(field(&rust, "outcome"), "normalized", "{rust}");
+    let gain: f64 = field(&rust, "gain").parse().unwrap();
+    let tp: f64 = field(&rust, "tp").parse().unwrap();
+    assert!(gain < -5.0 && tp <= -1.0, "{rust}");
     settle();
-    shot("editor-saved-clipped");
+    shot("editor-saved-loud");
     let trashed: Vec<String> = dirs
         .trash()
         .into_iter()
@@ -733,5 +748,275 @@ fn editor_first_beat() {
     assert_eq!(start_ms(&segs[1]), 4500.0, "{segs:?}");
     std::thread::sleep(secs(2));
     shot("editor-first-beat-zero");
+    finish(&app);
+}
+
+// ---- Normalize (gui-backing-normalize) ----
+
+/// The newest `editor layout mix=<px> overflow=<px> width=<px>` line: (mix, overflow, width).
+/// Waits up to 5 s for the first one.
+fn layout(app: &App) -> (i32, i32, i32) {
+    let end = Instant::now() + secs(5);
+    loop {
+        if let Some(l) = app
+            .all_lines()
+            .into_iter()
+            .rev()
+            .find(|l| l.contains("editor layout mix="))
+        {
+            let n = |k: &str| field(&l, k).parse::<i32>().unwrap();
+            return (n("mix"), n("overflow"), n("width"));
+        }
+        assert!(Instant::now() < end, "no editor layout line");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// RMS of the interleaved samples.
+fn rms(v: &[f32]) -> f64 {
+    (v.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>() / v.len() as f64).sqrt()
+}
+
+fn mtime(p: &std::path::Path) -> std::time::SystemTime {
+    std::fs::metadata(p).unwrap().modified().unwrap()
+}
+
+#[test]
+#[ignore]
+fn editor_normalize() {
+    if !ready() {
+        return;
+    }
+    let dirs = editor_dirs("editor_normalize");
+    let flac = dirs.track_dir(ED_MIXED).join("backings/backing.flac");
+    let stem_files = ["stems/vocals.flac", "stems/guitar.flac"];
+    let stems_before: Vec<Vec<u8>> = stem_files
+        .iter()
+        .map(|f| std::fs::read(dirs.track_dir(ED_MIXED).join(f)).unwrap())
+        .collect();
+    let old = std::fs::read(&flac).unwrap();
+    let (mut app, wid) = start_editor(&dirs);
+
+    // 1. The layout of the Mix lane before any result.
+    select(&mut app, &wid, "mixed before", ED_MIXED);
+    app.wait_contains("editor active");
+    settle();
+    let (mix, overflow, _) = layout(&app);
+    assert_eq!(overflow, 0, "the Editor overflows at 1280x800");
+    assert!(mix > 150, "mix lane height {mix}");
+    shot("editor-normalize-idle");
+
+    // 2. Normalize: the 330 Hz backing is brought to -14 LUFS.
+    app.click(&wid, NORMALIZE.0, NORMALIZE.1);
+    app.wait_contains("editor normalize start");
+    let l = app.wait_line(|l| l.contains("calliope: editor normalized"), secs(30));
+    assert_eq!(field(&l, "outcome"), "normalized", "{l}");
+    assert_eq!(field(&l, "changed"), "true", "{l}");
+    let gain: f64 = field(&l, "gain").parse().unwrap();
+    // the fixture backing measures about -21.8 LUFS, so the gain is about +7.8 dB
+    assert!((gain - 7.8).abs() < 1.0, "{l}");
+    app.wait_line(|l| l.contains("calliope-ui: editor normalized"), secs(10));
+    settle();
+    shot("editor-normalized");
+
+    // 3. The file: RMS ratio = gain, `track.json` record, stems untouched.
+    let new = std::fs::read(&flac).unwrap();
+    assert_ne!(new, old);
+    let (before, after) = (
+        {
+            let p = dirs.base().join("old-backing.flac");
+            std::fs::write(&p, &old).unwrap();
+            decode(&p)
+        },
+        decode(&flac),
+    );
+    assert_eq!(before.len(), after.len(), "same length");
+    let ratio = 20.0 * (rms(&after) / rms(&before)).log10();
+    assert!(
+        (ratio - gain).abs() < 0.1,
+        "RMS ratio {ratio} dB, gain {gain}"
+    );
+    let v = dirs.json(ED_MIXED);
+    assert_eq!(v["backings"][0]["loudness"]["target"], -14.0, "{v}");
+    let lufs = v["backings"][0]["loudness"]["lufs"].as_f64().unwrap();
+    assert!((lufs + 14.0).abs() < 0.1, "{v}");
+    let stems_after: Vec<Vec<u8>> = stem_files
+        .iter()
+        .map(|f| std::fs::read(dirs.track_dir(ED_MIXED).join(f)).unwrap())
+        .collect();
+    assert_eq!(stems_after, stems_before, "the stems changed");
+    // 7. the lane did not grow for the result line
+    assert_eq!(layout(&app), (mix, 0, layout(&app).2));
+
+    // 4. Again: already at the target, nothing is written.
+    let stamp = mtime(&flac);
+    app.click(&wid, NORMALIZE.0, NORMALIZE.1);
+    let l = app.wait_line(|l| l.contains("calliope: editor normalized"), secs(30));
+    assert_eq!(field(&l, "outcome"), "at-target", "{l}");
+    assert_eq!(field(&l, "changed"), "false", "{l}");
+    assert_eq!(std::fs::read(&flac).unwrap(), new);
+    assert_eq!(mtime(&flac), stamp);
+    app.wait_line(|l| l.contains("calliope-ui: editor normalized"), secs(10));
+    settle();
+    shot("editor-normalize-already");
+    assert_eq!(layout(&app).0, mix);
+    finish(&app);
+    drop(app);
+
+    // 5. Cancel: the old bytes are back, the app runs slowly (40 ms per block).
+    std::fs::write(&flac, &old).unwrap();
+    let (mut app, wid) = start_editor_with(&dirs, &[("CALLIOPE_E2E_BACKING_PACE", "40")]);
+    select(&mut app, &wid, "mixed before", ED_MIXED);
+    app.wait_contains("editor active");
+    settle();
+    app.click(&wid, NORMALIZE.0, NORMALIZE.1);
+    app.wait_contains("editor normalize start");
+    std::thread::sleep(secs(1));
+    shot("editor-normalize-running");
+    app.click(&wid, NORMALIZE.0, NORMALIZE.1); // the button reads Cancel now
+    app.wait_contains("calliope: editor normalize cancelled");
+    assert_eq!(
+        std::fs::read(&flac).unwrap(),
+        old,
+        "cancel changed the file"
+    );
+    settle();
+    shot("editor-normalize-cancelled");
+    assert_eq!(layout(&app).0, mix);
+
+    // 6. Disabled: no file in the variant of the four-lane track.
+    select(&mut app, &wid, "four lanes", ED_FOUR);
+    app.wait_contains("editor active");
+    settle();
+    let starts = app.count("editor normalize start");
+    app.click(&wid, NORMALIZE.0, NORMALIZE.1);
+    std::thread::sleep(Duration::from_millis(700));
+    assert_eq!(
+        app.count("editor normalize start"),
+        starts,
+        "Normalize must be disabled without a file"
+    );
+    shot("editor-normalize-disabled");
+
+    // 7. The smallest window with a result line showing.
+    select(&mut app, &wid, "mixed before", ED_MIXED);
+    app.wait_contains("editor active");
+    size(&wid, 1024, 640);
+    settle();
+    let (mix_small, _, _) = layout(&app);
+    shot("editor-normalize-1024-idle");
+    size(&wid, 1280, 800);
+    settle();
+    app.click(&wid, NORMALIZE.0, NORMALIZE.1);
+    app.wait_line(|l| l.contains("calliope-ui: editor normalized"), secs(30));
+    size(&wid, 1024, 640);
+    settle();
+    let (m, o, _) = layout(&app);
+    // by design the whole Editor pane scrolls at 1024x640 (docs/ui.md); the result line must not
+    // change that: the lane keeps its height and the pane its overflow (measured: 143 px)
+    assert_eq!(m, mix_small, "the Mix lane grew at 1024x640");
+    assert_eq!(o, 143, "overflow at 1024x640 with a result line");
+    shot("editor-normalize-1024");
+    assert!(app.count("editor normalize failed") == 0);
+    finish(&app);
+}
+
+#[test]
+#[ignore]
+fn editor_normalize_player_reopen() {
+    if !ready() {
+        return;
+    }
+    let dirs = editor_dirs("editor_normalize_player_reopen");
+    // a tempo and loops of the Player, which Normalize must leave alone
+    std::fs::write(
+        dirs.player_json(ED_MIXED),
+        r#"{"schema_version": 1, "source": "backing:backing", "position_ms": 0,
+            "tempo": {"beats_per_bar": 4, "segments": [{"start_ms": 500.0, "bpm": 120.0}]},
+            "speed": 1.0, "metronome": {"on": false, "count_in": false},
+            "loops": [{"id": "loop-1", "start": {"tick": 64}, "end": {"tick": 192}, "repeat": true, "count_in": false},
+                      {"id": "loop-2", "start": {"tick": 384}, "end": {"tick": 448}, "repeat": false, "count_in": true}],
+            "current_loop": "loop-1"}"#,
+    )
+    .unwrap();
+    let (mut app, wid) = start_editor(&dirs);
+    let cap = dirs.capture();
+    select(&mut app, &wid, "mixed before", ED_MIXED);
+    app.wait_contains("editor active");
+
+    // 1. The Player plays the backing for a second.
+    app.key(&wid, "alt+5");
+    app.wait_view("player");
+    app.wait_line(|l| l.contains("player active"), secs(20));
+    app.key(&wid, "ctrl+l");
+    app.wait_contains("player tree collapsed=true");
+    settle();
+    let play = |app: &mut App| -> (Vec<f32>, f64) {
+        // a new stream rewrites the capture file, so what is heard is read from its start then
+        let (start, streams) = (capture_len(&cap), app.count("audio backend=capture"));
+        app.click(&wid, PLAYER_PLAY.0, PLAYER_PLAY.1);
+        app.wait_contains("player play");
+        std::thread::sleep(Duration::from_millis(1500));
+        let from = if app.count("audio backend=capture") == streams {
+            start
+        } else {
+            0
+        };
+        let seg = capture_from(&cap, from);
+        let rate = rate_of(app);
+        app.click(&wid, PLAYER_PLAY.0, PLAYER_PLAY.1);
+        app.wait_contains("player pause");
+        // leave out the first 0.3 s (the sound ramps in)
+        let skip = (0.3 * rate) as usize * 2;
+        (seg[skip.min(seg.len())..].to_vec(), rate)
+    };
+    let (first, rate) = play(&mut app);
+    let p_old = tone_power(&first, rate, 330.0);
+    assert!(db(p_old, tone_power(&first, rate, 660.0)) > 40.0);
+
+    // 2. Normalize in the Editor: the Player is released.
+    app.key(&wid, "alt+3");
+    app.wait_view("editor");
+    settle();
+    app.skip_seen();
+    app.click(&wid, NORMALIZE.0, NORMALIZE.1);
+    app.wait_line(
+        |l| l.contains("calliope: player released") && l.contains("reason=backing"),
+        secs(30),
+    );
+    let l = app.wait_line(|l| l.contains("calliope: editor normalized"), secs(30));
+    assert_eq!(field(&l, "changed"), "true", "{l}");
+    let gain: f64 = field(&l, "gain").parse().unwrap();
+
+    // what the Player wrote when it was released
+    let state_before: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dirs.player_json(ED_MIXED)).unwrap()).unwrap();
+    assert_eq!(state_before["loops"].as_array().map(|l| l.len()), Some(2));
+
+    // 3. Back in the Player: it reopens and plays the normalized file.
+    app.key(&wid, "alt+5");
+    app.wait_view("player");
+    app.wait_line(|l| l.contains("player active"), secs(20));
+    app.key(&wid, "ctrl+l"); // the tree is expanded again after the view change
+    app.wait_contains("player tree collapsed=true");
+    settle();
+    shot("player-normalized-reopened");
+    let (second, _) = play(&mut app);
+    let p_new = tone_power(&second, rate, 330.0);
+    let ratio = db(p_new, p_old);
+    assert!(
+        (ratio - gain).abs() < 0.3,
+        "tone power ratio {ratio} dB, gain {gain}"
+    );
+
+    // 4. The Player's own state: the tempo and the loops are as the Player first wrote them.
+    let state = |dirs: &Dirs| -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(dirs.player_json(ED_MIXED)).unwrap()).unwrap()
+    };
+    let (before, after) = (state_before, state(&dirs));
+    for k in ["loops", "tempo"] {
+        assert_eq!(before[k], after[k], "player.json {k} changed");
+    }
+    assert_eq!(after["loops"].as_array().map(|l| l.len()), Some(2));
     finish(&app);
 }

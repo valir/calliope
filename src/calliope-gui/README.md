@@ -94,8 +94,20 @@ The Editor view (Alt+3) mixes the stems of the track selected in the tree into a
 * One lane per stem: Play (solo that stem; pressing it again ends the solo), Unmute, a volume
   slider (-60 to +12 dB, tick at 0 dB; the dB value resets it to 0 dB).
 * The pinned Mix lane has Play/Pause, Stop, the position slider, the time field (type a time, or
-  use the mouse wheel to nudge by 100 ms), the CLIP badge, and Save. Save renders the mix of the
-  unmuted stems to `backings/backing.flac` (the old file goes to the trash).
+  use the mouse wheel to nudge by 100 ms), the CLIP badge, Save and Normalize. Save renders the mix
+  of the unmuted stems to `backings/backing.flac` (the old file goes to the trash).
+* Loudness: Save writes the backing normalized to -14 LUFS (integrated loudness, ITU-R BS.1770 /
+  EBU R128). When that gain would push the true peak above the -1 dBTP ceiling, the gain stops at
+  the ceiling and the backing ends up quieter than -14 LUFS (there is no limiter, so nothing is
+  clipped or squashed). The result line under the Mix lane says what happened, for example
+  "Saved, normalized to -14.0 LUFS (gain +3.2 dB)." or "... limited by the -1 dBTP peak ceiling".
+  Normalize does the same for the backing file that exists already (the variant named in "Save
+  as"), without rendering the stems again: a backing within 0.1 LU of the target is left as it
+  is ("Already at the target"), otherwise the file is rewritten with the same length and format and
+  the old one goes to the trash. It is disabled while the variant has no file yet, and during a
+  Save, another Normalize or a beat detection. While it runs the button reads Cancel, and a
+  cancelled run leaves the file exactly as it was. A track open in the Player is closed when the
+  file is replaced and reopens, playing the new file, when you go back to it.
 * Above the Mix lane the waveform shows the mix of the unmuted stems (it follows the checkboxes and
   volume sliders a moment after the last change) with the playhead.
 * "Autodetect BPM" (needs the edge-AI server in Settings; the server needs a beat tracker, see

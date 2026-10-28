@@ -9,3 +9,6 @@ task 7 | The Normalize job | implementer | done
 task 8 | release_for_audio, Player gate, start_normalize, normalize_backing command | implementer | done
 task 9 | Frontend: ipc.ts types and loudness-format.ts | implementer | done
 task 10 | Frontend: editor state and the Normalize button | implementer | done
+task 11 | Acceptance tests | implementer | done
+task 12 | GUI tests: Save limited/normalized, editor_normalize, editor_normalize_player_reopen | implementer | done
+task 13 | README and docs/ui.md | implementer | done

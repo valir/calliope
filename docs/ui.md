@@ -158,6 +158,23 @@
   or the error). The lane was made tighter (padding, gaps, 3.5 rem waveform) so that four stem lanes
   and the whole Mix lane fit at 1280x800. When the window is too small (1024x640), the Mix lane wraps
   (Autodetect below Play) and the whole Editor pane scrolls; the lane list keeps at least 14 rem.
+- (gui-backing-normalize) Editor Save row. The row is now Save, Normalize, then the target or the
+  progress: `Save` keeps its place (112 px, centre x 704 at 1280x800), `Normalize` (outline, 3.25 rem
+  high) follows it (centre x 848, y 640 at 1280x800), and the "Save as: ..." text (or the progress
+  bar and percent) takes the rest, so no row is added and the Mix lane keeps its height (330 px at
+  1280x800, logged as `editor layout mix=<px> overflow=<px> width=<px>`). While a job runs, its own
+  button reads Cancel (Save while saving, Normalize while normalizing) and the other one is
+  disabled; there is no separate Cancel button. Normalize is disabled without a backing file (title
+  "Save the backing first"), during a job and during a beat detection. The two-line slot shows the
+  result: "Saved, normalized to -14.0 LUFS (gain +3.2 dB).", "Saved at -15.6 LUFS (gain -1.0 dB,
+  limited by the -1 dBTP peak ceiling).", "Saved. Too quiet to normalize (below -70 LUFS).",
+  "Normalized to -14.0 LUFS (gain +3.2 dB).", "Normalized to -15.6 LUFS (gain -1.0 dB, limited by the
+  -1 dBTP peak ceiling).", "Already at the target (-14.0 LUFS); the file was not changed.",
+  "Already at the -1 dBTP peak ceiling (-15.6 LUFS); the file was not changed.", "Too quiet to
+  normalize (below -70 LUFS); the file was not changed.", "Normalize cancelled; the file was not
+  changed.". A save no longer clips, so the clipped warning does not appear (the mix is summed without clipping and
+  the gain keeps the true peak at or below -1 dBTP). At 1024x640 the pane scrolls as before (about
+  143 px) and the result line does not change that.
 - Tempo sections in a waveform (Editor and Player): an amber 2 px bar at each section start and a label
   "<bpm> BPM" (bold 15 px, readable at 1-2 m) right of it, or just the number when the next bar is close.
   In the Editor, changes typed in the Player are dimmed (read-only) and detected ones can be moved: drag the bar (8 px
