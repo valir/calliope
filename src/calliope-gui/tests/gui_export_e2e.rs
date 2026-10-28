@@ -67,9 +67,11 @@ fn target_line(app: &mut App, id: &str, kind: &str) -> String {
 
 // Buttons at 1280x800 (window coordinates).
 const BTN_RC5: (i32, i32) = (748, 290);
-const BTN_MP3: (i32, i32) = (748, 362);
+// The RC-5 block has a reserved "To:" row (2 rem + gap) under its button, so MP3 and OGG sit
+// lower than before whether or not the row has text; measured on a 1280x800 screenshot.
+const BTN_MP3: (i32, i32) = (748, 429);
 // The OGG button: each "Last:" line has room for two lines under its button, so this is fixed.
-const BTN_OGG: (i32, i32) = (748, 512);
+const BTN_OGG: (i32, i32) = (748, 551);
 const MEMORY_BOX: (i32, i32) = (971, 290);
 
 fn press(app: &App, wid: &str, at: (i32, i32)) {
@@ -168,6 +170,41 @@ fn layout_overflow(app: &App) -> i64 {
         .pop()
         .expect("export layout line");
     field(&l, "overflow").parse().unwrap()
+}
+
+/// The newest `export layout` line as (overflow, width, hscroll).
+fn layout_values(app: &App) -> (i64, i64, i64) {
+    let l = lines_with(app, "export layout overflow=")
+        .pop()
+        .expect("export layout line");
+    let n = |name: &str| {
+        field(&l, name)
+            .parse()
+            .unwrap_or_else(|_| panic!("{name} in {l}"))
+    };
+    (n("overflow"), n("width"), n("hscroll"))
+}
+
+/// Resizes the window and returns the layout measured after the resize.
+fn layout_at(app: &App, wid: &str, w: u32, h: u32) -> (i64, i64, i64) {
+    let before = lines_with(app, "export layout overflow=").len();
+    size(wid, w, h);
+    let end = std::time::Instant::now() + secs(10);
+    while lines_with(app, "export layout overflow=").len() == before {
+        assert!(
+            std::time::Instant::now() < end,
+            "no layout line after resize"
+        );
+        sleep_ms(50);
+    }
+    settle();
+    layout_values(app)
+}
+
+/// Waits (in order) for the frontend's `export quick dir=<dir>` line.
+fn wait_quick(app: &mut App, dir: &str) {
+    let want = format!("calliope-ui: export quick dir={dir}");
+    app.wait_line(|l| l.trim_end() == want, secs(10));
 }
 
 #[test]
@@ -315,7 +352,6 @@ fn export_rc5_flow() {
         &[
             format!("export-rc5 {}", base.display()),
             format!("export-rc5 {}", base.display()),
-            format!("export-rc5 {}", base.display()),
         ],
     );
     let (mut app, wid) = start(&dirs, &ans, &[]);
@@ -352,6 +388,8 @@ fn export_rc5_flow() {
         "No leaves the file alone"
     );
     assert_eq!(app.count("export phase=writing"), 0, "nothing started");
+    // No is not a success: the visit has no quick folder yet, so the next press asks again.
+    assert_eq!(app.count("calliope-ui: export quick dir="), 0);
 
     // Yes replaces it (the old content is swapped for a marker first, to see the replacement).
     std::fs::write(&target, b"old content").unwrap();
@@ -364,6 +402,7 @@ fn export_rc5_flow() {
     let l = app.wait_line(|l| l.contains("export confirm answer="), secs(10));
     assert!(l.contains("answer=yes"), "{l}");
     wait_done(&mut app);
+    wait_quick(&mut app, &base.display().to_string());
     let (_, l, r) = read_wav(&target);
     assert_eq!(l, r);
     assert_eq!(settings(&dirs)["rc5_memory"], 7);
@@ -375,11 +414,37 @@ fn export_rc5_flow() {
         "the time is refreshed: {j}"
     );
 
-    // One track per memory: 7 for another track takes it over (Yes to overwrite).
+    // One track per memory: 7 for another track takes it over. The folder dialog is skipped now
+    // (one RC-5 export has succeeded in this visit); the overwrite question is still asked:
+    // No leaves the file alone, then Yes.
+    assert_eq!(app.count("dialog start kind=export-rc5"), 2);
     pick(&mut app, &wid, "plain mp3", EX_PLAIN);
     target_line(&mut app, EX_PLAIN, "track");
     set_memory(&app, &wid, "7");
+    let before_no = std::fs::read(&target).unwrap();
+    let writing = app.count("export phase=writing");
     press(&app, &wid, BTN_RC5);
+    app.wait_line(|l| l.contains("dialog skipped kind=export-rc5"), secs(10));
+    app.wait_line(
+        |l| l.contains("export prepare target=rc5 result=plan exists=true"),
+        secs(10),
+    );
+    app.key(&wid, "Return");
+    let l = app.wait_line(|l| l.contains("export confirm answer="), secs(10));
+    assert!(
+        l.contains("answer=no") && l.contains("007_1/007_1.WAV"),
+        "{l}"
+    );
+    settle();
+    assert_eq!(std::fs::read(&target).unwrap(), before_no, "No keeps it");
+    assert_eq!(
+        app.count("export phase=writing"),
+        writing,
+        "nothing started"
+    );
+    // Pressing again is skipped again; Yes.
+    press(&app, &wid, BTN_RC5);
+    app.wait_line(|l| l.contains("dialog skipped kind=export-rc5"), secs(10));
     app.wait_line(
         |l| l.contains("export prepare target=rc5 result=plan exists=true"),
         secs(10),
@@ -401,10 +466,144 @@ fn export_rc5_flow() {
     assert!(track_json(&dirs, EX_MONO)["exports"].get("rc5").is_none());
     assert_eq!(track_json(&dirs, EX_PLAIN)["exports"]["rc5"]["memory"], 7);
     assert_eq!(
+        app.count("dialog start kind=export-rc5"),
+        2,
+        "no more dialogs"
+    );
+    assert_eq!(app.count("dialog skipped kind=export-rc5"), 2);
+    assert_eq!(app.count("e2e dialog script mismatch"), 0);
+    assert_eq!(
         snapshot_except_exports(&dirs.repo()),
         before,
         "the repository must not change"
     );
+    app.assert_no_real_audio();
+    app.no_csp_violation();
+}
+
+#[test]
+#[ignore]
+fn export_rc5_quick() {
+    if !ready() {
+        return;
+    }
+    let dirs = export_dirs("export_rc5_quick");
+    // The Player view (step 6) saves its own state in player.json; that is not the export's.
+    let snap = |d: &Dirs| {
+        let mut m = snapshot_except_exports(&d.repo());
+        m.retain(|k, _| !k.ends_with("player.json"));
+        m
+    };
+    let before = snap(&dirs);
+    let b = rc5(&dirs, "B");
+    let c = rc5(&dirs, "C");
+    let (bs, cs) = (b.display().to_string(), c.display().to_string());
+    let ans = answers(
+        &dirs,
+        &[
+            format!("export-rc5 {bs}"),
+            "export-rc5 CANCEL".to_string(),
+            format!("export-rc5 {bs}"),
+            format!("export-rc5 {cs}"),
+            format!("export-rc5 {bs}"),
+        ],
+    );
+    let (mut app, wid) = start(&dirs, &ans, &[]);
+
+    // 1. The first export asks; then the folder is the visit's quick folder.
+    pick(&mut app, &wid, "mono backing", EX_MONO);
+    target_line(&mut app, EX_MONO, "track");
+    set_memory(&app, &wid, "3");
+    press(&app, &wid, BTN_RC5);
+    app.wait_line(|l| l.contains("dialog start kind=export-rc5"), secs(10));
+    wait_done(&mut app);
+    wait_quick(&mut app, &bs);
+    assert!(wav(&b, 3).is_file());
+    settle();
+    shot("export-rc5-quick-1280");
+    let (o1024, w1024, h1024) = layout_at(&app, &wid, 1024, 640);
+    shot("export-rc5-quick-1024");
+    let (o1280, w1280, h1280) = layout_at(&app, &wid, 1280, 800);
+    let _ = std::fs::write(
+        repo().join("target/gui-shots/export-rc5-quick-layout.txt"),
+        format!(
+            "1280x800 overflow={o1280} width={w1280} hscroll={h1280}\n\
+             1024x640 overflow={o1024} width={w1024} hscroll={h1024}\n"
+        ),
+    );
+    assert!(o1280 <= 14, "overflow {o1280} at 1280x800");
+    assert!(h1280 <= 0, "horizontal overflow {h1280} at 1280x800");
+    assert!(h1024 <= 0, "horizontal overflow {h1024} at 1024x640");
+
+    // 2. The next export goes to the same drive without a dialog.
+    pick(&mut app, &wid, "plain mp3", EX_PLAIN);
+    target_line(&mut app, EX_PLAIN, "track");
+    set_memory(&app, &wid, "4");
+    press(&app, &wid, BTN_RC5);
+    app.wait_line(|l| l.contains("dialog skipped kind=export-rc5"), secs(10));
+    wait_done(&mut app);
+    assert!(wav(&b, 4).is_file());
+    assert_eq!(app.count("dialog start kind=export-rc5"), 1);
+
+    // 3. The drive lost its ROLAND: the dialog opens (cancelled), and the skip is over.
+    std::fs::remove_dir_all(b.join("ROLAND")).unwrap();
+    press(&app, &wid, BTN_RC5);
+    app.wait_line(
+        |l| l.contains("export quick unavailable reason=no-roland"),
+        secs(10),
+    );
+    app.wait_line(|l| l.contains("dialog start kind=export-rc5"), secs(10));
+    wait_quick(&mut app, "none");
+    std::fs::create_dir_all(b.join("ROLAND")).unwrap();
+
+    // 4. Asks again, then succeeds.
+    press(&app, &wid, BTN_RC5);
+    app.wait_line(|l| l.contains("dialog start kind=export-rc5"), secs(10));
+    wait_done(&mut app);
+    wait_quick(&mut app, &bs);
+
+    // 5. Change... (Memory box, Tab, Return) picks C; the next export goes there directly.
+    press(&app, &wid, MEMORY_BOX);
+    app.key(&wid, "Tab Return");
+    let l = app.wait_line(|l| l.contains("dialog start kind=export-rc5"), secs(10));
+    assert!(l.contains("from=quick"), "{l}");
+    wait_quick(&mut app, &cs);
+    settle();
+    shot("export-rc5-quick-changed");
+    press(&app, &wid, BTN_RC5);
+    let l = app.wait_line(|l| l.contains("dialog skipped kind=export-rc5"), secs(10));
+    assert!(l.contains(&format!("dir={cs}")), "{l}");
+    wait_done(&mut app);
+    assert!(wav(&c, 4).is_file());
+
+    // 6. Leaving the view and coming back ends the skip.
+    app.key(&wid, "alt+5");
+    app.wait_view("player");
+    app.key(&wid, "alt+6");
+    // The reset and the view line come in either order.
+    let mut seen = (false, false);
+    while seen != (true, true) {
+        let l = app.wait_line(
+            |l| l.trim_end() == "calliope-ui: export quick dir=none" || l.contains("view=export"),
+            secs(10),
+        );
+        if l.contains("view=export") {
+            seen.0 = true;
+        } else {
+            seen.1 = true;
+        }
+    }
+    set_memory(&app, &wid, "5");
+    press(&app, &wid, BTN_RC5);
+    app.wait_line(|l| l.contains("dialog start kind=export-rc5"), secs(10));
+    wait_done(&mut app);
+    assert!(wav(&b, 5).is_file());
+
+    // 7. Every answer was used, nothing else happened.
+    assert_eq!(app.count("dialog start kind=export-rc5"), 5);
+    assert_eq!(app.count("dialog skipped kind=export-rc5"), 2);
+    assert_eq!(app.count("e2e dialog script mismatch"), 0);
+    assert_eq!(snap(&dirs), before, "the repository must not change");
     app.assert_no_real_audio();
     app.no_csp_violation();
 }

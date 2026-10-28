@@ -6,3 +6,4 @@ task 4 | Register the choose_rc5_folder command | lead (local result discarded: 
 task 5 | Headless acceptance tests ac_quick_* | implementer | done
 task 6 | Frontend state and types | implementer | done
 task 7 | Export pane: To: row, Change..., notice, hscroll | implementer | done
+task 8 | GUI e2e and docs/ui.md | implementer | done

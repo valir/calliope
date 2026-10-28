@@ -303,6 +303,18 @@
   button (one line for RC-5, two for MP3 and OGG), so the buttons sit at fixed y positions whatever the
   text (a path of two lines or fewer moves nothing; a longer one pushes the rows below it down); at 1024x640 the Memory box sits under its button and the
   pane scrolls. In the Library the rows are at the end of the scrolling field list.
+- (gui-export-rc5-quick) Quicker RC-5 exports. The RC-5 block has a reserved "To:" row (min height 2 rem)
+  between the button row and its "Last:" line, so the MP3 and OGG buttons sit 36 px lower than before and never jump.
+  It is empty until an RC-5 export has succeeded in the current visit of the Export view; then it reads
+  "To: <folder>" (breaking anywhere, wrapping inside the pane) with a small "Change..." button after it
+  (disabled while an export runs or a dialog is open; it comes right after the Memory box in tab order).
+  From then on "to BOSS RC-5" skips the folder dialog and writes to that folder, as long as it still exists
+  and holds `ROLAND/`; otherwise the dialog opens. The overwrite question is still asked. "Change..." only
+  picks the folder for the next exports (a refused folder shows "Folder not changed: ..."). The skip ends
+  when the view is left, on a failed or cancelled export, or when the dialog is cancelled; MP3 and OGG
+  always ask. Measured (pane `overflow` / `hscroll`, with the "To:" row filled and a result line shown):
+  1280x800 overflow 0, hscroll 0; 1024x640 overflow 0, hscroll 0 (the Memory box wraps below its button and
+  the long path takes two lines there).
 - (gui-first-beat) Player waveform: the part before the first beat is dimmed (the background colour at 60 % over
   it). The first bar is drawn like the other bars, also at 0:00, with its BPM label to its right; it is dragged
   and moved by keys like the others, and its readout reads "+N/64 beat (time) from the found start". The "Find
