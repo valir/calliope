@@ -157,7 +157,7 @@ tester for the features.
 - [x] `gui-first-beat.md`: find and set the first track beat
 - [x] `gui-section-bpm-detect.md`: reset section's bpm
 - [x] `gui-backing-normalize.md`: normalize the backing track level
-- [ ] `gui-export-rc5-quick.md`: reduce popup dialogs during export to RC-5 operations
+- [x] `gui-export-rc5-quick.md`: reduce popup dialogs during export to RC-5 operations
 - [ ] `gui-tablatures.md`: associate tablature to backing track
 - [ ] `gui-manipulate-backing-track.md`: associate tempo and MIDI commands into the backing track
 - [ ] `stems-empty-detection.md`: better detection of the empty resulting stems
