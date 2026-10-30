@@ -19,7 +19,7 @@
   const track = $derived(target.kind === 'track' ? target.track : null);
   const running = $derived(isRunning());
   const reason = $derived(disabledReason(target, ex.info, running));
-  const disabled = $derived(reason !== null || ex.preparing);
+  const disabled = $derived(reason !== null || ex.preparing || ex.slowSaving);
   const info = $derived(track && ex.info && ex.info.id === track.id ? ex.info : null);
   const slowDisabled = $derived(
     !info?.count_in || !info.available || running || ex.preparing || ex.confirm !== null || ex.slowSaving,
@@ -129,7 +129,7 @@
     </div>
   </div>
 
-  <fieldset class="flex min-w-0 flex-col gap-2 rounded-lg border border-border p-4">
+  <fieldset class="flex min-w-0 flex-col gap-2 rounded-lg border border-border p-4 pb-3">
     <legend class="px-2 text-sm font-medium">Export...</legend>
     <!-- Each "Last:" line sits under its button, so the rows' heights do not depend on the text. -->
     <div class="flex flex-col gap-1">

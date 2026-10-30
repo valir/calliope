@@ -580,9 +580,9 @@ function exportChannel(onEvent: (e: ExportEvent) => void): Channel<ExportEvent> 
 export const exportInfo = (id: string): Promise<ExportInfo> => invoke<ExportInfo>('export_info', { id });
 export const prepareExport = (id: string, target: ExportTargetReq): Promise<ExportPlan | null> =>
   invoke<ExportPlan | null>('prepare_export', { id, target });
-/** The "Change..." dialog of the RC-5 folder: the accepted folder, or null when cancelled. */
 export const setSlowCountIn = (id: string, on: boolean): Promise<ExportInfo> =>
   invoke<ExportInfo>('set_slow_count_in', { id, on });
+/** The "Change..." dialog of the RC-5 folder: the accepted folder, or null when cancelled. */
 export const chooseRc5Folder = (): Promise<string | null> => invoke<string | null>('choose_rc5_folder');
 export const startExport = (
   token: string,

@@ -173,7 +173,7 @@ async function start(plan: ExportPlan, kind: ExportKind): Promise<void> {
 }
 
 export async function exportTo(kind: ExportKind, track: TrackRecord | null): Promise<void> {
-  if (!track || ex.preparing || isRunning()) return;
+  if (!track || ex.preparing || ex.slowSaving || isRunning()) return;
   // Same rule as the buttons: nothing is asked or sent unless the track's info says it can be exported.
   if (!ex.info || ex.info.id !== track.id || !ex.info.available) return;
   const target: ExportTargetReq = kind === 'rc5' ? { kind, memory: ex.memory.trim(), reuse: ex.rc5Quick } : { kind };

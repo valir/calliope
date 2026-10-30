@@ -615,6 +615,34 @@ describe('Export view', () => {
       await waitFor(() => expect(slowSwitch().disabled).toBe(false));
     });
 
+    it('disables the export buttons and starts no export while the switch is being saved', async () => {
+      await renderWithTrack();
+      let release: () => void = () => {};
+      const gate = new Promise<void>((r) => { release = r; });
+      clearMocks();
+      mockIPC(async (cmd, args) => {
+        const a = args as Record<string, unknown>;
+        calls.push([cmd, a]);
+        if (cmd === 'export_info') return withSlow(a.id as string);
+        if (cmd === 'set_slow_count_in') {
+          await gate;
+          slowOf[a.id as string] = a.on as boolean;
+          return withSlow(a.id as string);
+        }
+        if (cmd === 'prepare_export') return plan;
+        return null;
+      });
+      await fireEvent.click(slowSwitch());
+      await waitFor(() => expect(btn('MP3 file').hasAttribute('disabled')).toBe(true));
+      expect(btn('OGG file').hasAttribute('disabled')).toBe(true);
+      expect(btn('to BOSS RC-5').hasAttribute('disabled')).toBe(true);
+      await fireEvent.click(btn('MP3 file'));
+      expect(names()).not.toContain('prepare_export');
+      release();
+      await waitFor(() => expect(btn('MP3 file').hasAttribute('disabled')).toBe(false));
+      expect(names()).not.toContain('prepare_export');
+    });
+
     it('shows a failed write and leaves the switch and the text as they were', async () => {
       slowError = 'cannot write track.json';
       await renderWithTrack();

@@ -327,8 +327,10 @@
   (before, it measured the pane itself and always read 0, so the earlier "overflow 0" values were not real; the real value
   before this change was about 7 px with a result line). Button centres at 1280x800 (window coordinates, "To:" row and
   result line included): to BOSS RC-5 (748, 308), Memory box (971, 308), MP3 (748, 434), OGG (748, 542), switch (655, 216).
-  Measured (scrolling section `overflow` / `hscroll`): 1280x800 overflow 3, hscroll 0; 1024x640 overflow 235 to 248
-  (vertical scrolling), hscroll 0.
+  The bottom padding of the "Export..." group went from 1 rem to 0.75 rem so that the section fits at 1280x800 (the
+  button positions above do not change). Measured (scrolling section `overflow` / `hscroll`): 1280x800 overflow 0,
+  hscroll 0. At 1024x640 (the minimum window size) the Export pane scrolls vertically, by 230 to 244 px, with no
+  horizontal scroll (hscroll 0); other views scroll there too.
 - (gui-first-beat) Player waveform: the part before the first beat is dimmed (the background colour at 60 % over
   it). The first bar is drawn like the other bars, also at 0:00, with its BPM label to its right; it is dragged
   and moved by keys like the others, and its readout reads "+N/64 beat (time) from the found start". The "Find

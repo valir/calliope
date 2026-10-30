@@ -534,7 +534,7 @@ fn export_rc5_quick() {
              1024x640 overflow={o1024} width={w1024} hscroll={h1024}\n"
         ),
     );
-    assert!(o1280 <= 14, "overflow {o1280} at 1280x800");
+    assert!(o1280 == 0, "overflow {o1280} at 1280x800");
     assert!(h1280 <= 0, "horizontal overflow {h1280} at 1280x800");
     assert!(h1024 <= 0, "horizontal overflow {h1024} at 1024x640");
 
@@ -672,7 +672,7 @@ fn export_slow_count_in() {
                  1024x640 overflow={o1024} width={w1024} hscroll={h1024}\n"
             ),
         );
-        assert!(o1280 <= 14, "overflow {o1280} at 1280x800");
+        assert!(o1280 == 0, "overflow {o1280} at 1280x800");
         assert!(h1280 <= 0, "horizontal overflow {h1280} at 1280x800");
         assert!(h1024 <= 0, "horizontal overflow {h1024} at 1024x640");
 
