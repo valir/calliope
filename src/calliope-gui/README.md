@@ -204,9 +204,15 @@ Editor); a plain backing track is exported as it is.
   the next RC-5 export asks again.
 * "MP3 file" / "OGG file": choose a folder; the file is named `Band - Title.mp3` (or `.ogg`) and
   carries the title, band, album, track number and year as tags.
-* Count-in: every export starts with 4 beats of lead at the track's tempo, with six ticks
-  in it (the last half a beat before the audio), so the audio that follows is in time with the
-  loop. The exported file is therefore 4 beats longer than the original.
+* Count-in: every export starts with silence, then a count-in of six ticks at the track's
+  tempo (the last one half a beat before the track's first beat), then the track. The silence
+  is as long as the count-in (4 beats), so the file is 8 beats longer than the track from its
+  first beat on. That leaves time to get ready after pressing play on the RC-5.
+* "Slow count-in (half tempo)": for fast tracks. With this switch on, the six ticks are twice
+  as far apart (the count-in is 4 beats at half the tempo, 8 beats of the track) and the
+  silence before them is twice as long too. The switch is remembered per track (in the
+  track's `track.json`, under `exports`), so re-exporting a track keeps its choice. The line
+  above the switch says which count-in will be written and how much it adds.
 * An existing file is only replaced after you confirm. Cancel stops a running export and leaves
   nothing behind.
 * What is remembered: after a successful export the track's `track.json` gets an `exports` entry
