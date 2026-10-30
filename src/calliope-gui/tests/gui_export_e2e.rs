@@ -66,13 +66,15 @@ fn target_line(app: &mut App, id: &str, kind: &str) -> String {
 }
 
 // Buttons at 1280x800 (window coordinates).
-const BTN_RC5: (i32, i32) = (748, 290);
+const BTN_RC5: (i32, i32) = (748, 308);
 // The RC-5 block has a reserved "To:" row (2 rem + gap) under its button, so MP3 and OGG sit
 // lower than before whether or not the row has text; measured on a 1280x800 screenshot.
-const BTN_MP3: (i32, i32) = (748, 429);
+const BTN_MP3: (i32, i32) = (748, 434);
 // The OGG button: each "Last:" line has room for two lines under its button, so this is fixed.
-const BTN_OGG: (i32, i32) = (748, 551);
-const MEMORY_BOX: (i32, i32) = (971, 290);
+const BTN_OGG: (i32, i32) = (748, 542);
+const MEMORY_BOX: (i32, i32) = (971, 308);
+// The slow count-in switch, in the row under the count-in line.
+const SLOW_SWITCH: (i32, i32) = (655, 216);
 
 fn press(app: &App, wid: &str, at: (i32, i32)) {
     app.click(wid, at.0, at.1);
@@ -323,7 +325,8 @@ fn export_rc5_flow() {
         let (rate, l, r) = read_wav(&target);
         assert_eq!(rate, 44100);
         assert_eq!(l, r, "equal channels");
-        assert_eq!(l.len(), 44100 * 4 + 88200);
+        // 4 s original after 2 s of silence and a 4-beat count-in at 120 BPM.
+        assert_eq!(l.len(), 44100 * 4 + 176400);
         assert!(l.iter().any(|v| v.abs() > 0.05), "the audio is there");
         assert!(!target.with_extension("WAV.part").exists());
         wait_has(
@@ -610,6 +613,154 @@ fn export_rc5_quick() {
 
 #[test]
 #[ignore]
+fn export_slow_count_in() {
+    if !ready() {
+        return;
+    }
+    let dirs = export_dirs("export_slow_count_in");
+    let snap = |d: &Dirs| {
+        let mut m = snapshot_except_exports(&d.repo());
+        m.retain(|k, _| !k.ends_with("player.json"));
+        m
+    };
+    let before = snap(&dirs);
+    let b = rc5(&dirs, "B");
+    let bs = b.display().to_string();
+    let ans = answers(
+        &dirs,
+        &[format!("export-rc5 {bs}"), format!("export-rc5 {bs}")],
+    );
+    let count_in = |id: &str, slow: bool| format!("export count-in id={id} slow={slow} text=");
+    let plain_off = format!(
+        "{}Count-in: 4 beats at 120 BPM, after 2.0 s of silence (adds 4.0 s)",
+        count_in(EX_PLAIN, false)
+    );
+    let plain_on = format!(
+        "{}Count-in: 4 beats at 60 BPM (half of 120), after 4.0 s of silence (adds 8.0 s)",
+        count_in(EX_PLAIN, true)
+    );
+    let target = wav(&b, 5);
+    {
+        let (mut app, wid) = start(&dirs, &ans, &[]);
+        // 1. The switch is off by default.
+        pick(&mut app, &wid, "plain mp3", EX_PLAIN);
+        app.wait_line(|l| l.trim_end().ends_with(&plain_off), secs(10));
+
+        // 2. Switching it on is saved and changes the text.
+        press(&app, &wid, SLOW_SWITCH);
+        app.wait_line(
+            |l| l.contains(&format!("export slow id={EX_PLAIN} on=true result=saved")),
+            secs(10),
+        );
+        app.wait_line(|l| l.trim_end().ends_with(&plain_on), secs(10));
+        assert_eq!(
+            track_json(&dirs, EX_PLAIN)["exports"]["slow_count_in"],
+            true
+        );
+
+        // 3. Layout with the longer text.
+        settle();
+        shot("export-slow-1280");
+        let (o1280, w1280, h1280) = layout_values(&app);
+        let (o1024, w1024, h1024) = layout_at(&app, &wid, 1024, 640);
+        shot("export-slow-1024");
+        let _ = layout_at(&app, &wid, 1280, 800);
+        let _ = std::fs::write(
+            repo().join("target/gui-shots/export-slow-layout.txt"),
+            format!(
+                "1280x800 overflow={o1280} width={w1280} hscroll={h1280}\n\
+                 1024x640 overflow={o1024} width={w1024} hscroll={h1024}\n"
+            ),
+        );
+        assert!(o1280 <= 14, "overflow {o1280} at 1280x800");
+        assert!(h1280 <= 0, "horizontal overflow {h1280} at 1280x800");
+        assert!(h1024 <= 0, "horizontal overflow {h1024} at 1024x640");
+
+        // 4. Slow export: 4 s of silence, 4 beats at 60 BPM, then the original.
+        set_memory(&app, &wid, "5");
+        press(&app, &wid, BTN_RC5);
+        app.wait_line(|l| l.contains("dialog start kind=export-rc5"), secs(10));
+        wait_done(&mut app);
+        let l = wait_has(&app, "calliope: export start", secs(10));
+        assert!(
+            l.contains("slow=true")
+                && l.contains("silence_frames=176400")
+                && l.contains("lead_frames=352800"),
+            "{l}"
+        );
+        let (_, w, _) = read_wav(&target);
+        let original = w.len() - 352800;
+        assert!(
+            (original as i64 - 44100 * 4).abs() < 5000,
+            "the original is about 4 s, got {original}"
+        );
+        assert!(w[..176400].iter().all(|&v| v == 0.0), "silence");
+        assert!(
+            w[176400..176400 + 400].iter().any(|&v| v != 0.0),
+            "the first tick is at 176400"
+        );
+
+        // 5. The switch is per track.
+        pick(&mut app, &wid, "mono backing", EX_MONO);
+        app.wait_line(|l| l.contains(&count_in(EX_MONO, false)), secs(10));
+        pick(&mut app, &wid, "plain mp3", EX_PLAIN);
+        app.wait_line(|l| l.trim_end().ends_with(&plain_on), secs(10));
+        wait_has(&app, "export last id=", secs(10));
+        app.assert_no_real_audio();
+    }
+
+    // 6. After a restart both tracks have their own value.
+    let (mut app, wid) = start(&dirs, &ans, &[]);
+    pick(&mut app, &wid, "plain mp3", EX_PLAIN);
+    app.wait_line(|l| l.trim_end().ends_with(&plain_on), secs(10));
+    pick(&mut app, &wid, "mono backing", EX_MONO);
+    app.wait_line(|l| l.contains(&count_in(EX_MONO, false)), secs(10));
+    pick(&mut app, &wid, "plain mp3", EX_PLAIN);
+    app.wait_line(|l| l.trim_end().ends_with(&plain_on), secs(10));
+
+    // 7. Off again: the key is gone and the export is short again (after the overwrite question).
+    press(&app, &wid, SLOW_SWITCH);
+    app.wait_line(
+        |l| l.contains(&format!("export slow id={EX_PLAIN} on=false result=saved")),
+        secs(10),
+    );
+    app.wait_line(|l| l.trim_end().ends_with(&plain_off), secs(10));
+    assert!(
+        track_json(&dirs, EX_PLAIN)["exports"]
+            .get("slow_count_in")
+            .is_none(),
+        "{}",
+        track_json(&dirs, EX_PLAIN)
+    );
+    settle();
+    press(&app, &wid, BTN_RC5);
+    app.wait_line(|l| l.contains("dialog start kind=export-rc5"), secs(10));
+    app.wait_line(
+        |l| l.contains("export prepare target=rc5 result=plan exists=true"),
+        secs(10),
+    );
+    app.key(&wid, "Tab Return");
+    let l = app.wait_line(|l| l.contains("export confirm answer="), secs(10));
+    assert!(l.contains("answer=yes"), "{l}");
+    wait_done(&mut app);
+    let (_, w, _) = read_wav(&target);
+    assert!(
+        (w.len() as i64 - 176400 - 44100 * 4).abs() < 5000,
+        "176400 + original, got {}",
+        w.len()
+    );
+    assert!(w.len() < 352800 + 44100 * 4 - 100_000, "shorter than slow");
+
+    // 8. Everything was used, nothing else changed.
+    assert_eq!(app.count("dialog start kind=export-rc5"), 1);
+    assert_eq!(app.count("e2e dialog script mismatch"), 0);
+    assert_eq!(snap(&dirs), before, "the repository must not change");
+    app.assert_no_real_audio();
+    app.no_csp_violation();
+}
+
+#[test]
+#[ignore]
 fn export_rc5_refusals() {
     if !ready() {
         return;
@@ -710,7 +861,10 @@ fn export_mp3_and_ogg() {
     )
     .parse()
     .unwrap();
-    assert!((dur - 6.0).abs() < 0.2, "4 s + 2 s count-in, got {dur}");
+    assert!(
+        (dur - 8.0).abs() < 0.2,
+        "4 s + 2 s silence + 2 s count-in, got {dur}"
+    );
 
     press(&app, &wid, BTN_OGG);
     let l = app.wait_line(|l| l.contains("dialog start kind=export-audio"), secs(10));

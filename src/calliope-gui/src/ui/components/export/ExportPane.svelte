@@ -82,7 +82,8 @@
   // Logs the pane's overflow and width once its size has settled.
   onMount(() => {
     if (!pane || typeof ResizeObserver === 'undefined') return;
-    const el = pane;
+    // The pane grows with its content; the scrolling happens in the section around it.
+    const el = pane.parentElement ?? pane;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ro = new ResizeObserver(() => {
       clearTimeout(timer);
@@ -94,6 +95,7 @@
       }, 300);
     });
     ro.observe(el);
+    ro.observe(pane);
     return () => {
       clearTimeout(timer);
       ro.disconnect();
@@ -103,7 +105,7 @@
   const viewLook = 'border-transparent bg-transparent dark:bg-transparent';
 </script>
 
-<div bind:this={pane} class="flex min-w-0 flex-col gap-4" data-testid="export-pane">
+<div bind:this={pane} class="flex min-w-0 flex-col gap-3" data-testid="export-pane">
   <div class="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1">
     <label for="export-band" class="text-sm font-medium">Band</label>
     <Input id="export-band" value={track?.band ?? ''} readonly disabled={!track} class={viewLook} />
@@ -127,13 +129,13 @@
     </div>
   </div>
 
-  <fieldset class="flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4">
+  <fieldset class="flex min-w-0 flex-col gap-2 rounded-lg border border-border p-4">
     <legend class="px-2 text-sm font-medium">Export...</legend>
     <!-- Each "Last:" line sits under its button, so the rows' heights do not depend on the text. -->
     <div class="flex flex-col gap-1">
       <div class="flex flex-wrap items-center gap-3">
         <Button
-          class="h-[3.25rem] w-44"
+          class="h-11 w-44"
           {disabled}
           onclick={() => void exportTo('rc5', track)}
         >to BOSS RC-5</Button>
@@ -166,11 +168,11 @@
       <p class="min-h-5 min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-rc5">{lastText('rc5', info?.last)}</p>
     </div>
     <div class="flex flex-col gap-1">
-      <Button class="h-[3.25rem] w-44" {disabled} onclick={() => void exportTo('mp3', track)}>MP3 file</Button>
+      <Button class="h-11 w-44" {disabled} onclick={() => void exportTo('mp3', track)}>MP3 file</Button>
       <p class="min-h-10 min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-mp3">{lastText('mp3', info?.last)}</p>
     </div>
     <div class="flex flex-col gap-1">
-      <Button class="h-[3.25rem] w-44" {disabled} onclick={() => void exportTo('ogg', track)}>OGG file</Button>
+      <Button class="h-11 w-44" {disabled} onclick={() => void exportTo('ogg', track)}>OGG file</Button>
       <p class="min-h-10 min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-ogg">{lastText('ogg', info?.last)}</p>
     </div>
     <p role="status" class="min-h-5 text-sm text-muted-foreground" data-testid="export-reason">{reason ?? ''}</p>

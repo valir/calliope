@@ -315,6 +315,20 @@
   always ask. Measured (pane `overflow` / `hscroll`, with the "To:" row filled and a result line shown):
   1280x800 overflow 0, hscroll 0; 1024x640 overflow 0, hscroll 0 (the Memory box wraps below its button and
   the long path takes two lines there).
+- (gui-export-slow-count-in) Slow count-in switch. Under the count-in line sits a row with a switch and the label
+  "Slow count-in (half tempo)" (min height 1.5 rem); it adds 28 px, and the "Export..." group and everything below it move
+  down by that much. The switch is per track and saved at once (key `exports.slow_count_in` in `track.json`, removed
+  again when it is off). It is disabled when the track has no count-in (no tempo, no mix) or is not available, while an
+  export runs or is being prepared, while the overwrite question is open, and while a save is in flight. The count-in line
+  reads "Count-in: 4 beats at 120 BPM, after 2.0 s of silence (adds 4.0 s)", and with the switch on "Count-in: 4 beats at
+  60 BPM (half of 120), after 4.0 s of silence (adds 8.0 s)"; it fits one line at 1280x800 and wraps to two at 1024x640.
+  To pay for the row, the pane gap went from 1 rem to 0.75 rem, the group gap from 0.75 rem to 0.5 rem and the three export
+  buttons from 3.25 rem to 2.75 rem tall. The `export layout` probe now measures the scrolling section around the pane
+  (before, it measured the pane itself and always read 0, so the earlier "overflow 0" values were not real; the real value
+  before this change was about 7 px with a result line). Button centres at 1280x800 (window coordinates, "To:" row and
+  result line included): to BOSS RC-5 (748, 308), Memory box (971, 308), MP3 (748, 434), OGG (748, 542), switch (655, 216).
+  Measured (scrolling section `overflow` / `hscroll`): 1280x800 overflow 3, hscroll 0; 1024x640 overflow 235 to 248
+  (vertical scrolling), hscroll 0.
 - (gui-first-beat) Player waveform: the part before the first beat is dimmed (the background colour at 60 % over
   it). The first bar is drawn like the other bars, also at 0:00, with its BPM label to its right; it is dragged
   and moved by keys like the others, and its readout reads "+N/64 beat (time) from the found start". The "Find
