@@ -75,6 +75,7 @@ const COMMANDS: &[&str] = &[
     "export_info",
     "prepare_export",
     "choose_rc5_folder",
+    "set_slow_count_in",
     "start_export",
     "cancel_export",
     "get_export",

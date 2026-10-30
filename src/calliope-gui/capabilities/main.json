@@ -59,6 +59,7 @@
     "allow-export-info",
     "allow-prepare-export",
     "allow-choose-rc5-folder",
+    "allow-set-slow-count-in",
     "allow-start-export",
     "allow-cancel-export",
     "allow-get-export",
