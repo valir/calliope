@@ -2626,3 +2626,212 @@ fn ac_slow_toggle_writes_only_the_key_and_survives_a_library_save() {
     assert!(repo.load_record(&id(401)).unwrap().slow_count_in);
     assert!(e.info(401).count_in.unwrap().slow);
 }
+
+// ==== QA: slow count-in edge cases (tempos, 48 kHz, stale values, switch during an export) ====
+
+/// Exports `n` (RC-5, switch `slow`) and checks the whole layout against the formula:
+/// `silence` zeros, the ticks at `silence + round(beats * f * beat)`, zeros between, the
+/// original bit for bit from the lead on. `bpm` is the track's tempo.
+fn check_layout(e: &Env, n: u32, file: &str, bpm: f64, slow: bool) {
+    let (wl, _) = slow_wav(e, n, slow);
+    let (ol, _) = decode(&e.repo.join("tracks").join(id(n)).join(file));
+    let beat = (44100.0 * 60.0 / bpm).round();
+    let f = if slow { 2.0 } else { 1.0 };
+    let silence = (4.0 * f * beat) as usize;
+    let lead = 2 * silence;
+    // The 48 kHz source is resampled, so its length may differ by a frame.
+    assert!(wl.len().abs_diff(lead + ol.len()) <= 1, "{n} {bpm} {slow}");
+    assert!(
+        wl[..silence].iter().all(|&v| v == 0.0),
+        "{n} {bpm}: silence"
+    );
+    let ticks: Vec<usize> = [0.0, 1.0, 2.0, 2.5, 3.0, 3.5]
+        .iter()
+        .map(|b| silence + (b * f * beat).round() as usize)
+        .collect();
+    let resampled = file == "backing.flac" && n == 405;
+    if !resampled {
+        for &t in &ticks {
+            let o = tick_onset(&wl, &ol, lead, t.saturating_sub(100), t + 400)
+                .unwrap_or_else(|| panic!("{bpm}: no tick near {t}"));
+            assert!(
+                o + 3 >= t && o <= t + 3,
+                "{bpm} slow={slow}: tick {t} at {o}"
+            );
+        }
+        for k in lead..wl.len().min(lead + ol.len()) {
+            assert_eq!(wl[k], ol[k - lead], "{bpm} slow={slow}: sample {k}");
+        }
+    }
+    // Silence between the silence and the first tick, and right before the first beat, holds.
+    assert!(wl[silence..ticks[0]].is_empty() || wl[silence..ticks[0]].iter().all(|&v| v == 0.0));
+    let last = *ticks.last().unwrap() + 1400;
+    assert!(
+        last < lead,
+        "{bpm}: the last tick must end before the first beat"
+    );
+}
+
+#[test]
+fn ac_slow_edge_tempos_odd_beats_fast_and_slow() {
+    // 117.3 and 143.7 BPM give odd beat lengths (rounded half ticks); 300 is very fast;
+    // 40 is slow.
+    for bpm in [117.3, 143.7, 300.0, 40.0] {
+        for slow in [false, true] {
+            let mut e = Env::new();
+            write_tempo(&mut e, 401, tempo(4, 0, bpm));
+            check_layout(&e, 401, "backings/backing.flac", bpm, slow);
+        }
+    }
+    // The BPMs above include at least one odd beat length.
+    assert!([117.3f64, 143.7]
+        .iter()
+        .any(|b| (44100.0 * 60.0 / b).round() as u64 % 2 == 1));
+}
+
+#[test]
+fn ac_slow_48k_source_has_the_slow_silence_and_the_original_after_it() {
+    let e = Env::new();
+    let (wl, _) = slow_wav(&e, 405, true);
+    // 100 BPM: beat 26460 frames; silence 8 beats (4.8 s), count-in 8 beats.
+    let beat = 26460usize;
+    let lead = 16 * beat;
+    assert!(wl.len().abs_diff(lead + 176400) <= 1, "{}", wl.len());
+    assert!(wl[..8 * beat].iter().all(|&v| v == 0.0));
+    assert!(
+        wl[8 * beat..8 * beat + 400].iter().any(|v| v.abs() > 0.01),
+        "first tick"
+    );
+    let tone = &wl[lead + 20000..lead + 40000];
+    assert!(goertzel(tone, 1000.0) > 5.0 * goertzel(tone, 440.0));
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_slow_stale_or_hand_edited_values_mean_normal() {
+    for bad in [
+        serde_json::json!("true"),
+        serde_json::json!(1),
+        serde_json::json!(null),
+        serde_json::json!([true]),
+        serde_json::json!(false),
+    ] {
+        let e = Env::new();
+        let p = track_json(&e, 401);
+        let mut j: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        j["exports"] = serde_json::json!({ "slow_count_in": bad.clone() });
+        std::fs::write(&p, serde_json::to_vec(&j).unwrap()).unwrap();
+        assert!(!e.info(401).count_in.unwrap().slow, "{bad}");
+        let (wl, _) = slow_wav_keep(&e, 401);
+        assert_eq!(
+            wl.len(),
+            176400 + original_401(&e).0.len(),
+            "{bad}: normal length"
+        );
+    }
+    // `exports` itself is junk: reads as normal, and switching on repairs it.
+    for junk in [
+        serde_json::json!("x"),
+        serde_json::json!([1, 2]),
+        serde_json::json!(7),
+    ] {
+        let e = Env::new();
+        let p = track_json(&e, 401);
+        let mut j: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        j["exports"] = junk.clone();
+        std::fs::write(&p, serde_json::to_vec(&j).unwrap()).unwrap();
+        assert!(!e.info(401).count_in.unwrap().slow, "{junk}");
+        assert!(e.slow(401, true).count_in.unwrap().slow, "{junk}");
+        assert!(e.info(401).count_in.unwrap().slow, "{junk}");
+    }
+}
+
+/// Like `slow_wav` but leaves the stored switch alone.
+fn slow_wav_keep(e: &Env, n: u32) -> (Vec<f32>, Vec<f32>) {
+    let base = e.rc5(&format!("keep-{n}"));
+    let (_, s) = e.export(n, rc5("7"), &base);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let (_, l, r) = read_wav(&wav_path(&base, 7));
+    (l, r)
+}
+
+#[test]
+fn ac_slow_switch_during_a_running_export_only_affects_the_next_one() {
+    let e = Env::new();
+    let base = e.rc5("during");
+    e.answer(&rc5("7"), &base);
+    let plan = e.prepare(401, rc5("7")).unwrap().unwrap();
+    e.start(&plan.token, plan.exists).unwrap();
+    // The switch is flipped right after the start (the running job fixed its count-in).
+    let info = e.slow(401, true);
+    assert!(info.count_in.unwrap().slow);
+    assert_eq!(e.wait().phase, ExportPhase::Done);
+    let (_, l, _) = read_wav(&wav_path(&base, 7));
+    assert_eq!(
+        l.len(),
+        176400 + original_401(&e).0.len(),
+        "the running export stays normal"
+    );
+    // The finished export's record did not drop the switch.
+    assert!(e.info(401).count_in.unwrap().slow);
+    let j: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(track_json(&e, 401)).unwrap()).unwrap();
+    assert_eq!(j["exports"]["slow_count_in"], serde_json::json!(true));
+    assert!(j["exports"].get("rc5").is_some());
+    // The next export is slow.
+    let base2 = e.rc5("after");
+    let (_, s) = e.export(401, rc5("8"), &base2);
+    assert_eq!(s.phase, ExportPhase::Done);
+    let (_, l, _) = read_wav(&wav_path(&base2, 8));
+    assert_eq!(l.len(), 352800 + original_401(&e).0.len());
+}
+
+#[test]
+fn ac_slow_overwrite_question_then_switch_exports_with_the_current_switch() {
+    let e = Env::new();
+    let base = e.rc5("ow");
+    let (_, s) = e.export(401, rc5("7"), &base);
+    assert_eq!(s.phase, ExportPhase::Done);
+    e.answer(&rc5("7"), &base);
+    let plan = e.prepare(401, rc5("7")).unwrap().unwrap();
+    assert!(plan.exists, "the overwrite question is open");
+    e.slow(401, true);
+    e.start(&plan.token, true).unwrap();
+    assert_eq!(e.wait().phase, ExportPhase::Done);
+    let (_, l, _) = read_wav(&wav_path(&base, 7));
+    assert_eq!(l.len(), 352800 + original_401(&e).0.len());
+}
+
+#[test]
+fn ac_slow_toggle_does_not_conflict_with_an_open_library_edit() {
+    let e = Env::new();
+    let repo = Repository::new(&e.repo);
+    let rec = repo.load_record(&id(401)).unwrap();
+    // The Library opened the edit here; the switch is toggled twice meanwhile.
+    e.slow(401, true);
+    e.slow(401, false);
+    e.slow(401, true);
+    let edits = calliope_gui::track_meta::TrackEdits {
+        band: rec.band.clone(),
+        album: rec.album.clone(),
+        title: "Renamed".into(),
+        composers: rec.composers.clone(),
+        year: rec.year,
+        source_url: None,
+        copyright: None,
+    };
+    repo.save_track(
+        SaveTrackRequest {
+            id: id(401),
+            revision: rec.revision.clone(),
+            edits,
+            tablatures: vec![],
+            position: None,
+            album_position: None,
+            group: vec![],
+        },
+        &|_| None,
+    )
+    .expect("no revision conflict after toggling the switch");
+    assert!(repo.load_record(&id(401)).unwrap().slow_count_in);
+}

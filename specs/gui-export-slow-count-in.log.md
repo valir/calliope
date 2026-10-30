@@ -8,3 +8,5 @@ task 6 | frontend types, state and texts | implementer | done
 task 7 | the switch in the Export pane | implementer | done
 task 8 | README | local | done
 task 9 | GUI e2e, visual review, docs/ui.md (layout probe fixed, pane spacing tightened) | implementer | done
+tester | 6 more acceptance tests, no functional defects; layout criterion fails as written | tester | done
+reviewer | CHANGES REQUIRED: 3 px overflow at 1280x800 (major), 2 minors | reviewer | done
