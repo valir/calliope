@@ -507,6 +507,7 @@ impl ExportState {
         token: &str,
         overwrite: bool,
         tempo: &TempoMap,
+        slow: bool,
         sink: Sink,
         on_done: OnDone,
     ) -> Result<ExportSnapshot, String> {
@@ -521,7 +522,7 @@ impl ExportState {
             drop(g);
             return refuse(kind, "busy", BUSY_MESSAGE);
         }
-        let Some(count_in) = count_in_plan(tempo, pl.rate) else {
+        let Some(count_in) = count_in_plan(tempo, pl.rate, slow) else {
             drop(g);
             return refuse(kind, "no-tempo", NO_TEMPO_REASON);
         };
@@ -602,14 +603,16 @@ impl ExportState {
             info_error: None,
         };
         eprintln!(
-            "calliope: export start job={job_id} id={} target={} path={} rate={} channels={} count_in={} first_beat_ms={} lead_frames={} skip_frames={} overwrite={overwrite}",
+            "calliope: export start job={job_id} id={} target={} path={} rate={} channels={} count_in={} slow={} first_beat_ms={} silence_frames={} lead_frames={} skip_frames={} overwrite={overwrite}",
             pl.id,
             kind.as_str(),
             pl.target.display(),
             pl.rate,
             pl.channels,
             count_in.bpm,
+            count_in.slow,
             tempo.segments[0].start_ms,
+            count_in.silence_frames,
             count_in.lead_frames,
             count_in.skip_frames,
         );

@@ -335,6 +335,7 @@ mod tests {
             modified: String::new(),
             revision: String::new(),
             exports: Default::default(),
+            slow_count_in: false,
             missing: vec![],
         }
     }

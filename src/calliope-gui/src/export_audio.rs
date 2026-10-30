@@ -1,6 +1,6 @@
 //! The audio pipeline of an export (plan sections 2.3 and 2.4): the count-in layout, the Player's
-//! click mixed at exact frames, and the run that streams `ffmpeg` (decoder) through Rust (4 beats
-//! of silence, the ticks) into the RC-5 WAV or into a second `ffmpeg` (encoder). No Tauri.
+//! click mixed at exact frames, and the run that streams `ffmpeg` (decoder) through Rust (silence
+//! as long as the count-in, then the count-in ticks) into the RC-5 WAV or into a second `ffmpeg` (encoder). No Tauri.
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -23,6 +23,9 @@ pub use crate::metronome::{LEAD_BEATS, TICK_BEATS};
 /// What `run` returns for a cancel.
 pub const CANCELLED: &str = "cancelled";
 
+/// How much farther apart the ticks (and so the silence) are with the slow count-in.
+pub const SLOW_SPACING: u64 = 2;
+
 /// Frames (not samples) per block of silence written at the start.
 const LEAD_BLOCK_FRAMES: usize = 4096;
 /// How long the job loop waits for decoded data before looking at the cancel flag.
@@ -33,6 +36,13 @@ const RECV_TIMEOUT: Duration = Duration::from_millis(50);
 pub struct CountInPlan {
     pub bpm: f64,
     pub beat_frames: u64,
+    /// The slow count-in (half tempo): the ticks and the silence are `SLOW_SPACING` times longer.
+    pub slow: bool,
+    /// The silence at the start of the file; as long as the count-in.
+    pub silence_frames: u64,
+    /// The count-in: `LEAD_BEATS` beats (times the spacing) of the track's tempo.
+    pub count_in_frames: u64,
+    /// Zeros written before the original: `silence_frames + count_in_frames` (ticks mixed in).
     pub lead_frames: u64,
     /// In the output: `lead + first - skip`.
     pub first_beat_frame: u64,
@@ -41,26 +51,34 @@ pub struct CountInPlan {
     pub ticks: [u64; 6],
 }
 
-/// The count-in for the first section of `map` at `rate`; `None` for an empty map. The beat is
-/// rounded once (`round(rate * 60 / bpm)`, as the Player's count-in), the first beat is
-/// `round(start_ms * rate / 1000)` frames into the original, each tick is `(first - skip) + round(offset * beat)`;
-/// `skip` is `first` when the first beat is set (the audio before it is dropped), else 0.
-pub fn count_in_plan(map: &TempoMap, rate: u32) -> Option<CountInPlan> {
+/// The silence and count-in for the first section of `map` at `rate`; `None` for an empty map.
+/// The beat is rounded once (`round(rate * 60 / bpm)`, as the Player's count-in); `f` is 1, or
+/// `SLOW_SPACING` when `slow`. The count-in is `LEAD_BEATS * f` beats, the silence before it is as
+/// long, the first beat is `round(start_ms * rate / 1000)` frames into the original, each tick is
+/// `silence + (first - skip) + round(offset * f * beat)`; `skip` is `first` when the first beat is
+/// set (the audio before it is dropped), else 0.
+pub fn count_in_plan(map: &TempoMap, rate: u32, slow: bool) -> Option<CountInPlan> {
     let seg = map.segments.first()?;
     if !(seg.bpm.is_finite() && seg.bpm > 0.0) {
         return None;
     }
     let beat = (f64::from(rate) * 60.0 / seg.bpm).round() as u64;
-    let lead = LEAD_BEATS * beat;
+    let f = if slow { SLOW_SPACING } else { 1 };
+    let count_in = LEAD_BEATS * f * beat;
+    let silence = count_in;
+    let lead = silence + count_in;
     let first = (seg.start_ms * f64::from(rate) / 1000.0).round().max(0.0) as u64;
     let skip = if map.first_beat_set() { first } else { 0 };
     let mut ticks = [0u64; 6];
     for (t, off) in ticks.iter_mut().zip(TICK_BEATS) {
-        *t = (first - skip) + (off * beat as f64).round() as u64;
+        *t = silence + (first - skip) + (off * (f * beat) as f64).round() as u64;
     }
     Some(CountInPlan {
         bpm: seg.bpm,
         beat_frames: beat,
+        slow,
+        silence_frames: silence,
+        count_in_frames: count_in,
         lead_frames: lead,
         first_beat_frame: lead + first - skip,
         skip_frames: skip,

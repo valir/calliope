@@ -437,7 +437,7 @@ fn ac_plain_backing_is_exportable() {
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     let (rate, l, _) = read_wav(&wav_path(&base, 3));
     assert_eq!(rate, 44100);
-    assert_seconds(l.len(), 6.0, 0.03);
+    assert_seconds(l.len(), 8.0, 0.03);
     e.repo_unchanged_except_exports();
 }
 
@@ -452,8 +452,8 @@ fn ac_rc5_memory_7() {
     assert_eq!(plan.path, wav_path(&base, 7).display().to_string());
     let (rate, l, r) = read_wav(&wav_path(&base, 7));
     assert_eq!(rate, 44100);
-    // 4 beats at 120 BPM (2.0 s) + the 4 s original.
-    assert_eq!(l.len(), 88200 + 176400);
+    // 2.0 s of silence + 4 beats at 120 BPM (2.0 s) + the 4 s original.
+    assert_eq!(l.len(), 176400 + 176400);
     let (ol, or) = decode(
         &e.repo
             .join("tracks")
@@ -461,12 +461,13 @@ fn ac_rc5_memory_7() {
             .join("backings/backing.flac"),
     );
     assert_eq!(ol.len(), 176400);
-    // The original is unchanged after the lead; the ticks are all inside the lead.
+    // The original is unchanged after the lead; the ticks are all inside the count-in.
     assert!(
-        l[88200..] == ol[..] && r[88200..] == or[..],
+        l[176400..] == ol[..] && r[176400..] == or[..],
         "the original differs"
     );
-    assert!(l[..88200].iter().any(|&v| v != 0.0), "no ticks");
+    assert!(l[..88200].iter().all(|&v| v == 0.0), "silence first");
+    assert!(l[88200..176400].iter().any(|&v| v != 0.0), "no ticks");
     assert_eq!(
         std::fs::read_dir(wav_path(&base, 7).parent().unwrap())
             .unwrap()
@@ -521,7 +522,7 @@ fn ac_rc5_overwrite_confirmed() {
     e.start(&plan.token, true).unwrap();
     assert_eq!(e.wait().phase, ExportPhase::Done);
     let (_, l, _) = read_wav(&wav_path(&base, 7));
-    assert_eq!(l.len(), 88200 + 176400);
+    assert_eq!(l.len(), 176400 + 176400);
     assert_eq!(std::fs::read(dir.join("notes.txt")).unwrap(), b"mine");
     e.repo_unchanged_except_exports();
 }
@@ -553,7 +554,7 @@ fn ac_rc5_mono_becomes_stereo() {
     assert_eq!(rate, 44100);
     assert!(l == r, "both channels carry the same signal");
     assert!(l.iter().any(|v| v.abs() > 0.1));
-    assert_eq!(l.len(), 88200 + 176400);
+    assert_eq!(l.len(), 176400 + 176400);
     e.repo_unchanged_except_exports();
 }
 
@@ -583,10 +584,10 @@ fn ac_rc5_resamples_48k() {
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     let (rate, l, _) = read_wav(&wav_path(&base, 5));
     assert_eq!(rate, 44100);
-    // 4 beats at 100 BPM (2.4 s) + the 4 s original.
-    let want = 105840 + 176400;
+    // 2.4 s of silence + 4 beats at 100 BPM (2.4 s) + the 4 s original.
+    let want = 211680 + 176400;
     assert!(l.len().abs_diff(want) <= 1, "{} vs {want}", l.len());
-    let tone = &l[105840 + 20000..105840 + 40000];
+    let tone = &l[211680 + 20000..211680 + 40000];
     assert!(goertzel(tone, 1000.0) > 5.0 * goertzel(tone, 440.0));
     e.repo_unchanged_except_exports();
 }
@@ -608,7 +609,7 @@ fn ac_mp3_export() {
     assert_eq!(tag(&v, "album").as_deref(), Some("Export Tests"));
     assert_eq!(tag(&v, "track").as_deref(), Some("3"));
     assert_eq!(tag(&v, "date").as_deref(), Some("2021"));
-    assert_seconds(decode(&file).0.len(), 6.0, 0.03);
+    assert_seconds(decode(&file).0.len(), 8.0, 0.03);
     // A track with an odd name and no album.
     let (_, s) = e.export(409, TargetReq::Mp3, &out);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
@@ -635,7 +636,7 @@ fn ac_ogg_export() {
     assert_eq!(tag(&v, "title").as_deref(), Some("Stem Mix"));
     assert_eq!(tag(&v, "artist").as_deref(), Some(BAND));
     assert_eq!(tag(&v, "album").as_deref(), Some("Export Tests"));
-    assert_seconds(decode(&file).0.len(), 6.0, 0.03);
+    assert_seconds(decode(&file).0.len(), 8.0, 0.03);
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 1);
     e.repo_unchanged_except_exports();
 }
@@ -766,7 +767,7 @@ fn ac_remembered_after_restart() {
 #[test]
 fn ac_count_in_before_the_first_beat() {
     // (track, file, first beat frame in the original, lead frames, original length in frames)
-    for (n, first, lead) in [(406u32, 22050usize, 88200usize), (407, 132300, 105840)] {
+    for (n, first, lead) in [(406u32, 22050usize, 176400usize), (407, 132300, 211680)] {
         let e = Env::new();
         let wav_base = e.rc5("rc5");
         let out = e.folder("out");
@@ -790,18 +791,20 @@ fn ac_count_in_before_the_first_beat() {
             original.join("intro.flac")
         };
         let (ol, or) = decode(&src);
-        // Length: the original + 4 beats.
+        // Length: the original + 4 beats of silence + 4 beats of count-in.
         assert_eq!(wl.len(), lead + ol.len(), "{n}");
         assert_seconds(ml.len(), (lead + ol.len()) as f64 / 44100.0, 0.03);
-        // The ticks sit at first + {0, 1, 2, 2.5, 3, 3.5} beats; the last tick is at first + 3.5 beats, the first beat at the end of the 4-beat lead.
-        let beat = lead / 4;
+        // The ticks sit at silence + first + {0, 1, 2, 2.5, 3, 3.5} beats; the last tick is half a beat
+        // before the first beat, which is at the end of the lead (4 beats of silence + 4 of count-in).
+        let beat = lead / 8;
+        let silence = 4 * beat;
         let ticks: Vec<usize> = [0.0, 1.0, 2.0, 2.5, 3.0, 3.5]
             .iter()
-            .map(|o| first + (o * beat as f64).round() as usize)
+            .map(|o| silence + first + (o * beat as f64).round() as usize)
             .collect();
         assert_eq!(
             ticks[5],
-            first + (3.5 * beat as f64).round() as usize,
+            silence + first + (3.5 * beat as f64).round() as usize,
             "the last tick"
         );
         assert!(
@@ -809,9 +812,9 @@ fn ac_count_in_before_the_first_beat() {
             "half a beat after the last tick, then the first beat (no silent beat)"
         );
         assert_eq!(
-            first + 4 * beat,
+            silence + first + 4 * beat,
             lead + first,
-            "the first beat is 4 beats after the start"
+            "the first beat is 4 beats after the start of the count-in"
         );
         // WAV: silence + exactly six ticks until the original starts; the original after the lead
         // is bit-exact except under a tick that overlaps it.
@@ -918,11 +921,11 @@ fn ac_count_in_odd_beat_length_rounds_once_and_ticks_are_exact() {
     let first = (333.0f64 * 44.1).round() as usize;
     assert_eq!(
         l.len(),
-        4 * beat + 176400,
-        "original + exactly 4 beats, the beat rounded once"
+        8 * beat + 176400,
+        "original + exactly 4 beats of silence and 4 of count-in, the beat rounded once"
     );
-    for &t in &ticks_for(first, beat) {
-        let o = tick_onset(&l, &ol, 4 * beat, t.saturating_sub(200), t + 400)
+    for &t in &ticks_for(4 * beat + first, beat) {
+        let o = tick_onset(&l, &ol, 8 * beat, t.saturating_sub(200), t + 400)
             .unwrap_or_else(|| panic!("no tick near {t}"));
         assert!(o >= t && o <= t + 3, "tick at {t} starts at {o}");
     }
@@ -941,8 +944,8 @@ fn ac_count_in_ignores_speed_and_bar_length() {
     let (_, l, _) = read_wav(&wav_path(&base, 7));
     assert_eq!(
         l.len(),
-        88200 + 176400,
-        "always 4 beats at the first section's BPM, speed 100 %"
+        176400 + 176400,
+        "always 4 beats of silence and 4 of count-in at the first section's BPM, speed 100 %"
     );
     let info = e.info(401);
     assert_eq!(info.count_in.unwrap().lead_ms, 2000.0);
@@ -961,7 +964,7 @@ fn ac_count_in_uses_the_first_section_only_and_the_map_as_it_is_at_start() {
     let base = e.rc5("rc5");
     let (_, s) = e.export(401, rc5("1"), &base);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
-    assert_eq!(read_wav(&wav_path(&base, 1)).1.len(), 88200 + 176400);
+    assert_eq!(read_wav(&wav_path(&base, 1)).1.len(), 176400 + 176400);
 
     // The first beat moves between prepare and start: the ticks follow the new map.
     e.answer(&rc5("2"), &base);
@@ -976,14 +979,14 @@ fn ac_count_in_uses_the_first_section_only_and_the_map_as_it_is_at_start() {
             .join(id(401))
             .join("backings/backing.flac"),
     );
-    assert_eq!(l.len(), 88200 + 176400);
-    for &t in &ticks_for(44100, 22050) {
-        let o = tick_onset(&l, &ol, 88200, t.saturating_sub(200), t + 400)
+    assert_eq!(l.len(), 176400 + 176400);
+    for &t in &ticks_for(88200 + 44100, 22050) {
+        let o = tick_onset(&l, &ol, 176400, t.saturating_sub(200), t + 400)
             .unwrap_or_else(|| panic!("no tick near {t}"));
         assert!(o >= t && o <= t + 3, "tick at {t} starts at {o}");
     }
     assert!(
-        tick_onset(&l, &ol, 88200, 0, 44100).is_none(),
+        tick_onset(&l, &ol, 176400, 0, 88200 + 44100).is_none(),
         "nothing before the moved first tick"
     );
 
@@ -1089,7 +1092,7 @@ fn ac_destination_inside_the_repository_is_refused() {
 fn ac_mp3_and_ogg_keep_the_source_rate_and_channels() {
     let e = Env::new();
     let out = e.folder("out");
-    for (n, rate, ch, secs) in [(405u32, "48000", 2, 6.4), (404, "44100", 1, 6.0)] {
+    for (n, rate, ch, secs) in [(405u32, "48000", 2, 8.8), (404, "44100", 1, 8.0)] {
         for (t, ext, codec) in [
             (TargetReq::Mp3, "mp3", "mp3"),
             (TargetReq::Ogg, "ogg", "vorbis"),
@@ -1214,7 +1217,7 @@ fn ac_mp3_overwrite_needs_confirmation_and_replaces() {
     let plan = e.prepare(401, TargetReq::Mp3).unwrap().unwrap();
     e.start(&plan.token, true).unwrap();
     assert_eq!(e.wait().phase, ExportPhase::Done);
-    assert_seconds(decode(&f).0.len(), 6.0, 0.03);
+    assert_seconds(decode(&f).0.len(), 8.0, 0.03);
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 1);
     // A used token cannot start a second export.
     assert!(e.start(&plan.token, true).is_err());
@@ -1331,7 +1334,7 @@ fn ac_long_intro_is_kept_and_a_stem_or_other_files_are_never_exported() {
     let (_, s) = e.export(407, rc5("7"), &base);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     let (_, l, _) = read_wav(&wav_path(&base, 7));
-    let (lead, first) = (105840usize, 132300usize);
+    let (lead, first) = (211680usize, 132300usize);
     assert_eq!(l.len(), lead + 264600);
     // The original's 3 s of silence and its tone are where the original put them.
     let tone = |a: usize| goertzel(&l[a..a + 20000], 440.0);
@@ -1345,7 +1348,7 @@ fn ac_long_intro_is_kept_and_a_stem_or_other_files_are_never_exported() {
     let (_, s) = e.export(401, rc5("8"), &base);
     assert_eq!(s.phase, ExportPhase::Done);
     let (_, l, r) = read_wav(&wav_path(&base, 8));
-    let w = 88200 + 5000..88200 + 25000;
+    let w = 176400 + 5000..176400 + 25000;
     assert!(goertzel(&l[w.clone()], 330.0) > 5.0 * goertzel(&l[w.clone()], 550.0));
     assert!(goertzel(&r[w.clone()], 550.0) > 5.0 * goertzel(&r[w], 330.0));
     e.repo_unchanged_except_exports();
@@ -1872,8 +1875,9 @@ fn noisy_original(e: &Env) -> (Vec<f32>, Vec<f32>) {
     (l, r)
 }
 
-/// Checks `wl`/`wr` = 4-beat lead (silence and) with the six ticks at {0,1,2,2.5,3,3.5} beats, then the
-/// original from frame `first` on, bit for bit; the length is exactly 4 beats + the rest.
+/// Checks `wl`/`wr` = 4 beats of silence, then 4 beats of count-in with the six ticks at
+/// {0,1,2,2.5,3,3.5} beats, then the original from frame `first` on, bit for bit; the length is
+/// exactly 8 beats + the rest.
 fn assert_lead_then_audio(
     wl: &[f32],
     wr: &[f32],
@@ -1881,10 +1885,10 @@ fn assert_lead_then_audio(
     first: usize,
     beat: usize,
 ) {
-    let lead = 4 * beat;
+    let lead = 8 * beat;
     assert_eq!(wl.len(), lead + NOISY_FRAMES - first, "length");
     assert_eq!(wr.len(), wl.len());
-    let ticks = ticks_for(0, beat);
+    let ticks = ticks_for(4 * beat, beat);
     let in_tick = |k: usize| ticks.iter().any(|&t| k >= t && k < t + 1400);
     for (k, v) in wl[..lead].iter().enumerate() {
         if !in_tick(k) {
@@ -1914,7 +1918,7 @@ fn ac_first_beat_rc5_is_the_lead_then_the_audio_from_the_first_beat() {
     assert_eq!(rate, 44100);
     assert_lead_then_audio(&wl, &wr, &noisy_original(&e), 52920, 22050);
     // the faint noise (0.005) of the first 1.2 s is nowhere after the lead: the tone starts at once
-    assert!(wl[88200..88200 + 2000].iter().any(|v| v.abs() > 0.1));
+    assert!(wl[176400..176400 + 2000].iter().any(|v| v.abs() > 0.1));
     e.repo_unchanged_except_exports();
 }
 
@@ -1922,7 +1926,7 @@ fn ac_first_beat_rc5_is_the_lead_then_the_audio_from_the_first_beat() {
 fn ac_first_beat_mp3_and_ogg_have_the_same_length() {
     let mut e = Env::new();
     add_noisy(&mut e, first_beat_tempo(1200.0, Some(1200.0), 120.0));
-    let want = (88200 + NOISY_FRAMES - 52920) as f64 / 44100.0;
+    let want = (176400 + NOISY_FRAMES - 52920) as f64 / 44100.0;
     for (target, ext) in [(TargetReq::Mp3, "mp3"), (TargetReq::Ogg, "ogg")] {
         let out = e.folder(ext);
         let (_, s) = e.export(411, target, &out);
@@ -1938,7 +1942,7 @@ fn ac_first_beat_mp3_and_ogg_have_the_same_length() {
         // the lead is quiet before the tone: nothing of the 1.2 s noise-then-tone intro
         let tone = |a: usize| goertzel(&l[a..a + 4000], 440.0);
         assert!(
-            tone(88200 + 8000) > 20.0 * tone(88200 - 20000).max(1e-6),
+            tone(176400 + 8000) > 20.0 * tone(176400 - 20000).max(1e-6),
             "{ext}"
         );
     }
@@ -1990,7 +1994,7 @@ fn ac_first_beat_with_several_sections_uses_the_first_sections_tempo_and_start_o
 #[test]
 fn ac_first_beat_track_saved_before_the_feature_exports_everything() {
     // schema 6, a first beat at 1.2 s that was never "found": the full original after the lead,
-    // the lead's ticks where they were (first + k beats), as before the feature.
+    // the ticks where they were (first + k beats) after the silence.
     let mut e = Env::new();
     let mut t = first_beat_tempo(1200.0, None, 120.0);
     t["schema_version"] = 6.into();
@@ -2000,13 +2004,13 @@ fn ac_first_beat_track_saved_before_the_feature_exports_everything() {
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     let (_, wl, _) = read_wav(&wav_path(&base, 7));
     let (ol, _) = noisy_original(&e);
-    assert_eq!(wl.len(), 88200 + NOISY_FRAMES);
-    for &t in &ticks_for(52920, 22050) {
-        let o = tick_onset(&wl, &ol, 88200, t.saturating_sub(200), t + 400)
+    assert_eq!(wl.len(), 176400 + NOISY_FRAMES);
+    for &t in &ticks_for(88200 + 52920, 22050) {
+        let o = tick_onset(&wl, &ol, 176400, t.saturating_sub(200), t + 400)
             .unwrap_or_else(|| panic!("no tick near {t}"));
         assert!(o >= t && o <= t + 3, "tick at {t} starts at {o}");
     }
-    assert_eq!(&wl[88200 + 100000..], &ol[100000..], "untouched audio");
+    assert_eq!(&wl[176400 + 100000..], &ol[100000..], "untouched audio");
     e.repo_unchanged_except_exports();
 }
 

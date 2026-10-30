@@ -63,6 +63,8 @@ pub struct TrackRecord {
     pub revision: String,
     /// The last export to each destination (read leniently from `exports`).
     pub exports: TrackExports,
+    /// The export's slow count-in, from `exports.slow_count_in`.
+    pub slow_count_in: bool,
     /// Files listed in the metadata that are not on disk.
     pub missing: Vec<String>,
 }
@@ -400,6 +402,7 @@ impl Repository {
     fn record(dir: &Path, l: Loaded) -> TrackRecord {
         let m = l.meta;
         let exports = export_record::read(m.extra.get(EXPORTS_KEY));
+        let slow_count_in = export_record::slow_count_in(m.extra.get(EXPORTS_KEY));
         let missing = track_files(&m)
             .into_iter()
             .filter(|n| !dir.join(n).is_file())
@@ -426,6 +429,7 @@ impl Repository {
             modified: m.modified,
             revision: l.revision,
             exports,
+            slow_count_in,
             missing,
         }
     }
@@ -484,6 +488,18 @@ impl Repository {
                 eprintln!("calliope: export recorded id={id} target=ogg path={path} at={at}")
             }
         }
+        self.load_record(id)
+    }
+
+    /// Sets the track's slow count-in switch (`exports.slow_count_in`) and nothing else (not even
+    /// `modified`); writes only when it changes. The caller holds the repository lock.
+    pub fn set_slow_count_in(&self, id: &str, on: bool) -> Result<TrackRecord, String> {
+        let (dir, mut obj) = self.raw_meta(id)?;
+        let changed = export_record::set_slow_count_in(&mut obj, on);
+        if changed {
+            Self::write_raw(&dir, obj)?;
+        }
+        eprintln!("calliope: export count-in id={id} slow={on} changed={changed}");
         self.load_record(id)
     }
 

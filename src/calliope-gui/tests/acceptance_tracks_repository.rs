@@ -918,6 +918,7 @@ fn newer_schema_track_is_a_problem_and_never_rewritten_or_deleted() {
         modified: "".into(),
         revision: fsutil::fnv1a64_hex(&bytes),
         exports: Default::default(),
+        slow_count_in: false,
         missing: vec![],
         position: None,
         album_position: None,

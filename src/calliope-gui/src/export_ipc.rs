@@ -8,7 +8,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::Manager;
 
-use crate::export_audio::LEAD_BEATS;
+use crate::export_audio::{LEAD_BEATS, SLOW_SPACING};
 use crate::export_job::{
     check_rc5_base, ExportEvent, ExportPlan, ExportSnapshot, ExportState, Finished, OnDone,
     PlanInput, Recorded, Sink, TargetReq, BUSY_MESSAGE, STALE_MESSAGE,
@@ -28,8 +28,14 @@ use crate::track_meta;
 pub struct CountInInfo {
     pub bpm: f64,
     pub first_beat_ms: f64,
-    /// `LEAD_BEATS` beats at `bpm`.
+    /// The track's slow count-in switch.
+    pub slow: bool,
+    /// `bpm`, or `bpm / 2` with the slow count-in.
+    pub count_in_bpm: f64,
+    /// The count-in: `LEAD_BEATS` beats at `count_in_bpm`.
     pub lead_ms: f64,
+    /// The silence before the count-in (as long as it).
+    pub silence_ms: f64,
     /// The audio before the first beat that the export leaves out (0 unless the first beat is set).
     pub skip_ms: f64,
 }
@@ -56,6 +62,29 @@ fn load(repo: &RepoState, id: &str) -> Result<(TrackRecord, PathBuf), String> {
     let r = Repository::new(root.clone());
     let rec = r.load_record(id)?;
     Ok((rec, r.tracks_dir().join(id)))
+}
+
+fn count_in_bpm(bpm: f64, slow: bool) -> f64 {
+    if slow {
+        bpm / SLOW_SPACING as f64
+    } else {
+        bpm
+    }
+}
+
+/// Sets the track's slow count-in switch and returns its fresh export info.
+pub fn do_set_slow_count_in(
+    repo: &RepoState,
+    settings: &SettingsStore,
+    store: &dyn TempoStore,
+    id: &str,
+    on: bool,
+) -> Result<ExportInfo, String> {
+    {
+        let root = repo.lock();
+        Repository::new(root.clone()).set_slow_count_in(id, on)?;
+    }
+    do_export_info(repo, settings, store, id)
 }
 
 pub fn do_export_info(
@@ -90,10 +119,14 @@ pub fn do_export_info(
     match tempo.segments.first() {
         Some(seg) if seg.bpm > 0.0 => {
             info.available = true;
+            let lead_ms = LEAD_BEATS as f64 * 60000.0 / count_in_bpm(seg.bpm, rec.slow_count_in);
             info.count_in = Some(CountInInfo {
                 bpm: seg.bpm,
                 first_beat_ms: seg.start_ms,
-                lead_ms: LEAD_BEATS as f64 * 60000.0 / seg.bpm,
+                slow: rec.slow_count_in,
+                count_in_bpm: count_in_bpm(seg.bpm, rec.slow_count_in),
+                lead_ms,
+                silence_ms: lead_ms,
                 skip_ms: tempo.play_start_ms(),
             });
         }
@@ -364,6 +397,10 @@ pub fn do_start_export(
     };
     // The track directory is the one the plan was made for, not the current repository root.
     let tempo = store.load(&plan.id, &plan.track_dir)?;
+    // The switch is read now, like the tempo map, so the file matches what the pane shows.
+    let slow = Repository::new(plan.repo_root.clone())
+        .load_record(&plan.id)?
+        .slow_count_in;
     let lock = repo.repo_lock();
     let root = plan.repo_root.clone();
     let on_done: OnDone = Box::new(move |f| {
@@ -372,7 +409,7 @@ pub fn do_start_export(
         }
         record_finished(&*lock, &root, f, &track_meta::now_rfc3339())
     });
-    export.start(token, overwrite, &tempo, sink, on_done)
+    export.start(token, overwrite, &tempo, slow, sink, on_done)
 }
 
 // ---- Tauri commands ----
@@ -391,6 +428,24 @@ where
     tauri::async_runtime::spawn_blocking(f)
         .await
         .map_err(|e| format!("internal error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn set_slow_count_in(
+    app: tauri::AppHandle,
+    id: String,
+    on: bool,
+) -> Result<ExportInfo, String> {
+    blocking(move || {
+        do_set_slow_count_in(
+            &app.state::<RepoState>(),
+            &app.state::<SettingsStore>(),
+            &**app.state::<Arc<dyn TempoStore>>(),
+            &id,
+            on,
+        )
+    })
+    .await
 }
 
 #[tauri::command]

@@ -2567,6 +2567,67 @@ fn record_export_keeps_a_v1_file_v1_and_refuses_problem_tracks() {
 }
 
 #[test]
+fn slow_count_in_is_stored_in_exports_without_touching_anything_else() {
+    let env = Env::new();
+    let rec = env.track("aaa", &[]);
+    assert!(!rec.slow_count_in);
+    let before = json_of(&env, "aaa");
+    let p = env.dir("aaa").join("track.json");
+
+    let on = env.repo.set_slow_count_in("aaa", true).unwrap();
+    assert!(on.slow_count_in);
+    assert_eq!((&on.modified, &on.revision), (&rec.modified, &rec.revision));
+    let after = json_of(&env, "aaa");
+    assert_eq!(after["exports"]["slow_count_in"], true);
+    assert_eq!(without_exports(after), before);
+
+    // on again: no write
+    let bytes = fs::read(&p).unwrap();
+    let mtime = fs::metadata(&p).unwrap().modified().unwrap();
+    assert!(
+        env.repo
+            .set_slow_count_in("aaa", true)
+            .unwrap()
+            .slow_count_in
+    );
+    assert_eq!(fs::read(&p).unwrap(), bytes);
+    assert_eq!(fs::metadata(&p).unwrap().modified().unwrap(), mtime);
+
+    // a Library save keeps the key
+    let saved = env.repo.save_track(req(&on, vec![]), &|_| None).unwrap();
+    assert!(saved.track.slow_count_in);
+    assert_eq!(json_of(&env, "aaa")["exports"]["slow_count_in"], true);
+
+    // off removes the key and the emptied exports
+    let off = env.repo.set_slow_count_in("aaa", false).unwrap();
+    assert!(!off.slow_count_in);
+    assert!(json_of(&env, "aaa").get("exports").is_none());
+
+    // off keeps the other export entries
+    env.repo
+        .record_export("aaa", &ExportEntry::Rc5 { memory: 4 }, "t")
+        .unwrap();
+    env.repo.set_slow_count_in("aaa", true).unwrap();
+    let off = env.repo.set_slow_count_in("aaa", false).unwrap();
+    assert_eq!(off.exports.rc5.unwrap().memory, 4);
+    assert!(json_of(&env, "aaa")["exports"]
+        .get("slow_count_in")
+        .is_none());
+}
+
+#[test]
+fn slow_count_in_refuses_problem_tracks() {
+    let env = Env::new();
+    env.track("aaa", &[]);
+    let p = env.dir("aaa").join("track.json");
+    fs::write(&p, b"{ not json").unwrap();
+    assert!(env.repo.set_slow_count_in("aaa", true).is_err());
+    assert_eq!(fs::read(&p).unwrap(), b"{ not json");
+    assert!(env.repo.set_slow_count_in("../x", true).is_err());
+    assert!(env.repo.set_slow_count_in("nope", true).is_err());
+}
+
+#[test]
 fn clear_rc5_holders_clears_the_others_and_keeps_their_files_entries() {
     let env = Env::new();
     for id in ["aaa", "bbb", "ccc", "ddd", "eee"] {

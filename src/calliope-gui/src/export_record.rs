@@ -10,6 +10,9 @@ use serde_json::{Map, Value};
 /// The top-level key in `track.json`; `track_meta::revision` ignores it.
 pub const EXPORTS_KEY: &str = "exports";
 
+/// The key inside `exports` that holds the track's slow count-in switch.
+pub const SLOW_COUNT_IN_KEY: &str = "slow_count_in";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Rc5Export {
     pub memory: u8,
@@ -107,6 +110,44 @@ pub fn set(obj: &mut Map<String, Value>, entry: &ExportEntry, at: &str) {
     slot.as_object_mut()
         .expect("just made an object")
         .insert(kind.into(), Value::Object(value));
+}
+
+/// The slow count-in switch of an `exports` value: true only for the JSON value `true`.
+pub fn slow_count_in(exports: Option<&Value>) -> bool {
+    exports
+        .and_then(Value::as_object)
+        .and_then(|o| o.get(SLOW_COUNT_IN_KEY))
+        .is_some_and(|v| v == &Value::Bool(true))
+}
+
+/// Sets `exports.slow_count_in`. On inserts `true` (making `exports` an object when needed);
+/// off removes the key, and `exports` when it ends up empty. True when something changed.
+pub fn set_slow_count_in(obj: &mut Map<String, Value>, on: bool) -> bool {
+    if on {
+        let slot = obj
+            .entry(EXPORTS_KEY)
+            .or_insert_with(|| Value::Object(Map::new()));
+        if !slot.is_object() {
+            *slot = Value::Object(Map::new());
+        }
+        let o = slot.as_object_mut().expect("just made an object");
+        if o.get(SLOW_COUNT_IN_KEY) == Some(&Value::Bool(true)) {
+            return false;
+        }
+        o.insert(SLOW_COUNT_IN_KEY.into(), Value::Bool(true));
+        true
+    } else {
+        let Some(exports) = obj.get_mut(EXPORTS_KEY).and_then(Value::as_object_mut) else {
+            return false;
+        };
+        if exports.remove(SLOW_COUNT_IN_KEY).is_none() {
+            return false;
+        }
+        if exports.is_empty() {
+            obj.remove(EXPORTS_KEY);
+        }
+        true
+    }
 }
 
 /// Removes `exports.rc5` (and `exports` when it ends up empty). True when something changed.
@@ -248,6 +289,59 @@ mod tests {
         let mut o = obj(json!({"exports": "junk"}));
         assert!(!clear_rc5(&mut o));
         assert_eq!(o["exports"], "junk");
+    }
+
+    #[test]
+    fn reads_the_slow_count_in_switch() {
+        assert!(slow_count_in(Some(&json!({"slow_count_in": true}))));
+        for v in [
+            json!({"slow_count_in": false}),
+            json!({"slow_count_in": "yes"}),
+            json!({"slow_count_in": 1}),
+            json!({"slow_count_in": null}),
+            json!({}),
+            json!("x"),
+            json!(true),
+        ] {
+            assert!(!slow_count_in(Some(&v)), "{v}");
+        }
+        assert!(!slow_count_in(None));
+        let with = json!({"rc5": {"memory": 3, "at": "t"}, "slow_count_in": true});
+        let without = json!({"rc5": {"memory": 3, "at": "t"}});
+        assert_eq!(read(Some(&with)), read(Some(&without)));
+    }
+
+    #[test]
+    fn sets_the_slow_count_in_switch() {
+        let mut o = Map::new();
+        assert!(set_slow_count_in(&mut o, true));
+        assert_eq!(o["exports"], json!({"slow_count_in": true}));
+        assert!(!set_slow_count_in(&mut o, true), "already on");
+        assert!(set_slow_count_in(&mut o, false));
+        assert!(!o.contains_key("exports"), "emptied exports is removed");
+        assert!(!set_slow_count_in(&mut o, false), "nothing to remove");
+
+        for bad in [json!("x"), json!(null), json!([1])] {
+            let mut o = obj(json!({"exports": bad}));
+            assert!(set_slow_count_in(&mut o, true));
+            assert_eq!(o["exports"], json!({"slow_count_in": true}));
+        }
+        let mut o = obj(json!({"exports": "junk"}));
+        assert!(!set_slow_count_in(&mut o, false));
+        assert_eq!(o["exports"], "junk");
+
+        let mut o = obj(json!({"exports": {
+            "rc5": {"memory": 1, "at": "t"}, "mp3": {"path": "/a.mp3"}, "flac": 5, "slow_count_in": false
+        }}));
+        assert!(set_slow_count_in(&mut o, true));
+        assert_eq!(o["exports"]["slow_count_in"], true);
+        assert_eq!(o["exports"]["flac"], 5);
+        assert_eq!(o["exports"]["mp3"], json!({"path": "/a.mp3"}));
+        assert!(set_slow_count_in(&mut o, false));
+        assert_eq!(
+            o["exports"],
+            json!({"rc5": {"memory": 1, "at": "t"}, "mp3": {"path": "/a.mp3"}, "flac": 5})
+        );
     }
 
     #[test]

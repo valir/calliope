@@ -89,6 +89,20 @@ impl Rig {
         do_export_info(&self.st, &self.settings, &FileTempoStore, &Self::id(n)).unwrap()
     }
 
+    fn slow(&self, n: u32, on: bool) -> Result<ExportInfo, String> {
+        do_set_slow_count_in(&self.st, &self.settings, &FileTempoStore, &Self::id(n), on)
+    }
+
+    /// The left channel of the RC-5 WAV of `memory` in `base`.
+    fn rc5_left(base: &Path, memory: u8) -> Vec<f32> {
+        let b = std::fs::read(base.join(format!("ROLAND/WAVE/{memory:03}_1/{memory:03}_1.WAV")))
+            .unwrap();
+        b[44..]
+            .chunks_exact(8)
+            .map(|f| f32::from_le_bytes([f[0], f[1], f[2], f[3]]))
+            .collect()
+    }
+
     fn prepare(&self, n: u32, t: TargetReq) -> Result<Option<ExportPlan>, String> {
         do_prepare_export(
             &self.st,
@@ -154,7 +168,10 @@ fn info_for_each_fixture() {
         Some(CountInInfo {
             bpm: 120.0,
             first_beat_ms: 0.0,
+            slow: false,
+            count_in_bpm: 120.0,
             lead_ms: 2000.0,
+            silence_ms: 2000.0,
             skip_ms: 0.0
         })
     );
@@ -177,7 +194,10 @@ fn info_for_each_fixture() {
         Some(CountInInfo {
             bpm: 100.0,
             first_beat_ms: 0.0,
+            slow: false,
+            count_in_bpm: 100.0,
             lead_ms: 2400.0,
+            silence_ms: 2400.0,
             skip_ms: 0.0
         })
     );
@@ -188,7 +208,10 @@ fn info_for_each_fixture() {
         Some(CountInInfo {
             bpm: 100.0,
             first_beat_ms: 3000.0,
+            slow: false,
+            count_in_bpm: 100.0,
             lead_ms: 2400.0,
+            silence_ms: 2400.0,
             skip_ms: 0.0
         })
     );
@@ -353,6 +376,97 @@ fn dialog_cancel_is_none() {
 }
 
 #[test]
+fn set_slow_count_in_changes_the_info_and_survives_a_restart() {
+    let rig = Rig::new();
+    let slow = rig.slow(401, true).unwrap();
+    assert_eq!(
+        slow.count_in,
+        Some(CountInInfo {
+            bpm: 120.0,
+            first_beat_ms: 0.0,
+            slow: true,
+            count_in_bpm: 60.0,
+            lead_ms: 4000.0,
+            silence_ms: 4000.0,
+            skip_ms: 0.0
+        })
+    );
+    // A restart: a fresh RepoState on the same folder.
+    let st = RepoState::new(rig.repo.clone(), Box::new(rig.picker.clone()));
+    let again = do_export_info(&st, &rig.settings, &FileTempoStore, &Rig::id(401)).unwrap();
+    assert_eq!(again, slow);
+    assert!(
+        !rig.info(405).count_in.unwrap().slow,
+        "other tracks stay off"
+    );
+    let normal = rig.slow(401, false).unwrap().count_in.unwrap();
+    assert_eq!(
+        (
+            normal.slow,
+            normal.count_in_bpm,
+            normal.lead_ms,
+            normal.silence_ms
+        ),
+        (false, 120.0, 2000.0, 2000.0)
+    );
+    // Not exportable: the switch is still stored, the info says why.
+    assert!(rig.slow(402, true).unwrap().count_in.is_none());
+}
+
+#[test]
+fn set_slow_count_in_with_an_unknown_id_writes_nothing() {
+    let rig = Rig::new();
+    let before = std::fs::read(
+        rig.repo
+            .join("tracks")
+            .join(Rig::id(401))
+            .join("track.json"),
+    );
+    for id in ["nope", "../x", ""] {
+        assert!(
+            do_set_slow_count_in(&rig.st, &rig.settings, &FileTempoStore, id, true).is_err(),
+            "{id}"
+        );
+    }
+    assert!(!rig.repo.join("tracks").join("nope").exists());
+    let after = std::fs::read(
+        rig.repo
+            .join("tracks")
+            .join(Rig::id(401))
+            .join("track.json"),
+    );
+    assert_eq!(before.unwrap(), after.unwrap());
+}
+
+#[test]
+fn export_with_the_slow_switch_on_is_slow_and_the_flag_is_read_at_start() {
+    let rig = Rig::new();
+    let base = rig.base("rc5");
+    rig.slow(401, true).unwrap();
+    rig.answer(&[format!("export-rc5 {}", base.display())]);
+    let plan = rig.prepare(401, Rig::rc5("7")).unwrap().unwrap();
+    rig.start(&plan.token, false).unwrap();
+    assert_eq!(rig.wait().phase, ExportPhase::Done);
+    let left = Rig::rc5_left(&base, 7);
+    assert_eq!(left.len(), 352800 + 176400);
+    assert!(left[..176400].iter().all(|&v| v == 0.0));
+    let click = Click::new(44100).samples().to_vec();
+    assert_eq!(
+        &left[176400 + 44100..176400 + 44100 + click.len()],
+        &click[..]
+    );
+
+    // Prepared with the switch off, switched on before the start: the file is slow.
+    rig.slow(401, false).unwrap();
+    rig.answer(&[format!("export-rc5 {}", base.display())]);
+    let plan = rig.prepare(401, Rig::rc5("8")).unwrap().unwrap();
+    rig.slow(401, true).unwrap();
+    rig.start(&plan.token, false).unwrap();
+    assert_eq!(rig.wait().phase, ExportPhase::Done);
+    assert_eq!(Rig::rc5_left(&base, 8).len(), 352800 + 176400);
+}
+
+#[test]
 fn start_rereads_the_tempo() {
     let rig = Rig::new();
     let base = rig.base("rc5");
@@ -377,8 +491,9 @@ fn start_rereads_the_tempo() {
         .map(|f| f32::from_le_bytes([f[0], f[1], f[2], f[3]]))
         .collect();
     let click = Click::new(44100).samples().to_vec();
-    assert_eq!(&left[66150..66150 + click.len()], &click[..]);
-    assert!(left[22050..22050 + click.len()].iter().all(|&v| v == 0.0));
+    // 88200 frames of silence, then the ticks from 88200 + 66150 (not 88200 + 22050).
+    assert_eq!(&left[154350..154350 + click.len()], &click[..]);
+    assert!(left[..110250 + click.len()].iter().all(|&v| v == 0.0));
     // Stale and emptied-map starts.
     assert_eq!(rig.start("x1", false).unwrap_err(), STALE_MESSAGE);
     rig.answer(&[format!("export-rc5 {}", base.display())]);

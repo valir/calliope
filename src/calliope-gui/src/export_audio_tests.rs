@@ -21,37 +21,38 @@ fn map(start_ms: f64, bpm: f64) -> TempoMap {
 
 #[test]
 fn plan_worked_examples() {
-    let p = count_in_plan(&map(500.0, 120.0), 44100).unwrap();
-    assert_eq!((p.beat_frames, p.lead_frames), (22050, 88200));
-    assert_eq!(p.ticks, [22050, 44100, 66150, 77175, 88200, 99225]);
-    assert_eq!(p.first_beat_frame, 110250);
+    let p = count_in_plan(&map(500.0, 120.0), 44100, false).unwrap();
+    assert_eq!((p.beat_frames, p.lead_frames), (22050, 176400));
+    assert_eq!((p.silence_frames, p.count_in_frames), (88200, 88200));
+    assert_eq!(p.ticks, [110250, 132300, 154350, 165375, 176400, 187425]);
+    assert_eq!(p.first_beat_frame, 198450);
     assert_eq!(p.bpm, 120.0);
-    let p = count_in_plan(&map(3000.0, 100.0), 44100).unwrap();
-    assert_eq!((p.beat_frames, p.lead_frames), (26460, 105840));
-    assert_eq!(p.ticks, [132300, 158760, 185220, 198450, 211680, 224910]);
-    assert_eq!(p.first_beat_frame, 238140);
+    let p = count_in_plan(&map(3000.0, 100.0), 44100, false).unwrap();
+    assert_eq!((p.beat_frames, p.lead_frames), (26460, 211680));
+    assert_eq!(p.ticks, [238140, 264600, 291060, 304290, 317520, 330750]);
+    assert_eq!(p.first_beat_frame, 343980);
 }
 
 #[test]
 fn plan_set_first_beat_skips_the_audio_before_it() {
     let mut m = map(1200.0, 120.0);
     m.segments[0].found_ms = Some(1200.0);
-    let p = count_in_plan(&m, 44100).unwrap();
+    let p = count_in_plan(&m, 44100, false).unwrap();
     assert_eq!(p.skip_frames, 52920);
-    assert_eq!(p.ticks, [0, 22050, 44100, 55125, 66150, 77175]);
-    assert_eq!(p.first_beat_frame, 88200);
+    assert_eq!(p.ticks, [88200, 110250, 132300, 143325, 154350, 165375]);
+    assert_eq!(p.first_beat_frame, 176400);
     assert_eq!(p.first_beat_frame, p.lead_frames);
-    let p = count_in_plan(&map(1200.0, 120.0), 44100).unwrap();
+    let p = count_in_plan(&map(1200.0, 120.0), 44100, false).unwrap();
     assert_eq!(p.skip_frames, 0);
-    assert_eq!(p.first_beat_frame, 88200 + 52920);
-    assert_eq!(p.ticks[0], 52920);
+    assert_eq!(p.first_beat_frame, 176400 + 52920);
+    assert_eq!(p.ticks[0], 88200 + 52920);
 }
 
 #[test]
 fn plan_empty_map_and_first_beat_at_zero() {
-    assert_eq!(count_in_plan(&TempoMap::default(), 44100), None);
-    let p = count_in_plan(&map(0.0, 120.0), 44100).unwrap();
-    assert_eq!(p.ticks, [0, 22050, 44100, 55125, 66150, 77175]);
+    assert_eq!(count_in_plan(&TempoMap::default(), 44100, false), None);
+    let p = count_in_plan(&map(0.0, 120.0), 44100, false).unwrap();
+    assert_eq!(p.ticks, [88200, 110250, 132300, 143325, 154350, 165375]);
     assert_eq!(p.first_beat_frame, p.lead_frames);
 }
 
@@ -61,49 +62,107 @@ fn plan_odd_beats_round_half_away_from_zero() {
         .map(|i| 120.0 + f64::from(i) / 10.0)
         .find(|b| ((44100.0f64 * 60.0 / b).round() as u64) % 2 == 1)
         .unwrap();
-    let p = count_in_plan(&map(0.0, bpm), 44100).unwrap();
+    let p = count_in_plan(&map(0.0, bpm), 44100, false).unwrap();
     let beat = (44100.0f64 * 60.0 / bpm).round() as u64;
     assert_eq!(p.beat_frames, beat);
-    assert_eq!(p.lead_frames, LEAD_BEATS * beat);
+    assert_eq!(p.lead_frames, 2 * LEAD_BEATS * beat);
     let half = (2.5 * beat as f64).round() as u64;
     // 2.5 * odd beat ends in .5 and goes up
     assert_eq!(beat % 2, 1, "the test needs an odd beat ({beat})");
-    assert_eq!(p.ticks[3], (5 * beat).div_ceil(2));
-    assert_eq!(p.ticks[3], half);
-    assert_eq!(p.ticks[5], (7 * beat).div_ceil(2));
+    let silence = p.silence_frames;
+    assert_eq!(p.ticks[3] - silence, (5 * beat).div_ceil(2));
+    assert_eq!(p.ticks[3] - silence, half);
+    assert_eq!(p.ticks[5] - silence, (7 * beat).div_ceil(2));
 }
 
 #[test]
 fn plan_extreme_tempos_other_rates_and_meter() {
-    let p = count_in_plan(&map(0.0, 300.0), 44100).unwrap();
+    let p = count_in_plan(&map(0.0, 300.0), 44100, false).unwrap();
     assert_eq!(p.beat_frames, 8820);
-    let p = count_in_plan(&map(0.0, 20.0), 44100).unwrap();
-    assert_eq!((p.beat_frames, p.lead_frames), (132300, 529200));
-    let p = count_in_plan(&map(0.0, 100.0), 48000).unwrap();
-    assert_eq!((p.beat_frames, p.lead_frames), (28800, 115200));
+    let p = count_in_plan(&map(0.0, 20.0), 44100, false).unwrap();
+    assert_eq!((p.beat_frames, p.lead_frames), (132300, 1058400));
+    let p = count_in_plan(&map(0.0, 100.0), 48000, false).unwrap();
+    assert_eq!((p.beat_frames, p.lead_frames), (28800, 230400));
     let mut three = map(500.0, 120.0);
     three.beats_per_bar = 3;
     assert_eq!(
-        count_in_plan(&three, 44100),
-        count_in_plan(&map(500.0, 120.0), 44100)
+        count_in_plan(&three, 44100, false),
+        count_in_plan(&map(500.0, 120.0), 44100, false)
     );
 }
 
 #[test]
 fn plan_later_first_beat_moves_the_ticks_only() {
-    let a = count_in_plan(&map(500.0, 120.0), 44100).unwrap();
-    let b = count_in_plan(&map(1500.0, 120.0), 44100).unwrap();
+    let a = count_in_plan(&map(500.0, 120.0), 44100, false).unwrap();
+    let b = count_in_plan(&map(1500.0, 120.0), 44100, false).unwrap();
     assert_eq!(a.lead_frames, b.lead_frames);
     for (x, y) in a.ticks.iter().zip(b.ticks) {
         assert_eq!(y - x, 44100);
     }
 }
 
+#[test]
+fn plan_normal_and_slow_at_120_bpm() {
+    let p = count_in_plan(&map(0.0, 120.0), 44100, false).unwrap();
+    assert!(!p.slow);
+    assert_eq!((p.silence_frames, p.count_in_frames), (88200, 88200));
+    assert_eq!(p.lead_frames, 176400);
+    assert_eq!(p.ticks, [88200, 110250, 132300, 143325, 154350, 165375]);
+    assert_eq!(p.first_beat_frame, 176400);
+    let p = count_in_plan(&map(0.0, 120.0), 44100, true).unwrap();
+    assert!(p.slow);
+    assert_eq!((p.silence_frames, p.count_in_frames), (176400, 176400));
+    assert_eq!(p.lead_frames, 352800);
+    let want = [0, 44100, 88200, 110250, 132300, 154350].map(|t| 176400 + t);
+    assert_eq!(p.ticks, want);
+    assert_eq!(p.first_beat_frame, 352800);
+    assert_eq!((p.bpm, p.beat_frames), (120.0, 22050));
+}
+
+#[test]
+fn plan_slow_with_a_set_or_unset_first_beat() {
+    let mut m = map(1200.0, 120.0);
+    m.segments[0].found_ms = Some(1200.0);
+    let p = count_in_plan(&m, 44100, true).unwrap();
+    assert_eq!(p.skip_frames, 52920);
+    assert_eq!(p.ticks[0], 176400);
+    assert_eq!(p.ticks[5], 176400 + 154350);
+    assert_eq!(p.first_beat_frame, 352800);
+    let p = count_in_plan(&map(1200.0, 120.0), 44100, true).unwrap();
+    assert_eq!(p.skip_frames, 0);
+    assert_eq!(p.ticks[0], 176400 + 52920);
+    assert_eq!(p.ticks[1], 176400 + 52920 + 44100);
+    assert_eq!(p.first_beat_frame, 352800 + 52920);
+}
+
+#[test]
+fn plan_slow_ticks_are_twice_as_far_for_any_bpm() {
+    for bpm in [60.0, 97.3, 117.3, 120.0, 143.7, 180.0, 233.3] {
+        let n = count_in_plan(&map(0.0, bpm), 44100, false).unwrap();
+        let s = count_in_plan(&map(0.0, bpm), 44100, true).unwrap();
+        assert_eq!(s.silence_frames, 2 * n.silence_frames, "{bpm}");
+        for k in 0..6 {
+            // Exact, except that 2.5 and 3.5 beats of an odd beat are rounded in the normal plan.
+            let (a, b) = (s.ticks[k] - s.silence_frames, n.ticks[k] - n.silence_frames);
+            assert!(a.abs_diff(2 * b) <= 1, "{bpm} tick {k}");
+            if n.beat_frames.is_multiple_of(2) || matches!(k, 0 | 1 | 2 | 4) {
+                assert_eq!(a, 2 * b, "{bpm} tick {k}");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_players_count_in_constants_are_unchanged() {
+    assert_eq!(crate::metronome::LEAD_BEATS, 4);
+    assert_eq!(crate::metronome::TICK_BEATS, [0.0, 1.0, 2.0, 2.5, 3.0, 3.5]);
+}
+
 // ---- mix_ticks ----
 
 #[test]
 fn mix_ticks_blocks_equal_one_block_and_leave_the_rest_alone() {
-    let plan = count_in_plan(&map(0.0, 120.0), 22050).unwrap();
+    let plan = count_in_plan(&map(0.0, 120.0), 22050, false).unwrap();
     let click = Click::new(22050).samples().to_vec();
     let total = 4 * 22050usize;
     let src: Vec<f32> = (0..total * 2)
@@ -151,6 +210,9 @@ fn mix_ticks_clamps_and_counts() {
     let plan = CountInPlan {
         bpm: 120.0,
         beat_frames: 10,
+        slow: false,
+        silence_frames: 20,
+        count_in_frames: 20,
         lead_frames: 40,
         first_beat_frame: 40,
         skip_frames: 0,
@@ -269,7 +331,7 @@ fn no_progress() -> impl FnMut(u64) {
 
 /// Renders to a WAV in a temp dir and returns the samples (after checking the header).
 fn render_wav(src: &Path, start_ms: f64, bpm: f64) -> (RunStats, Vec<f32>, CountInPlan) {
-    let plan = count_in_plan(&map(start_ms, bpm), 44100).unwrap();
+    let plan = count_in_plan(&map(start_ms, bpm), 44100, false).unwrap();
     let d = tempfile::tempdir().unwrap();
     let part = d.path().join("out.wav");
     let w = WavWriter::create(&part, 44100).unwrap();
@@ -331,7 +393,7 @@ fn wav_equals_lead_plus_original_with_ticks() {
         assert_eq!(got.len(), want.len(), "{n}");
         assert!(got == want, "{n}: samples differ");
         assert_eq!(stats.frames, (got.len() / 2) as u64);
-        assert_eq!(stats.frames, 88200 + 176400, "{n}");
+        assert_eq!(stats.frames, 176400 + 176400, "{n}");
         assert!(stats.clipped < 50);
     }
 }
@@ -341,22 +403,22 @@ fn long_intro_ticks_fall_in_silence() {
     let (_d, dir) = fixture(407);
     let src = dir.join("intro.flac");
     let (stats, got, plan) = render_wav(&src, 3000.0, 100.0);
-    assert_eq!(plan.first_beat_frame, 238140);
-    assert_eq!(stats.frames, 105840 + 264600);
+    assert_eq!(plan.first_beat_frame, 343980);
+    assert_eq!(stats.frames, 211680 + 264600);
     let click = Click::new(44100).samples().to_vec();
-    let mut want = vec![0.0f32; 238140 * 2];
+    let mut want = vec![0.0f32; 343980 * 2];
     mix_ticks(&mut want, 2, 0, &plan, &click);
     assert!(
-        got[..238140 * 2] == want[..],
+        got[..343980 * 2] == want[..],
         "silence + exactly the six ticks until the first beat"
     );
     for &t in &plan.ticks {
         let w = &left(&got)[t as usize..t as usize + click.len()];
         assert!(goertzel(w, 1500.0, 44100) > 0.05);
     }
-    let after = &left(&got)[238140..238140 + 20000];
+    let after = &left(&got)[343980..343980 + 20000];
     assert!(goertzel(after, 440.0, 44100) > 10.0 * goertzel(after, 1000.0, 44100));
-    let before = &left(&got)[238140 - 5000..238140];
+    let before = &left(&got)[343980 - 5000..343980];
     assert!(before.iter().all(|&v| v == 0.0));
 }
 
@@ -364,14 +426,14 @@ fn long_intro_ticks_fall_in_silence() {
 fn mono_becomes_stereo_and_48k_is_resampled() {
     let (_d, dir) = fixture(404);
     let (stats, got, _) = render_wav(&dir.join("backing.flac"), 0.0, 120.0);
-    assert_eq!(stats.frames, 88200 + 176400);
+    assert_eq!(stats.frames, 176400 + 176400);
     assert!(got.chunks_exact(2).all(|f| f[0] == f[1]));
     assert!(got.iter().any(|&v| v.abs() > 0.1));
 
     let (_d, dir) = fixture(405);
     let (stats, got, plan) = render_wav(&dir.join("backing.flac"), 0.0, 100.0);
-    assert_eq!(plan.lead_frames, 105840);
-    let want = 105840 + (4.0f64 * 44100.0).round() as u64;
+    assert_eq!(plan.lead_frames, 211680);
+    let want = 211680 + (4.0f64 * 44100.0).round() as u64;
     assert!(
         stats.frames.abs_diff(want) <= 1,
         "{} vs {want}",
@@ -408,7 +470,7 @@ fn encodes_mp3_and_ogg_with_tags() {
             };
             let part = out.path().join(format!(".t.{ext}.part"));
             std::fs::File::create(&part).unwrap();
-            let plan = count_in_plan(&map(start, 120.0), 44100).unwrap();
+            let plan = count_in_plan(&map(start, 120.0), 44100, false).unwrap();
             let tags = vec![
                 ("title", "Stem Mix".to_string()),
                 ("artist", "The Example Band".to_string()),
@@ -428,10 +490,10 @@ fn encodes_mp3_and_ogg_with_tags() {
                 &mut no_progress(),
             )
             .unwrap_or_else(|e| panic!("{n} {kind:?}: {e}"));
-            assert_eq!(stats.frames, 264600);
+            assert_eq!(stats.frames, 352800);
             let back = reference(&part, 44100, 2);
             let secs = (back.len() / 2) as f64 / 44100.0;
-            assert!((secs - 6.0).abs() <= 0.03, "{n} {kind:?}: {secs}");
+            assert!((secs - 8.0).abs() <= 0.03, "{n} {kind:?}: {secs}");
             let v = probe(&part, "format_tags:stream_tags");
             let mut tags = v["format"]["tags"].as_object().cloned().unwrap_or_default();
             tags.extend(
@@ -491,7 +553,7 @@ fn cancel_returns_promptly_and_leaves_no_child() {
             argv.display()
         ),
     );
-    let plan = count_in_plan(&map(0.0, 120.0), 44100).unwrap();
+    let plan = count_in_plan(&map(0.0, 120.0), 44100, false).unwrap();
     let part = d.path().join("out.wav");
     let w = WavWriter::create(&part, 44100).unwrap();
     let mut p = pipeline(Path::new("/x/song.flac"), 44100, 2, plan, &part);
@@ -531,7 +593,7 @@ fn encoder_failure_names_its_message_and_decoder_failure_too() {
         "echo 'No space left on device' >&2\nexit 1",
     );
     let part = d.path().join("out.mp3");
-    let plan = count_in_plan(&map(0.0, 120.0), 44100).unwrap();
+    let plan = count_in_plan(&map(0.0, 120.0), 44100, false).unwrap();
     let p = pipeline(&src, 44100, 2, plan.clone(), &part);
     let args = encoder_args(ExportKind::Mp3, 44100, 2, &[], &part);
     let e = run(
@@ -562,7 +624,7 @@ fn encoder_failure_names_its_message_and_decoder_failure_too() {
 fn progress_is_reported_up_to_the_end() {
     let (_d, dir) = fixture(401);
     let src = dir.join("backings/backing.flac");
-    let plan = count_in_plan(&map(0.0, 120.0), 44100).unwrap();
+    let plan = count_in_plan(&map(0.0, 120.0), 44100, false).unwrap();
     let d = tempfile::tempdir().unwrap();
     let part = d.path().join("o.wav");
     let w = WavWriter::create(&part, 44100).unwrap();
@@ -575,7 +637,7 @@ fn progress_is_reported_up_to_the_end() {
         calls += 1;
     })
     .unwrap();
-    assert_eq!(last, 264600);
+    assert_eq!(last, 352800);
     assert!(calls > 10);
 }
 
@@ -590,7 +652,7 @@ fn set_first_beat_wav_drops_the_noisy_lead_in() {
     .unwrap();
     let mut m = map(1200.0, 120.0);
     m.segments[0].found_ms = Some(1200.0);
-    let plan = count_in_plan(&m, 44100).unwrap();
+    let plan = count_in_plan(&m, 44100, false).unwrap();
     let part = d.path().join("out.wav");
     let w = WavWriter::create(&part, 44100).unwrap();
     let p = pipeline(&src, 44100, 2, plan.clone(), &part);
@@ -601,7 +663,7 @@ fn set_first_beat_wav_drops_the_noisy_lead_in() {
         &mut no_progress(),
     )
     .unwrap();
-    assert_eq!(stats.frames, 88200 + 229320 - 52920);
+    assert_eq!(stats.frames, 176400 + 229320 - 52920);
     let bytes = std::fs::read(&part).unwrap();
     let got: Vec<f32> = bytes[44..]
         .chunks_exact(4)
