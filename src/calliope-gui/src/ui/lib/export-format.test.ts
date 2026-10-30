@@ -13,7 +13,7 @@ const snap = (o: Partial<ExportSnapshot> = {}): ExportSnapshot => ({
 });
 const info = (o: Partial<ExportInfo> = {}): ExportInfo => ({
   id: 't1', available: true, reason: null, source: 'backings/backing.flac',
-  count_in: { bpm: 120, first_beat_ms: 0, lead_ms: 2000, skip_ms: 0 }, memory: 1,
+  count_in: { bpm: 120, first_beat_ms: 0, slow: false, count_in_bpm: 120, lead_ms: 2000, silence_ms: 2000, skip_ms: 0 }, memory: 1,
   last: { rc5: null, mp3: null, ogg: null }, ...o,
 });
 
@@ -35,9 +35,17 @@ describe('texts', () => {
     expect(progressText(snap())).toBe('Exporting Stem Mix to /m/Stem Mix.mp3 · 42 %');
   });
   it('countInText', () => {
-    expect(countInText(info())).toBe('Count-in: 4 beats at 120 BPM before the first beat (adds 2.0 s)');
-    expect(countInText(info({ count_in: { bpm: 120, first_beat_ms: 1200, lead_ms: 2000, skip_ms: 1200 } }))).toBe(
-      'Count-in: 4 beats at 120 BPM before the first beat (adds 2.0 s; the 1.2 s before the first beat are left out)',
+    const c = (o: Partial<NonNullable<ExportInfo['count_in']>>) =>
+      info({ count_in: { ...info().count_in!, ...o } });
+    expect(countInText(info())).toBe('Count-in: 4 beats at 120 BPM, after 2.0 s of silence (adds 4.0 s)');
+    expect(countInText(c({ first_beat_ms: 1200, skip_ms: 1200 }))).toBe(
+      'Count-in: 4 beats at 120 BPM, after 2.0 s of silence (adds 4.0 s; the 1.2 s before the first beat are left out)',
+    );
+    expect(countInText(c({ bpm: 180, slow: true, count_in_bpm: 90, lead_ms: 2666.7, silence_ms: 2666.7 }))).toBe(
+      'Count-in: 4 beats at 90 BPM (half of 180), after 2.7 s of silence (adds 5.3 s)',
+    );
+    expect(countInText(c({ slow: true, count_in_bpm: 60, lead_ms: 4000, silence_ms: 4000, skip_ms: 1200 }))).toBe(
+      'Count-in: 4 beats at 60 BPM (half of 120), after 4.0 s of silence (adds 8.0 s; the 1.2 s before the first beat are left out)',
     );
     expect(countInText(info({ count_in: null }))).toBe('');
     expect(countInText(null)).toBe('');

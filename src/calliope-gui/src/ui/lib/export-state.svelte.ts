@@ -4,6 +4,7 @@ import {
   exportInfo,
   frontendLog,
   prepareExport,
+  setSlowCountIn as saveSlowCountIn,
   startExport,
   watchExport,
   type ExportEvent,
@@ -31,6 +32,8 @@ export const ex = $state({
   rc5Quick: null as string | null,
   /** A "Change..." refusal, shown on the result line. */
   notice: '',
+  /** The slow count-in switch is being written. */
+  slowSaving: false,
 });
 
 let infoSeq = 0;
@@ -67,6 +70,7 @@ export function resetExport(): void {
   ex.confirm = null;
   ex.rc5Quick = null;
   ex.notice = '';
+  ex.slowSaving = false;
   startedBase = null;
   infoSeq = 0;
   filledFor = null;
@@ -227,6 +231,26 @@ export async function changeRc5Folder(): Promise<void> {
   } finally {
     void frontendLog(`export change result=${result}`);
     ex.preparing = false;
+  }
+}
+
+/** The slow count-in switch of the shown track: written at once, the info answer replaces `ex.info`. */
+export async function setSlowCountIn(on: boolean): Promise<void> {
+  if (!ex.info || ex.slowSaving || ex.preparing || isRunning() || ex.confirm) return;
+  const id = ex.info.id;
+  ex.slowSaving = true;
+  ex.message = '';
+  let result = 'failed';
+  try {
+    const info = await saveSlowCountIn(id, on);
+    ++infoSeq;
+    if (targetId === id) ex.info = info;
+    result = 'saved';
+  } catch (e) {
+    ex.message = String(e);
+  } finally {
+    void frontendLog(`export slow id=${id} on=${on} result=${result}`);
+    ex.slowSaving = false;
   }
 }
 

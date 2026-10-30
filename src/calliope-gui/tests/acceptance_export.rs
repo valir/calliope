@@ -11,8 +11,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use calliope_gui::export_ipc::{
-    do_choose_rc5_folder, do_export_info, do_prepare_export, do_start_export, remember_memory,
-    ExportInfo,
+    do_choose_rc5_folder, do_export_info, do_prepare_export, do_set_slow_count_in, do_start_export,
+    remember_memory, ExportInfo,
 };
 use calliope_gui::export_job::{
     ExportPhase, ExportPlan, ExportSnapshot, ExportState, Sink, TargetReq,
@@ -163,6 +163,10 @@ impl Env {
 
     fn info(&self, n: u32) -> ExportInfo {
         do_export_info(&self.st, &self.settings(), &FileTempoStore, &id(n)).unwrap()
+    }
+
+    fn slow(&self, n: u32, on: bool) -> ExportInfo {
+        do_set_slow_count_in(&self.st, &self.settings(), &FileTempoStore, &id(n), on).unwrap()
     }
 
     /// Scripts the folder dialog of `target` to answer `base`.
@@ -2394,4 +2398,231 @@ fn ac_quick_mp3_between_rc5_exports_keeps_the_skip() {
     let (_, s) = e.export(401, TargetReq::Mp3, &out);
     assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
     assert_eq!(e.picker.starts().len(), n + 1);
+}
+
+// ==== gui-export-slow-count-in: the lead silence and the slow count-in ====
+
+/// RC-5 export of track `n` with the switch `slow`; returns the WAV channels.
+fn slow_wav(e: &Env, n: u32, slow: bool) -> (Vec<f32>, Vec<f32>) {
+    e.slow(n, slow);
+    let base = e.rc5(&format!("rc5-{n}-{slow}"));
+    let (_, s) = e.export(n, rc5("7"), &base);
+    assert_eq!(s.phase, ExportPhase::Done, "{n} {s:?}");
+    let (_, l, r) = read_wav(&wav_path(&base, 7));
+    (l, r)
+}
+
+fn original_401(e: &Env) -> (Vec<f32>, Vec<f32>) {
+    decode(
+        &e.repo
+            .join("tracks")
+            .join(id(401))
+            .join("backings/backing.flac"),
+    )
+}
+
+/// Silence up to `silence`, ticks at `silence + offsets`, silence between them, the original after `lead`.
+fn check_401(e: &Env, slow: bool) {
+    let (wl, wr) = slow_wav(e, 401, slow);
+    let (ol, or) = original_401(e);
+    let f = if slow { 2 } else { 1 };
+    let silence = 88200 * f;
+    let lead = 2 * silence;
+    assert_eq!(wl.len(), lead + ol.len());
+    assert!(wl[..silence].iter().all(|&v| v == 0.0), "silence");
+    let ticks: Vec<usize> = [0, 22050, 44100, 55125, 66150, 77175]
+        .iter()
+        .map(|o| silence + o * f)
+        .collect();
+    for &t in &ticks {
+        let o = tick_onset(&wl, &ol, lead, t.saturating_sub(200), t + 400)
+            .unwrap_or_else(|| panic!("no tick near {t}"));
+        assert!(o + 3 >= t && o <= t + 3, "tick at {t} starts at {o}");
+    }
+    let in_tick = |k: usize| ticks.iter().any(|&t| k + 3 >= t && k < t + 1400);
+    for (k, v) in wl[..lead].iter().enumerate() {
+        if !in_tick(k) {
+            assert_eq!(*v, 0.0, "frame {k} should be silent");
+        }
+    }
+    for k in 0..ol.len() {
+        assert_eq!(wl[lead + k], ol[k], "left {k}");
+        assert_eq!(wr[lead + k], or[k], "right {k}");
+    }
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_slow_off_120_bpm_silence_ticks_first_beat() {
+    check_401(&Env::new(), false);
+}
+
+#[test]
+fn ac_slow_on_120_bpm_silence_ticks_first_beat() {
+    check_401(&Env::new(), true);
+}
+
+#[test]
+fn ac_slow_audio_from_the_first_beat_is_unchanged() {
+    for slow in [false, true] {
+        let mut e = Env::new();
+        add_noisy(&mut e, first_beat_tempo(1200.0, Some(1200.0), 120.0));
+        // (track, first frame of the first section, frames dropped, source file)
+        let cases = [
+            (401u32, 0usize, 0usize, "backings/backing.flac"),
+            (406, 22050, 0, "backings/backing.flac"),
+            (411, 52920, 52920, "audio.flac"),
+        ];
+        for (n, first, skip, file) in cases {
+            let (wl, wr) = slow_wav(&e, n, slow);
+            let (ol, or) = decode(&e.repo.join("tracks").join(id(n)).join(file));
+            let lead = if slow { 352800 } else { 176400 };
+            let first_beat = lead + first - skip;
+            assert_eq!(wl.len(), lead + ol.len() - skip, "{n} slow={slow}");
+            for k in 0..ol.len() - first {
+                assert_eq!(
+                    wl[first_beat + k],
+                    ol[first + k],
+                    "{n} slow={slow} left {k}"
+                );
+                assert_eq!(
+                    wr[first_beat + k],
+                    or[first + k],
+                    "{n} slow={slow} right {k}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn ac_slow_first_beat_set_still_drops_the_audio_before_it() {
+    let mut e = Env::new();
+    add_noisy(&mut e, first_beat_tempo(1200.0, Some(1200.0), 120.0));
+    let (wl, _) = slow_wav(&e, 411, true);
+    assert_eq!(wl.len(), 16 * 22050 + NOISY_FRAMES - 52920);
+    // the noise (0.005) of the first 1.2 s is nowhere: the tone starts at the first beat
+    assert!(wl[352800..352800 + 2000].iter().any(|v| v.abs() > 0.1));
+    // and the original's own 1.2 s of noise precedes nothing: the file ends with the tone
+
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_slow_per_track_survives_a_restart() {
+    let e = Env::new();
+    let repo = Repository::new(&e.repo);
+    let rev = repo.load_record(&id(401)).unwrap().revision;
+    assert!(e.slow(401, true).count_in.unwrap().slow);
+    assert!(!e.slow(406, false).count_in.unwrap().slow);
+    let st = RepoState::new(e.repo.clone(), Box::new(e.picker.clone()));
+    let info = |n: u32| {
+        do_export_info(&st, &e.settings(), &FileTempoStore, &id(n))
+            .unwrap()
+            .count_in
+            .unwrap()
+            .slow
+    };
+    assert!(info(401));
+    assert!(!info(406));
+    assert!(!info(407));
+    let j = |n: u32| -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(track_json(&e, n)).unwrap()).unwrap()
+    };
+    assert_eq!(j(401)["exports"]["slow_count_in"], serde_json::json!(true));
+    assert!(j(406).get("exports").is_none());
+    e.repo_unchanged_except_exports();
+    assert_eq!(repo.load_record(&id(401)).unwrap().revision, rev);
+}
+
+#[test]
+fn ac_slow_mp3_and_ogg_have_the_same_count_in_and_silence() {
+    let e = Env::new();
+    e.slow(401, true);
+    let (ol, _) = original_401(&e);
+    for (target, ext) in [(TargetReq::Mp3, "mp3"), (TargetReq::Ogg, "ogg")] {
+        let out = e.folder(ext);
+        let (_, s) = e.export(401, target, &out);
+        assert_eq!(s.phase, ExportPhase::Done, "{ext}: {s:?}");
+        let f = std::fs::read_dir(&out)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let (l, _) = decode(&f);
+        assert_seconds(l.len(), 8.0 + ol.len() as f64 / 44100.0, 0.06);
+        let peak = l[..4 * 44100 - 2000]
+            .iter()
+            .fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak < 0.01, "{ext}: the silence has a peak of {peak}");
+        for t in [4.0, 5.0, 6.0, 6.5, 7.0, 7.5] {
+            let a = (t * 44100.0) as usize + 50;
+            assert!(
+                goertzel(&l[a..a + 1300], 1500.0) > 0.02,
+                "{ext}: no tick at {t} s"
+            );
+        }
+        let a = 8 * 44100 + 8000;
+        let g = goertzel(&l[a..a + 4000], 440.0);
+        let want = goertzel(&ol[8000..12000], 440.0);
+        assert!(
+            want > 0.0 && g > 0.5 * want,
+            "{ext}: no tone after 8 s ({g}, original {want})"
+        );
+    }
+}
+
+#[test]
+fn ac_slow_info_texts_values() {
+    let mut e = Env::new();
+    write_tempo(&mut e, 401, tempo(4, 0, 180.0));
+    let c = e.info(401).count_in.unwrap();
+    assert!(!c.slow);
+    assert!((c.lead_ms - 1333.3).abs() < 0.1 && (c.silence_ms - 1333.3).abs() < 0.1);
+    let c = e.slow(401, true).count_in.unwrap();
+    assert!(c.slow);
+    assert_eq!(c.count_in_bpm, 90.0);
+    assert!((c.lead_ms - 2666.7).abs() < 0.1 && (c.silence_ms - 2666.7).abs() < 0.1);
+}
+
+#[test]
+fn ac_slow_toggle_writes_only_the_key_and_survives_a_library_save() {
+    let e = Env::new();
+    let repo = Repository::new(&e.repo);
+    let rec = repo.load_record(&id(401)).unwrap();
+    let rev = rec.revision.clone();
+    e.slow(401, true);
+    // only track.json of 401 differs, and only in `exports`
+    e.repo_unchanged_except_exports();
+    let now = tree(&e.repo);
+    for (k, v) in &now {
+        if !k.ends_with(&format!("{}/track.json", id(401))) {
+            assert!(v == &e.before[k], "{k} changed");
+        }
+    }
+    let edits = calliope_gui::track_meta::TrackEdits {
+        band: rec.band.clone(),
+        album: rec.album.clone(),
+        title: rec.title.clone(),
+        composers: rec.composers.clone(),
+        year: Some(2024),
+        source_url: None,
+        copyright: None,
+    };
+    repo.save_track(
+        SaveTrackRequest {
+            id: id(401),
+            revision: rev,
+            edits,
+            tablatures: vec![],
+            position: None,
+            album_position: None,
+            group: vec![],
+        },
+        &|_| None,
+    )
+    .unwrap();
+    assert!(repo.load_record(&id(401)).unwrap().slow_count_in);
+    assert!(e.info(401).count_in.unwrap().slow);
 }

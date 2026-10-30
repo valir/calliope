@@ -3,11 +3,13 @@
   import ConfirmDialog from '../ConfirmDialog.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
+  import { Label } from '$lib/components/ui/label/index.js';
+  import { Switch } from '$lib/components/ui/switch/index.js';
   import { Progress } from '$lib/components/ui/progress/index.js';
   import { lib, selectedTrack } from '$lib/library-state.svelte';
   import { frontendLog } from '$lib/ipc';
   import {
-    ex, answerConfirm, cancel, changeRc5Folder, exportTo, isRunning, loadInfo,
+    ex, answerConfirm, cancel, changeRc5Folder, exportTo, isRunning, loadInfo, setSlowCountIn,
   } from '$lib/export-state.svelte';
   import {
     confirmText, countInText, disabledReason, exportTarget, lastText, progressText, resultText,
@@ -19,6 +21,9 @@
   const reason = $derived(disabledReason(target, ex.info, running));
   const disabled = $derived(reason !== null || ex.preparing);
   const info = $derived(track && ex.info && ex.info.id === track.id ? ex.info : null);
+  const slowDisabled = $derived(
+    !info?.count_in || !info.available || running || ex.preparing || ex.confirm !== null || ex.slowSaving,
+  );
   const resultLine = $derived(
     ex.message !== '' ? `Export failed: ${ex.message}` : ex.notice !== '' ? ex.notice : resultText(ex.snap),
   );
@@ -46,6 +51,16 @@
     const line = `export target id=${id} kind=${kind} available=${available}`;
     if (line === lastTargetLog) return;
     lastTargetLog = line;
+    void frontendLog(line);
+  });
+
+  // One log line per change of the count-in text or of the track (GUI tests read it).
+  let lastCountInLog = '';
+  $effect(() => {
+    if (!info?.count_in) return;
+    const line = `export count-in id=${info.id} slow=${info.count_in.slow} text=${countInText(info)}`;
+    if (line === lastCountInLog) return;
+    lastCountInLog = line;
     void frontendLog(line);
   });
 
@@ -101,6 +116,15 @@
   <div class="flex flex-col gap-1 text-sm text-muted-foreground">
     <p class="min-h-5" data-testid="export-source">{info?.source ? `Backing track: ${info.source}` : ''}</p>
     <p class="min-h-5" data-testid="export-count-in">{countInText(info)}</p>
+    <div class="flex min-h-6 items-center gap-3">
+      <Switch
+        id="export-slow-count-in"
+        data-testid="export-slow-count-in"
+        bind:checked={() => info?.count_in?.slow ?? false, (v) => void setSlowCountIn(v)}
+        disabled={slowDisabled}
+      />
+      <Label for="export-slow-count-in">Slow count-in (half tempo)</Label>
+    </div>
   </div>
 
   <fieldset class="flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4">

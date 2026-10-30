@@ -31,7 +31,8 @@ export function countInText(info: { count_in: CountInInfo | null } | null): stri
   const c = info?.count_in;
   if (!c) return '';
   const left = c.skip_ms > 0 ? `; the ${seconds(c.skip_ms)} s before the first beat are left out` : '';
-  return `Count-in: 4 beats at ${c.bpm} BPM before the first beat (adds ${seconds(c.lead_ms)} s${left})`;
+  const tempo = c.slow ? `${c.count_in_bpm} BPM (half of ${c.bpm})` : `${c.bpm} BPM`;
+  return `Count-in: 4 beats at ${tempo}, after ${seconds(c.silence_ms)} s of silence (adds ${seconds(c.silence_ms + c.lead_ms)} s${left})`;
 }
 
 export function resultText(snap: ExportSnapshot | null): string {

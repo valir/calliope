@@ -20,6 +20,21 @@ let lastTarget = 'mp3';
 let targets: Record<string, unknown>[];
 let chooseResult: string | null | Error;
 let startError: string | null;
+let slowError: string | null;
+let slowOf: Record<string, boolean>;
+
+/** `info` with the slow values of the track, when its switch is on. */
+function withSlow(id: string): ExportInfo {
+  const c = info.count_in;
+  const slow = slowOf[id] ?? c?.slow ?? false;
+  if (!c) return { ...info, id };
+  const f = slow ? 2 : 1;
+  return {
+    ...info,
+    id,
+    count_in: { ...c, slow, count_in_bpm: c.bpm / f, lead_ms: 2000 * f, silence_ms: 2000 * f },
+  };
+}
 
 const snapshot = (o: Partial<ExportSnapshot> = {}): ExportSnapshot => ({
   job: 'j1', id: TRACK.id, title: TRACK.title, target: 'mp3', path: '/out/a.mp3', phase: 'writing',
@@ -41,12 +56,14 @@ beforeEach(() => {
   targets = [];
   chooseResult = null;
   startError = null;
+  slowError = null;
+  slowOf = {};
   sendIndex = 0;
   prepareError = null;
   plan = { token: 'tok', path: '/out/a.mp3', exists: false, base: '/out' };
   info = {
     id: TRACK.id, available: true, reason: null, source: 'backings/backing.flac',
-    count_in: { bpm: 120, first_beat_ms: 0, lead_ms: 2000, skip_ms: 0 }, memory: 7,
+    count_in: { bpm: 120, first_beat_ms: 0, slow: false, count_in_bpm: 120, lead_ms: 2000, silence_ms: 2000, skip_ms: 0 }, memory: 7,
     last: { rc5: null, mp3: null, ogg: null },
   };
   mockIPC((cmd, args) => {
@@ -54,7 +71,12 @@ beforeEach(() => {
     calls.push([cmd, a]);
     if (cmd === 'get_repository') return { root: '/tmp/repo', is_default: true, status: 'ok' };
     if (cmd === 'list_tracks') return { root: '/tmp/repo', tracks: structuredClone(FIXTURE_TRACKS), problems: [] };
-    if (cmd === 'export_info') return { ...info, id: a.id };
+    if (cmd === 'export_info') return withSlow(a.id as string);
+    if (cmd === 'set_slow_count_in') {
+      if (slowError) throw slowError;
+      slowOf[a.id as string] = a.on as boolean;
+      return withSlow(a.id as string);
+    }
     if (cmd === 'prepare_export') {
       targets.push(a.target as Record<string, unknown>);
       if (prepareError) throw prepareError;
@@ -82,6 +104,8 @@ afterEach(() => {
 
 const btn = (name: string) => screen.getByRole('button', { name }) as HTMLButtonElement;
 const reason = () => screen.getByTestId('export-reason').textContent;
+const slowSwitch = () => screen.getByRole('switch', { name: 'Slow count-in (half tempo)' }) as HTMLButtonElement;
+const countIn = () => screen.getByTestId('export-count-in').textContent;
 const names = () => calls.map((c) => c[0]);
 
 async function renderWithTrack(): Promise<void> {
@@ -100,7 +124,7 @@ describe('Export view', () => {
     expect(screen.getByText('Export...')).toBeTruthy();
     expect(screen.getByTestId('export-source').textContent).toBe('Backing track: backings/backing.flac');
     expect(screen.getByTestId('export-count-in').textContent)
-      .toBe('Count-in: 4 beats at 120 BPM before the first beat (adds 2.0 s)');
+      .toBe('Count-in: 4 beats at 120 BPM, after 2.0 s of silence (adds 4.0 s)');
     expect(reason()).toBe('');
     expect((screen.getByLabelText('Memory') as HTMLInputElement).value).toBe('7');
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(TRACK.title);
@@ -507,6 +531,107 @@ describe('Export view', () => {
       await waitFor(() => expect(screen.getByTestId('export-result').textContent).toBe('Written to /out/a.mp3.'));
       expect(targets[targets.length - 1]).toEqual({ kind: 'mp3' });
       expect(folderText()).toBe('To: /media/B');
+    });
+  });
+
+  describe('slow count-in switch', () => {
+    const NORMAL = 'Count-in: 4 beats at 120 BPM, after 2.0 s of silence (adds 4.0 s)';
+    const SLOW = 'Count-in: 4 beats at 60 BPM (half of 120), after 4.0 s of silence (adds 8.0 s)';
+
+    it('is off for a normal track; a click saves and shows the slow text, a second one goes back', async () => {
+      await renderWithTrack();
+      expect(slowSwitch().getAttribute('aria-checked')).toBe('false');
+      expect(slowSwitch().disabled).toBe(false);
+      await fireEvent.click(slowSwitch());
+      await waitFor(() => expect(slowSwitch().getAttribute('aria-checked')).toBe('true'));
+      expect(calls.filter((c) => c[0] === 'set_slow_count_in').map((c) => c[1])).toEqual([{ id: TRACK.id, on: true }]);
+      expect(countIn()).toBe(SLOW);
+      await fireEvent.click(slowSwitch());
+      await waitFor(() => expect(slowSwitch().getAttribute('aria-checked')).toBe('false'));
+      expect(calls.filter((c) => c[0] === 'set_slow_count_in')[1][1]).toEqual({ id: TRACK.id, on: false });
+      expect(countIn()).toBe(NORMAL);
+    });
+
+    it('shows the value of the selected track', async () => {
+      const other = FIXTURE_TRACKS[5];
+      slowOf[TRACK.id] = true;
+      await renderWithTrack();
+      await waitFor(() => expect(slowSwitch().getAttribute('aria-checked')).toBe('true'));
+      selectTrack(other.id);
+      lib.treeFocus = `t:${other.id}`;
+      await waitFor(() => expect(countIn()).toBe(NORMAL));
+      expect(slowSwitch().getAttribute('aria-checked')).toBe('false');
+    });
+
+    it('is disabled with no track, for a group row and for an unavailable track', async () => {
+      render(ExportView);
+      await tick();
+      expect(slowSwitch().disabled).toBe(true);
+      cleanup();
+      selectTrack(TRACK.id);
+      lib.treeFocus = 'b:somebody';
+      render(ExportView);
+      await tick();
+      expect(slowSwitch().disabled).toBe(true);
+      cleanup();
+      lib.treeFocus = null;
+      info = { ...info, available: false, reason: NO_TEMPO, count_in: null };
+      render(ExportView);
+      await waitFor(() => expect(reason()).toBe(NO_TEMPO));
+      expect(slowSwitch().disabled).toBe(true);
+    });
+
+    it('is disabled while preparing, during the overwrite question and while an export runs', async () => {
+      await renderWithTrack();
+      // preparing: the dialog never answers
+      let release: (p: ExportPlan | null) => void = () => {};
+      const pending = new Promise<ExportPlan | null>((r) => { release = r; });
+      clearMocks();
+      mockIPC((cmd, args) => {
+        const a = args as Record<string, unknown>;
+        calls.push([cmd, a]);
+        if (cmd === 'export_info') return withSlow(a.id as string);
+        if (cmd === 'prepare_export') return pending;
+        if (cmd === 'start_export') {
+          channelId = (a.events as { id: number }).id;
+          sendIndex = 0;
+          return snapshot();
+        }
+        return null;
+      });
+      await fireEvent.click(btn('MP3 file'));
+      await waitFor(() => expect(slowSwitch().disabled).toBe(true));
+      // the overwrite question
+      release({ token: 'tok', path: '/out/a.mp3', exists: true, base: '/out' });
+      await screen.findByRole('alertdialog');
+      expect(slowSwitch().disabled).toBe(true);
+      // an export that runs
+      await fireEvent.click(screen.getByRole('button', { name: 'Yes' }));
+      await waitFor(() => expect(names()).toContain('start_export'));
+      send({ phase: 'writing', progress: 0.2 });
+      await waitFor(() => expect(reason()).toBe('An export is running'));
+      expect(slowSwitch().disabled).toBe(true);
+      send({ phase: 'done', path: '/out/a.mp3', clipped: 0, root: '/tmp/repo', records: [], info_error: null });
+      await waitFor(() => expect(slowSwitch().disabled).toBe(false));
+    });
+
+    it('shows a failed write and leaves the switch and the text as they were', async () => {
+      slowError = 'cannot write track.json';
+      await renderWithTrack();
+      await fireEvent.click(slowSwitch());
+      await waitFor(() => expect(screen.getByTestId('export-result').textContent)
+        .toBe('Export failed: cannot write track.json'));
+      expect(slowSwitch().getAttribute('aria-checked')).toBe('false');
+      expect(countIn()).toBe(NORMAL);
+    });
+
+    it('does not refill the Memory box', async () => {
+      await renderWithTrack();
+      const box = screen.getByLabelText('Memory') as HTMLInputElement;
+      await fireEvent.input(box, { target: { value: '12' } });
+      await fireEvent.click(slowSwitch());
+      await waitFor(() => expect(slowSwitch().getAttribute('aria-checked')).toBe('true'));
+      expect(box.value).toBe('12');
     });
   });
 });

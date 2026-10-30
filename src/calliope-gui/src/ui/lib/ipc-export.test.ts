@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import {
-  cancelExport, chooseRc5Folder, exportInfo, getExport, prepareExport, startExport, watchExport, type ExportEvent,
+  cancelExport, chooseRc5Folder, exportInfo, getExport, prepareExport, setSlowCountIn, startExport, watchExport, type ExportEvent,
 } from './ipc';
 
 afterEach(() => clearMocks());
@@ -19,8 +19,9 @@ describe('export ipc wrappers', () => {
     await cancelExport('j1');
     await getExport();
     await watchExport(() => {});
+    await setSlowCountIn('t1', true);
     expect(calls.map((c) => c[0])).toEqual([
-      'export_info', 'prepare_export', 'prepare_export', 'prepare_export', 'choose_rc5_folder', 'start_export', 'cancel_export', 'get_export', 'watch_export',
+      'export_info', 'prepare_export', 'prepare_export', 'prepare_export', 'choose_rc5_folder', 'start_export', 'cancel_export', 'get_export', 'watch_export', 'set_slow_count_in',
     ]);
     expect(calls[0][1]).toEqual({ id: 't1' });
     expect(calls[1][1]).toEqual({ id: 't1', target: { kind: 'rc5', memory: '7', reuse: null } });
@@ -31,6 +32,7 @@ describe('export ipc wrappers', () => {
     expect(calls[5][1].overwrite).toBe(true);
     expect(calls[6][1]).toEqual({ job: 'j1' });
     expect(Object.keys(calls[8][1])).toEqual(['events']);
+    expect(calls[9][1]).toEqual({ id: 't1', on: true });
     for (const i of [5, 8]) expect(JSON.stringify(calls[i][1].events)).toMatch(/^"__CHANNEL__:\d+"$/);
   });
 

@@ -528,7 +528,15 @@ export type ExportTargetReq =
   | { kind: 'rc5'; memory: string; reuse: string | null }
   | { kind: 'mp3' }
   | { kind: 'ogg' };
-export interface CountInInfo { bpm: number; first_beat_ms: number; lead_ms: number; skip_ms: number }
+export interface CountInInfo {
+  bpm: number;
+  first_beat_ms: number;
+  slow: boolean;
+  count_in_bpm: number;
+  lead_ms: number;
+  silence_ms: number;
+  skip_ms: number;
+}
 export interface ExportInfo {
   id: string;
   available: boolean;
@@ -573,6 +581,8 @@ export const exportInfo = (id: string): Promise<ExportInfo> => invoke<ExportInfo
 export const prepareExport = (id: string, target: ExportTargetReq): Promise<ExportPlan | null> =>
   invoke<ExportPlan | null>('prepare_export', { id, target });
 /** The "Change..." dialog of the RC-5 folder: the accepted folder, or null when cancelled. */
+export const setSlowCountIn = (id: string, on: boolean): Promise<ExportInfo> =>
+  invoke<ExportInfo>('set_slow_count_in', { id, on });
 export const chooseRc5Folder = (): Promise<string | null> => invoke<string | null>('choose_rc5_folder');
 export const startExport = (
   token: string,
