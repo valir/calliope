@@ -187,7 +187,7 @@ Ctrl+L folds it to a narrow rail).
 ## Export
 
 The Export view (Alt+6) copies the backing track of the track selected in the tree to the BOSS RC-5
-loop station, or saves it as an MP3 or an OGG file. It needs `ffmpeg` and `ffprobe` and a tempo map
+or BOSS RC-500 loop station, or saves it as an MP3 or an OGG file. It needs `ffmpeg` and `ffprobe` and a tempo map
 (set it in the Player; a track without one cannot be exported). A stem track needs a saved mix (the
 Editor); a plain backing track is exported as it is.
 
@@ -202,6 +202,15 @@ Editor); a plain backing track is exported as it is.
   "To: <folder>" under the button shows that drive, and "Change..." picks another one. The
   overwrite question is still asked. Leaving the Export view or closing the app forgets it, and
   the next RC-5 export asks again.
+* "to BOSS RC-500": the same as the RC-5, with its own Memory box and a choice of
+  "Track 1" or "Track 2". Memory 7, track 2 is written to `ROLAND/WAVE/007_2/007_2.WAV`
+  (track 1 to `007_1/007_1.WAV`); the other track's file is never touched. The RC-500
+  has its own remembered drive, its own last memory (the box suggests it plus one, with
+  Track 1) and its own "To: <folder>" line and "Change...", independent of the RC-5.
+  A track exported to the RC-500 shows its memory and track again when selected, and the
+  Library shows an "RC-500" row. One track per memory and track: exporting to memory 7,
+  track 2 removes the RC-500 entry of any other track on memory 7, track 2 (not track 1,
+  and not the RC-5 entries).
 * "MP3 file" / "OGG file": choose a folder; the file is named `Band - Title.mp3` (or `.ogg`) and
   carries the title, band, album, track number and year as tags.
 * Count-in: every export starts with silence, then a count-in of six ticks at the track's
