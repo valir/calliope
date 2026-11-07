@@ -158,7 +158,7 @@ tester for the features.
 - [x] `gui-section-bpm-detect.md`: reset section's bpm
 - [x] `gui-backing-normalize.md`: normalize the backing track level
 - [x] `gui-export-rc5-quick.md`: reduce popup dialogs during export to RC-5 operations
-- [ ] `gui-export-slow-count-in.md`: slow count-in feature
+- [x] `gui-export-slow-count-in.md`: slow count-in feature
 - [ ] `gui-tablatures.md`: associate tablature to backing track
 - [ ] `gui-manipulate-backing-track.md`: associate tempo and MIDI commands into the backing track
 - [ ] `stems-empty-detection.md`: better detection of the empty resulting stems
