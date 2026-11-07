@@ -2725,6 +2725,118 @@ fn clear_rc5_holders_reports_an_unwritable_holder_and_clears_the_rest() {
     assert_eq!(bytes_of(&env, "bbb"), before);
 }
 
+fn rc500(m: u8, t: u8) -> ExportEntry {
+    ExportEntry::Rc500 {
+        memory: m,
+        track: t,
+    }
+}
+
+#[test]
+fn record_export_rc500_writes_only_its_entry() {
+    let env = Env::new();
+    let rec = env.track("aaa", &[]);
+    let before = json_of(&env, "aaa");
+    let r = env
+        .repo
+        .record_export("aaa", &rc500(7, 2), "2026-11-07T17:30:00Z")
+        .unwrap();
+    assert_eq!((&r.modified, &r.revision), (&rec.modified, &rec.revision));
+    let e = r.exports.rc500.unwrap();
+    assert_eq!((e.memory, e.track), (7, 2));
+    let after = json_of(&env, "aaa");
+    assert_eq!(
+        after["exports"],
+        serde_json::json!({"rc500": {"memory": 7, "track": 2, "at": "2026-11-07T17:30:00Z"}})
+    );
+    assert_eq!(without_exports(after), before);
+}
+
+#[test]
+fn clear_rc500_holders_clears_only_the_same_memory_and_track() {
+    let env = Env::new();
+    for id in ["aaa", "bbb", "ccc", "ddd", "eee", "fff", "ggg"] {
+        env.track(id, &[]);
+    }
+    let rec = |id: &str, e: ExportEntry| {
+        env.repo.record_export(id, &e, "old").unwrap();
+    };
+    rec("aaa", rc500(7, 2));
+    rec("aaa", ExportEntry::Rc5 { memory: 7 });
+    rec("bbb", rc500(7, 2));
+    rec("ccc", rc500(7, 1));
+    rec("ddd", ExportEntry::Rc5 { memory: 7 });
+    rec("eee", rc500(8, 2));
+    rec("fff", rc500(7, 2));
+    rec("ggg", rc500(7, 2));
+    // fff becomes a problem track: skipped and untouched
+    let pf = env.dir("fff").join("track.json");
+    let mut j = json_of(&env, "fff");
+    j["schema_version"] = 3.into();
+    fs::write(&pf, serde_json::to_vec_pretty(&j).unwrap()).unwrap();
+    let fff = fs::read(&pf).unwrap();
+
+    let out = env.repo.clear_rc500_holders(7, 2, "bbb");
+    assert!(out.failed.is_empty(), "{:?}", out.failed);
+    let ids: Vec<_> = out.cleared.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["aaa", "ggg"]);
+    let a = env.repo.load_record("aaa").unwrap();
+    assert!(a.exports.rc500.is_none());
+    assert_eq!(a.exports.rc5.unwrap().memory, 7, "rc5 next to it is kept");
+    assert!(json_of(&env, "ggg").get("exports").is_none());
+    let kept = |id: &str| env.repo.load_record(id).unwrap().exports;
+    assert!(kept("bbb").rc500.is_some(), "except is kept");
+    assert_eq!(kept("ccc").rc500.unwrap().track, 1);
+    assert!(kept("ddd").rc5.is_some());
+    assert_eq!(kept("eee").rc500.unwrap().memory, 8);
+    assert_eq!(fs::read(&pf).unwrap(), fff);
+}
+
+#[test]
+fn clear_rc5_holders_leaves_rc500_records_alone() {
+    let env = Env::new();
+    for id in ["aaa", "bbb", "ccc"] {
+        env.track(id, &[]);
+    }
+    env.repo.record_export("aaa", &rc500(7, 1), "t").unwrap();
+    env.repo.record_export("bbb", &rc500(7, 2), "t").unwrap();
+    env.repo
+        .record_export("ccc", &ExportEntry::Rc5 { memory: 7 }, "t")
+        .unwrap();
+    let out = env.repo.clear_rc5_holders(7, "zzz");
+    let ids: Vec<_> = out.cleared.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["ccc"]);
+    assert!(env.repo.load_record("aaa").unwrap().exports.rc500.is_some());
+    assert!(env.repo.load_record("bbb").unwrap().exports.rc500.is_some());
+}
+
+#[cfg(unix)]
+#[test]
+fn clear_rc500_holders_reports_an_unwritable_holder() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = Env::new();
+    for id in ["aaa", "bbb", "ccc"] {
+        env.track(id, &[]);
+        env.repo.record_export(id, &rc500(4, 2), "old").unwrap();
+    }
+    let dir = env.dir("bbb");
+    let before = bytes_of(&env, "bbb");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+    if fs::File::create(dir.join("probe")).is_ok() {
+        fs::remove_file(dir.join("probe")).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        return; // running as root: permissions are not enforced
+    }
+    let out = env.repo.clear_rc500_holders(4, 2, "zzz");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    let ids: Vec<_> = out.cleared.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["aaa", "ccc"]);
+    assert_eq!(out.failed.len(), 1);
+    assert_eq!(out.failed[0].id, "bbb");
+    assert!(out.failed[0].message.starts_with("cannot write track.json"));
+    assert_eq!(bytes_of(&env, "bbb"), before);
+}
+
 #[test]
 fn save_after_an_export_keeps_exports_and_other_changes_still_conflict() {
     let env = Env::new();

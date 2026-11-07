@@ -481,6 +481,11 @@ impl Repository {
             ExportEntry::Rc5 { memory } => {
                 eprintln!("calliope: export recorded id={id} target=rc5 memory={memory} at={at}")
             }
+            ExportEntry::Rc500 { memory, track } => {
+                eprintln!(
+                    "calliope: export recorded id={id} target=rc500 memory={memory} track={track} at={at}"
+                )
+            }
             ExportEntry::Mp3 { path } => {
                 eprintln!("calliope: export recorded id={id} target=mp3 path={path} at={at}")
             }
@@ -506,6 +511,33 @@ impl Repository {
     /// Removes the RC-5 entry of every track but `except` that names `memory` (one track per
     /// memory). Problem tracks are skipped; a write failure is reported and the others go on.
     pub fn clear_rc5_holders(&self, memory: u8, except: &str) -> ClearOutcome {
+        self.clear_holders(
+            except,
+            |obj| export_record::rc5_memory(obj) == Some(memory),
+            export_record::clear_rc5,
+            &format!("memory={memory}"),
+        )
+    }
+
+    /// Removes the RC-500 entry of every track but `except` that names `memory` and `track`
+    /// (one track per memory and track). Other tracks of the memory and RC-5 entries stay.
+    pub fn clear_rc500_holders(&self, memory: u8, track: u8, except: &str) -> ClearOutcome {
+        self.clear_holders(
+            except,
+            |obj| export_record::rc500_slot(obj) == Some((memory, track)),
+            export_record::clear_rc500,
+            &format!("target=rc500 memory={memory} track={track}"),
+        )
+    }
+
+    /// The folder walk shared by the `clear_*_holders`; `what` is the log text after the id.
+    fn clear_holders(
+        &self,
+        except: &str,
+        holds: impl Fn(&serde_json::Map<String, serde_json::Value>) -> bool,
+        clear: impl Fn(&mut serde_json::Map<String, serde_json::Value>) -> bool,
+        what: &str,
+    ) -> ClearOutcome {
         let mut out = ClearOutcome::default();
         let mut names: Vec<String> = fs::read_dir(self.tracks_dir())
             .into_iter()
@@ -528,25 +560,23 @@ impl Repository {
             let Ok(serde_json::Value::Object(mut obj)) = serde_json::from_slice(&bytes) else {
                 continue;
             };
-            if export_record::rc5_memory(&obj) != Some(memory) {
+            if !holds(&obj) {
                 continue;
             }
             if let Err(m) = track_meta::parse(&bytes, &id) {
                 eprintln!("calliope: export clear skipped id={id} reason={m}");
                 continue;
             }
-            export_record::clear_rc5(&mut obj);
+            clear(&mut obj);
             match Self::write_raw(&dir, obj) {
                 Ok(()) => {
-                    eprintln!("calliope: export cleared id={id} memory={memory}");
+                    eprintln!("calliope: export cleared id={id} {what}");
                     if let Ok(r) = self.load_record(&id) {
                         out.cleared.push(r);
                     }
                 }
                 Err(message) => {
-                    eprintln!(
-                        "calliope: export clear failed id={id} memory={memory} message={message}"
-                    );
+                    eprintln!("calliope: export clear failed id={id} {what} message={message}");
                     let title = track_meta::parse(&bytes, &id)
                         .map(|m| m.title)
                         .unwrap_or_default();

@@ -19,6 +19,7 @@ pub enum DialogKind {
     ImportVideo,
     ImportDirectory,
     ExportRc5,
+    ExportRc500,
     ExportAudio,
 }
 
@@ -34,6 +35,7 @@ impl DialogKind {
             DialogKind::ImportVideo => "import-video",
             DialogKind::ImportDirectory => "import-directory",
             DialogKind::ExportRc5 => "export-rc5",
+            DialogKind::ExportRc500 => "export-rc500",
             DialogKind::ExportAudio => "export-audio",
         }
     }
@@ -49,6 +51,7 @@ impl DialogKind {
             DialogKind::ImportVideo,
             DialogKind::ImportDirectory,
             DialogKind::ExportRc5,
+            DialogKind::ExportRc500,
             DialogKind::ExportAudio,
         ]
         .into_iter()
@@ -410,6 +413,26 @@ mod tests {
             Some("/tmp/rc5".into())
         );
         assert_eq!(p.pick_folder(&folder(DialogKind::ExportAudio)), None);
+    }
+
+    #[test]
+    fn scripted_answers_the_rc500_kind_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("answers");
+        std::fs::write(&f, "export-rc500 /tmp/x\nexport-rc5 /tmp/y\n").unwrap();
+        let p = ScriptedPicker::new(f);
+        let folder = |kind| FolderReq {
+            kind,
+            title: "t".into(),
+            start_dir: None,
+        };
+        assert_eq!(DialogKind::ExportRc500.as_str(), "export-rc500");
+        assert_eq!(
+            p.pick_folder(&folder(DialogKind::ExportRc500)),
+            Some("/tmp/x".into())
+        );
+        // an `export-rc5` line does not answer an RC-500 request (script mismatch)
+        assert_eq!(p.pick_folder(&folder(DialogKind::ExportRc500)), None);
     }
 
     #[test]

@@ -20,6 +20,13 @@ pub struct Rc5Export {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Rc500Export {
+    pub memory: u8,
+    pub track: u8,
+    pub at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FileExport {
     pub path: String,
     pub at: String,
@@ -29,6 +36,7 @@ pub struct FileExport {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct TrackExports {
     pub rc5: Option<Rc5Export>,
+    pub rc500: Option<Rc500Export>,
     pub mp3: Option<FileExport>,
     pub ogg: Option<FileExport>,
 }
@@ -36,6 +44,7 @@ pub struct TrackExports {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExportEntry {
     Rc5 { memory: u8 },
+    Rc500 { memory: u8, track: u8 },
     Mp3 { path: String },
     Ogg { path: String },
 }
@@ -71,8 +80,18 @@ pub fn read(v: Option<&Value>) -> TrackExports {
             at: at_of(o),
         })
     });
+    let rc500 = obj.get("rc500").and_then(Value::as_object).and_then(|o| {
+        let memory = o.get("memory")?.as_u64().filter(|n| (1..=99).contains(n))? as u8;
+        let track = o.get("track")?.as_u64().filter(|n| (1..=2).contains(n))? as u8;
+        Some(Rc500Export {
+            memory,
+            track,
+            at: at_of(o),
+        })
+    });
     TrackExports {
         rc5,
+        rc500,
         mp3: file_entry(obj.get("mp3")),
         ogg: file_entry(obj.get("ogg")),
     }
@@ -83,6 +102,13 @@ pub fn rc5_memory(obj: &Map<String, Value>) -> Option<u8> {
     read(obj.get(EXPORTS_KEY)).rc5.map(|e| e.memory)
 }
 
+/// The recorded RC-500 `(memory, track)` of a raw `track.json` object.
+pub fn rc500_slot(obj: &Map<String, Value>) -> Option<(u8, u8)> {
+    read(obj.get(EXPORTS_KEY))
+        .rc500
+        .map(|e| (e.memory, e.track))
+}
+
 /// Writes only `exports.<kind>`; other keys inside `exports` are kept, a non-object `exports`
 /// is replaced.
 pub fn set(obj: &mut Map<String, Value>, entry: &ExportEntry, at: &str) {
@@ -90,6 +116,13 @@ pub fn set(obj: &mut Map<String, Value>, entry: &ExportEntry, at: &str) {
         ExportEntry::Rc5 { memory } => (
             "rc5",
             Map::from_iter([("memory".to_string(), Value::from(*memory))]),
+        ),
+        ExportEntry::Rc500 { memory, track } => (
+            "rc500",
+            Map::from_iter([
+                ("memory".to_string(), Value::from(*memory)),
+                ("track".to_string(), Value::from(*track)),
+            ]),
         ),
         ExportEntry::Mp3 { path } => (
             "mp3",
@@ -152,10 +185,19 @@ pub fn set_slow_count_in(obj: &mut Map<String, Value>, on: bool) -> bool {
 
 /// Removes `exports.rc5` (and `exports` when it ends up empty). True when something changed.
 pub fn clear_rc5(obj: &mut Map<String, Value>) -> bool {
+    clear_kind(obj, "rc5")
+}
+
+/// Removes `exports.rc500` (and `exports` when it ends up empty). True when something changed.
+pub fn clear_rc500(obj: &mut Map<String, Value>) -> bool {
+    clear_kind(obj, "rc500")
+}
+
+fn clear_kind(obj: &mut Map<String, Value>, key: &str) -> bool {
     let Some(exports) = obj.get_mut(EXPORTS_KEY).and_then(Value::as_object_mut) else {
         return false;
     };
-    if exports.remove("rc5").is_none() {
+    if exports.remove(key).is_none() {
         return false;
     }
     if exports.is_empty() {
@@ -292,6 +334,73 @@ mod tests {
     }
 
     #[test]
+    fn reads_rc500_leniently() {
+        let v = json!({"rc500": {"memory": 7, "track": 2, "at": "t"}});
+        assert_eq!(
+            read(Some(&v)).rc500,
+            Some(Rc500Export {
+                memory: 7,
+                track: 2,
+                at: "t".into()
+            })
+        );
+        assert_eq!(rc500_slot(&obj(json!({"exports": v}))), Some((7, 2)));
+        for bad in [json!(0), json!(3), json!("2"), json!(1.5), json!(null)] {
+            let v = json!({"rc500": {"memory": 7, "track": bad}});
+            assert_eq!(read(Some(&v)).rc500, None, "{bad}");
+        }
+        for v in [
+            json!({"rc500": {"memory": 7}}),
+            json!({"rc500": {"memory": 0, "track": 1}}),
+            json!({"rc500": {"memory": 100, "track": 1}}),
+            json!({"rc500": 5}),
+        ] {
+            assert_eq!(read(Some(&v)).rc500, None, "{v}");
+        }
+    }
+
+    #[test]
+    fn set_rc500_keeps_the_other_kinds() {
+        let mut o = obj(json!({"exports": {
+            "rc5": {"memory": 1, "at": "old"},
+            "mp3": {"path": "/a.mp3", "at": "old"},
+            "flac": 5
+        }}));
+        set(
+            &mut o,
+            &ExportEntry::Rc500 {
+                memory: 7,
+                track: 2,
+            },
+            "new",
+        );
+        assert_eq!(
+            o["exports"]["rc500"],
+            json!({"memory": 7, "track": 2, "at": "new"})
+        );
+        assert_eq!(o["exports"]["rc5"], json!({"memory": 1, "at": "old"}));
+        assert_eq!(o["exports"]["mp3"], json!({"path": "/a.mp3", "at": "old"}));
+        assert_eq!(o["exports"]["flac"], 5);
+    }
+
+    #[test]
+    fn clear_rc500_keeps_rc5_and_removes_an_empty_exports() {
+        let mut o = obj(json!({"exports": {"rc500": {"memory": 1, "track": 1}}}));
+        assert!(clear_rc500(&mut o));
+        assert!(!o.contains_key("exports"));
+        assert!(!clear_rc500(&mut o));
+
+        let mut o =
+            obj(json!({"exports": {"rc5": {"memory": 1}, "rc500": {"memory": 1, "track": 2}}}));
+        assert!(clear_rc500(&mut o));
+        assert_eq!(o["exports"], json!({"rc5": {"memory": 1}}));
+        assert!(!clear_rc500(&mut o), "nothing to remove");
+
+        let mut o = obj(json!({"exports": "junk"}));
+        assert!(!clear_rc500(&mut o));
+    }
+
+    #[test]
     fn reads_the_slow_count_in_switch() {
         assert!(slow_count_in(Some(&json!({"slow_count_in": true}))));
         for v in [
@@ -355,7 +464,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_value(&e).unwrap(),
-            json!({"rc5": null, "mp3": {"path": "/a", "at": "t"}, "ogg": null})
+            json!({"rc5": null, "rc500": null, "mp3": {"path": "/a", "at": "t"}, "ogg": null})
         );
     }
 }

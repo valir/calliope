@@ -31,6 +31,10 @@ pub struct Settings {
     pub export_dir: Option<PathBuf>,
     /// RC-5 memory of the last successful export (1..=99); the next one suggests it plus one.
     pub rc5_memory: Option<u8>,
+    /// Root of the RC-500 drive chosen last (its export dialog starts there); `None` = none yet.
+    pub rc500_dir: Option<PathBuf>,
+    /// RC-500 memory of the last successful export (1..=99); the next one suggests it plus one.
+    pub rc500_memory: Option<u8>,
 }
 
 /// Longest accepted `edge_ai_url`.
@@ -186,6 +190,7 @@ pub fn load(path: &Path) -> Settings {
     }
     for (key, slot) in [
         ("rc5_dir", &mut s.rc5_dir),
+        ("rc500_dir", &mut s.rc500_dir),
         ("export_dir", &mut s.export_dir),
     ] {
         match obj.get(key) {
@@ -206,6 +211,16 @@ pub fn load(path: &Path) -> Settings {
         }
         Some(v) => eprintln!(
             "calliope: invalid rc5_memory {v} in {} (not 1..99); using none",
+            path.display()
+        ),
+    }
+    match obj.get("rc500_memory") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::Number(n)) if n.as_u64().is_some_and(|m| (1..=99).contains(&m)) => {
+            s.rc500_memory = n.as_u64().map(|m| m as u8);
+        }
+        Some(v) => eprintln!(
+            "calliope: invalid rc500_memory {v} in {} (not 1..99); using none",
             path.display()
         ),
     }
@@ -309,6 +324,24 @@ impl SettingsStore {
         *cur = next.clone();
         Ok(next)
     }
+
+    pub fn set_rc500_dir(&self, dir: Option<PathBuf>) -> std::io::Result<Settings> {
+        let mut cur = self.current.lock().unwrap_or_else(|e| e.into_inner());
+        let mut next = cur.clone();
+        next.rc500_dir = dir;
+        save(&self.path, &next)?;
+        *cur = next.clone();
+        Ok(next)
+    }
+
+    pub fn set_rc500_memory(&self, n: Option<u8>) -> std::io::Result<Settings> {
+        let mut cur = self.current.lock().unwrap_or_else(|e| e.into_inner());
+        let mut next = cur.clone();
+        next.rc500_memory = n;
+        save(&self.path, &next)?;
+        *cur = next.clone();
+        Ok(next)
+    }
 }
 
 #[cfg(test)]
@@ -331,7 +364,7 @@ mod tests {
     fn json_shape() {
         assert_eq!(
             serde_json::to_string(&light()).unwrap(),
-            r#"{"theme":"light","repository_root":null,"edge_ai_url":null,"keep_original":false,"last_import_dir":null,"rc5_dir":null,"export_dir":null,"rc5_memory":null}"#
+            r#"{"theme":"light","repository_root":null,"edge_ai_url":null,"keep_original":false,"last_import_dir":null,"rc5_dir":null,"export_dir":null,"rc5_memory":null,"rc500_dir":null,"rc500_memory":null}"#
         );
         let s: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
         assert_eq!(s, light());
@@ -544,6 +577,49 @@ mod tests {
         );
         store.set_rc5_dir(None).unwrap();
         store.set_export_dir(None).unwrap();
+        store.set_rc5_memory(None).unwrap();
+        assert_eq!(SettingsStore::open(q).get(), Settings::default());
+    }
+
+    #[test]
+    fn rc500_fields_roundtrip_and_lenient() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("s.json");
+        let s = Settings {
+            rc500_dir: Some(PathBuf::from("/media/RC-500")),
+            rc500_memory: Some(7),
+            ..Settings::default()
+        };
+        save(&p, &s).unwrap();
+        assert_eq!(load(&p), s);
+        for mem in ["0", "100", "\"7\"", "-1"] {
+            std::fs::write(
+                &p,
+                format!(r#"{{"theme":"light","rc500_dir":"rel","rc500_memory":{mem}}}"#),
+            )
+            .unwrap();
+            assert_eq!(load(&p), light(), "{mem}");
+        }
+        std::fs::write(&p, r#"{"theme":"light","rc500_dir":5}"#).unwrap();
+        assert_eq!(load(&p), light());
+
+        let q = d.path().join("cfg/s.json");
+        let store = SettingsStore::open(q.clone());
+        store.set_rc5_dir(Some(PathBuf::from("/r5"))).unwrap();
+        store.set_rc5_memory(Some(3)).unwrap();
+        store.set_rc500_dir(Some(PathBuf::from("/a"))).unwrap();
+        store.set_rc500_memory(Some(99)).unwrap();
+        let g = SettingsStore::open(q.clone()).get();
+        assert_eq!(
+            (g.rc500_dir, g.rc500_memory, g.rc5_dir, g.rc5_memory),
+            (Some("/a".into()), Some(99), Some("/r5".into()), Some(3)),
+            "the two devices are independent"
+        );
+        store.set_rc500_dir(None).unwrap();
+        store.set_rc500_memory(None).unwrap();
+        let g = SettingsStore::open(q.clone()).get();
+        assert_eq!((g.rc5_dir, g.rc5_memory), (Some("/r5".into()), Some(3)));
+        store.set_rc5_dir(None).unwrap();
         store.set_rc5_memory(None).unwrap();
         assert_eq!(SettingsStore::open(q).get(), Settings::default());
     }
