@@ -167,6 +167,7 @@ pub fn run() {
             export_ipc::export_info,
             export_ipc::prepare_export,
             export_ipc::choose_rc5_folder,
+            export_ipc::choose_rc500_folder,
             export_ipc::set_slow_count_in,
             export_ipc::start_export,
             export_ipc::cancel_export,
