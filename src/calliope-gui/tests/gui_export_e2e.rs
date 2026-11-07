@@ -66,15 +66,37 @@ fn target_line(app: &mut App, id: &str, kind: &str) -> String {
 }
 
 // Buttons at 1280x800 (window coordinates).
-const BTN_RC5: (i32, i32) = (748, 308);
-// The RC-5 block has a reserved "To:" row (2 rem + gap) under its button, so MP3 and OGG sit
-// lower than before whether or not the row has text; measured on a 1280x800 screenshot.
-const BTN_MP3: (i32, i32) = (748, 434);
-// The OGG button: each "Last:" line has room for two lines under its button, so this is fixed.
-const BTN_OGG: (i32, i32) = (748, 542);
-const MEMORY_BOX: (i32, i32) = (971, 308);
+const BTN_RC5: (i32, i32) = (739, 308);
+// The four exports form a two-column grid at 1280x800 (RC-5, RC-500 / MP3, OGG); the numbers
+// are the centres from the pane's `export geometry` log line (guarded in `export_view_buttons`).
+const BTN_MP3: (i32, i32) = (739, 488);
+const BTN_OGG: (i32, i32) = (1045, 488);
+const MEMORY_BOX: (i32, i32) = (761, 358);
 // The slow count-in switch, in the row under the count-in line.
 const SLOW_SWITCH: (i32, i32) = (655, 216);
+// The RC-500 block: the button, its Memory box and the two Track radios.
+const BTN_RC500: (i32, i32) = (1045, 308);
+const RC500_MEMORY_BOX: (i32, i32) = (1067, 358);
+const RC500_TRACK1: (i32, i32) = (1158, 295);
+const RC500_TRACK2: (i32, i32) = (1158, 322);
+
+/// The newest `export geometry` line (centres in window pixels) as name -> (x, y).
+fn geometry(app: &App) -> std::collections::BTreeMap<String, (i32, i32)> {
+    let l = lines_with(app, "export geometry")
+        .pop()
+        .expect("export geometry line");
+    l.split_whitespace()
+        .filter_map(|w| {
+            let (k, v) = w.split_once('=')?;
+            let (x, y) = v.split_once(',')?;
+            Some((k.to_string(), (x.parse().ok()?, y.parse().ok()?)))
+        })
+        .collect()
+}
+
+fn rc500_wav(base: &Path, n: u8, t: u8) -> PathBuf {
+    base.join(format!("ROLAND/WAVE/{n:03}_{t}/{n:03}_{t}.WAV"))
+}
 
 fn press(app: &App, wid: &str, at: (i32, i32)) {
     app.click(wid, at.0, at.1);
@@ -232,6 +254,25 @@ fn export_view_buttons() {
         "layout overflow {}",
         layout_overflow(&app)
     );
+    // The click constants still match the layout.
+    let g = geometry(&app);
+    for (name, want) in [
+        ("rc5", BTN_RC5),
+        ("memory", MEMORY_BOX),
+        ("rc500", BTN_RC500),
+        ("rc500_memory", RC500_MEMORY_BOX),
+        ("track1", RC500_TRACK1),
+        ("track2", RC500_TRACK2),
+        ("mp3", BTN_MP3),
+        ("ogg", BTN_OGG),
+        ("slow", SLOW_SWITCH),
+    ] {
+        let got = g[name];
+        assert!(
+            (got.0 - want.0).abs() <= 4 && (got.1 - want.1).abs() <= 4,
+            "{name}: constant {want:?} but measured {got:?} (all: {g:?})"
+        );
+    }
 
     pick(&mut app, &wid, "no mix", EX_NOMIX);
     let l = target_line(&mut app, EX_NOMIX, "track");
@@ -480,6 +521,190 @@ fn export_rc5_flow() {
         before,
         "the repository must not change"
     );
+    app.assert_no_real_audio();
+    app.no_csp_violation();
+}
+
+fn set_rc500(app: &App, wid: &str, memory: &str, track: u8) {
+    press(app, wid, RC500_MEMORY_BOX);
+    app.key(wid, "ctrl+a");
+    app.typ(wid, memory);
+    press(
+        app,
+        wid,
+        if track == 2 {
+            RC500_TRACK2
+        } else {
+            RC500_TRACK1
+        },
+    );
+    settle();
+}
+
+/// Answers an overwrite question with Yes if the plan says the file exists.
+fn yes_if_exists(app: &mut App, wid: &str) {
+    let l = app.wait_line(|l| l.contains("export prepare target="), secs(10));
+    if l.contains("exists=true") {
+        app.key(wid, "Tab Return");
+    }
+}
+
+#[test]
+#[ignore]
+fn export_rc500_flow() {
+    if !ready() {
+        return;
+    }
+    let dirs = export_dirs("export_rc500_flow");
+    let snap = |d: &Dirs| {
+        let mut m = snapshot_except_exports(&d.repo());
+        m.retain(|k, _| !k.ends_with("player.json"));
+        m
+    };
+    let before = snap(&dirs);
+    let b = rc5(&dirs, "B");
+    let r = rc5(&dirs, "R");
+    let (bs, rs) = (b.display().to_string(), r.display().to_string());
+    // A track on the RC-500 that must stay untouched.
+    let other = rc500_wav(&b, 7, 1);
+    std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+    std::fs::write(&other, b"RIFF known bytes").unwrap();
+    let ans = answers(
+        &dirs,
+        &[
+            format!("export-rc500 {bs}"),
+            format!("export-rc5 {rs}"),
+            format!("export-rc500 {bs}"),
+        ],
+    );
+    let (mut app, wid) = start(&dirs, &ans, &[]);
+
+    // 1. Mono original to memory 7, Track 2: the first export asks, then recorded.
+    pick(&mut app, &wid, "mono backing", EX_MONO);
+    target_line(&mut app, EX_MONO, "track");
+    set_rc500(&app, &wid, "7", 2);
+    press(&app, &wid, BTN_RC500);
+    app.wait_line(|l| l.contains("dialog start kind=export-rc500"), secs(10));
+    wait_done(&mut app);
+    let t72 = rc500_wav(&b, 7, 2);
+    let (rate, l, rr) = read_wav(&t72);
+    assert_eq!(rate, 44100);
+    assert_eq!(l, rr, "equal channels");
+    assert_eq!(std::fs::read(&other).unwrap(), b"RIFF known bytes");
+    wait_has(
+        &app,
+        &format!("calliope: export recorded id={EX_MONO} target=rc500 memory=7 track=2"),
+        secs(10),
+    );
+    wait_has(
+        &app,
+        &format!("calliope-ui: export quick kind=rc500 dir={bs}"),
+        secs(10),
+    );
+    let after1 = std::fs::read(&t72).unwrap();
+
+    // 2. Another track, memory 8 Track 1: no dialog now.
+    pick(&mut app, &wid, "plain mp3", EX_PLAIN);
+    target_line(&mut app, EX_PLAIN, "track");
+    set_rc500(&app, &wid, "8", 1);
+    press(&app, &wid, BTN_RC500);
+    app.wait_line(
+        |l| l.contains(&format!("dialog skipped kind=export-rc500 dir={bs}")),
+        secs(10),
+    );
+    wait_done(&mut app);
+    assert!(rc500_wav(&b, 8, 1).is_file());
+    assert_eq!(app.count("dialog start kind=export-rc500"), 1);
+
+    // 3. The RC-5 still asks (its own folder).
+    set_memory(&app, &wid, "3");
+    press(&app, &wid, BTN_RC5);
+    app.wait_line(|l| l.contains("dialog start kind=export-rc5"), secs(10));
+    wait_done(&mut app);
+    assert!(wav(&r, 3).is_file());
+
+    // 4. Both "To:" rows, both "Last:" lines and a result line: the layout.
+    settle();
+    shot("export-rc500-1280");
+    let (o1024, w1024, h1024) = layout_at(&app, &wid, 1024, 640);
+    shot("export-rc500-1024");
+    let (o1280, w1280, h1280) = layout_at(&app, &wid, 1280, 800);
+    let _ = std::fs::write(
+        repo().join("target/gui-shots/export-rc500-layout.txt"),
+        format!(
+            "1280x800 overflow={o1280} width={w1280} hscroll={h1280}\n\
+             1024x640 overflow={o1024} width={w1024} hscroll={h1024}\n"
+        ),
+    );
+    assert!(o1280 == 0, "overflow {o1280} at 1280x800");
+    assert!(h1280 <= 0, "horizontal overflow {h1280} at 1280x800");
+    assert!(h1024 <= 0, "horizontal overflow {h1024} at 1024x640");
+
+    // 5. Back on the first track: its recorded memory and track are shown; the Library lists it.
+    pick(&mut app, &wid, "mono backing", EX_MONO);
+    wait_has(
+        &app,
+        &format!("export last-rc500 id={EX_MONO} memory=7 track=2 recorded=7/2"),
+        secs(10),
+    );
+    settle();
+    shot("export-rc500-recall");
+    app.key(&wid, "alt+1");
+    app.wait_view("library");
+    let l = wait_has(&app, &format!("track exports id={EX_MONO} rows="), secs(10));
+    assert!(l.contains("rc500"), "{l}");
+    settle();
+    shot("library-rc500-row");
+    app.key(&wid, "alt+6");
+    app.wait_view("export");
+
+    // 6. Overwrite declined: the file stays as it was. Leaving the view ended the quick folder,
+    // so this press asks for the folder again (starting in the remembered one).
+    set_rc500(&app, &wid, "7", 2);
+    press(&app, &wid, BTN_RC500);
+    let l = app.wait_line(|l| l.contains("dialog start kind=export-rc500"), secs(10));
+    assert!(l.contains("from=last"), "{l}");
+    app.wait_line(
+        |l| l.contains("export prepare target=rc500 result=plan exists=true"),
+        secs(10),
+    );
+    app.key(&wid, "Return");
+    let l = app.wait_line(|l| l.contains("export confirm answer="), secs(10));
+    assert!(l.contains("answer=no"), "{l}");
+    settle();
+    assert_eq!(std::fs::read(&t72).unwrap(), after1, "No keeps the file");
+    assert_eq!(app.count("dialog start kind=export-rc500"), 2);
+    assert_eq!(app.count("e2e dialog script mismatch"), 0);
+    drop(app);
+
+    // 7. After a restart both dialogs start in their remembered drives.
+    let ans = answers(
+        &dirs,
+        &[format!("export-rc500 {bs}"), format!("export-rc5 {rs}")],
+    );
+    let (mut app, wid) = start(&dirs, &ans, &[]);
+    pick(&mut app, &wid, "plain mp3", EX_PLAIN);
+    target_line(&mut app, EX_PLAIN, "track");
+    press(&app, &wid, BTN_RC500);
+    let l = app.wait_line(|l| l.contains("dialog start kind=export-rc500"), secs(10));
+    assert!(
+        l.contains("from=last") && l.contains(&format!("dir={bs}")),
+        "{l}"
+    );
+    yes_if_exists(&mut app, &wid);
+    wait_done(&mut app);
+    press(&app, &wid, BTN_RC5);
+    let l = app.wait_line(|l| l.contains("dialog start kind=export-rc5"), secs(10));
+    assert!(
+        l.contains("from=last") && l.contains(&format!("dir={rs}")),
+        "{l}"
+    );
+    yes_if_exists(&mut app, &wid);
+    wait_done(&mut app);
+
+    // 8. Nothing else happened.
+    assert_eq!(app.count("e2e dialog script mismatch"), 0);
+    assert_eq!(snap(&dirs), before, "the repository must not change");
     app.assert_no_real_audio();
     app.no_csp_violation();
 }

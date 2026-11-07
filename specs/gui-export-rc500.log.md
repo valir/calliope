@@ -8,3 +8,4 @@ task 6 | headless acceptance tests ac_rc500_* | implementer | done
 task 7 | frontend types, state, texts, Library RC-500 row | implementer | done
 task 8 | Export pane: RC-500 block, two-column grid, geometry line | implementer | done
 task 9 | README | local | done
+task 10 | GUI e2e, geometry guard, layout measured, docs/ui.md | implementer | done

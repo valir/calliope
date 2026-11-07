@@ -331,6 +331,19 @@
   button positions above do not change). Measured (scrolling section `overflow` / `hscroll`): 1280x800 overflow 0,
   hscroll 0. At 1024x640 (the minimum window size) the Export pane scrolls vertically, by 230 to 244 px, with no
   horizontal scroll (hscroll 0); other views scroll there too.
+- (gui-export-rc500) BOSS RC-500 export. The "Export..." group is a grid of four blocks, inside a container query:
+  one column below 576 px of group width, two columns above (order RC-5, RC-500, MP3, OGG; at 1280x800 RC-5 and
+  RC-500 side by side, MP3 and OGG under them). The "to BOSS RC-500" button (11 rem wide like the others) has a
+  "Track 1 / Track 2" radio group beside it (Track 1 default), then the Memory box with Change... and a text-only
+  "To:" row, as for the RC-5; the "Last:" line reads "Last: memory 7, track 2, 2026-11-08". The RC-500 has its own quick
+  folder, memory and track, remembered in settings apart from the RC-5's; both follow the track's recorded export
+  (else the last used plus one). The Library track pane lists an "RC-500" row ("memory 7, track 2"). Measured
+  centres at 1280x800 (window coordinates, from the `export geometry` log line; guarded in `export_view_buttons`):
+  RC-5 (739, 308), RC-5 Memory (761, 358), RC-500 (1045, 308), RC-500 Memory (1067, 358), Track 1 (1158, 295),
+  Track 2 (1158, 322), MP3 (739, 488), OGG (1045, 488), slow switch (655, 216). Measured overflow / hscroll
+  (both "To:" rows, both "Last:" lines and the result line shown): 1280x800 overflow 0, hscroll 0; 1024x640 overflow 419,
+  hscroll 0 (single column, the pane scrolls vertically, allowed). Leaving the Export view ends the quick folders
+  of both devices, as before. No overflow lever was needed.
 - (gui-first-beat) Player waveform: the part before the first beat is dimmed (the background colour at 60 % over
   it). The first bar is drawn like the other bars, also at 0:00, with its BPM label to its right; it is dragged
   and moved by keys like the others, and its readout reads "+N/64 beat (time) from the found start". The "Find
