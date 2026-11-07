@@ -693,6 +693,13 @@ fn export_rc500_flow() {
     );
     yes_if_exists(&mut app, &wid);
     wait_done(&mut app);
+    // Let the pane finish its after-export refresh before the next press.
+    wait_has(
+        &app,
+        &format!("calliope-ui: export quick kind=rc500 dir={bs}"),
+        secs(10),
+    );
+    settle();
     press(&app, &wid, BTN_RC5);
     let l = app.wait_line(|l| l.contains("dialog start kind=export-rc5"), secs(10));
     assert!(
