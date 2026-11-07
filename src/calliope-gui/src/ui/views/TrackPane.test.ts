@@ -5,6 +5,7 @@ import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import LibraryView from './LibraryView.svelte';
 import { lib, mergeTracks, resetLibrary } from '$lib/library-state.svelte';
 import { EDITOR_FIXTURE_TRACKS, FIXTURE_TRACKS } from '$lib/fixture-tracks';
+import { formatStamp } from '$lib/export-format';
 import type { Picked, SaveTrackRequest, TrackRecord } from '$lib/ipc';
 
 let tracks: TrackRecord[] = [];
@@ -13,18 +14,21 @@ let saves: SaveTrackRequest[] = [];
 let pick: Picked | null = null;
 let saveError: string | null = null;
 let exportPath: string | null = null;
+let logs: string[] = [];
 const NEW_MODIFIED = '2026-10-05T09:00:00Z';
 
 beforeEach(() => {
   tracks = structuredClone(FIXTURE_TRACKS);
   calls = [];
+  logs = [];
   saves = [];
   pick = null;
   saveError = null;
   exportPath = '/tmp/out/export.zip';
   resetLibrary();
   mockIPC((cmd, args) => {
-    if (cmd !== 'frontend_log') calls.push({ cmd, args });
+    if (cmd === 'frontend_log') logs.push(String((args as { message: string }).message));
+    else calls.push({ cmd, args });
     switch (cmd) {
       case 'get_repository':
         return { root: '/tmp/repo', is_default: true, status: 'ok' };
@@ -545,6 +549,16 @@ describe('Track pane: export rows', () => {
     await clickBtn('Save');
     expect(saves).toHaveLength(1);
     expect('exports' in saves[0]).toBe(false);
+  });
+
+  it('shows the RC-500 row between RC-5 and MP3, with memory and track', async () => {
+    const t = withExports();
+    t.exports = { ...t.exports!, rc500: { memory: 7, track: 2, at: '2026-11-07T17:30:00Z' } };
+    tracks[0] = t;
+    await open(t.title);
+    expect(exportIds()).toEqual(['track-export-rc5', 'track-export-rc500', 'track-export-mp3']);
+    expect(field('RC-500').value).toBe(`memory 7, track 2 (${formatStamp('2026-11-07T17:30:00Z')})`);
+    expect(logs).toContain('track exports id=' + t.id + ' rows=rc5,rc500,mp3');
   });
 
   it('mergeTracks during edit mode updates the rows and keeps the draft', async () => {

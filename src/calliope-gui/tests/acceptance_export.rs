@@ -171,10 +171,10 @@ impl Env {
 
     /// Scripts the folder dialog of `target` to answer `base`.
     fn answer(&self, target: &TargetReq, base: &Path) {
-        let kind = if matches!(target, TargetReq::Rc5 { .. }) {
-            "export-rc5"
-        } else {
-            "export-audio"
+        let kind = match target {
+            TargetReq::Rc5 { .. } => "export-rc5",
+            TargetReq::Rc500 { .. } => "export-rc500",
+            _ => "export-audio",
         };
         let old = std::fs::read_to_string(&self.answers).unwrap();
         std::fs::write(&self.answers, format!("{old}{kind} {}\n", base.display())).unwrap();
@@ -249,6 +249,18 @@ fn rc5(m: &str) -> TargetReq {
         memory: m.into(),
         reuse: None,
     }
+}
+
+fn rc500(m: &str, t: u8) -> TargetReq {
+    TargetReq::Rc500 {
+        memory: m.into(),
+        track: t,
+        reuse: None,
+    }
+}
+
+fn rc500_wav_path(base: &Path, n: u32, t: u8) -> PathBuf {
+    base.join(format!("ROLAND/WAVE/{n:03}_{t}/{n:03}_{t}.WAV"))
 }
 
 fn wav_path(base: &Path, n: u32) -> PathBuf {
@@ -2834,4 +2846,322 @@ fn ac_slow_toggle_does_not_conflict_with_an_open_library_edit() {
     )
     .expect("no revision conflict after toggling the switch");
     assert!(repo.load_record(&id(401)).unwrap().slow_count_in);
+}
+
+// ==== gui-export-rc500: export to the BOSS RC-500 ====
+
+#[test]
+fn ac_rc500_memory_7_track_1() {
+    let e = Env::new();
+    let (a, b) = (e.rc5("drive-a"), e.rc5("drive-b"));
+    let (_, s) = e.export(401, rc5("7"), &a);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let (plan, s) = e.export(401, rc500("7", 1), &b);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    assert_eq!(s.target, calliope_gui::export_rules::ExportKind::Rc500);
+    assert_eq!(plan.path, rc500_wav_path(&b, 7, 1).display().to_string());
+    assert_eq!(plan.path, wav_path(&b, 7).display().to_string());
+    let (rate, l, _) = read_wav(&rc500_wav_path(&b, 7, 1));
+    assert_eq!((rate, l.len()), (44100, 176400 + 176400));
+    assert_eq!(
+        std::fs::read(rc500_wav_path(&b, 7, 1)).unwrap(),
+        std::fs::read(wav_path(&a, 7)).unwrap(),
+        "the same bytes as the RC-5 export"
+    );
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_rc500_track_2_leaves_track_1_alone() {
+    let e = Env::new();
+    let b = e.rc5("b");
+    let one = rc500_wav_path(&b, 7, 1);
+    std::fs::create_dir_all(one.parent().unwrap()).unwrap();
+    std::fs::write(&one, b"track one").unwrap();
+    std::fs::create_dir_all(b.join("ROLAND/DATA")).unwrap();
+    std::fs::write(b.join("ROLAND/DATA/MEMORY1.RC0"), b"dummy").unwrap();
+    let (_, s) = e.export(401, rc500("7", 2), &b);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let two = rc500_wav_path(&b, 7, 2);
+    assert_eq!(read_wav(&two).1.len(), 176400 + 176400);
+    assert_eq!(std::fs::read(&one).unwrap(), b"track one");
+    assert_eq!(
+        std::fs::read(b.join("ROLAND/DATA/MEMORY1.RC0")).unwrap(),
+        b"dummy"
+    );
+    // Track 1 over the existing 007_1 (confirmed) leaves track 2 alone.
+    let two_bytes = std::fs::read(&two).unwrap();
+    let (plan, s) = e.export(403, rc500("7", 1), &b);
+    assert!(plan.exists);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    assert_eq!(read_wav(&one).0, 44100);
+    assert_eq!(std::fs::read(&two).unwrap(), two_bytes);
+}
+
+#[test]
+fn ac_rc500_overwrite_needs_confirmation() {
+    let e = Env::new();
+    let b = e.rc5("b");
+    let two = rc500_wav_path(&b, 7, 2);
+    std::fs::create_dir_all(two.parent().unwrap()).unwrap();
+    std::fs::write(&two, b"old").unwrap();
+    e.answer(&rc500("7", 2), &b);
+    let plan = e.prepare(401, rc500("7", 2)).unwrap().unwrap();
+    assert!(plan.exists);
+    assert!(
+        plan.path.ends_with("ROLAND/WAVE/007_2/007_2.WAV"),
+        "{}",
+        plan.path
+    );
+    assert!(e
+        .start(&plan.token, false)
+        .unwrap_err()
+        .contains("already exists"));
+    assert_eq!(std::fs::read(&two).unwrap(), b"old");
+    e.answer(&rc500("7", 2), &b);
+    let plan = e.prepare(401, rc500("7", 2)).unwrap().unwrap();
+    e.start(&plan.token, true).unwrap();
+    assert_eq!(e.wait().phase, ExportPhase::Done);
+    assert_eq!(read_wav(&two).1.len(), 176400 + 176400);
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_rc500_without_roland() {
+    let e = Env::new();
+    let base = e.folder("plain");
+    e.answer(&rc500("7", 1), &base);
+    let err = e.prepare(401, rc500("7", 1)).unwrap_err();
+    assert_eq!(
+        err,
+        format!(
+            "No ROLAND folder in {}: is the RC-500 mounted?",
+            base.display()
+        )
+    );
+    assert!(tree(&base).is_empty());
+    assert_eq!(e.settings().get().rc500_dir, None);
+    // The RC-5 text is as it was.
+    e.answer(&rc5("7"), &base);
+    assert_eq!(
+        e.prepare(401, rc5("7")).unwrap_err(),
+        format!(
+            "No ROLAND folder in {}: is the RC-5 mounted?",
+            base.display()
+        )
+    );
+    assert!(tree(&base).is_empty());
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_rc500_quick_is_its_own() {
+    use calliope_gui::picker::DialogKind;
+    let e = Env::new();
+    let b = e.rc5("b");
+    let (plan, s) = e.export(401, rc500("7", 1), &b);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    assert_eq!(
+        e.export
+            .quick_dir(calliope_gui::export_rules::ExportKind::Rc500),
+        Some(b.clone())
+    );
+    let starts = e.picker.starts().len();
+    let plan2 = e
+        .prepare(
+            403,
+            TargetReq::Rc500 {
+                memory: "8".into(),
+                track: 2,
+                reuse: Some(plan.base.clone()),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(e.picker.starts().len(), starts, "no dialog");
+    assert_eq!(PathBuf::from(&plan2.path), rc500_wav_path(&b, 8, 2));
+    e.start(&plan2.token, false).unwrap();
+    assert_eq!(e.wait().phase, ExportPhase::Done);
+    assert!(rc500_wav_path(&b, 8, 2).is_file());
+    // The RC-5 has no quick folder of its own yet: it asks.
+    let r = e.rc5("r");
+    e.answer(&rc5("1"), &r);
+    e.prepare(401, rc5("1")).unwrap().unwrap();
+    let starts = e.picker.starts();
+    assert_eq!(starts.len(), 2);
+    assert_eq!(starts[1].0, DialogKind::ExportRc5);
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_rc500_and_rc5_folders_survive_a_restart() {
+    use calliope_gui::picker::DialogKind;
+    let e = Env::new();
+    let (r, b) = (e.rc5("r"), e.rc5("b"));
+    assert_eq!(e.export(401, rc5("7"), &r).1.phase, ExportPhase::Done);
+    assert_eq!(e.export(403, rc500("3", 2), &b).1.phase, ExportPhase::Done);
+    let settings = e.settings();
+    assert_eq!(settings.get().rc5_dir, Some(r.clone()));
+    assert_eq!(settings.get().rc500_dir, Some(b.clone()));
+    assert_eq!(settings.get().rc500_memory, Some(3));
+
+    let answers = e.home.join("answers2");
+    std::fs::write(
+        &answers,
+        format!("export-rc5 {}\nexport-rc500 {}\n", r.display(), b.display()),
+    )
+    .unwrap();
+    let picker = Arc::new(ScriptedPicker::new(answers));
+    let st = RepoState::new(e.repo.clone(), Box::new(picker.clone()));
+    let export = ExportState::new(Box::new(real_tools));
+    let prep = |n, t| {
+        do_prepare_export(
+            &st,
+            &settings,
+            &export,
+            &FileTempoStore,
+            Some(e.home.clone()),
+            &id(n),
+            t,
+        )
+        .unwrap()
+        .unwrap()
+    };
+    prep(401, rc5("8"));
+    prep(403, rc500("4", 1));
+    assert_eq!(
+        picker.starts(),
+        [
+            (DialogKind::ExportRc5, Some(r)),
+            (DialogKind::ExportRc500, Some(b))
+        ]
+    );
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_rc500_one_track_per_memory_and_track() {
+    use calliope_gui::export_job::ExportEvent;
+    let mut e = Env::new();
+    write_exports(
+        &mut e,
+        403,
+        serde_json::json!({"rc500": {"memory": 7, "track": 1, "at": STALE}}),
+    );
+    write_exports(
+        &mut e,
+        404,
+        serde_json::json!({"rc5": {"memory": 7, "at": STALE}}),
+    );
+    let b = e.rc5("b");
+    assert_eq!(e.export(401, rc500("7", 2), &b).1.phase, ExportPhase::Done);
+    assert_eq!(exports_of(&e, 401).rc500.unwrap().track, 2);
+
+    // B takes 7/2 from A; the sink shows A among the changed records.
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink: Sink = {
+        let events = events.clone();
+        Arc::new(move |ev| events.lock().unwrap().push(ev))
+    };
+    e.answer(&rc500("7", 2), &b);
+    let plan = e.prepare(405, rc500("7", 2)).unwrap().unwrap();
+    let path = e.settings_file.clone();
+    do_start_export(
+        &e.st,
+        &e.export,
+        &FileTempoStore,
+        &plan.token,
+        plan.exists,
+        sink,
+        Box::new(move |k, n| remember_memory(&SettingsStore::open(path), k, n)),
+    )
+    .unwrap();
+    assert_eq!(e.wait().phase, ExportPhase::Done);
+    assert!(exports_of(&e, 401).rc500.is_none(), "A lost 7/2");
+    assert_eq!(exports_of(&e, 405).rc500.unwrap().track, 2);
+    assert_eq!(exports_of(&e, 403).rc500.unwrap().track, 1, "C keeps 7/1");
+    assert_eq!(
+        exports_of(&e, 404).rc5.unwrap().memory,
+        7,
+        "D keeps its RC-5"
+    );
+    let evs = events.lock().unwrap();
+    let held = evs.iter().any(|ev| match ev {
+        ExportEvent::Done { records, .. } => records.iter().any(|r| r.id == id(401)),
+        _ => false,
+    });
+    assert!(held, "done.records holds A: {evs:?}");
+    drop(evs);
+
+    // An RC-5 export to memory 7 leaves B's RC-500 record alone.
+    let r = e.rc5("r");
+    assert_eq!(e.export(406, rc5("7"), &r).1.phase, ExportPhase::Done);
+    assert_eq!(exports_of(&e, 405).rc500.unwrap().track, 2);
+    assert!(exports_of(&e, 404).rc5.is_none(), "RC-5 clearing as before");
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_rc500_info_follows_the_record() {
+    let e = Env::new();
+    let b = e.rc5("b");
+    assert_eq!(e.export(401, rc500("7", 2), &b).1.phase, ExportPhase::Done);
+    let i = e.info(401);
+    assert_eq!((i.rc500_memory, i.rc500_track), (7, 2));
+    let r = i.last.rc500.unwrap();
+    assert_eq!((r.memory, r.track), (7, 2));
+    assert!(r.at.ends_with('Z'), "{}", r.at);
+    let i = e.info(403);
+    assert_eq!((i.rc500_memory, i.rc500_track), (8, 1));
+    assert!(i.last.rc500.is_none());
+    e.settings().set_rc500_memory(Some(99)).unwrap();
+    let i = e.info(403);
+    assert_eq!((i.rc500_memory, i.rc500_track), (99, 1));
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_rc500_slow_count_in() {
+    let e = Env::new();
+    e.slow(401, true);
+    let b = e.rc5("b");
+    let (_, s) = e.export(401, rc500("7", 2), &b);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let (_, wl, _) = read_wav(&rc500_wav_path(&b, 7, 2));
+    let (ol, _) = original_401(&e);
+    let lead = 352800;
+    assert_eq!(wl.len(), lead + ol.len());
+    assert!(wl[..176400].iter().all(|&v| v == 0.0), "silence");
+    for o in [0, 44100, 88200, 110250, 132300, 154350] {
+        let t = 176400 + o;
+        let k = tick_onset(&wl, &ol, lead, t - 200, t + 400)
+            .unwrap_or_else(|| panic!("no tick near {t}"));
+        assert!(k + 3 >= t && k <= t + 3, "tick at {t} starts at {k}");
+    }
+    assert!(wl[lead..] == ol[..], "the original from 352800");
+}
+
+#[test]
+fn ac_rc500_bad_memory_and_track_refused_before_the_dialog() {
+    let e = Env::new();
+    let b = e.rc5("b");
+    let before = tree(&b);
+    e.answer(&rc500("7", 1), &b);
+    for bad in ["0", "100", "abc"] {
+        assert_eq!(
+            e.prepare(401, rc500(bad, 1)).unwrap_err(),
+            "Enter a memory number from 1 to 99",
+            "{bad:?}"
+        );
+    }
+    for t in [0u8, 3] {
+        assert_eq!(
+            e.prepare(401, rc500("7", t)).unwrap_err(),
+            "Choose Track 1 or Track 2",
+            "{t}"
+        );
+    }
+    assert!(e.picker.starts().is_empty(), "refused before any dialog");
+    assert!(tree(&b) == before);
+    e.repo_unchanged();
 }

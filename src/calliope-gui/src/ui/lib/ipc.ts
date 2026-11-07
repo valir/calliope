@@ -10,6 +10,8 @@ export interface Settings {
   rc5_dir?: string | null;
   export_dir?: string | null;
   rc5_memory?: number | null;
+  rc500_dir?: string | null;
+  rc500_memory?: number | null;
 }
 
 export const appVersion = (): Promise<string> => invoke<string>('app_version');
@@ -33,8 +35,14 @@ export interface BackingVariant {
   mix: unknown;
 }
 export interface Rc5Export { memory: number; at: string }
+export interface Rc500Export { memory: number; track: number; at: string }
 export interface FileExport { path: string; at: string }
-export interface TrackExports { rc5: Rc5Export | null; mp3: FileExport | null; ogg: FileExport | null }
+export interface TrackExports {
+  rc5: Rc5Export | null;
+  /** Optional so existing test literals stay valid; Rust always sends it. */
+  rc500?: Rc500Export | null;
+  mp3: FileExport | null; ogg: FileExport | null;
+}
 export interface TrackRecord {
   id: string;
   type: TrackType;
@@ -523,9 +531,10 @@ export const playerLoop = (id: string, action: LoopAction): Promise<PlayerSnapsh
   invoke<PlayerSnapshot>('player_loop', { id, action });
 
 // Export: mirrors src/export_job.rs and src/export_ipc.rs.
-export type ExportKind = 'rc5' | 'mp3' | 'ogg';
+export type ExportKind = 'rc5' | 'rc500' | 'mp3' | 'ogg';
 export type ExportTargetReq =
   | { kind: 'rc5'; memory: string; reuse: string | null }
+  | { kind: 'rc500'; memory: string; track: 1 | 2; reuse: string | null }
   | { kind: 'mp3' }
   | { kind: 'ogg' };
 export interface CountInInfo {
@@ -544,9 +553,11 @@ export interface ExportInfo {
   source: string | null;
   count_in: CountInInfo | null;
   memory: number;
+  rc500_memory: number;
+  rc500_track: number;
   last: TrackExports;
 }
-/** `base` is the folder an RC-5 plan writes into (the destination folder for the others). */
+/** `base` is the folder an RC-5 or RC-500 plan writes into (the destination folder for the others). */
 export interface ExportPlan { token: string; path: string; exists: boolean; base: string }
 export type ExportPhase = 'writing' | 'finishing' | 'done' | 'failed' | 'cancelled';
 export interface ExportSnapshot {
@@ -584,6 +595,7 @@ export const setSlowCountIn = (id: string, on: boolean): Promise<ExportInfo> =>
   invoke<ExportInfo>('set_slow_count_in', { id, on });
 /** The "Change..." dialog of the RC-5 folder: the accepted folder, or null when cancelled. */
 export const chooseRc5Folder = (): Promise<string | null> => invoke<string | null>('choose_rc5_folder');
+export const chooseRc500Folder = (): Promise<string | null> => invoke<string | null>('choose_rc500_folder');
 export const startExport = (
   token: string,
   overwrite: boolean,

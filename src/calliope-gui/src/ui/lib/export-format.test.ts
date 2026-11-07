@@ -13,7 +13,7 @@ const snap = (o: Partial<ExportSnapshot> = {}): ExportSnapshot => ({
 });
 const info = (o: Partial<ExportInfo> = {}): ExportInfo => ({
   id: 't1', available: true, reason: null, source: 'backings/backing.flac',
-  count_in: { bpm: 120, first_beat_ms: 0, slow: false, count_in_bpm: 120, lead_ms: 2000, silence_ms: 2000, skip_ms: 0 }, memory: 1,
+  count_in: { bpm: 120, first_beat_ms: 0, slow: false, count_in_bpm: 120, lead_ms: 2000, silence_ms: 2000, skip_ms: 0 }, memory: 1, rc500_memory: 1, rc500_track: 1,
   last: { rc5: null, mp3: null, ogg: null }, ...o,
 });
 
@@ -54,6 +54,8 @@ describe('texts', () => {
     expect(resultText(snap({ phase: 'done' }))).toBe('Written to /m/Stem Mix.mp3.');
     expect(resultText(snap({ phase: 'done', target: 'rc5', path: '/r/ROLAND/WAVE/007_1/007_1.wav' })))
       .toBe('Written to /r/ROLAND/WAVE/007_1/007_1.wav. Eject the RC-5 before unplugging it.');
+    expect(resultText(snap({ phase: 'done', target: 'rc500', path: '/r/ROLAND/WAVE/007_2/007_2.WAV' })))
+      .toBe('Written to /r/ROLAND/WAVE/007_2/007_2.WAV. Eject the RC-500 before unplugging it.');
     expect(resultText(snap({ phase: 'failed', message: 'disk full' }))).toBe('Export failed: disk full');
     expect(resultText(snap({ phase: 'cancelled' }))).toBe('Export cancelled; nothing was written.');
     expect(resultText(snap())).toBe('');
@@ -100,6 +102,15 @@ describe('export info texts', () => {
       { id: 'track-export-rc5', label: 'RC-5', value: 'memory 7 (2026-10-24 21:30)' },
       { id: 'track-export-mp3', label: 'MP3', value: '/m/A - B.mp3 (2026-10-24 21:32)' },
     ]);
+    const all = {
+      ...last, rc500: { memory: 7, track: 2, at: '2026-10-24T18:31:00Z' }, ogg: { path: '/o.ogg', at: '' },
+    };
+    expect(exportRows(all).map((r) => r.id)).toEqual([
+      'track-export-rc5', 'track-export-rc500', 'track-export-mp3', 'track-export-ogg',
+    ]);
+    expect(exportRows({ ...none, rc500: all.rc500 })).toEqual([
+      { id: 'track-export-rc500', label: 'RC-500', value: 'memory 7, track 2 (2026-10-24 21:31)' },
+    ]);
     expect(exportRows(none)).toEqual([]);
     expect(exportRows(undefined)).toEqual([]);
     expect(exportRows({ ...none, ogg: { path: '/o.ogg', at: '' } })[0].value).toBe('/o.ogg');
@@ -108,6 +119,11 @@ describe('export info texts', () => {
     expect(lastText('rc5', last)).toBe('Last: memory 7, 2026-10-24');
     expect(lastText('mp3', last)).toBe('Last: /m/A - B.mp3, 2026-10-24');
     expect(lastText('ogg', last)).toBe('');
+    expect(lastText('rc500', last)).toBe('');
+    expect(lastText('rc500', { ...last, rc500: { memory: 7, track: 2, at: '2026-11-07T10:00:00Z' } })).toBe(
+      'Last: memory 7, track 2, 2026-11-07',
+    );
+    expect(lastText('rc500', { ...last, rc500: { memory: 7, track: 2, at: '' } })).toBe('Last: memory 7, track 2');
     expect(lastText('ogg', undefined)).toBe('');
   });
 });

@@ -6,10 +6,11 @@
   import { Label } from '$lib/components/ui/label/index.js';
   import { Switch } from '$lib/components/ui/switch/index.js';
   import { Progress } from '$lib/components/ui/progress/index.js';
+  import * as RadioGroup from '$lib/components/ui/radio-group/index.js';
   import { lib, selectedTrack } from '$lib/library-state.svelte';
   import { frontendLog } from '$lib/ipc';
   import {
-    ex, answerConfirm, cancel, changeRc5Folder, exportTo, isRunning, loadInfo, setSlowCountIn,
+    ex, answerConfirm, cancel, changeRc5Folder, changeRc500Folder, exportTo, isRunning, loadInfo, setSlowCountIn,
   } from '$lib/export-state.svelte';
   import {
     confirmText, countInText, disabledReason, exportTarget, lastText, progressText, resultText,
@@ -92,6 +93,7 @@
           `export layout overflow=${el.scrollHeight - el.clientHeight} width=${el.clientWidth} ` +
             `hscroll=${el.scrollWidth - el.clientWidth}`,
         );
+        void frontendLog(geometryLine());
       }, 300);
     });
     ro.observe(el);
@@ -101,6 +103,24 @@
       ro.disconnect();
     };
   });
+
+  /** The centres of the controls in window coordinates (the GUI tests take their click points from it). */
+  function geometryLine(): string {
+    const at = (sel: string): string => {
+      const e = pane?.querySelector(sel);
+      if (!e) return 'none';
+      const b = e.getBoundingClientRect();
+      const k = window.devicePixelRatio || 1;
+      return `${Math.round((b.left + b.width / 2) * k)},${Math.round((b.top + b.height / 2) * k)}`;
+    };
+    return (
+      `export geometry rc5=${at('[data-testid="export-rc5-button"]')} memory=${at('#export-memory')} ` +
+      `rc500=${at('[data-testid="export-rc500-button"]')} rc500_memory=${at('#export-rc500-memory')} ` +
+      `track1=${at('#export-rc500-track-1')} track2=${at('#export-rc500-track-2')} ` +
+      `mp3=${at('[data-testid="export-mp3-button"]')} ogg=${at('[data-testid="export-ogg-button"]')} ` +
+      `slow=${at('#export-slow-count-in')}`
+    );
+  }
 
   const viewLook = 'border-transparent bg-transparent dark:bg-transparent';
 </script>
@@ -129,17 +149,21 @@
     </div>
   </div>
 
-  <fieldset class="flex min-w-0 flex-col gap-2 rounded-lg border border-border p-4 pb-3">
+  <fieldset class="@container flex min-w-0 flex-col gap-2 rounded-lg border border-border p-4 pb-3">
     <legend class="px-2 text-sm font-medium">Export...</legend>
-    <!-- Each "Last:" line sits under its button, so the rows' heights do not depend on the text. -->
-    <div class="flex flex-col gap-1">
-      <div class="flex flex-wrap items-center gap-3">
-        <Button
-          class="h-11 w-44"
-          {disabled}
-          onclick={() => void exportTo('rc5', track)}
-        >to BOSS RC-5</Button>
-        <div class="flex items-center gap-3">
+    <!-- Two columns when there is room (RC-5 | RC-500, MP3 | OGG), one otherwise. Each "Last:" line sits under its
+         button, so the heights do not depend on the text. -->
+    <div class="grid grid-cols-1 gap-x-4 gap-y-2 @min-[576px]:grid-cols-2">
+      <div class="flex min-w-0 flex-col gap-1" role="group" aria-label="BOSS RC-5" data-testid="export-rc5">
+        <div class="flex min-h-11 items-center gap-3">
+          <Button
+            class="h-11 w-40"
+            data-testid="export-rc5-button"
+            {disabled}
+            onclick={() => void exportTo('rc5', track)}
+          >to BOSS RC-5</Button>
+        </div>
+        <div class="flex min-h-9 items-center gap-3">
           <label for="export-memory" class="text-sm font-medium">Memory</label>
           <Input
             id="export-memory"
@@ -149,31 +173,85 @@
             bind:value={ex.memory}
             disabled={running || ex.preparing}
           />
+          {#if ex.rc5Quick}
+            <Button
+              variant="outline"
+              size="sm"
+              class="shrink-0"
+              data-testid="export-rc5-change"
+              disabled={running || ex.preparing}
+              onclick={() => void changeRc5Folder()}
+            >Change...</Button>
+          {/if}
         </div>
+        <!-- Reserved row: it keeps its height with or without a folder, so nothing below it moves. -->
+        <div class="min-h-10 min-w-0" data-testid="export-rc5-to">
+          {#if ex.rc5Quick}
+            <p class="min-w-0 break-all text-sm" data-testid="export-rc5-folder">To: {ex.rc5Quick}</p>
+          {/if}
+        </div>
+        <p class="min-h-5 min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-rc5">{lastText('rc5', info?.last)}</p>
       </div>
-      <!-- Reserved row: it keeps its height with or without a folder, so nothing below it moves. -->
-      <div class="flex min-h-8 min-w-0 items-center gap-2" data-testid="export-rc5-to">
-        {#if ex.rc5Quick}
-          <p class="min-w-0 break-all text-sm" data-testid="export-rc5-folder">To: {ex.rc5Quick}</p>
+      <div class="flex min-w-0 flex-col gap-1" role="group" aria-label="BOSS RC-500" data-testid="export-rc500">
+        <div class="flex min-h-11 items-center gap-3">
           <Button
-            variant="outline"
-            size="sm"
-            class="shrink-0"
-            data-testid="export-rc5-change"
+            class="h-11 w-40"
+            data-testid="export-rc500-button"
+            {disabled}
+            onclick={() => void exportTo('rc500', track)}
+          >to BOSS RC-500</Button>
+          <RadioGroup.Root
+            value={String(ex.rc500Track)}
+            onValueChange={(v) => (ex.rc500Track = v === '2' ? 2 : 1)}
             disabled={running || ex.preparing}
-            onclick={() => void changeRc5Folder()}
-          >Change...</Button>
-        {/if}
+            aria-label="RC-500 track"
+            class="gap-1"
+          >
+            {#each [1, 2] as t (t)}
+              <div class="flex items-center gap-2">
+                <RadioGroup.Item value={String(t)} id="export-rc500-track-{t}" />
+                <Label for="export-rc500-track-{t}" class="text-sm">Track {t}</Label>
+              </div>
+            {/each}
+          </RadioGroup.Root>
+        </div>
+        <div class="flex min-h-9 items-center gap-3">
+          <span class="text-sm font-medium" aria-hidden="true">Memory</span>
+          <Input
+            id="export-rc500-memory"
+            aria-label="RC-500 memory"
+            class="w-16"
+            inputmode="numeric"
+            autocomplete="off"
+            bind:value={ex.rc500Memory}
+            disabled={running || ex.preparing}
+          />
+          {#if ex.rc500Quick}
+            <Button
+              variant="outline"
+              size="sm"
+              class="shrink-0"
+              data-testid="export-rc500-change"
+              disabled={running || ex.preparing}
+              onclick={() => void changeRc500Folder()}
+            >Change...</Button>
+          {/if}
+        </div>
+        <div class="min-h-10 min-w-0" data-testid="export-rc500-to">
+          {#if ex.rc500Quick}
+            <p class="min-w-0 break-all text-sm" data-testid="export-rc500-folder">To: {ex.rc500Quick}</p>
+          {/if}
+        </div>
+        <p class="min-h-5 min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-rc500">{lastText('rc500', info?.last)}</p>
       </div>
-      <p class="min-h-5 min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-rc5">{lastText('rc5', info?.last)}</p>
-    </div>
-    <div class="flex flex-col gap-1">
-      <Button class="h-11 w-44" {disabled} onclick={() => void exportTo('mp3', track)}>MP3 file</Button>
-      <p class="min-h-10 min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-mp3">{lastText('mp3', info?.last)}</p>
-    </div>
-    <div class="flex flex-col gap-1">
-      <Button class="h-11 w-44" {disabled} onclick={() => void exportTo('ogg', track)}>OGG file</Button>
-      <p class="min-h-10 min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-ogg">{lastText('ogg', info?.last)}</p>
+      <div class="flex min-w-0 flex-col gap-1">
+        <Button class="h-11 w-40" data-testid="export-mp3-button" {disabled} onclick={() => void exportTo('mp3', track)}>MP3 file</Button>
+        <p class="min-h-10 min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-mp3">{lastText('mp3', info?.last)}</p>
+      </div>
+      <div class="flex min-w-0 flex-col gap-1">
+        <Button class="h-11 w-40" data-testid="export-ogg-button" {disabled} onclick={() => void exportTo('ogg', track)}>OGG file</Button>
+        <p class="min-h-10 min-w-0 break-all text-sm text-muted-foreground" data-testid="export-last-ogg">{lastText('ogg', info?.last)}</p>
+      </div>
     </div>
     <p role="status" class="min-h-5 text-sm text-muted-foreground" data-testid="export-reason">{reason ?? ''}</p>
   </fieldset>

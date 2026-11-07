@@ -39,7 +39,11 @@ export function resultText(snap: ExportSnapshot | null): string {
   if (!snap) return '';
   switch (snap.phase) {
     case 'done':
-      return `Written to ${snap.path}.` + (snap.target === 'rc5' ? ' Eject the RC-5 before unplugging it.' : '');
+      return (
+        `Written to ${snap.path}.` +
+        (snap.target === 'rc5' ? ' Eject the RC-5 before unplugging it.' : '') +
+        (snap.target === 'rc500' ? ' Eject the RC-500 before unplugging it.' : '')
+      );
     case 'failed':
       return `Export failed: ${snap.message ?? 'unknown error'}`;
     case 'cancelled':
@@ -80,7 +84,7 @@ export function formatStamp(iso: string): string {
 
 export interface ExportRow { id: string; label: string; value: string }
 
-/** One read-only row per export kind present: RC-5, MP3, OGG. */
+/** One read-only row per export kind present: RC-5, RC-500, MP3, OGG. */
 export function exportRows(exports?: TrackExports): ExportRow[] {
   if (!exports) return [];
   const row = (id: string, label: string, what: string, at: string): ExportRow => {
@@ -89,6 +93,10 @@ export function exportRows(exports?: TrackExports): ExportRow[] {
   };
   const rows: ExportRow[] = [];
   if (exports.rc5) rows.push(row('track-export-rc5', 'RC-5', `memory ${exports.rc5.memory}`, exports.rc5.at));
+  if (exports.rc500) {
+    const r = exports.rc500;
+    rows.push(row('track-export-rc500', 'RC-500', `memory ${r.memory}, track ${r.track}`, r.at));
+  }
   if (exports.mp3) rows.push(row('track-export-mp3', 'MP3', exports.mp3.path, exports.mp3.at));
   if (exports.ogg) rows.push(row('track-export-ogg', 'OGG', exports.ogg.path, exports.ogg.at));
   return rows;
@@ -98,7 +106,7 @@ export function exportRows(exports?: TrackExports): ExportRow[] {
 export function lastText(kind: ExportKind, last?: TrackExports | null): string {
   const e = last?.[kind];
   if (!e) return '';
-  const what = 'memory' in e ? `memory ${e.memory}` : e.path;
+  const what = 'track' in e ? `memory ${e.memory}, track ${e.track}` : 'memory' in e ? `memory ${e.memory}` : e.path;
   const day = formatDay(e.at);
   return day ? `Last: ${what}, ${day}` : `Last: ${what}`;
 }

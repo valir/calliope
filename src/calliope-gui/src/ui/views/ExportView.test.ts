@@ -64,6 +64,7 @@ beforeEach(() => {
   info = {
     id: TRACK.id, available: true, reason: null, source: 'backings/backing.flac',
     count_in: { bpm: 120, first_beat_ms: 0, slow: false, count_in_bpm: 120, lead_ms: 2000, silence_ms: 2000, skip_ms: 0 }, memory: 7,
+    rc500_memory: 1, rc500_track: 1,
     last: { rc5: null, mp3: null, ogg: null },
   };
   mockIPC((cmd, args) => {
@@ -87,9 +88,9 @@ beforeEach(() => {
       if (startError) throw startError;
       channelId = (a.events as { id: number }).id;
       sendIndex = 0;
-      return snapshot({ target: (lastTarget as 'rc5' | 'mp3' | 'ogg') });
+      return snapshot({ target: (lastTarget as 'rc5' | 'rc500' | 'mp3' | 'ogg') });
     }
-    if (cmd === 'choose_rc5_folder') {
+    if (cmd === 'choose_rc5_folder' || cmd === 'choose_rc500_folder') {
       if (chooseResult instanceof Error) throw chooseResult.message;
       return chooseResult;
     }
@@ -660,6 +661,192 @@ describe('Export view', () => {
       await fireEvent.click(slowSwitch());
       await waitFor(() => expect(slowSwitch().getAttribute('aria-checked')).toBe('true'));
       expect(box.value).toBe('12');
+    });
+  });
+
+  describe('RC-500', () => {
+    const rc500Plan = (base: string, exists = false): ExportPlan => ({
+      token: 'tok', path: `${base}/ROLAND/WAVE/007_2/007_2.WAV`, exists, base,
+    });
+    const box = () => screen.getByLabelText('RC-500 memory') as HTMLInputElement;
+    const radio = (n: number) => screen.getByRole('radio', { name: `Track ${n}` });
+    const checked = (n: number) => radio(n).getAttribute('aria-checked') === 'true';
+    const folderText = (k: string) => screen.queryByTestId(`export-${k}-folder`)?.textContent ?? '';
+    const lastTarget500 = () => targets[targets.length - 1] as { kind: string; reuse?: string | null };
+
+    /** One RC-500 click that starts a job, then the end of that job. */
+    async function job500(base: string, end: Record<string, unknown> = {}): Promise<void> {
+      plan = rc500Plan(base);
+      const n = names().filter((x) => x === 'start_export').length;
+      await fireEvent.click(btn('to BOSS RC-500'));
+      await waitFor(() => expect(names().filter((x) => x === 'start_export').length).toBe(n + 1));
+      send({ phase: 'done', path: plan.path, clipped: 0, root: '/tmp/repo', records: [], info_error: null, ...end });
+      await waitFor(() => expect(screen.getByTestId('export-result').textContent).not.toBe(''));
+    }
+    async function click5(k: 'to BOSS RC-5' | 'to BOSS RC-500', base: string): Promise<void> {
+      const n = targets.length;
+      plan = rc500Plan(base, true);
+      await fireEvent.click(btn(k));
+      await waitFor(() => expect(targets.length).toBe(n + 1));
+      await fireEvent.click(await screen.findByRole('button', { name: 'No' }));
+      await tick();
+    }
+
+    it('is enabled for an available track and shows the suggestion; Memory is still the RC-5 box', async () => {
+      await renderWithTrack();
+      expect(btn('to BOSS RC-500').disabled).toBe(false);
+      expect(box().value).toBe('1');
+      expect(checked(1)).toBe(true);
+      expect(checked(2)).toBe(false);
+      expect((screen.getByLabelText('Memory') as HTMLInputElement).id).toBe('export-memory');
+      expect((screen.getByLabelText('Memory') as HTMLInputElement).value).toBe('7');
+    });
+
+    it('shows the recorded memory and track per track', async () => {
+      info = { ...info, rc500_memory: 7, rc500_track: 2 };
+      await renderWithTrack();
+      expect(box().value).toBe('7');
+      expect(checked(2)).toBe(true);
+      info = { ...info, rc500_memory: 1, rc500_track: 1 };
+      const other = FIXTURE_TRACKS[5];
+      selectTrack(other.id);
+      lib.treeFocus = `t:${other.id}`;
+      await waitFor(() => expect(box().value).toBe('1'));
+      expect(checked(1)).toBe(true);
+    });
+
+    it('sends the chosen track and the typed memory', async () => {
+      await renderWithTrack();
+      await fireEvent.click(radio(2));
+      await waitFor(() => expect(checked(2)).toBe(true));
+      await fireEvent.input(box(), { target: { value: '12' } });
+      await fireEvent.click(btn('to BOSS RC-500'));
+      await waitFor(() => expect(targets).toHaveLength(1));
+      expect(targets[0]).toEqual({ kind: 'rc500', memory: '12', track: 2, reuse: null });
+    });
+
+    it('keeps its own quick folder: RC-5 stays empty, a failure clears only the RC-500 one', async () => {
+      await renderWithTrack();
+      await job500('/media/B');
+      await waitFor(() => expect(folderText('rc500')).toBe('To: /media/B'));
+      expect(folderText('rc5')).toBe('');
+      expect(screen.getByTestId('export-rc500-change')).toBeTruthy();
+      expect(screen.queryByTestId('export-rc5-change')).toBeNull();
+      await click5('to BOSS RC-5', '/media/R');
+      expect(lastTarget500().reuse).toBeNull();
+      await click5('to BOSS RC-500', '/media/B');
+      expect(lastTarget500().reuse).toBe('/media/B');
+      // An RC-5 folder too, then a failed RC-500 job clears only the RC-500 one.
+      lastTarget = 'rc5';
+      plan = { token: 'tok', path: '/media/R/ROLAND/WAVE/007_1/007_1.WAV', exists: false, base: '/media/R' };
+      await fireEvent.click(btn('to BOSS RC-5'));
+      await waitFor(() => expect(names().filter((x) => x === 'start_export').length).toBe(2));
+      send({ phase: 'done', path: plan.path, clipped: 0, root: '/tmp/repo', records: [], info_error: null });
+      await waitFor(() => expect(folderText('rc5')).toBe('To: /media/R'));
+      await job500('/media/B', { phase: 'failed', message: 'boom' });
+      await waitFor(() => expect(folderText('rc500')).toBe(''));
+      expect(folderText('rc5')).toBe('To: /media/R');
+    });
+
+    it('Change... picks, keeps on cancel, shows a refusal and is disabled while running', async () => {
+      await renderWithTrack();
+      await job500('/media/B');
+      await waitFor(() => expect(folderText('rc500')).toBe('To: /media/B'));
+      const change = () => screen.getByTestId('export-rc500-change') as HTMLButtonElement;
+      chooseResult = '/media/C';
+      await fireEvent.click(change());
+      await waitFor(() => expect(folderText('rc500')).toBe('To: /media/C'));
+      expect(names().filter((n) => n === 'choose_rc500_folder')).toHaveLength(1);
+      chooseResult = null;
+      await fireEvent.click(change());
+      await waitFor(() => expect(names().filter((n) => n === 'choose_rc500_folder')).toHaveLength(2));
+      await tick();
+      expect(folderText('rc500')).toBe('To: /media/C');
+      chooseResult = new Error('No ROLAND folder in /x: is the RC-500 mounted?');
+      await fireEvent.click(change());
+      await waitFor(() => expect(screen.getByTestId('export-result').textContent)
+        .toBe('Folder not changed: No ROLAND folder in /x: is the RC-500 mounted?'));
+      expect(folderText('rc500')).toBe('To: /media/C');
+      plan = { token: 'tok', path: '/out/a.mp3', exists: false, base: '/out' };
+      await fireEvent.click(btn('MP3 file'));
+      await waitFor(() => expect(names().filter((x) => x === 'start_export').length).toBe(2));
+      send({ phase: 'writing', progress: 0.2 });
+      await waitFor(() => expect(change().disabled).toBe(true));
+    });
+
+    it('disables the radios, the box and the button while preparing, running or unavailable', async () => {
+      await renderWithTrack();
+      const off = (on: boolean) => {
+        expect(btn('to BOSS RC-500').disabled).toBe(on);
+        expect(box().disabled).toBe(on);
+        expect((radio(1) as HTMLButtonElement).disabled).toBe(on);
+        expect((radio(2) as HTMLButtonElement).disabled).toBe(on);
+      };
+      off(false);
+      plan = { token: 'tok', path: '/out/a.mp3', exists: false, base: '/out' };
+      await fireEvent.click(btn('MP3 file'));
+      await waitFor(() => expect(names()).toContain('start_export'));
+      send({ phase: 'writing', progress: 0.2 });
+      await waitFor(() => off(true));
+      send({ phase: 'cancelled' });
+      await waitFor(() => off(false));
+      // Preparing: the dialog never answers.
+      let release: (v: unknown) => void = () => {};
+      const held = new Promise((res) => (release = res));
+      clearMocks();
+      mockIPC((cmd) => {
+        if (cmd === 'prepare_export') return held;
+        return null;
+      });
+      await fireEvent.click(btn('to BOSS RC-500'));
+      await waitFor(() => {
+        expect(box().disabled).toBe(true);
+        expect((radio(2) as HTMLButtonElement).disabled).toBe(true);
+        expect(btn('to BOSS RC-500').disabled).toBe(true);
+      });
+      release(null);
+      await waitFor(() => expect(btn('to BOSS RC-500').disabled).toBe(false));
+    });
+
+    it('is disabled with the same reasons as the others', async () => {
+      info = { ...info, available: false, reason: NO_TEMPO };
+      selectTrack(TRACK.id);
+      lib.treeFocus = `t:${TRACK.id}`;
+      render(ExportView);
+      await waitFor(() => expect(reason()).toBe(NO_TEMPO));
+      expect(btn('to BOSS RC-500').disabled).toBe(true);
+      lib.treeFocus = 'b:somebody';
+      await waitFor(() => expect(reason()).toBe('Select a track to export it'));
+      expect(btn('to BOSS RC-500').disabled).toBe(true);
+    });
+
+    it('shows the done text and the Last: line after the refill', async () => {
+      await renderWithTrack();
+      expect(screen.getByTestId('export-last-rc500').textContent).toBe('');
+      info = {
+        ...info, rc500_memory: 7, rc500_track: 2,
+        last: { ...info.last, rc500: { memory: 7, track: 2, at: '2026-11-07T10:00:00Z' } },
+      };
+      await job500('/media/B');
+      await waitFor(() => expect(screen.getByTestId('export-result').textContent)
+        .toBe('Written to /media/B/ROLAND/WAVE/007_2/007_2.WAV. Eject the RC-500 before unplugging it.'));
+      await waitFor(() => expect(screen.getByTestId('export-last-rc500').textContent)
+        .toMatch(/^Last: memory 7, track 2, 2026-11-0\d$/));
+      expect(box().value).toBe('7');
+      expect(checked(2)).toBe(true);
+    });
+
+    it('leaving the view and coming back clears both quick folders', async () => {
+      await renderWithTrack();
+      await job500('/media/B');
+      await waitFor(() => expect(folderText('rc500')).toBe('To: /media/B'));
+      cleanup();
+      await renderWithTrack();
+      expect(folderText('rc500')).toBe('');
+      expect(folderText('rc5')).toBe('');
+      expect(screen.getByTestId('export-rc500-to')).toBeTruthy();
+      await click5('to BOSS RC-500', '/media/B');
+      expect(lastTarget500().reuse).toBeNull();
     });
   });
 });
