@@ -3165,3 +3165,159 @@ fn ac_rc500_bad_memory_and_track_refused_before_the_dialog() {
     assert!(tree(&b) == before);
     e.repo_unchanged();
 }
+
+// ==== QA additions (gui-export-rc500): edges ====
+
+#[test]
+fn ac_rc500_memory_boundaries_and_both_tracks_byte_identical_neighbours() {
+    let e = Env::new();
+    let b = e.rc5("b");
+    for (m, t, f) in [
+        ("1", 1u8, "001_1"),
+        ("1", 2, "001_2"),
+        ("99", 2, "099_2"),
+        (" 7 ", 1, "007_1"),
+    ] {
+        let (plan, s) = e.export(409, rc500(m, t), &b);
+        assert_eq!(s.phase, ExportPhase::Done, "{m} {t} {s:?}");
+        let want = b.join(format!("ROLAND/WAVE/{f}/{f}.WAV"));
+        assert_eq!(plan.path, want.display().to_string());
+        read_wav(&want);
+    }
+    // Real exported track 1 stays byte-identical across a track 2 export, and the other way round.
+    let one = std::fs::read(rc500_wav_path(&b, 7, 1)).unwrap();
+    assert_eq!(e.export(401, rc500("7", 2), &b).1.phase, ExportPhase::Done);
+    assert_eq!(std::fs::read(rc500_wav_path(&b, 7, 1)).unwrap(), one);
+    let two = std::fs::read(rc500_wav_path(&b, 7, 2)).unwrap();
+    assert_eq!(e.export(403, rc500("7", 1), &b).1.phase, ExportPhase::Done);
+    assert_eq!(std::fs::read(rc500_wav_path(&b, 7, 2)).unwrap(), two);
+    e.repo_unchanged_except_exports();
+}
+
+#[test]
+fn ac_rc500_slot_folder_is_a_file_fails_and_writes_nothing_else() {
+    let e = Env::new();
+    let b = e.rc5("b");
+    std::fs::create_dir_all(b.join("ROLAND/WAVE")).unwrap();
+    std::fs::write(b.join("ROLAND/WAVE/007_2"), b"i am a file").unwrap();
+    let before = tree(&b);
+    e.answer(&rc500("7", 2), &b);
+    let r = e.prepare(401, rc500("7", 2));
+    let failed = match r {
+        Err(_) => true,
+        Ok(Some(plan)) => match e.start(&plan.token, plan.exists) {
+            Err(_) => true,
+            Ok(_) => e.wait().phase == ExportPhase::Failed,
+        },
+        Ok(None) => true,
+    };
+    assert!(failed, "an export under a file must not succeed");
+    assert!(tree(&b) == before, "nothing changed on the drive");
+    assert!(exports_of(&e, 401).rc500.is_none(), "nothing recorded");
+    assert_eq!(
+        e.settings().get().rc500_dir,
+        None,
+        "no quick/remembered folder set by a failure"
+    );
+    e.repo_unchanged();
+}
+
+#[test]
+fn ac_rc500_roland_symlink_and_roland_file() {
+    let e = Env::new();
+    let b = e.folder("b");
+    let real = e.folder("elsewhere");
+    std::os::unix::fs::symlink(&real, b.join("ROLAND")).unwrap();
+    let r = e.prepare(401, {
+        e.answer(&rc500("7", 1), &b);
+        rc500("7", 1)
+    });
+    // Either accepted like the RC-5 does, or refused; both RC kinds must agree.
+    e.answer(&rc5("7"), &b);
+    let r5 = e.prepare(401, rc5("7"));
+    assert_eq!(
+        r.is_ok(),
+        r5.is_ok(),
+        "RC-500 and RC-5 treat a ROLAND symlink alike: {r:?} / {r5:?}"
+    );
+    // A ROLAND file is refused with the RC-500 text.
+    let c = e.folder("c");
+    std::fs::write(c.join("ROLAND"), "x").unwrap();
+    e.answer(&rc500("7", 1), &c);
+    let err = e.prepare(401, rc500("7", 1)).unwrap_err();
+    assert!(err.contains("RC-500"), "{err}");
+}
+
+#[test]
+fn ac_rc500_and_rc5_quick_folders_are_independent_both_ways() {
+    use calliope_gui::export_rules::ExportKind;
+    use calliope_gui::picker::DialogKind;
+    let e = Env::new();
+    let (r, b) = (e.rc5("r"), e.rc5("b"));
+    assert_eq!(e.export(401, rc5("1"), &r).1.phase, ExportPhase::Done);
+    assert_eq!(e.export(403, rc500("1", 1), &b).1.phase, ExportPhase::Done);
+    assert_eq!(e.export.quick_dir(ExportKind::Rc5), Some(r.clone()));
+    assert_eq!(e.export.quick_dir(ExportKind::Rc500), Some(b.clone()));
+    // Each skips with its own folder; reuse of the other kind's folder opens a dialog.
+    let n = e.picker.starts().len();
+    let p = e
+        .prepare(
+            401,
+            TargetReq::Rc500 {
+                memory: "2".into(),
+                track: 1,
+                reuse: Some(b.display().to_string()),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(e.picker.starts().len(), n);
+    assert_eq!(PathBuf::from(&p.path), rc500_wav_path(&b, 2, 1));
+    e.start(&p.token, false).unwrap();
+    e.wait();
+    std::fs::write(&e.answers, "export-rc500 CANCEL\n").unwrap();
+    let before = tree(&r);
+    let q = e.prepare(
+        401,
+        TargetReq::Rc500 {
+            memory: "3".into(),
+            track: 1,
+            reuse: Some(r.display().to_string()),
+        },
+    );
+    assert!(
+        matches!(q, Ok(None)),
+        "RC-5 folder is not the RC-500 quick folder: {q:?}"
+    );
+    assert_eq!(e.picker.starts().last().unwrap().0, DialogKind::ExportRc500);
+    assert!(tree(&r) == before);
+}
+
+#[test]
+fn ac_rc500_stale_record_in_track_json_is_harmless() {
+    let mut e = Env::new();
+    for (n, rec) in [
+        (
+            401u32,
+            serde_json::json!({"rc500": {"memory": 200, "track": 5, "at": STALE}}),
+        ),
+        (
+            403,
+            serde_json::json!({"rc500": {"memory": 7, "track": "two", "at": STALE}}),
+        ),
+        (404, serde_json::json!({"rc500": {"memory": 7}})),
+    ] {
+        write_exports(&mut e, n, rec);
+    }
+    for n in [401, 403, 404] {
+        let i = e.info(n);
+        assert!(i.last.rc500.is_none(), "{n}");
+        assert!(
+            (1..=99).contains(&i.rc500_memory) && (1..=2).contains(&i.rc500_track),
+            "{n}"
+        );
+    }
+    let b = e.rc5("b");
+    assert_eq!(e.export(405, rc500("7", 2), &b).1.phase, ExportPhase::Done);
+    assert_eq!(exports_of(&e, 405).rc500.unwrap().memory, 7);
+}
