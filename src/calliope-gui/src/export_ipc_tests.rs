@@ -126,6 +126,14 @@ impl Rig {
         }
     }
 
+    fn rc500(memory: &str, track: u8, reuse: Option<&Path>) -> TargetReq {
+        TargetReq::Rc500 {
+            memory: memory.into(),
+            track,
+            reuse: reuse.map(|p| p.to_string_lossy().into_owned()),
+        }
+    }
+
     fn start(&self, token: &str, overwrite: bool) -> Result<ExportSnapshot, String> {
         let sink: Sink = Arc::new(|_| {});
         let path = self.settings_path();
@@ -136,7 +144,7 @@ impl Rig {
             token,
             overwrite,
             sink,
-            Box::new(move |n| remember_memory(&SettingsStore::open(path), n)),
+            Box::new(move |k, n| remember_memory(&SettingsStore::open(path), k, n)),
         )
     }
 
@@ -556,7 +564,7 @@ fn memory_is_remembered_after_done() {
         &plan.token,
         false,
         Arc::new(|_| {}),
-        Box::new(move |_| {
+        Box::new(move |_, _| {
             r2.fetch_add(1, Ordering::SeqCst);
         }),
     )
@@ -888,6 +896,201 @@ fn choose_rc5_folder_is_busy_during_an_export() {
     rig.start(&plan.token, false).unwrap();
     let starts = rig.picker.starts().len();
     let e = do_choose_rc5_folder(&rig.st, &rig.settings, &rig.export, None).unwrap_err();
+    assert_eq!(e, BUSY_MESSAGE);
+    assert_eq!(rig.picker.starts().len(), starts);
+    let job = rig.export.snapshot().unwrap().job;
+    rig.export.cancel(&job);
+    rig.wait();
+}
+
+#[test]
+fn rc500_info_prepare_refusals_and_remembered_folder() {
+    let rig = Rig::new();
+    let i = rig.info(401);
+    assert_eq!((i.memory, i.rc500_memory, i.rc500_track), (1, 1, 1));
+    remember_memory(&rig.settings, ExportKind::Rc500, 98);
+    let i = rig.info(401);
+    assert_eq!((i.memory, i.rc500_memory, i.rc500_track), (1, 99, 1));
+    assert_eq!(rig.settings.get().rc5_memory, None);
+    remember_memory(&rig.settings, ExportKind::Rc5, 4);
+    assert_eq!(rig.info(401).rc500_memory, 99);
+    assert_eq!(rig.settings.get().rc500_memory, Some(98));
+
+    // Refusals come before any dialog.
+    for (t, msg) in [
+        (Rig::rc500("3", 0, None), "Choose Track 1 or Track 2"),
+        (Rig::rc500("3", 3, None), "Choose Track 1 or Track 2"),
+        (
+            Rig::rc500("abc", 1, None),
+            "Enter a memory number from 1 to 99",
+        ),
+    ] {
+        assert_eq!(rig.prepare(401, t).unwrap_err(), msg);
+    }
+    assert!(rig.picker.starts().is_empty());
+
+    // First time: the dialog starts at home; the RC-500 folder is remembered, the RC-5's is not.
+    let base = rig.base("rc500");
+    rig.answer(&[format!("export-rc500 {}", base.display())]);
+    let plan = rig
+        .prepare(401, Rig::rc500(" 7 ", 2, None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        plan.path,
+        base.join("ROLAND/WAVE/007_2/007_2.WAV")
+            .display()
+            .to_string()
+    );
+    assert_eq!(
+        rig.picker.starts(),
+        [(DialogKind::ExportRc500, Some(rig.home.clone()))]
+    );
+    assert_eq!(rig.settings.get().rc500_dir, Some(base.clone()));
+    assert_eq!(rig.settings.get().rc5_dir, None);
+    // Next time it starts there; a folder without ROLAND is refused and not remembered.
+    let plain = rig.home.join("plain");
+    std::fs::create_dir(&plain).unwrap();
+    rig.answer(&[format!("export-rc500 {}", plain.display())]);
+    let e = rig.prepare(401, Rig::rc500("7", 1, None)).unwrap_err();
+    assert_eq!(
+        e,
+        format!(
+            "No ROLAND folder in {}: is the RC-500 mounted?",
+            plain.display()
+        )
+    );
+    assert_eq!(
+        rig.picker.starts()[1],
+        (DialogKind::ExportRc500, Some(base.clone()))
+    );
+    assert_eq!(rig.settings.get().rc500_dir, Some(base));
+}
+
+#[test]
+fn rc500_done_records_remembers_and_clears_holders() {
+    let rig = Rig::new();
+    let base = rig.base("rc500");
+    let s = rig.export_to(401, Rig::rc500("7", 2, None), "export-rc500", &base);
+    assert_eq!((s.phase, s.info_error), (ExportPhase::Done, None));
+    assert!(base.join("ROLAND/WAVE/007_2/007_2.WAV").is_file());
+    // The finished export wrote the settings file (a second store reads it).
+    let reopened = SettingsStore::open(rig.settings_path());
+    let s = reopened.get();
+    assert_eq!((s.rc500_memory, s.rc5_memory), (Some(7), None));
+    let rec = rig.exports(401).rc500.unwrap();
+    assert_eq!((rec.memory, rec.track), (7, 2));
+    assert!(rig.exports(401).rc5.is_none());
+    let i = do_export_info(&rig.st, &reopened, &FileTempoStore, &Rig::id(401)).unwrap();
+    assert_eq!((i.rc500_memory, i.rc500_track), (7, 2));
+    assert_eq!(i.memory, 1);
+    // Another track: 7/1 and an RC-5 export leave the 7/2 record alone.
+    rig.export_to(403, Rig::rc500("7", 1, None), "export-rc500", &base);
+    rig.export_to(403, Rig::rc5("7"), "export-rc5", &base);
+    assert_eq!(
+        rig.exports(401).rc500.map(|e| (e.memory, e.track)),
+        Some((7, 2))
+    );
+    assert_eq!(
+        rig.exports(403).rc500.map(|e| (e.memory, e.track)),
+        Some((7, 1))
+    );
+    assert_eq!(rig.exports(403).rc5.map(|e| e.memory), Some(7));
+    // The same memory and track on another track takes it over; the records say so.
+    let f = Finished {
+        id: Rig::id(403),
+        kind: ExportKind::Rc500,
+        memory: Some(7),
+        track: Some(2),
+        path: base.join("ROLAND/WAVE/007_2/007_2.WAV"),
+    };
+    let out = record_finished(&*rig.st.repo_lock(), &rig.repo, &f, "2026-01-01T00:00:00Z");
+    assert_eq!(out.info_error, None);
+    let ids: Vec<_> = out.records.iter().map(|r| r.id.clone()).collect();
+    assert_eq!(ids, [Rig::id(403), Rig::id(401)]);
+    assert!(rig.exports(401).rc500.is_none());
+    assert_eq!(
+        rig.exports(403).rc500.map(|e| (e.memory, e.track)),
+        Some((7, 2))
+    );
+    assert_eq!(rig.exports(403).rc5.map(|e| e.memory), Some(7));
+}
+
+#[test]
+fn rc500_quick_and_choose_folder() {
+    let rig = Rig::new();
+    let b = rig.base("B");
+    let choose = |rig: &Rig| {
+        do_choose_rc500_folder(&rig.st, &rig.settings, &rig.export, Some(rig.home.clone()))
+    };
+    // Cancel: nothing changes.
+    rig.answer(&["export-rc500 CANCEL".into()]);
+    assert_eq!(choose(&rig), Ok(None));
+    assert_eq!(rig.export.quick_dir(ExportKind::Rc500), None);
+    // Refused (no ROLAND): nothing changes.
+    let plain = rig.home.join("plain");
+    std::fs::create_dir(&plain).unwrap();
+    rig.answer(&[format!("export-rc500 {}", plain.display())]);
+    assert!(choose(&rig)
+        .unwrap_err()
+        .ends_with("is the RC-500 mounted?"));
+    assert_eq!(rig.settings.get().rc500_dir, None);
+    // Picked: sets the quick folder and the setting, not the RC-5's.
+    rig.answer(&[format!("export-rc500 {}", b.display())]);
+    assert_eq!(choose(&rig), Ok(Some(b.to_string_lossy().into_owned())));
+    assert_eq!(rig.export.quick_dir(ExportKind::Rc500), Some(b.clone()));
+    assert_eq!(rig.export.quick_dir(ExportKind::Rc5), None);
+    assert_eq!(rig.settings.get().rc500_dir, Some(b.clone()));
+    assert_eq!(rig.settings.get().rc5_dir, None);
+    // The next dialog starts in the quick folder.
+    rig.answer(&["export-rc500 CANCEL".into()]);
+    assert_eq!(choose(&rig), Ok(None));
+    assert_eq!(
+        rig.picker.starts().last().unwrap(),
+        &(DialogKind::ExportRc500, Some(b.clone()))
+    );
+    // A success keeps it; a prepare with reuse skips the dialog, the RC-5's does not.
+    let s = rig.export_to(401, Rig::rc500("3", 1, None), "export-rc500", &b);
+    assert_eq!(s.phase, ExportPhase::Done);
+    let starts = rig.picker.starts().len();
+    let plan = rig
+        .prepare(403, Rig::rc500("4", 2, Some(&b)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(rig.picker.starts().len(), starts);
+    assert_eq!(
+        plan.path,
+        b.join("ROLAND/WAVE/004_2/004_2.WAV").display().to_string()
+    );
+    rig.answer(&["export-rc5 CANCEL".into()]);
+    assert_eq!(
+        rig.prepare(403, Rig::rc5_reuse("4", Some(&b))).unwrap(),
+        None
+    );
+    assert_eq!(rig.picker.starts().len(), starts + 1);
+    assert_eq!(rig.picker.starts()[starts].0, DialogKind::ExportRc5);
+    // And the other way round: an RC-5 success sets only the RC-5 quick folder.
+    let c = rig.base("C");
+    rig.export_to(401, Rig::rc5("5"), "export-rc5", &c);
+    assert_eq!(rig.export.quick_dir(ExportKind::Rc5), Some(c.clone()));
+    assert_eq!(rig.export.quick_dir(ExportKind::Rc500), Some(b));
+    // Serde.
+    let t: TargetReq = serde_json::from_str(r#"{"kind":"rc500","memory":"7","track":2}"#).unwrap();
+    assert_eq!(Rig::rc500("7", 2, None), t);
+    assert!(
+        serde_json::from_str::<TargetReq>(r#"{"kind":"rc500","memory":"7","track":"2"}"#).is_err()
+    );
+}
+
+#[test]
+fn choose_rc500_folder_is_busy_during_an_export() {
+    let rig = Rig::with(ExportState::new(Box::new(real_tools)).with_pace(5.0));
+    let b = rig.base("B");
+    rig.answer(&[format!("export-rc500 {}", b.display())]);
+    let plan = rig.prepare(401, Rig::rc500("3", 2, None)).unwrap().unwrap();
+    rig.start(&plan.token, false).unwrap();
+    let starts = rig.picker.starts().len();
+    let e = do_choose_rc500_folder(&rig.st, &rig.settings, &rig.export, None).unwrap_err();
     assert_eq!(e, BUSY_MESSAGE);
     assert_eq!(rig.picker.starts().len(), starts);
     let job = rig.export.snapshot().unwrap().job;

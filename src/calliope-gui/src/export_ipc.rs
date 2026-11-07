@@ -10,7 +10,7 @@ use tauri::Manager;
 
 use crate::export_audio::{LEAD_BEATS, SLOW_SPACING};
 use crate::export_job::{
-    check_rc5_base, ExportEvent, ExportPlan, ExportSnapshot, ExportState, Finished, OnDone,
+    check_looper_base, ExportEvent, ExportPlan, ExportSnapshot, ExportState, Finished, OnDone,
     PlanInput, Recorded, Sink, TargetReq, BUSY_MESSAGE, STALE_MESSAGE,
 };
 use crate::export_record::{ExportEntry, TrackExports};
@@ -52,6 +52,10 @@ pub struct ExportInfo {
     pub count_in: Option<CountInInfo>,
     /// The memory recorded for the track, else the suggested RC-5 memory.
     pub memory: u8,
+    /// The RC-500 memory: the recorded one, else the suggestion after the last one used.
+    pub rc500_memory: u8,
+    /// The RC-500 track: the recorded one, else 1.
+    pub rc500_track: u8,
     /// The track's recorded exports, as read now.
     pub last: TrackExports,
 }
@@ -98,6 +102,10 @@ pub fn do_export_info(
         rec.exports.rc5.as_ref().map(|e| e.memory),
         settings.get().rc5_memory,
     );
+    let (rc500_memory, rc500_track) = export_rules::rc500_slot_for(
+        rec.exports.rc500.as_ref().map(|e| (e.memory, e.track)),
+        settings.get().rc500_memory,
+    );
     let mut info = ExportInfo {
         id: id.to_string(),
         available: false,
@@ -105,6 +113,8 @@ pub fn do_export_info(
         source: None,
         count_in: None,
         memory,
+        rc500_memory,
+        rc500_track,
         last: rec.exports.clone(),
     };
     let src = match export_rules::export_source(&rec) {
@@ -136,6 +146,7 @@ pub fn do_export_info(
 }
 
 const RC5_TITLE: &str = "Choose the RC-5 drive (its root folder)";
+const RC500_TITLE: &str = "Choose the RC-500 drive (its root folder)";
 
 /// Logs the dialog start and opens the folder dialog.
 fn pick(
@@ -188,6 +199,20 @@ pub fn do_prepare_export(
             Ok(n) => Some(n),
             Err(e) => return refused(kind, "memory", e),
         },
+        TargetReq::Rc500 { memory, track, .. } => {
+            let n = match export_rules::parse_memory(memory) {
+                Ok(n) => n,
+                Err(e) => return refused(kind, "memory", e),
+            };
+            if let Err(e) = export_rules::parse_track(*track) {
+                return refused(kind, "track", e);
+            }
+            Some(n)
+        }
+        _ => None,
+    };
+    let rc500_track = match &target {
+        TargetReq::Rc500 { track, .. } => Some(*track),
         _ => None,
     };
     export.require(kind)?;
@@ -201,23 +226,35 @@ pub fn do_prepare_export(
         return refused(kind, "no-tempo", NO_TEMPO_REASON);
     }
 
-    // RC-5 only: the folder of the last success, when the frontend asks for it and it is still
-    // a usable RC-5 folder; otherwise the dialog, as the first time.
+    // RC-5 and RC-500 only: the folder of the last success, when the frontend asks for it and it
+    // is still a usable folder; otherwise the dialog, as the first time.
     let mut quick: Option<PathBuf> = None;
-    if let TargetReq::Rc5 {
-        reuse: Some(reuse), ..
-    } = &target
-    {
-        match export_rules::quick_rc5_dir(Some(reuse), export.rc5_quick().as_deref()) {
+    let reuse = match &target {
+        TargetReq::Rc5 { reuse, .. } | TargetReq::Rc500 { reuse, .. } => reuse.as_deref(),
+        _ => None,
+    };
+    if let Some(reuse) = reuse {
+        match export_rules::quick_rc5_dir(Some(reuse), export.quick_dir(kind).as_deref()) {
             Ok(dir) => {
                 eprintln!(
-                    "calliope: dialog skipped kind=export-rc5 dir={}",
+                    "calliope: dialog skipped kind={} dir={}",
+                    if kind == ExportKind::Rc500 {
+                        "export-rc500"
+                    } else {
+                        "export-rc5"
+                    },
                     dir.display()
                 );
                 quick = Some(dir);
             }
             Err(reason) => {
-                eprintln!("calliope: export quick unavailable reason={reason} dir={reuse}");
+                if kind == ExportKind::Rc500 {
+                    eprintln!(
+                        "calliope: export quick unavailable kind=rc500 reason={reason} dir={reuse}"
+                    );
+                } else {
+                    eprintln!("calliope: export quick unavailable reason={reason} dir={reuse}");
+                }
             }
         }
     }
@@ -227,19 +264,22 @@ pub fn do_prepare_export(
         None => {
             let (dialog, title) = match kind {
                 ExportKind::Rc5 => (DialogKind::ExportRc5, RC5_TITLE),
+                ExportKind::Rc500 => (DialogKind::ExportRc500, RC500_TITLE),
                 _ => (
                     DialogKind::ExportAudio,
                     "Choose a folder for the MP3/OGG file",
                 ),
             };
             let s = settings.get();
-            let remembered = if kind == ExportKind::Rc5 {
-                s.rc5_dir
-            } else {
-                s.export_dir
+            let remembered = match kind {
+                ExportKind::Rc5 => s.rc5_dir,
+                ExportKind::Rc500 => s.rc500_dir,
+                _ => s.export_dir,
             };
             let (from, start_dir) = match kind {
-                ExportKind::Rc5 => export_rules::start_dir(remembered.as_deref(), home.as_deref()),
+                ExportKind::Rc5 | ExportKind::Rc500 => {
+                    export_rules::start_dir(remembered.as_deref(), home.as_deref())
+                }
                 _ => {
                     let recorded = match kind {
                         ExportKind::Mp3 => rec.exports.mp3.as_ref(),
@@ -263,23 +303,24 @@ pub fn do_prepare_export(
         source: dir.join(&src.file),
         kind,
         memory,
+        rc500_track,
         chosen: &chosen,
         repo_root: &root,
         tempo: &tempo,
     })?;
     if !skipped && chosen.is_absolute() {
-        let saved = if kind == ExportKind::Rc5 {
-            settings.set_rc5_dir(Some(chosen.clone()))
-        } else {
-            settings.set_export_dir(Some(chosen.clone()))
+        let saved = match kind {
+            ExportKind::Rc5 => settings.set_rc5_dir(Some(chosen.clone())),
+            ExportKind::Rc500 => settings.set_rc500_dir(Some(chosen.clone())),
+            _ => settings.set_export_dir(Some(chosen.clone())),
         };
         match saved {
             Ok(_) => eprintln!(
                 "calliope: export remembered kind={} dir={}",
-                if kind == ExportKind::Rc5 {
-                    "rc5"
-                } else {
-                    "file"
+                match kind {
+                    ExportKind::Rc5 => "rc5",
+                    ExportKind::Rc500 => "rc500",
+                    _ => "file",
                 },
                 chosen.display()
             ),
@@ -298,37 +339,88 @@ pub fn do_choose_rc5_folder(
     export: &ExportState,
     home: Option<PathBuf>,
 ) -> Result<Option<String>, String> {
+    do_choose_folder(ExportKind::Rc5, repo, settings, export, home)
+}
+
+/// "Change..." on the RC-500 row: the same for the RC-500 drive.
+pub fn do_choose_rc500_folder(
+    repo: &RepoState,
+    settings: &SettingsStore,
+    export: &ExportState,
+    home: Option<PathBuf>,
+) -> Result<Option<String>, String> {
+    do_choose_folder(ExportKind::Rc500, repo, settings, export, home)
+}
+
+fn do_choose_folder(
+    kind: ExportKind,
+    repo: &RepoState,
+    settings: &SettingsStore,
+    export: &ExportState,
+    home: Option<PathBuf>,
+) -> Result<Option<String>, String> {
+    let rc500 = kind == ExportKind::Rc500;
     if export.is_running() {
-        return refused(ExportKind::Rc5, "busy", BUSY_MESSAGE);
+        return refused(kind, "busy", BUSY_MESSAGE);
     }
-    let (from, start_dir) = match export.rc5_quick().filter(|q| q.is_dir()) {
+    let (from, start_dir) = match export.quick_dir(kind).filter(|q| q.is_dir()) {
         Some(q) => ("quick", Some(q)),
-        None => export_rules::start_dir(settings.get().rc5_dir.as_deref(), home.as_deref()),
+        None => {
+            let s = settings.get();
+            let remembered = if rc500 { s.rc500_dir } else { s.rc5_dir };
+            export_rules::start_dir(remembered.as_deref(), home.as_deref())
+        }
     };
-    let Some(chosen) = pick(repo, DialogKind::ExportRc5, RC5_TITLE, from, start_dir) else {
+    let (dialog, title) = if rc500 {
+        (DialogKind::ExportRc500, RC500_TITLE)
+    } else {
+        (DialogKind::ExportRc5, RC5_TITLE)
+    };
+    let Some(chosen) = pick(repo, dialog, title, from, start_dir) else {
         return Ok(None);
     };
-    if let Err((reason, message)) = check_rc5_base(&chosen, &repo.current_root()) {
-        return refused(ExportKind::Rc5, reason, message);
+    if let Err((reason, message)) = check_looper_base(kind, &chosen, &repo.current_root()) {
+        return refused(kind, reason, message);
     }
-    export.set_rc5_quick(chosen.clone());
+    export.set_quick_dir(kind, chosen.clone());
     if chosen.is_absolute() {
-        match settings.set_rc5_dir(Some(chosen.clone())) {
+        let saved = if rc500 {
+            settings.set_rc500_dir(Some(chosen.clone()))
+        } else {
+            settings.set_rc5_dir(Some(chosen.clone()))
+        };
+        match saved {
             Ok(_) => eprintln!(
-                "calliope: export remembered kind=rc5 dir={}",
+                "calliope: export remembered kind={} dir={}",
+                kind.as_str(),
                 chosen.display()
             ),
             Err(e) => eprintln!("calliope: could not save settings: {e}"),
         }
     }
-    eprintln!("calliope: export quick dir={}", chosen.display());
+    if rc500 {
+        eprintln!("calliope: export quick kind=rc500 dir={}", chosen.display());
+    } else {
+        eprintln!("calliope: export quick dir={}", chosen.display());
+    }
     Ok(Some(chosen.to_string_lossy().into_owned()))
 }
 
-/// Saves the RC-5 memory of a finished export (a save error is only logged).
-pub fn remember_memory(settings: &SettingsStore, n: u8) {
-    match settings.set_rc5_memory(Some(n)) {
-        Ok(_) => eprintln!("calliope: export remembered memory={n}"),
+/// Saves the memory of a finished RC-5 or RC-500 export (a save error is only logged).
+pub fn remember_memory(settings: &SettingsStore, kind: ExportKind, n: u8) {
+    let (saved, line) = if kind == ExportKind::Rc500 {
+        (
+            settings.set_rc500_memory(Some(n)),
+            format!("export remembered kind=rc500 memory={n}"),
+        )
+    } else {
+        (
+            settings.set_rc5_memory(Some(n)),
+            format!("export remembered memory={n}"),
+        )
+    };
+    match saved {
+        Ok(_) => eprintln!("calliope: {line}"),
         Err(e) => eprintln!("calliope: could not save settings: {e}"),
     }
 }
@@ -346,6 +438,10 @@ pub fn record_finished(lock: &dyn RepoLock, root: &Path, f: &Finished, at: &str)
         let entry = match (f.kind, f.memory, f.path.to_str()) {
             (ExportKind::Rc5, Some(memory), _) => Some(ExportEntry::Rc5 { memory }),
             (ExportKind::Rc5, None, _) => None,
+            (ExportKind::Rc500, Some(memory), _) => {
+                f.track.map(|track| ExportEntry::Rc500 { memory, track })
+            }
+            (ExportKind::Rc500, ..) => None,
             (_, _, None) => {
                 errors.push(
                     "The export info wasn't saved: the file's path is not valid UTF-8".into(),
@@ -374,13 +470,23 @@ pub fn record_finished(lock: &dyn RepoLock, root: &Path, f: &Finished, at: &str)
                 ));
             }
         }
+        if let (ExportKind::Rc500, Some(memory), Some(track)) = (f.kind, f.memory, f.track) {
+            let cleared = repo.clear_rc500_holders(memory, track, &f.id);
+            out.records.extend(cleared.cleared);
+            for b in cleared.failed {
+                errors.push(format!(
+                    "The RC-500 info of \"{}\" (memory {memory}, track {track}) wasn't cleared: {}",
+                    b.title, b.message
+                ));
+            }
+        }
         out.info_error = (!errors.is_empty()).then(|| errors.join(" "));
         out
     })
 }
 
 /// Starts the planned export with the tempo map as it is now (read from the planned track's directory). When it is done, `remember`
-/// runs with the RC-5 memory (RC-5 only), then the export info is recorded in the plan's own
+/// runs with the memory (RC-5 and RC-500 only), then the export info is recorded in the plan's own
 /// repository; both before the `done` event.
 pub fn do_start_export(
     repo: &RepoState,
@@ -389,7 +495,7 @@ pub fn do_start_export(
     token: &str,
     overwrite: bool,
     sink: Sink,
-    remember: Box<dyn FnOnce(u8) + Send>,
+    remember: Box<dyn FnOnce(ExportKind, u8) + Send>,
 ) -> Result<ExportSnapshot, String> {
     let Some(plan) = export.planned(token) else {
         eprintln!("calliope: export refused target=none reason=stale");
@@ -404,8 +510,8 @@ pub fn do_start_export(
     let lock = repo.repo_lock();
     let root = plan.repo_root.clone();
     let on_done: OnDone = Box::new(move |f| {
-        if let (ExportKind::Rc5, Some(n)) = (f.kind, f.memory) {
-            remember(n);
+        if let (true, Some(n)) = (f.kind.is_looper(), f.memory) {
+            remember(f.kind, n);
         }
         record_finished(&*lock, &root, f, &track_meta::now_rfc3339())
     });
@@ -495,6 +601,19 @@ pub async fn choose_rc5_folder(app: tauri::AppHandle) -> Result<Option<String>, 
 }
 
 #[tauri::command]
+pub async fn choose_rc500_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    blocking(move || {
+        do_choose_rc500_folder(
+            &app.state::<RepoState>(),
+            &app.state::<SettingsStore>(),
+            &app.state::<ExportState>(),
+            app.path().home_dir().ok(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn start_export(
     app: tauri::AppHandle,
     token: String,
@@ -510,7 +629,7 @@ pub async fn start_export(
             &token,
             overwrite,
             channel_sink(events),
-            Box::new(move |n| remember_memory(&handle.state::<SettingsStore>(), n)),
+            Box::new(move |k, n| remember_memory(&handle.state::<SettingsStore>(), k, n)),
         )
     })
     .await

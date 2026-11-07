@@ -112,6 +112,17 @@ impl Rig {
         memory: Option<u8>,
         chosen: &Path,
     ) -> Result<ExportPlan, String> {
+        self.plan_track(n, kind, memory, None, chosen)
+    }
+
+    fn plan_track(
+        &self,
+        n: u32,
+        kind: ExportKind,
+        memory: Option<u8>,
+        rc500_track: Option<u8>,
+        chosen: &Path,
+    ) -> Result<ExportPlan, String> {
         let r = Repository::new(&self.repo);
         let t = r.load_record(&Self::id(n)).unwrap();
         let dir = r.tracks_dir().join(&t.id);
@@ -123,6 +134,7 @@ impl Rig {
             source: src,
             kind,
             memory,
+            rc500_track,
             chosen,
             repo_root: &self.repo,
             tempo: &tempo,
@@ -303,6 +315,7 @@ fn rc5_writes_the_memory_file() {
             id: Rig::id(401),
             kind: ExportKind::Rc5,
             memory: Some(7),
+            track: None,
             path: target.clone()
         }]
     );
@@ -470,6 +483,26 @@ fn cancel_leaves_nothing() {
     assert!(base.join("ROLAND/WAVE").is_dir());
     assert!(!base.join("ROLAND/WAVE/008_1").exists());
     assert!(parts(&base).is_empty());
+    // RC-500 track 2: only its own folder goes, WAVE and track 1 stay.
+    let base = rig.rc5("kept500");
+    std::fs::create_dir_all(base.join("ROLAND/WAVE/008_1")).unwrap();
+    std::fs::write(base.join("ROLAND/WAVE/008_1/008_1.WAV"), b"one").unwrap();
+    let plan = rig
+        .plan_track(401, ExportKind::Rc500, Some(8), Some(2), &base)
+        .unwrap();
+    let (r, ev, _) = rig.start(&plan.token, false, &rig.tempo(401));
+    let job = r.unwrap().job;
+    wait_event(&ev);
+    assert!(base.join("ROLAND/WAVE/008_2").is_dir());
+    rig.state.cancel(&job);
+    assert_eq!(wait_terminal(&rig.state).phase, ExportPhase::Cancelled);
+    assert!(!base.join("ROLAND/WAVE/008_2").exists());
+    assert_eq!(
+        std::fs::read(base.join("ROLAND/WAVE/008_1/008_1.WAV")).unwrap(),
+        b"one"
+    );
+    assert!(parts(&base).is_empty() && parts(&base.join("ROLAND/WAVE/008_1")).is_empty());
+    assert_eq!(rig.state.quick_dir(ExportKind::Rc500), None);
     // Cancelling a finished or unknown job changes nothing.
     assert!(rig.state.cancel("nope").is_none());
     assert_eq!(
@@ -496,6 +529,18 @@ fn failure_leaves_nothing() {
             "{e}"
         );
         assert!(!roland.join("WAVE").exists());
+        // RC-500: WAVE exists but cannot take the new folder.
+        let base = rig.rc5("ro500");
+        let wave = base.join("ROLAND/WAVE");
+        std::fs::create_dir_all(&wave).unwrap();
+        std::fs::set_permissions(&wave, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let plan = rig
+            .plan_track(401, ExportKind::Rc500, Some(7), Some(2), &base)
+            .unwrap();
+        let (r, _, _) = rig.start(&plan.token, false, &rig.tempo(401));
+        std::fs::set_permissions(&wave, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(r.unwrap_err().contains("Permission denied"));
+        assert!(snapshot(&wave).is_empty());
         // An MP3 folder that cannot be written.
         let ro = rig.dest.join("ro-mp3");
         std::fs::create_dir(&ro).unwrap();
@@ -552,6 +597,92 @@ fn failure_leaves_nothing() {
 }
 
 #[test]
+fn rc500_writes_its_track_folder() {
+    let rig = Rig::new();
+    let a = rig.rc5("a");
+    let b = rig.rc5("b");
+    // Track 1 is the RC-5's file, byte for byte.
+    let (s, _, _) = rig.run(401, ExportKind::Rc5, Some(7), &a);
+    assert_eq!(s.phase, ExportPhase::Done, "{s:?}");
+    let plan = rig
+        .plan_track(401, ExportKind::Rc500, Some(7), Some(1), &b)
+        .unwrap();
+    assert_eq!(
+        plan.path,
+        b.join("ROLAND/WAVE/007_1/007_1.WAV").display().to_string()
+    );
+    let (r, _, _) = rig.start(&plan.token, false, &rig.tempo(401));
+    r.unwrap();
+    assert_eq!(wait_terminal(&rig.state).phase, ExportPhase::Done);
+    assert_eq!(
+        std::fs::read(a.join("ROLAND/WAVE/007_1/007_1.WAV")).unwrap(),
+        std::fs::read(b.join("ROLAND/WAVE/007_1/007_1.WAV")).unwrap()
+    );
+    assert_eq!(rig.state.quick_dir(ExportKind::Rc500), Some(b.clone()));
+    assert_eq!(rig.state.quick_dir(ExportKind::Rc5), Some(a.clone()));
+    // Track 2 touches nothing else.
+    std::fs::create_dir_all(b.join("ROLAND/DATA")).unwrap();
+    std::fs::write(b.join("ROLAND/DATA/x"), b"data").unwrap();
+    let before = snapshot(&b);
+    let plan = rig
+        .plan_track(401, ExportKind::Rc500, Some(7), Some(2), &b)
+        .unwrap();
+    assert!(!plan.exists);
+    let planned = rig.state.planned(&plan.token).unwrap();
+    assert_eq!(
+        (planned.kind, planned.memory, planned.track),
+        (ExportKind::Rc500, Some(7), Some(2))
+    );
+    let (r, _, _) = rig.start(&plan.token, false, &rig.tempo(401));
+    r.unwrap();
+    assert_eq!(wait_terminal(&rig.state).phase, ExportPhase::Done);
+    let after = snapshot(&b);
+    let new: Vec<_> = after.keys().filter(|k| !before.contains_key(*k)).collect();
+    assert_eq!(new, ["ROLAND/WAVE/007_2", "ROLAND/WAVE/007_2/007_2.WAV"]);
+    assert!(
+        before.iter().all(|(k, v)| after[k] == *v),
+        "old files changed"
+    );
+    assert_eq!(
+        rig.finished
+            .lock()
+            .unwrap()
+            .last()
+            .map(|f| (f.kind, f.memory, f.track)),
+        Some((ExportKind::Rc500, Some(7), Some(2)))
+    );
+    // The two quick folders are separate, in both directions.
+    let fresh = Rig::new();
+    let c = fresh.rc5("c");
+    fresh.run(401, ExportKind::Rc500, Some(1), &c);
+    assert_eq!(fresh.state.quick_dir(ExportKind::Rc500), Some(c.clone()));
+    assert_eq!(fresh.state.quick_dir(ExportKind::Rc5), None);
+    // An existing target needs `overwrite`.
+    let t = b.join("ROLAND/WAVE/007_2/007_2.WAV");
+    let bytes = std::fs::read(&t).unwrap();
+    let plan = rig
+        .plan_track(401, ExportKind::Rc500, Some(7), Some(2), &b)
+        .unwrap();
+    assert!(plan.exists);
+    let (r, _, _) = rig.start(&plan.token, false, &rig.tempo(401));
+    assert!(r.unwrap_err().ends_with("already exists"));
+    assert_eq!(std::fs::read(&t).unwrap(), bytes);
+    rig.assert_repo_untouched();
+    fresh.assert_repo_untouched();
+}
+
+#[test]
+fn rc5_quick_does_not_set_rc500() {
+    let rig = Rig::new();
+    let a = rig.rc5("a");
+    rig.run(401, ExportKind::Rc5, Some(7), &a);
+    assert_eq!(rig.state.quick_dir(ExportKind::Rc500), None);
+    rig.state.set_quick_dir(ExportKind::Rc500, a.clone());
+    assert_eq!(rig.state.quick_dir(ExportKind::Rc500), Some(a));
+    assert_eq!(rig.state.quick_dir(ExportKind::Mp3), None);
+}
+
+#[test]
 fn check_rc5_base_reasons() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
@@ -573,9 +704,31 @@ fn check_rc5_base_reasons() {
         )
     );
     assert_eq!(reason(&repo), "inside-repo");
+    let (r, m) = check_looper_base(ExportKind::Rc500, &bare, &repo).unwrap_err();
+    assert_eq!(r, "no-roland");
+    assert_eq!(
+        m,
+        format!(
+            "No ROLAND folder in {}: is the RC-500 mounted?",
+            bare.display()
+        )
+    );
+    for kind in [ExportKind::Rc5, ExportKind::Rc500] {
+        assert_eq!(
+            check_looper_base(kind, &tmp.path().join("missing"), &repo)
+                .unwrap_err()
+                .0,
+            "not-folder"
+        );
+        assert_eq!(
+            check_looper_base(kind, &repo, &repo).unwrap_err().0,
+            "inside-repo"
+        );
+    }
     let ok = tmp.path().join("ok");
     std::fs::create_dir_all(ok.join("ROLAND")).unwrap();
     assert!(check_rc5_base(&ok, &repo).is_ok());
+    assert!(check_looper_base(ExportKind::Rc500, &ok, &repo).is_ok());
 }
 
 #[test]

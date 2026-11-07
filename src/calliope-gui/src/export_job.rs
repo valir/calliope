@@ -40,6 +40,14 @@ pub enum TargetReq {
         #[serde(default)]
         reuse: Option<String>,
     },
+    Rc500 {
+        memory: String,
+        /// The RC-500 track, 1 or 2.
+        track: u8,
+        /// As for `Rc5`.
+        #[serde(default)]
+        reuse: Option<String>,
+    },
     Mp3,
     Ogg,
 }
@@ -48,6 +56,7 @@ impl TargetReq {
     pub fn kind(&self) -> ExportKind {
         match self {
             TargetReq::Rc5 { .. } => ExportKind::Rc5,
+            TargetReq::Rc500 { .. } => ExportKind::Rc500,
             TargetReq::Mp3 => ExportKind::Mp3,
             TargetReq::Ogg => ExportKind::Ogg,
         }
@@ -117,6 +126,8 @@ pub struct Finished {
     pub id: String,
     pub kind: ExportKind,
     pub memory: Option<u8>,
+    /// The RC-500 track (RC-500 only).
+    pub track: Option<u8>,
     pub path: PathBuf,
 }
 
@@ -139,6 +150,7 @@ pub struct PlannedRef {
     pub repo_root: PathBuf,
     pub kind: ExportKind,
     pub memory: Option<u8>,
+    pub track: Option<u8>,
 }
 
 pub struct PlanInput<'a> {
@@ -148,6 +160,8 @@ pub struct PlanInput<'a> {
     pub kind: ExportKind,
     /// The RC-5 memory (RC-5 only).
     pub memory: Option<u8>,
+    /// The RC-500 track (RC-500 only). Not called `track`: that is the `TrackRecord`.
+    pub rc500_track: Option<u8>,
     /// The folder picked by the user: the RC-5's root, or the MP3/OGG folder.
     pub chosen: &'a Path,
     pub repo_root: &'a Path,
@@ -166,6 +180,7 @@ struct Planned {
     source: PathBuf,
     kind: ExportKind,
     memory: Option<u8>,
+    track: Option<u8>,
     base: PathBuf,
     repo_root: PathBuf,
     target: PathBuf,
@@ -189,6 +204,8 @@ struct Inner {
     next_job: u64,
     /// The base folder of the last successful RC-5 export (or accepted by "Change...").
     rc5_quick: Option<PathBuf>,
+    /// The same for the RC-500.
+    rc500_quick: Option<PathBuf>,
 }
 
 impl Inner {
@@ -286,9 +303,18 @@ fn probe(ffprobe: &Path, src: &Path) -> Result<StreamInfo, String> {
     export_rules::parse_stream_info(&json).ok_or_else(|| format!("Cannot read the audio of {name}"))
 }
 
-/// The checks of an RC-5 base folder, in order: it is a folder, it holds `ROLAND`, and it is not
-/// inside the repository. `Err((reason, message))`.
+/// The checks of an RC-5 base folder, see `check_looper_base`.
 pub fn check_rc5_base(base: &Path, repo_root: &Path) -> Result<(), (&'static str, String)> {
+    check_looper_base(ExportKind::Rc5, base, repo_root)
+}
+
+/// The checks of an RC-5 / RC-500 base folder, in order: it is a folder, it holds `ROLAND`, and
+/// it is not inside the repository. `Err((reason, message))`; the message names the device.
+pub fn check_looper_base(
+    kind: ExportKind,
+    base: &Path,
+    repo_root: &Path,
+) -> Result<(), (&'static str, String)> {
     if !base.is_dir() {
         return Err((
             "not-folder",
@@ -299,8 +325,9 @@ pub fn check_rc5_base(base: &Path, repo_root: &Path) -> Result<(), (&'static str
         return Err((
             "no-roland",
             format!(
-                "No ROLAND folder in {}: is the RC-5 mounted?",
-                base.display()
+                "No ROLAND folder in {}: is the {} mounted?",
+                base.display(),
+                kind.device()
             ),
         ));
     }
@@ -320,8 +347,8 @@ fn check_destination(
     repo_root: &Path,
     target: &Path,
 ) -> Result<(), (&'static str, String)> {
-    if kind == ExportKind::Rc5 {
-        check_rc5_base(base, repo_root)?;
+    if kind.is_looper() {
+        check_looper_base(kind, base, repo_root)?;
     } else {
         if !base.is_dir() {
             return Err((
@@ -336,7 +363,7 @@ fn check_destination(
             ));
         }
     }
-    if kind == ExportKind::Rc5 {
+    if kind.is_looper() {
         let dirs = [
             base.join("ROLAND").join("WAVE"),
             target.parent().map(Path::to_path_buf).unwrap_or_default(),
@@ -353,9 +380,18 @@ fn check_destination(
     Ok(())
 }
 
-fn target_of(kind: ExportKind, base: &Path, memory: Option<u8>, track: &TrackRecord) -> PathBuf {
+fn target_of(
+    kind: ExportKind,
+    base: &Path,
+    memory: Option<u8>,
+    rc500_track: Option<u8>,
+    track: &TrackRecord,
+) -> PathBuf {
     match kind {
         ExportKind::Rc5 => export_rules::rc5_target(base, memory.unwrap_or(1)),
+        ExportKind::Rc500 => {
+            export_rules::rc500_target(base, memory.unwrap_or(1), rc500_track.unwrap_or(1))
+        }
         ExportKind::Mp3 => base.join(export_rules::file_name(
             &track.band,
             &track.title,
@@ -395,7 +431,7 @@ impl ExportState {
             return refuse(kind, "tools", TOOLS_MESSAGE);
         };
         let (name, what) = match kind {
-            ExportKind::Rc5 => return Ok((ffmpeg, ffprobe)),
+            ExportKind::Rc5 | ExportKind::Rc500 => return Ok((ffmpeg, ffprobe)),
             ExportKind::Mp3 => ("libmp3lame", "MP3 encoder (libmp3lame)"),
             ExportKind::Ogg => ("libvorbis", "Ogg Vorbis encoder (libvorbis)"),
         };
@@ -425,7 +461,7 @@ impl ExportState {
             eprintln!("calliope: export failed job=none message={e}");
             e
         })?;
-        let target = target_of(kind, p.chosen, p.memory, p.track);
+        let target = target_of(kind, p.chosen, p.memory, p.rc500_track, p.track);
         if let Err((reason, msg)) = check_destination(kind, p.chosen, p.repo_root, &target) {
             return refuse(kind, reason, msg);
         }
@@ -452,6 +488,7 @@ impl ExportState {
             source: p.source,
             kind,
             memory: p.memory,
+            track: p.rc500_track,
             base: p.chosen.to_path_buf(),
             repo_root: p.repo_root.to_path_buf(),
             target,
@@ -472,11 +509,30 @@ impl ExportState {
 
     /// The RC-5 folder the next export may use without the dialog (in memory only).
     pub fn rc5_quick(&self) -> Option<PathBuf> {
-        lock(&self.inner).rc5_quick.clone()
+        self.quick_dir(ExportKind::Rc5)
     }
 
     pub fn set_rc5_quick(&self, dir: PathBuf) {
-        lock(&self.inner).rc5_quick = Some(dir);
+        self.set_quick_dir(ExportKind::Rc5, dir);
+    }
+
+    /// The quick folder of a looper kind (`None` for MP3/OGG).
+    pub fn quick_dir(&self, kind: ExportKind) -> Option<PathBuf> {
+        let g = lock(&self.inner);
+        match kind {
+            ExportKind::Rc5 => g.rc5_quick.clone(),
+            ExportKind::Rc500 => g.rc500_quick.clone(),
+            _ => None,
+        }
+    }
+
+    pub fn set_quick_dir(&self, kind: ExportKind, dir: PathBuf) {
+        let mut g = lock(&self.inner);
+        match kind {
+            ExportKind::Rc5 => g.rc5_quick = Some(dir),
+            ExportKind::Rc500 => g.rc500_quick = Some(dir),
+            _ => {}
+        }
     }
 
     /// True while an export runs.
@@ -497,6 +553,7 @@ impl ExportState {
                 repo_root: p.repo_root.clone(),
                 kind: p.kind,
                 memory: p.memory,
+                track: p.track,
             })
     }
 
@@ -554,7 +611,7 @@ impl ExportState {
             eprintln!("calliope: export failed job=none message={msg}");
             msg
         };
-        if kind == ExportKind::Rc5 {
+        if kind.is_looper() {
             let wave = pl.base.join("ROLAND").join("WAVE");
             let mem = pl
                 .target
@@ -735,8 +792,14 @@ impl Work {
                     "calliope: export done job={} path={path} frames={} clipped={}",
                     self.job, stats.frames, stats.clipped
                 );
-                if self.pl.kind == ExportKind::Rc5 {
-                    lock(&self.inner).rc5_quick = Some(self.pl.base.clone());
+                if self.pl.kind.is_looper() {
+                    let mut g = lock(&self.inner);
+                    let base = Some(self.pl.base.clone());
+                    if self.pl.kind == ExportKind::Rc500 {
+                        g.rc500_quick = base;
+                    } else {
+                        g.rc5_quick = base;
+                    }
                 }
                 // Before `done` is published, so that whoever reacts to it (the pane reloads the
                 // memory suggestion) sees what `on_done` saved.
@@ -744,6 +807,7 @@ impl Work {
                     id: self.pl.id.clone(),
                     kind: self.pl.kind,
                     memory: self.pl.memory,
+                    track: self.pl.track,
                     path: self.pl.target.clone(),
                 });
                 let info_error = rec.info_error.clone();
@@ -797,7 +861,7 @@ impl Work {
         };
         let part = self.part.display().to_string();
         let output = match pl.kind {
-            ExportKind::Rc5 => {
+            ExportKind::Rc5 | ExportKind::Rc500 => {
                 let f = self
                     .file
                     .try_clone()
@@ -824,7 +888,7 @@ impl Work {
         })?;
 
         self.publish(|s| s.phase = ExportPhase::Finishing, ExportEvent::Finishing);
-        if pl.kind != ExportKind::Rc5 {
+        if !pl.kind.is_looper() {
             File::open(&self.part)
                 .and_then(|f| f.sync_all())
                 .map_err(|e| format!("Cannot write {part}: {e}"))?;

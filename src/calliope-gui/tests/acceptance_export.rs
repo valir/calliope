@@ -218,7 +218,7 @@ impl Env {
             token,
             overwrite,
             sink,
-            Box::new(move |n| remember_memory(&SettingsStore::open(path), n)),
+            Box::new(move |k, n| remember_memory(&SettingsStore::open(path), k, n)),
         )
     }
 

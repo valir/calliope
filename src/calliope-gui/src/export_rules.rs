@@ -18,6 +18,7 @@ pub const NO_TEMPO_REASON: &str =
 #[serde(rename_all = "lowercase")]
 pub enum ExportKind {
     Rc5,
+    Rc500,
     Mp3,
     Ogg,
 }
@@ -26,8 +27,23 @@ impl ExportKind {
     pub fn as_str(self) -> &'static str {
         match self {
             ExportKind::Rc5 => "rc5",
+            ExportKind::Rc500 => "rc500",
             ExportKind::Mp3 => "mp3",
             ExportKind::Ogg => "ogg",
+        }
+    }
+
+    /// RC-5 and RC-500: the WAV for a looper drive.
+    pub fn is_looper(self) -> bool {
+        matches!(self, ExportKind::Rc5 | ExportKind::Rc500)
+    }
+
+    /// The device name of a looper kind (`""` for MP3/OGG).
+    pub fn device(self) -> &'static str {
+        match self {
+            ExportKind::Rc5 => "RC-5",
+            ExportKind::Rc500 => "RC-500",
+            _ => "",
         }
     }
 }
@@ -113,6 +129,36 @@ pub fn rc5_target(base: &Path, n: u8) -> PathBuf {
         .join(format!("{f}.WAV"))
 }
 
+const TRACK_MESSAGE: &str = "Choose Track 1 or Track 2";
+
+/// The RC-500 track: 1 or 2.
+pub fn parse_track(t: u8) -> Result<u8, String> {
+    match t {
+        1 | 2 => Ok(t),
+        _ => Err(TRACK_MESSAGE.into()),
+    }
+}
+
+/// `007_2`
+pub fn rc500_folder_name(n: u8, t: u8) -> String {
+    format!("{n:03}_{t}")
+}
+
+/// `<base>/ROLAND/WAVE/007_2/007_2.WAV`
+pub fn rc500_target(base: &Path, n: u8, t: u8) -> PathBuf {
+    let f = rc500_folder_name(n, t);
+    base.join("ROLAND")
+        .join("WAVE")
+        .join(&f)
+        .join(format!("{f}.WAV"))
+}
+
+/// The RC-500 Memory and Track defaults: the recorded `(memory, track)` when the track has
+/// one, else the suggestion after the last memory used, on Track 1.
+pub fn rc500_slot_for(recorded: Option<(u8, u8)>, last: Option<u8>) -> (u8, u8) {
+    recorded.unwrap_or_else(|| (suggest_memory(last), 1))
+}
+
 /// The suggested memory: 1 at first, then the last one plus one (at most 99).
 pub fn suggest_memory(last: Option<u8>) -> u8 {
     match last {
@@ -187,7 +233,7 @@ const MP3_RATES: [u32; 9] = [8000, 11025, 12000, 16000, 22050, 24000, 32000, 441
 pub fn output_format(kind: ExportKind, src: &StreamInfo) -> (u32, u32) {
     let channels = if src.channels == 1 { 1 } else { 2 };
     match kind {
-        ExportKind::Rc5 => (44100, 2),
+        ExportKind::Rc5 | ExportKind::Rc500 => (44100, 2),
         ExportKind::Ogg => (src.rate, channels),
         ExportKind::Mp3 => {
             let rate = if MP3_RATES.contains(&src.rate) {
@@ -271,7 +317,7 @@ pub fn file_start_dir(
     start_dir(remembered, home)
 }
 
-/// The folder an RC-5 export may use without the dialog, or why not:
+/// The folder an RC-5 or RC-500 export may use without the dialog, or why not:
 /// "none" (no reuse asked or nothing remembered), "other" (reuse != remembered),
 /// "gone" (not a directory any more), "no-roland" (no ROLAND directory in it).
 pub fn quick_rc5_dir(
@@ -431,6 +477,36 @@ mod tests {
     }
 
     #[test]
+    fn rc500_paths_and_slots() {
+        assert_eq!(rc500_folder_name(7, 2), "007_2");
+        assert_eq!(
+            rc500_target(Path::new("/b"), 7, 2),
+            PathBuf::from("/b/ROLAND/WAVE/007_2/007_2.WAV")
+        );
+        assert_eq!(
+            rc500_target(Path::new("/b"), 99, 2),
+            PathBuf::from("/b/ROLAND/WAVE/099_2/099_2.WAV")
+        );
+        assert_eq!(
+            rc500_target(Path::new("/b"), 7, 1),
+            rc5_target(Path::new("/b"), 7)
+        );
+        assert_eq!(parse_track(1), Ok(1));
+        assert_eq!(parse_track(2), Ok(2));
+        for t in [0, 3, 255] {
+            assert_eq!(parse_track(t).unwrap_err(), "Choose Track 1 or Track 2");
+        }
+        assert_eq!(rc500_slot_for(Some((7, 2)), Some(98)), (7, 2));
+        assert_eq!(rc500_slot_for(None, Some(98)), (99, 1));
+        assert_eq!(rc500_slot_for(None, Some(99)), (99, 1));
+        assert_eq!(rc500_slot_for(None, None), (1, 1));
+        assert!(ExportKind::Rc5.is_looper() && ExportKind::Rc500.is_looper());
+        assert!(!ExportKind::Mp3.is_looper() && !ExportKind::Ogg.is_looper());
+        assert_eq!(ExportKind::Rc5.device(), "RC-5");
+        assert_eq!(ExportKind::Rc500.device(), "RC-500");
+    }
+
+    #[test]
     fn file_names() {
         assert_eq!(
             file_name("AC/DC*", "Live: A/B?", "mp3", "id"),
@@ -516,6 +592,7 @@ mod tests {
         ];
         for (src, rc5, mp3, ogg) in rows {
             assert_eq!(output_format(Rc5, &src), rc5, "{src:?}");
+            assert_eq!(output_format(Rc500, &src), rc5, "{src:?}");
             assert_eq!(output_format(Mp3, &src), mp3, "{src:?}");
             assert_eq!(output_format(Ogg, &src), ogg, "{src:?}");
         }
@@ -652,5 +729,10 @@ mod tests {
             ExportKind::Ogg
         );
         assert_eq!(ExportKind::Mp3.as_str(), "mp3");
+        assert_eq!(
+            serde_json::to_string(&ExportKind::Rc500).unwrap(),
+            "\"rc500\""
+        );
+        assert_eq!(ExportKind::Rc500.as_str(), "rc500");
     }
 }
