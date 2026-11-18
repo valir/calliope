@@ -567,7 +567,18 @@ pub fn start_import_app(
     keep_original: bool,
     answers: &[String],
 ) -> (App, String) {
-    start_stems_app(dirs, stub_mode, "ok", keep_original, answers, None)
+    start_import_app_with(dirs, stub_mode, keep_original, answers, &[])
+}
+
+/// Like `start_import_app`, with extra environment variables for the app.
+pub fn start_import_app_with(
+    dirs: &Dirs,
+    stub_mode: &str,
+    keep_original: bool,
+    answers: &[String],
+    env: &[(&str, &str)],
+) -> (App, String) {
+    start_stems_app(dirs, stub_mode, "ok", keep_original, answers, None, env)
 }
 
 /// Sets the stub beat tracker's mode for the runs that start from now on.
@@ -588,8 +599,15 @@ pub fn start_detect_app(dirs: &Dirs, tracker_mode: &str) -> (App, String) {
     }
     std::fs::create_dir_all(dirs.base().join("stems-work")).unwrap();
     std::fs::create_dir_all(dirs.base().join("home")).unwrap();
-    let (mut app, wid) =
-        start_stems_app(dirs, "ok", tracker_mode, false, &[], Some(dirs.capture()));
+    let (mut app, wid) = start_stems_app(
+        dirs,
+        "ok",
+        tracker_mode,
+        false,
+        &[],
+        Some(dirs.capture()),
+        &[],
+    );
     app.key(&wid, "alt+3");
     app.wait_view("editor");
     (app, wid)
@@ -605,8 +623,15 @@ pub fn start_player_stems(dirs: &Dirs, tracker_mode: &str) -> (App, String) {
     }
     std::fs::create_dir_all(dirs.base().join("stems-work")).unwrap();
     std::fs::create_dir_all(dirs.base().join("home")).unwrap();
-    let (mut app, wid) =
-        start_stems_app(dirs, "ok", tracker_mode, false, &[], Some(dirs.capture()));
+    let (mut app, wid) = start_stems_app(
+        dirs,
+        "ok",
+        tracker_mode,
+        false,
+        &[],
+        Some(dirs.capture()),
+        &[],
+    );
     app.key(&wid, "alt+5");
     app.wait_view("player");
     (app, wid)
@@ -619,6 +644,7 @@ fn start_stems_app(
     keep_original: bool,
     answers: &[String],
     capture: Option<PathBuf>,
+    env: &[(&str, &str)],
 ) -> (App, String) {
     assert!(
         dirs.base().starts_with(repo().join("target")),
@@ -692,6 +718,9 @@ fn start_stems_app(
         .env("FAKE_YTDLP_LOG", dirs.base().join("ytdlp.log"))
         .env("CALLIOPE_E2E_DIALOG_ANSWERS", &ans)
         .env("CALLIOPE_E2E_TAG", &tag);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     if let Some(cap) = capture {
         cmd.env("CALLIOPE_E2E_AUDIO", format!("capture:{}", cap.display()));
     }

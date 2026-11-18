@@ -375,3 +375,13 @@
   errors in the message line (destructive colour). Cancel is immediate: the section keeps its BPM and nothing is applied
   later. A section moved, removed or retyped during the run, or another track opened, drops the result; for an edited
   section the note says "The section changed during the detection; its BPM was left as it was".
+- (gui-import-normalize) Every import first has a Normalizing step. On the source page (single file or URL) it is the
+  text "Normalizing the audio..." with a determinate progress bar (`aria-label` "Normalizing the audio") and Cancel
+  below it, in the place of the Preparing step; in a directory import the same text, bar and the batch's own Cancel
+  are in the batch progress (the footer says "File 2 of 3: Normalizing the audio..."). The edit pane shows the result
+  as a read-only "Loudness" row after Source and Length, in the same grid, before Extract. The five texts, with no
+  final full stop: "Normalized to -14.0 LUFS (gain +6.0 dB)", "Normalized to -16.2 LUFS (gain +3.1 dB, limited by the
+  -1 dBTP peak ceiling)", "Already at -14.0 LUFS; not changed", "Already at the -1 dBTP peak ceiling (-15.3 LUFS); not
+  changed" and "Too quiet or too short to normalize; imported as is". The batch list line of
+  a saved file is "<name>: saved as <title>; <loudness text>" (followed by the dropped-stems note, if any). At
+  1024x640 the edit pane scrolls, as before; the Loudness row sits above Extract and is reached by scrolling.

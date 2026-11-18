@@ -97,6 +97,20 @@ impl Rig {
         answers: &[String],
         extra: serde_json::Value,
     ) -> Rig {
+        Rig::build_with(test, stub, keep_original, answers, extra, &[], &|_| {})
+    }
+
+    /// `env`: extra environment of the app; `prep` runs before the media and library snapshots
+    /// (create files in the media folder, `stems-work/stub-inputs`).
+    fn build_with(
+        test: &str,
+        stub: &str,
+        keep_original: bool,
+        answers: &[String],
+        extra: serde_json::Value,
+        env: &[(&str, &str)],
+        prep: &dyn Fn(&Dirs),
+    ) -> Rig {
         let outside_before = outside_fingerprint();
         let dirs = import_dirs(test);
         let media_dir = dirs.base().join("media").display().to_string();
@@ -108,13 +122,14 @@ impl Rig {
             serde_json::to_vec(&extra).unwrap(),
         )
         .unwrap();
+        prep(&dirs);
         let repo_before = snapshot(&dirs.repo());
         let media_before = snapshot(&dirs.base().join("media"));
         let answers: Vec<String> = answers
             .iter()
             .map(|a| a.replace("{media}", &dirs.base().join("media").display().to_string()))
             .collect();
-        let (app, wid) = start_import_app(&dirs, stub, keep_original, &answers);
+        let (app, wid) = start_import_app_with(&dirs, stub, keep_original, &answers, env);
         Rig {
             dirs,
             app,
@@ -1379,5 +1394,151 @@ fn import_directory_cancel() {
     assert_eq!(tracks.len(), 1);
     r.check_stem_track(&tracks[0].0, &tracks[0].1, false);
     r.check_disk_tracks(&[tracks[0].0.clone()], &[]);
+    r.assert_no_children();
+}
+
+/// A 44.1 kHz stereo FLAC of `secs` seconds of a 1 kHz sine of `amp` (0 = silence).
+fn make_tone(path: &Path, amp: f64, secs: u32) {
+    let src = format!("aevalsrc={amp}*sin(2*PI*1000*t)|{amp}*sin(2*PI*1000*t):s=44100:d={secs}");
+    let s = Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", &src])
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(s.success(), "ffmpeg could not make {}", path.display());
+}
+
+/// The `calliope-ui: import ...` lines so far that contain `what`.
+fn ui_lines(r: &Rig, what: &str) -> Vec<String> {
+    r.app
+        .all_lines()
+        .into_iter()
+        .filter(|l| l.contains("calliope-ui: import") && l.contains(what))
+        .collect()
+}
+
+#[test]
+#[ignore]
+fn import_normalize_result_shown() {
+    if !ready() {
+        return;
+    }
+    let mut r = Rig::build_with(
+        "import_normalize_result_shown",
+        "ok",
+        true,
+        &["import-audio {media}/quiet.flac".into()],
+        serde_json::json!({}),
+        &[],
+        &|d| {
+            make_tone(&d.media("quiet.flac"), 0.0631, 10);
+            std::fs::create_dir_all(d.base().join("stems-work/stub-inputs")).unwrap();
+        },
+    );
+    r.open_source(1);
+    r.browse();
+    r.wait("phase=normalizing");
+    let l = r.wait_ui("loudness outcome=normalized");
+    let gain: f64 = field(&l, "gain").parse().unwrap();
+    assert!((9.8..=10.2).contains(&gain), "{l}");
+    settle(); // the result line comes right after phase=ready
+    size(&r.wid, 1280, 800);
+    shot("import-normalize-ready");
+    size(&r.wid, 1024, 640);
+    // The pane scrolls at this size: scroll down so that the Loudness row is in the picture.
+    let s = Command::new("xdotool")
+        .args(["mousemove", "--window", &r.wid, "700", "400"])
+        .args(["click", "--repeat", "6", "--delay", "50", "5"])
+        .status()
+        .unwrap();
+    assert!(s.success());
+    settle();
+    shot("import-normalize-ready-small");
+    r.extract();
+    let (id, json) = r.saved();
+    r.check_stem_track(&id, &json, true);
+    assert!(json.get("loudness").is_none(), "{json}");
+    let sent = std::fs::read(r.dirs.base().join("stems-work/stub-inputs/001.flac")).unwrap();
+    let kept = std::fs::read(r.dirs.track_dir(&id).join("original.flac")).unwrap();
+    assert!(
+        sent == kept,
+        "original.flac differs from the mix that was sent"
+    );
+    r.check_disk(Some(&id));
+    r.assert_no_children();
+}
+
+#[test]
+#[ignore]
+fn import_normalize_cancel() {
+    if !ready() {
+        return;
+    }
+    let mut r = Rig::build_with(
+        "import_normalize_cancel",
+        "ok",
+        false,
+        &["import-audio {media}/quiet.flac".into()],
+        serde_json::json!({}),
+        &[("CALLIOPE_E2E_IMPORT_PACE", "50")],
+        &|d| make_tone(&d.media("quiet.flac"), 0.0631, 10),
+    );
+    r.open_source(1);
+    r.browse();
+    r.wait_ui("phase=normalizing");
+    settle();
+    shot("import-normalizing");
+    r.cancel();
+    r.wait_ui("phase=cancelled");
+    assert!(ui_lines(&r, "loudness outcome").is_empty());
+    r.check_disk(None);
+    r.assert_no_children();
+}
+
+#[test]
+#[ignore]
+fn import_directory_normalize_summary() {
+    if !ready() {
+        return;
+    }
+    let mut r = Rig::build_with(
+        "import_directory_normalize_summary",
+        "ok",
+        false,
+        &[],
+        serde_json::json!({}),
+        &[],
+        &|d| {
+            let dir = d.media("levels");
+            std::fs::create_dir_all(&dir).unwrap();
+            make_tone(&dir.join("a-quiet.flac"), 0.0631, 10);
+            make_tone(&dir.join("b-target.flac"), 0.1995, 10);
+            make_tone(&dir.join("c-silent.flac"), 0.0, 10);
+        },
+    );
+    r.open_source(3);
+    let dir = format!("{}/levels", r.media());
+    r.type_path(&dir);
+    r.wait_ui("batch finished saved=3 failed=0");
+    settle();
+    let l = ui_lines(&r, "batch loudness");
+    assert_eq!(l.len(), 3, "{l:?}");
+    for (i, o) in ["normalized", "at-target", "too-quiet"].iter().enumerate() {
+        assert!(
+            l[i].contains(&format!("item={} outcome={o} ", i + 1)),
+            "{l:?}"
+        );
+    }
+    size(&r.wid, 1280, 800);
+    shot("import-batch-normalize-summary");
+    size(&r.wid, 1024, 640);
+    shot("import-batch-normalize-summary-small");
+    let tracks = new_tracks(&r);
+    assert_eq!(tracks.len(), 3);
+    let ids: Vec<String> = tracks.iter().map(|(id, _)| id.clone()).collect();
+    for (id, j) in &tracks {
+        r.check_stem_track(id, j, false);
+    }
+    r.check_disk_tracks(&ids, &[]);
     r.assert_no_children();
 }
