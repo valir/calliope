@@ -17,6 +17,7 @@ pub mod first_beat;
 pub mod fsutil;
 pub mod gui;
 pub mod import_job;
+pub mod import_normalize;
 pub mod import_tmp;
 pub mod ipc;
 pub mod local_source;
