@@ -7,3 +7,5 @@ task 5 | import components: Normalizing block, Loudness row, batch lists | imple
 task 6 | headless acceptance tests | implementer | done
 task 7 | GUI tests and docs/ui.md | implementer | done
 task 8 | README | local (a dropped parenthesis fixed by orchestrator) | done
+tester | 5 more acceptance tests, no defects | tester | done
+reviewer | APPROVED, 3 minors (stray edit_readme.py from the local model removed) | reviewer | done

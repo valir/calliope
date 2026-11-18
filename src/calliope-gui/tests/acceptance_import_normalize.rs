@@ -742,3 +742,282 @@ impl Rig {
             .collect()
     }
 }
+
+// ------------------------------------------------------------------ QA additions: edge cases
+
+/// A 5 s 1 kHz sine from ffmpeg in an arbitrary layout (channels, rate, sample format, container).
+fn ffmpeg_sine(path: &Path, channels: u32, rate: u32, fmt: &str, vol_db: f64) {
+    let layout = if channels == 1 { "mono" } else { "stereo" };
+    let out = Command::new(tool("ffmpeg"))
+        .args(["-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i"])
+        .arg(format!("sine=frequency=1000:duration=5:sample_rate={rate}"))
+        .args(["-af", &format!("volume={vol_db}dB"), "-ac"])
+        .arg(channels.to_string())
+        .args(["-channel_layout", layout, "-sample_fmt", fmt])
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn flac_info(path: &Path) -> (u32, u32, u32) {
+    let r = claxon::FlacReader::open(path).unwrap();
+    let i = r.streaminfo();
+    (i.sample_rate, i.channels, i.bits_per_sample)
+}
+
+#[test]
+fn qa_odd_sources_are_converted_first_then_normalized() {
+    let server = RealServer::start();
+    let mut rig = Rig::new();
+    let cases: Vec<(&str, u32, u32, &str)> = vec![
+        ("mono48k.wav", 1, 48_000, "s16"),
+        ("stereo96k24.flac", 2, 96_000, "s32"),
+        ("mono22k.flac", 1, 22_050, "s16"),
+    ];
+    let mut srcs = vec![];
+    for (name, ch, rate, fmt) in &cases {
+        let p = rig.sources.join(name);
+        ffmpeg_sine(&p, *ch, *rate, fmt, -22.0);
+        srcs.push(p);
+    }
+    rig.seal();
+    for (i, src) in srcs.iter().enumerate() {
+        rig.file(src, FileKind::Audio);
+        let ready = rig.ready();
+        let r = ready.loudness.clone().unwrap();
+        assert_eq!(r.outcome, Outcome::Normalized, "{src:?}");
+        rig.extract(&ready, &server, false);
+        let sent = &server.sent()[i];
+        let (rate, ch, bits) = flac_info(sent);
+        assert_eq!((rate, ch), (RATE, 2), "{src:?}");
+        assert_eq!(bits, 24, "{src:?}: normalized output is 24-bit");
+        assert_at_target(sent);
+    }
+    rig.check_clean();
+}
+
+#[test]
+fn qa_loud_and_full_scale_sources_never_exceed_full_scale() {
+    let server = RealServer::start();
+    let mut rig = Rig::new();
+    // loud sine: negative gain
+    let loud = flac_of(&rig.sources, "loud.flac", &sine_at(6.0, -8.0));
+    // full-scale bursts (peak 0 dBFS and a bit more after the true-peak overshoot)
+    let hot: Vec<f32> = bursts()
+        .into_iter()
+        .map(|v| (v * 1.41).clamp(-1.0, 1.0))
+        .collect();
+    let hot = flac_of(&rig.sources, "hot.flac", &hot);
+    rig.seal();
+    for (i, src) in [&loud, &hot].into_iter().enumerate() {
+        rig.file(src, FileKind::Audio);
+        let ready = rig.ready();
+        let r = ready.loudness.clone().unwrap();
+        assert!(r.gain_db < 0.0, "{src:?}: gain {}", r.gain_db);
+        rig.extract(&ready, &server, false);
+        let sent = &server.sent()[i];
+        let (s, bits) = read_flac(sent);
+        let full = (1i64 << (bits - 1)) as i64;
+        assert!(
+            s.iter().all(|&x| (x as i64) < full && (x as i64) >= -full),
+            "{src:?}: sample out of range"
+        );
+        let m = measure_file(sent);
+        assert!(m.true_peak.unwrap() <= -0.95, "{src:?}: {:?}", m.true_peak);
+        if i == 0 {
+            assert!((m.lufs.unwrap() + 14.0).abs() <= 0.1);
+        }
+    }
+    rig.check_clean();
+}
+
+/// Starts the fake-yt-dlp URL import up to Ready and returns its job folder.
+fn url_ready(rig: &Rig) -> (JobSnapshot, PathBuf) {
+    rig.state
+        .start_url(&rig.root, WATCH, false, rig.sink.clone())
+        .unwrap();
+    let s = rig.ready();
+    let d = rig.job_dir("url-");
+    (s, d)
+}
+
+fn resume_url(rig: &Rig) -> (ImportState, Arc<Mutex<Vec<ImportEvent>>>, JobSnapshot) {
+    let state = rig.new_state();
+    let events: Arc<Mutex<Vec<ImportEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let e2 = events.clone();
+    state
+        .start_url(
+            &rig.root,
+            WATCH,
+            true,
+            Arc::new(move |e| e2.lock().unwrap().push(e)),
+        )
+        .unwrap();
+    let end = Instant::now() + Duration::from_secs(60);
+    while state.is_running() {
+        assert!(Instant::now() < end, "timed out");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let snap = state.snapshot().unwrap();
+    (state, events, snap)
+}
+
+fn has_normalizing(events: &Arc<Mutex<Vec<ImportEvent>>>) -> bool {
+    events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| matches!(e, ImportEvent::Normalizing { .. }))
+}
+
+#[test]
+fn qa_resume_after_a_crash_or_a_stale_marker_redoes_the_step_identically() {
+    let mut rig = Rig::new();
+    rig.seal();
+    let (_, dir) = url_ready(&rig);
+    let good = fs::read(dir.join("normalized.flac")).unwrap();
+    let marker = fs::read(dir.join("normalize.json")).unwrap();
+
+    type Break = Box<dyn Fn(&Path)>;
+    let edit = |key: &'static str, val: serde_json::Value| -> Break {
+        Box::new(move |d: &Path| {
+            let p = d.join("normalize.json");
+            let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+            v[key] = val.clone();
+            fs::write(p, serde_json::to_vec_pretty(&v).unwrap()).unwrap();
+        })
+    };
+    let breaks: Vec<(&str, Break)> = vec![
+        (
+            "crash: .part only",
+            Box::new(|d| {
+                fs::remove_file(d.join("normalized.flac")).unwrap();
+                fs::remove_file(d.join("normalize.json")).unwrap();
+                fs::write(d.join(".normalized.flac.part"), b"half").unwrap();
+            }),
+        ),
+        (
+            "crash: normalized.flac without marker",
+            Box::new(|d| {
+                fs::remove_file(d.join("normalize.json")).unwrap();
+                fs::write(d.join("normalized.flac"), b"truncated").unwrap();
+            }),
+        ),
+        ("wrong target", edit("target", (-16.0).into())),
+        (
+            "wrong md5",
+            edit("md5", "0123456789abcdef0123456789abcdef".into()),
+        ),
+        (
+            "wrong source md5",
+            edit("source_md5", "0123456789abcdef0123456789abcdef".into()),
+        ),
+        (
+            "garbage marker",
+            Box::new(|d| fs::write(d.join("normalize.json"), b"{{{").unwrap()),
+        ),
+    ];
+    for (name, brk) in breaks {
+        brk(&dir);
+        let (state, events, snap) = resume_url(&rig);
+        assert_eq!(snap.phase, Phase::Ready, "{name}: {:?}", snap.error);
+        assert!(has_normalizing(&events), "{name}: the step must run again");
+        assert_eq!(
+            fs::read(dir.join("normalized.flac")).unwrap(),
+            good,
+            "{name}"
+        );
+        assert_eq!(
+            fs::read(dir.join("normalize.json")).unwrap(),
+            marker,
+            "{name}"
+        );
+        assert!(!dir.join(".normalized.flac.part").exists(), "{name}");
+        assert_eq!(
+            snap.loudness.unwrap().outcome,
+            Outcome::Normalized,
+            "{name}"
+        );
+        drop(state);
+    }
+    // an intact one is resumed, not redone
+    let (_, events, snap) = resume_url(&rig);
+    assert!(!has_normalizing(&events));
+    assert_eq!(snap.phase, Phase::Ready);
+}
+
+#[test]
+fn qa_unreadable_audio_flac_fails_in_prepare_and_leaves_no_track() {
+    let mut rig = Rig::new();
+    rig.seal();
+    let (_, dir) = url_ready(&rig);
+    // audio.flac damaged after the conversion; the cached normalization no longer matches
+    fs::write(dir.join("audio.flac"), b"not a flac").unwrap();
+    let (_state, _events, snap) = resume_url(&rig);
+    // either the conversion is redone from the download (Ready) or it fails as a prepare failure
+    match snap.phase {
+        Phase::Ready => {
+            let (_, bits) = read_flac(&dir.join("normalized.flac"));
+            assert!(bits > 0);
+        }
+        Phase::Failed => assert_eq!(snap.error.unwrap().stage, Stage::Prepare),
+        other => panic!("{other:?}"),
+    }
+    assert!(rig.tracks().is_empty());
+    rig.check_clean();
+}
+
+#[test]
+fn qa_a_failing_file_in_a_directory_does_not_stop_the_others() {
+    let server = RealServer::start();
+    let mut rig = Rig::new();
+    let dir = rig.sources.join("mixed");
+    fs::create_dir_all(&dir).unwrap();
+    let files = vec![
+        flac_of(&dir, "a.flac", &sine_at(6.0, -24.0)),
+        {
+            let p = dir.join("b-broken.flac");
+            fs::write(&p, b"this is not audio at all").unwrap();
+            p
+        },
+        flac_of(&dir, "c.flac", &sine_at(6.0, -20.0)),
+    ];
+    rig.seal();
+    rig.state
+        .start_batch(
+            &rig.root,
+            &dir,
+            files,
+            Some(&server.url),
+            false,
+            rig.sink.clone(),
+        )
+        .unwrap();
+    let done = rig.idle("the batch");
+    assert_eq!(done.phase, Phase::Finished);
+    let items = done.batch.unwrap().items;
+    assert_eq!(items.len(), 3);
+    assert!(matches!(items[0].outcome, BatchOutcome::Saved { .. }));
+    match &items[1].outcome {
+        BatchOutcome::Failed { stage, message } => {
+            assert_eq!(*stage, Stage::Prepare);
+            assert!(!message.is_empty());
+        }
+        other => panic!("{other:?}"),
+    }
+    match &items[2].outcome {
+        BatchOutcome::Saved { loudness, .. } => assert_eq!(loudness.outcome, Outcome::Normalized),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(server.sent().len(), 2);
+    assert_at_target(&server.sent()[0]);
+    assert_at_target(&server.sent()[1]);
+    assert_eq!(rig.tracks().len(), 2);
+    assert!(names_in(&rig.root.join("import-tmp")).is_empty());
+    rig.check_clean();
+}
