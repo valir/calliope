@@ -41,6 +41,9 @@ directory (or two levels up), else `ok`:
 
 `$STUB_SEPARATOR_LOG` gets one tab-separated argv line per run.
 
+If the folder `stub-inputs/` exists in the server's work dir, every run first copies its input
+there as `001.flac`, `002.flac`, ... (run order): the mix the app sent (gui-import-normalize tests).
+
 The real adapter `src/calliope-stems/separators/audio-separator.sh` is only syntax-checked
 (`bash -n`); no test or agent ever runs it.
 

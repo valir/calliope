@@ -22,6 +22,7 @@
 #   boundary    vocals/drums/bass as ok; guitar 15.0 s audible, other 14.9 s, piano short loud bursts (9.5 s)
 #   seq:M1,M2,...  run n (counted in <work dir>/stub-runs) uses the n-th mode; the last one repeats
 # $STUB_SEPARATOR_LOG, if set, gets the argv (one line, tab separated) appended.
+# If <work dir>/stub-inputs/ exists, each input is copied there as 001.flac, 002.flac, ... in run order.
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
@@ -37,6 +38,13 @@ ACT="$HERE/../fixtures/import/stems-activity"
 
 if [[ -n "${STUB_SEPARATOR_LOG:-}" ]]; then
   printf '%s\t%s\t%s\n' "$in" "$out" "$model" >>"$STUB_SEPARATOR_LOG"
+fi
+
+# Keep a copy of every input when <work dir>/stub-inputs/ exists (tests check the mix that was sent).
+keep="$PWD/../../stub-inputs"
+if [[ -d $keep ]]; then
+  n=$(find "$keep" -maxdepth 1 -name '*.flac' | wc -l)
+  cp -- "$in" "$keep/$(printf '%03d' $((n + 1))).flac"
 fi
 
 mode=${STUB_SEPARATOR_MODE:-}
