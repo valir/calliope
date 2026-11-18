@@ -27,11 +27,14 @@ use calliope_lib::stems_api::JobState;
 use calliope_lib::stems_client::{ClientError, StemsClient, STALL_TIMEOUT};
 use serde::Serialize;
 
+use crate::backing_render::{fmt_opt, CANCELLED};
 use crate::download::{self, DownloadError};
+use crate::import_normalize;
 use crate::import_tmp::{self, ImportTmp};
+use crate::loudness::LoudnessResult;
 use crate::media::{self, Cancel, MediaError, Probe};
 use crate::repository::{self, RepoStatus, Repository, Staging, TrackRecord, ORIGINAL_NAME};
-use crate::stem_audio::{self, StemCheck, EMPTY_STEM_MIN_AUDIBLE_MS};
+use crate::stem_audio::{self, StemCheck, StemReader, EMPTY_STEM_MIN_AUDIBLE_MS};
 use crate::tools::{ToolName, Tools};
 use crate::track_meta::{self, StemEntry, TrackEdits, TrackMeta, TrackType};
 use calliope_lib::flac_level::AUDIBLE_LEVEL_DBFS;
@@ -52,6 +55,7 @@ const MAX_INFO_BYTES: u64 = 8 << 20;
 pub enum Phase {
     Downloading,
     Preparing,
+    Normalizing,
     Ready,
     Uploading,
     Queued,
@@ -132,6 +136,7 @@ pub struct JobSnapshot {
     pub stems_done: u32,
     pub stems_total: u32,
     pub progress: Option<f64>,
+    pub loudness: Option<LoudnessResult>,
     pub duration_s: Option<f64>,
     pub metadata: Option<TrackEdits>,
     pub error: Option<JobError>,
@@ -169,6 +174,7 @@ pub enum BatchOutcome {
     Saved {
         track: TrackRecord,
         dropped: Vec<DroppedStem>,
+        loudness: LoudnessResult,
     },
     Failed {
         stage: Stage,
@@ -185,9 +191,13 @@ pub enum ImportEvent {
         total: Option<u64>,
     },
     Preparing,
+    Normalizing {
+        progress: f64,
+    },
     Ready {
         metadata: TrackEdits,
         duration_s: Option<f64>,
+        loudness: LoudnessResult,
     },
     Uploading {
         sent: u64,
@@ -236,6 +246,7 @@ impl ImportEvent {
         matches!(
             self,
             ImportEvent::Downloading { .. }
+                | ImportEvent::Normalizing { .. }
                 | ImportEvent::Uploading { .. }
                 | ImportEvent::Working { .. }
                 | ImportEvent::Receiving { .. }
@@ -331,6 +342,8 @@ struct Inner {
     /// Looks the tools up again (the app re-reads PATH, so a tool installed while Calliope runs
     /// is found without a restart). `None` keeps the tools given to `new` (tests).
     rediscover: Option<Box<dyn Fn() -> Tools + Send + Sync>>,
+    /// Sleep per normalizing progress call (test knob, `CALLIOPE_E2E_IMPORT_PACE`).
+    normalize_pace: Option<Duration>,
     lock: Arc<dyn RepoLock>,
     poll: Duration,
 }
@@ -390,6 +403,7 @@ fn new_snapshot(job: String, kind: SourceKind, label: String, phase: Phase) -> J
         stems_done: 0,
         stems_total: 0,
         progress: None,
+        loudness: None,
         duration_s: None,
         metadata: None,
         error: None,
@@ -456,6 +470,7 @@ impl ImportState {
                 throttle: Mutex::new(Throttle::default()),
                 tools: Mutex::new(tools),
                 rediscover: None,
+                normalize_pace: None,
                 lock,
                 poll,
             }),
@@ -467,6 +482,14 @@ impl ImportState {
         Arc::get_mut(&mut self.inner)
             .expect("with_rediscovery before sharing")
             .rediscover = Some(Box::new(f));
+        self
+    }
+
+    /// The normalizing step sleeps `pace` per progress call below 1.0 (tests: time to cancel).
+    pub fn with_normalize_pace(mut self, pace: Duration) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("with_normalize_pace before sharing")
+            .normalize_pace = Some(pace);
         self
     }
 
@@ -947,9 +970,11 @@ fn set_ready(
     metadata: TrackEdits,
     duration_s: Option<f64>,
     position: Option<u32>,
+    loudness: LoudnessResult,
 ) {
     ctx.update(|j| {
         j.audio = Some(audio);
+        j.snap.loudness = Some(loudness.clone());
         j.position = position;
         j.snap.metadata = Some(metadata.clone());
         j.snap.duration_s = duration_s;
@@ -961,7 +986,70 @@ fn set_ready(
     ctx.emit(ImportEvent::Ready {
         metadata,
         duration_s,
+        loudness,
     });
+}
+
+/// The normalizing step of every import (gui-import-normalize).
+fn normalize_step(ctx: &Ctx, dir: &Path, converted: &Path) -> R<import_normalize::Normalized> {
+    ctx.check_cancel()?;
+    let n = match import_normalize::resume(dir, converted) {
+        Some(n) => n,
+        None => {
+            ctx.phase(
+                Phase::Normalizing,
+                ImportEvent::Normalizing { progress: 0.0 },
+            );
+            let pace = ctx.inner.normalize_pace;
+            let c = ctx.clone();
+            let mut progress = move |f: f32| {
+                if f < 1.0 {
+                    if let Some(p) = pace {
+                        std::thread::sleep(p);
+                    }
+                }
+                let f = f as f64;
+                c.update(|j| j.snap.progress = Some(f));
+                c.progress(ImportEvent::Normalizing { progress: f });
+            };
+            import_normalize::normalize(dir, converted, ctx.cancel.flag(), &mut progress).map_err(
+                |e| {
+                    if e == CANCELLED {
+                        Stop::Cancelled
+                    } else {
+                        Stop::Failed(JobError {
+                            stage: Stage::Prepare,
+                            message: format!("Cannot normalize the audio: {e}"),
+                            http_status: None,
+                        })
+                    }
+                },
+            )?
+        }
+    };
+    let bits = if n.changed {
+        import_normalize::OUTPUT_BITS.to_string()
+    } else {
+        StemReader::open(&n.audio)
+            .map(|r| r.bits().to_string())
+            .unwrap_or_else(|_| "none".into())
+    };
+    let m = &n.measured;
+    let r = &n.result;
+    eprintln!(
+        "calliope: import job={} normalized outcome={} measured_lufs={} measured_tp={} gain={:.2} lufs={} tp={} bits={bits} clipped={} changed={} via={}",
+        ctx.id,
+        r.outcome.as_str(),
+        fmt_opt(m.lufs),
+        fmt_opt(m.true_peak),
+        r.gain_db,
+        fmt_opt(r.lufs),
+        fmt_opt(r.true_peak),
+        n.clipped,
+        n.changed,
+        if n.resumed { "resume" } else { "measure" }
+    );
+    Ok(n)
 }
 
 fn run_url(ctx: &Ctx, dir: &Path, url: &str, resume: bool) -> R<()> {
@@ -1024,12 +1112,14 @@ fn run_url(ctx: &Ctx, dir: &Path, url: &str, resume: bool) -> R<()> {
         .and_then(read_info)
         .and_then(|t| download::edits_from_info(&t, url));
     let edits = merge_url_edits(info_edits, &probe, url);
+    let n = normalize_step(ctx, dir, &audio)?;
     set_ready(
         ctx,
-        audio,
+        n.audio,
         edits,
         probe.duration_s,
         media::position_from_tags(&probe),
+        n.result,
     );
     Ok(())
 }
@@ -1041,6 +1131,7 @@ struct Prepared {
     duration_s: Option<f64>,
     /// The track number of the file's tag.
     position: Option<u32>,
+    loudness: LoudnessResult,
 }
 
 /// Probes and converts a local file; everything `run_file` does except publishing `ready`.
@@ -1052,9 +1143,10 @@ fn prepare_file(ctx: &Ctx, dir: &Path, path: &Path, name: &str) -> R<Prepared> {
     media::check_duration(&probe, name).map_err(|e| media_stop(e, None))?;
     let audio =
         media::to_flac(&ffmpeg, path, &probe, dir, &ctx.cancel).map_err(|e| media_stop(e, None))?;
-    ctx.check_cancel()?;
+    let n = normalize_step(ctx, dir, &audio)?;
     Ok(Prepared {
-        audio,
+        audio: n.audio,
+        loudness: n.result,
         edits: media::edits_from_tags(&probe, name),
         duration_s: probe.duration_s,
         position: media::position_from_tags(&probe),
@@ -1063,7 +1155,7 @@ fn prepare_file(ctx: &Ctx, dir: &Path, path: &Path, name: &str) -> R<Prepared> {
 
 fn run_file(ctx: &Ctx, dir: &Path, path: &Path, name: &str) -> R<()> {
     let p = prepare_file(ctx, dir, path, name)?;
-    set_ready(ctx, p.audio, p.edits, p.duration_s, p.position);
+    set_ready(ctx, p.audio, p.edits, p.duration_s, p.position, p.loudness);
     Ok(())
 }
 

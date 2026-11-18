@@ -56,10 +56,18 @@ pub fn run() {
             app.manage(store);
             let repo = RepoState::new(root, choose_picker(app.handle()));
             let discover = || Tools::discover(&std::env::var_os("PATH").unwrap_or_default());
-            app.manage(
-                ImportState::new(discover(), repo.repo_lock(), ipc::IMPORT_POLL)
-                    .with_rediscovery(discover),
-            );
+            #[allow(unused_mut)]
+            let mut import = ImportState::new(discover(), repo.repo_lock(), ipc::IMPORT_POLL)
+                .with_rediscovery(discover);
+            #[cfg(feature = "e2e-hooks")]
+            if let Some(ms) = std::env::var("CALLIOPE_E2E_IMPORT_PACE")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|ms| *ms > 0)
+            {
+                import = import.with_normalize_pace(std::time::Duration::from_millis(ms));
+            }
+            app.manage(import);
             app.manage(repo);
             app.manage(new_export_state(discover));
             let backend = crate::audio_out::select_backend();

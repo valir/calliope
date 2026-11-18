@@ -90,7 +90,7 @@ fn run_one(
     name: &str,
     url: &str,
     keep_original: bool,
-) -> R<(TrackRecord, Vec<DroppedStem>)> {
+) -> R<(TrackRecord, Vec<DroppedStem>, LoudnessResult)> {
     let dir = match ctx
         .tmp
         .new_file_dir("audio-file", name, &track_meta::now_rfc3339())
@@ -104,12 +104,13 @@ fn run_one(
         ctx.update(|j| {
             j.snap.metadata = Some(p.edits.clone());
             j.snap.duration_s = p.duration_s;
+            j.snap.loudness = Some(p.loudness.clone());
         });
         ctx.phase(
             Phase::Uploading,
             ImportEvent::Uploading { sent: 0, total: 0 },
         );
-        extract_cleaned(
+        let (track, dropped) = extract_cleaned(
             ctx,
             &dir,
             &p.audio,
@@ -117,7 +118,8 @@ fn run_one(
             url,
             keep_original,
             p.position,
-        )
+        )?;
+        Ok((track, dropped, p.loudness))
     })();
     if r.is_err() && dir.exists() {
         if let Err(e) = ctx.tmp.remove_job_dir(&dir) {
@@ -146,6 +148,7 @@ fn run_batch(ctx: &Ctx, files: &[PathBuf], names: &[String], url: &str, keep_ori
             s.stems_total = 0;
             s.dropped.clear();
             s.metadata = None;
+            s.loudness = None;
             s.duration_s = None;
             s.error = None;
             if let Some(b) = s.batch.as_mut() {
@@ -164,7 +167,7 @@ fn run_batch(ctx: &Ctx, files: &[PathBuf], names: &[String], url: &str, keep_ori
         });
         ctx.phase(Phase::Preparing, ImportEvent::Preparing);
         let outcome = match run_one(ctx, path, name, url, keep_original) {
-            Ok((track, dropped)) => {
+            Ok((track, dropped, loudness)) => {
                 let d = if dropped.is_empty() {
                     "none".to_string()
                 } else {
@@ -175,7 +178,11 @@ fn run_batch(ctx: &Ctx, files: &[PathBuf], names: &[String], url: &str, keep_ori
                         .join(",")
                 };
                 eprintln!("calliope: import batch job={} file={}/{n} name={name} result=saved id={} dropped={d}", ctx.id, i + 1, track.id);
-                BatchOutcome::Saved { track, dropped }
+                BatchOutcome::Saved {
+                    track,
+                    dropped,
+                    loudness,
+                }
             }
             Err(Stop::Failed(e)) => {
                 eprintln!(

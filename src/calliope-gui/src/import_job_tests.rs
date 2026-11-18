@@ -874,6 +874,7 @@ fn batch_imports_each_file_in_order() {
     let file = [
         "batch-file",
         "preparing",
+        "normalizing",
         "uploading",
         "receiving",
         "saving",
@@ -897,7 +898,7 @@ fn batch_imports_each_file_in_order() {
             (i, ["a.flac", "b.mp3"][i])
         );
         assert!(
-            matches!(&item.outcome, BatchOutcome::Saved { track, dropped } if dropped.is_empty() && tracks.tracks.contains(track))
+            matches!(&item.outcome, BatchOutcome::Saved { track, dropped, .. } if dropped.is_empty() && tracks.tracks.contains(track))
         );
     }
     assert!(Rig::names_in(&rig.root.join("import-tmp")).is_empty());
@@ -1753,4 +1754,342 @@ fn a_normal_extraction_drops_nothing() {
     assert!(dropped.is_empty());
     let v = serde_json::to_value(rig.events.lock().unwrap().last().unwrap()).unwrap();
     assert_eq!(v["dropped"], serde_json::json!([]));
+}
+
+// ---- the normalizing phase (gui-import-normalize) ----
+
+impl Rig {
+    /// The same rig, with the normalizing step slowed down by `ms` per progress call.
+    fn paced(ms: u64) -> Rig {
+        let mut rig = Rig::new();
+        rig.state = ImportState::new(
+            rig.tools.clone(),
+            rig.lock.clone(),
+            Duration::from_millis(50),
+        )
+        .with_normalize_pace(Duration::from_millis(ms));
+        rig
+    }
+
+    /// The audio the active job goes on with.
+    fn job_audio(&self) -> PathBuf {
+        guard(&self.state.inner.job)
+            .as_ref()
+            .and_then(|j| j.audio.clone())
+            .expect("the job has no audio")
+    }
+
+    /// The only job folder in `import-tmp`.
+    fn job_dir(&self, prefix: &str) -> PathBuf {
+        let dirs: Vec<String> = Self::names_in(&self.root.join("import-tmp"))
+            .into_iter()
+            .filter(|n| n.starts_with(prefix))
+            .collect();
+        assert_eq!(dirs.len(), 1, "{dirs:?}");
+        self.root.join("import-tmp").join(&dirs[0])
+    }
+
+    fn normalizing_events(&self) -> Vec<f64> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                ImportEvent::Normalizing { progress } => Some(*progress),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The result of the last saved batch item.
+    fn batch_loudness_of_last(&self) -> Option<LoudnessResult> {
+        match self.batch_items().last().map(|i| i.outcome.clone()) {
+            Some(BatchOutcome::Saved { loudness, .. }) => Some(loudness),
+            _ => None,
+        }
+    }
+
+    fn ready_loudness(&self) -> Option<LoudnessResult> {
+        self.events.lock().unwrap().iter().find_map(|e| match e {
+            ImportEvent::Ready { loudness, .. } => Some(loudness.clone()),
+            _ => None,
+        })
+    }
+}
+
+/// A 6 s stereo 1 kHz sine of about `lufs` LUFS (both channels equal: LUFS = 20 log10 amplitude),
+/// or digital silence for `None`, written as 16-bit FLAC with the real ffmpeg.
+fn generated(path: &Path, lufs: Option<f64>) -> PathBuf {
+    let (src, filter) = match lufs {
+        Some(l) => (
+            "sine=frequency=1000:duration=6:sample_rate=44100".to_string(),
+            format!("volume={}dB,pan=stereo|c0=c0|c1=c0", l + 18.0618),
+        ),
+        None => (
+            "anullsrc=r=44100:cl=stereo:d=6".to_string(),
+            "anull".to_string(),
+        ),
+    };
+    let out = std::process::Command::new(tool("ffmpeg"))
+        .args(["-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i"])
+        .arg(src)
+        .args(["-af", &filter, "-c:a", "flac", "-sample_fmt", "s16"])
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    path.to_path_buf()
+}
+
+#[test]
+fn a_local_file_is_normalized_before_ready_and_that_mix_is_what_gets_extracted() {
+    let server = TestServer::start("ok");
+    let inputs = server.keep_inputs();
+    let rig = Rig::new();
+    rig.file("tagged.mp3").unwrap();
+    let ready = rig.ready();
+    let phases = rig.phases();
+    let pos = |p: &str| phases.iter().position(|x| x == p).unwrap();
+    assert!(pos("normalizing") < pos("ready"));
+    assert_eq!(rig.normalizing_events()[0], 0.0);
+    let loudness = ready.loudness.clone().unwrap();
+    assert_eq!(rig.ready_loudness(), Some(loudness.clone()));
+    assert_eq!(loudness.outcome, crate::loudness::Outcome::Normalized);
+    let audio = rig.job_audio();
+    assert_eq!(audio.file_name().unwrap(), "normalized.flac");
+    let mix = fs::read(&audio).unwrap();
+    rig.extract(&ready, &server, true).unwrap();
+    let t = rig
+        .wait("saved", |s| s.phase == Phase::Saved)
+        .track
+        .unwrap();
+    assert_eq!(fs::read(inputs.join("001.flac")).unwrap(), mix);
+    let original = rig.tracks_dir().join(&t.id).join("original.flac");
+    assert_eq!(fs::read(original).unwrap(), mix);
+    // the snapshot keeps the result through the extraction
+    assert_eq!(rig.state.snapshot().unwrap().loudness, Some(loudness));
+    rig.check_clean();
+}
+
+#[test]
+fn a_video_file_and_a_url_are_normalized_and_the_input_sent_is_that_mix() {
+    let server = TestServer::start("ok");
+    let inputs = server.keep_inputs();
+    let rig = Rig::new();
+    rig.file("with-audio.mp4").unwrap();
+    let ready = rig.ready();
+    assert!(rig.phases().contains(&"normalizing".to_string()));
+    assert!(ready.loudness.is_some());
+    let mix = fs::read(rig.job_audio()).unwrap();
+    rig.extract(&ready, &server, false).unwrap();
+    rig.wait("saved", |s| s.phase == Phase::Saved);
+    assert_eq!(fs::read(inputs.join("001.flac")).unwrap(), mix);
+
+    let rig = Rig::new();
+    rig.url(WATCH, false).unwrap();
+    let ready = rig.ready();
+    let phases = rig.phases();
+    let pos = |p: &str| phases.iter().position(|x| x == p).unwrap();
+    assert!(pos("preparing") < pos("normalizing") && pos("normalizing") < pos("ready"));
+    assert!(ready.loudness.is_some());
+    let audio = rig.job_audio();
+    assert_eq!(audio, rig.job_dir("url-").join("normalized.flac"));
+    let mix = fs::read(&audio).unwrap();
+    rig.extract(&ready, &server, false).unwrap();
+    rig.wait("saved", |s| s.phase == Phase::Saved);
+    assert_eq!(fs::read(inputs.join("002.flac")).unwrap(), mix);
+}
+
+#[test]
+fn a_url_resume_does_not_normalize_again_but_an_old_folder_is_normalized_then() {
+    let rig = Rig::new();
+    rig.url(WATCH, false).unwrap();
+    let first = rig.ready();
+    let dir = rig.job_dir("url-");
+    let stamp = |name: &str| {
+        let p = dir.join(name);
+        (
+            fs::read(&p).unwrap(),
+            fs::metadata(&p).unwrap().modified().unwrap(),
+        )
+    };
+    let before = (stamp("normalized.flac"), stamp("normalize.json"));
+    let resume = || {
+        // the app was closed in the edit pane and started again
+        let state = ImportState::new(
+            rig.tools.clone(),
+            rig.lock.clone(),
+            Duration::from_millis(50),
+        );
+        let events: Arc<Mutex<Vec<ImportEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let e2 = events.clone();
+        state
+            .start_url(
+                &rig.root,
+                WATCH,
+                true,
+                Arc::new(move |e| e2.lock().unwrap().push(e)),
+            )
+            .unwrap();
+        let end = Instant::now() + Duration::from_secs(30);
+        while state.is_running() {
+            assert!(Instant::now() < end);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let snap = state.snapshot().unwrap();
+        assert_eq!(snap.phase, Phase::Ready, "{:?}", snap.error);
+        let n = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e, ImportEvent::Normalizing { .. }))
+            .count();
+        (snap, n)
+    };
+    let (snap, n) = resume();
+    assert_eq!(n, 0);
+    assert_eq!(snap.loudness, first.loudness);
+    assert_eq!(before, (stamp("normalized.flac"), stamp("normalize.json")));
+
+    // a folder left by an older build: audio.flac only
+    fs::remove_file(dir.join("normalized.flac")).unwrap();
+    fs::remove_file(dir.join("normalize.json")).unwrap();
+    let (snap, n) = resume();
+    assert!(n > 0);
+    assert_eq!(snap.loudness, first.loudness);
+    assert_eq!(stamp("normalized.flac").0, before.0 .0);
+    assert!(dir.join("normalize.json").is_file());
+    rig.check_clean();
+}
+
+#[test]
+fn cancel_while_normalizing_leaves_no_track_and_a_url_folder_keeps_only_its_inputs() {
+    let rig = Rig::paced(50);
+    let snap = rig.file("tagged.mp3").unwrap();
+    rig.wait("normalizing", |s| s.phase == Phase::Normalizing);
+    rig.state.cancel(&snap.job).unwrap();
+    assert_eq!(rig.wait_idle("cancel").phase, Phase::Cancelled);
+    rig.last_event_where("cancelled", |e| {
+        matches!(
+            e,
+            ImportEvent::Cancelled {
+                back_to: BackTo::Source
+            }
+        )
+    });
+    assert!(Rig::names_in(&rig.root.join("import-tmp")).is_empty());
+    assert!(Repository::new(&rig.root).scan().tracks.is_empty());
+    rig.check_clean();
+
+    let rig = Rig::paced(50);
+    let snap = rig.url(WATCH, false).unwrap();
+    rig.wait("normalizing", |s| s.phase == Phase::Normalizing);
+    rig.state.cancel(&snap.job).unwrap();
+    assert_eq!(rig.wait_idle("cancel").phase, Phase::Cancelled);
+    let names = Rig::names_in(&rig.job_dir("url-"));
+    for gone in [".normalized.flac.part", "normalized.flac", "normalize.json"] {
+        assert!(!names.contains(&gone.to_string()), "{names:?}");
+    }
+    assert!(names.contains(&"audio.flac".to_string()), "{names:?}");
+    assert!(
+        names.iter().any(|n| n.starts_with("download.")),
+        "{names:?}"
+    );
+    assert!(Repository::new(&rig.root).scan().tracks.is_empty());
+    rig.check_clean();
+}
+
+#[test]
+fn a_normalizing_failure_is_a_preparation_failure_and_removes_the_job_folder() {
+    let rig = Rig::paced(50);
+    rig.file("tagged.mp3").unwrap();
+    rig.wait("normalizing", |s| s.phase == Phase::Normalizing);
+    fs::create_dir(rig.job_dir("file-").join(".normalized.flac.part")).unwrap();
+    let s = rig.wait_idle("the failure");
+    assert_eq!(s.phase, Phase::Failed);
+    let e = s.error.unwrap();
+    assert_eq!(e.stage, Stage::Prepare);
+    assert!(
+        e.message.starts_with("Cannot normalize the audio:"),
+        "{}",
+        e.message
+    );
+    assert!(Rig::names_in(&rig.root.join("import-tmp")).is_empty());
+    assert!(Repository::new(&rig.root).scan().tracks.is_empty());
+    rig.check_clean();
+}
+
+#[test]
+fn every_batch_file_is_normalized_and_the_result_is_reset_between_files() {
+    let server = TestServer::start("ok");
+    let rig = Rig::new();
+    let dir = rig.sources.join("levels");
+    fs::create_dir_all(&dir).unwrap();
+    let files = vec![
+        generated(&dir.join("a-quiet.flac"), Some(-24.0)),
+        generated(&dir.join("b-target.flac"), Some(-14.0)),
+        generated(&dir.join("c-silence.flac"), None),
+    ];
+    // the snapshot's result when each file starts
+    let at_start: Arc<Mutex<Vec<Option<LoudnessResult>>>> = Arc::new(Mutex::new(Vec::new()));
+    let (events, starts, state) = (
+        rig.events.clone(),
+        at_start.clone(),
+        ImportState {
+            inner: rig.state.inner.clone(),
+        },
+    );
+    let sink: Sink = Arc::new(move |ev| {
+        if matches!(ev, ImportEvent::BatchFile { .. }) {
+            starts
+                .lock()
+                .unwrap()
+                .push(state.snapshot().unwrap().loudness);
+        }
+        events.lock().unwrap().push(ev);
+    });
+    rig.state
+        .start_batch(&rig.root, &dir, files, Some(&server.url), false, sink)
+        .unwrap();
+    let done = rig.wait_idle("the batch to end");
+    assert_eq!(done.phase, Phase::Finished);
+    let phases: Vec<String> = rig
+        .phases()
+        .into_iter()
+        .filter(|p| p != "queued" && p != "working")
+        .collect();
+    let file = [
+        "batch-file",
+        "preparing",
+        "normalizing",
+        "uploading",
+        "receiving",
+        "saving",
+        "batch-item",
+    ];
+    let expected: Vec<&str> = file
+        .iter()
+        .cycle()
+        .take(21)
+        .copied()
+        .chain(["finished"])
+        .collect();
+    assert_eq!(phases, expected);
+    use crate::loudness::Outcome::*;
+    let outcomes: Vec<_> = rig
+        .batch_items()
+        .iter()
+        .map(|i| match &i.outcome {
+            BatchOutcome::Saved { loudness, .. } => loudness.outcome,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(outcomes, [Normalized, AtTarget, TooQuiet]);
+    assert_eq!(*at_start.lock().unwrap(), [None, None, None]);
+    assert_eq!(done.loudness, rig.batch_loudness_of_last());
+    rig.check_clean();
 }

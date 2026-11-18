@@ -36,6 +36,8 @@ pub struct Normalized {
     pub changed: bool,
     /// Taken from a valid `normalize.json`: nothing was measured or written.
     pub resumed: bool,
+    /// Samples clipped while rendering (always 0 in practice; 0 for unchanged and resumed).
+    pub clipped: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -119,6 +121,7 @@ pub fn resume(dir: &Path, converted: &Path) -> Option<Normalized> {
         result: loudness::result_of(measured, decision),
         changed,
         resumed: true,
+        clipped: 0,
     })
 }
 
@@ -178,6 +181,7 @@ pub fn normalize(
     check_cancel(cancel)?;
     let d = loudness::decide(m, Purpose::Normalize);
     let changed = is_changed(d.outcome);
+    let mut clipped = 0;
     let (audio, md5) = if changed {
         let part = dir.join(PART_FILE);
         match fs::symlink_metadata(&part) {
@@ -193,12 +197,7 @@ pub fn normalize(
             let _ = fs::remove_file(&part);
             return Err(e);
         }
-        if stats.clipped_samples > 0 {
-            eprintln!(
-                "calliope: import normalize clipped={} samples",
-                stats.clipped_samples
-            );
-        }
+        clipped = stats.clipped_samples;
         if let Err(e) = fs::rename(&part, &out) {
             let _ = fs::remove_file(&part);
             return Err(format!("cannot move {PART_FILE} into place: {e}"));
@@ -234,6 +233,7 @@ pub fn normalize(
         result: loudness::result_of(m, d),
         changed,
         resumed: false,
+        clipped,
     })
 }
 

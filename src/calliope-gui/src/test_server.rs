@@ -132,6 +132,13 @@ impl TestServer {
         .unwrap();
     }
 
+    /// Makes the stub separator keep a copy of every input: `work/stub-inputs/` (001.flac, ...).
+    pub(crate) fn keep_inputs(&self) -> PathBuf {
+        let d = self.outer.path().join("work/stub-inputs");
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
     pub(crate) fn saw(&self, needle: &str) -> bool {
         self.log.lock().unwrap().iter().any(|l| l.contains(needle))
     }
