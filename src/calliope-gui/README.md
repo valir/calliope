@@ -266,6 +266,14 @@ FLAC stems (vocals, drums, bass, guitar, piano, other):
    separated there and downloaded; "Working..." shows the progress. Cancel stops it and nothing
    is saved. A cancelled or failed URL download can be resumed the next time you enter the same URL.
 
+Every import first brings the song to the same loudness as the backing tracks: -14 LUFS integrated
+(ITU-R BS.1770), with the true peak at most -1 dBTP and no limiter. The step is shown as "Normalizing the
+audio..." and its result appears in the track details before you press Extract, for example "Normalized to
+-14.0 LUFS (gain +6.0 dB)", "Normalized to -16.2 LUFS (gain +3.1 dB, limited by the -1 dBTP peak ceiling)",
+"Already at -14.0 LUFS; not changed" or "Too quiet or too short to normalize; imported as is". A directory
+import lists the result of each file. The stems are made from the normalized mix, and the kept original
+(original.flac) is the normalized mix. The result is not stored in track.json.
+
 Needs:
 
 * `yt-dlp` (URL source) and `ffmpeg`/`ffprobe` on the PATH: `sudo pacman -S yt-dlp ffmpeg`.
@@ -275,11 +283,11 @@ Needs:
   shows "Edge-AI: connected". Building, running and deploying the server is described in
   [`src/calliope-stems/README.md`](../calliope-stems/README.md).
 * Settings > Stem extraction > "Keep the original mix with the stems" (off by default) also stores
-  the converted source as `original.flac` in the track folder.
+  the normalized mix as `original.flac` in the track folder.
 
 Where files go: the finished track is a new folder in the track repository
 (`tracks/<id>/` with `track.json` plus `stems/*.flac`, and `original.flac` if kept). While a job
-runs, its working files (downloads, converted audio) live in `<repository root>/import-tmp/` and
+runs, its working files (downloads, converted audio, the normalized mix normalized.flac and its normalize.json) live in `<repository root>/import-tmp/` and
 are removed when the job finishes or is discarded; only a cancelled or failed URL download is
 kept there for the resume prompt. Your source files are never modified or moved. Licences of the
 external tools: [`docs/licences.md`](../../docs/licences.md).

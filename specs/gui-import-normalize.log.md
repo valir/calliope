@@ -6,3 +6,4 @@ task 4 | frontend types, texts and import state | implementer | done
 task 5 | import components: Normalizing block, Loudness row, batch lists | implementer | done
 task 6 | headless acceptance tests | implementer | done
 task 7 | GUI tests and docs/ui.md | implementer | done
+task 8 | README | local (a dropped parenthesis fixed by orchestrator) | done
