@@ -7,7 +7,7 @@ import { imp, resetImport } from '$lib/import-state.svelte';
 import { lib, resetLibrary } from '$lib/library-state.svelte';
 import { ui } from '$lib/app-state.svelte';
 import { FIXTURE_TRACKS } from '$lib/fixture-tracks';
-import type { ImportEvent, JobSnapshot, TrackEdits, TrackRecord, UrlPrep } from '$lib/ipc';
+import type { ImportEvent, JobSnapshot, LoudnessResult, TrackEdits, TrackRecord, UrlPrep } from '$lib/ipc';
 
 type Call = [string, Record<string, unknown>];
 let calls: Call[] = [];
@@ -30,6 +30,8 @@ const snap = (over: Partial<JobSnapshot> = {}): JobSnapshot => ({
   sent: 0, stems_done: 0, stems_total: 0, progress: null, duration_s: null, metadata: null, error: null,
   track: null, dropped: [], ...over,
 });
+const loud = (outcome: LoudnessResult['outcome'], lufs: number | null, gain_db: number): LoudnessResult =>
+  ({ outcome, lufs, true_peak: -3, gain_db, target: -14, ceiling: -1 });
 const stemTrack: TrackRecord = {
   ...FIXTURE_TRACKS[0], type: 'stem', audio: null,
   stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'].map((n) => ({ name: n, file: `${n}.flac` })),
@@ -359,6 +361,38 @@ describe('Import view: edit pane and extraction', () => {
     expect(screen.queryByRole('radio')).toBeNull();
   });
 
+  it('ready without a result shows no Loudness row', async () => {
+    await toEditPane();
+    expect(screen.queryByTestId('import-loudness')).toBeNull();
+  });
+
+  it('a normalizing event shows the step with its bar and a Cancel', async () => {
+    await startDownload();
+    await emit({ phase: 'preparing' });
+    await emit({ phase: 'normalizing', progress: 0.25 });
+    expect(await screen.findByText('Normalizing the audio...')).toBeTruthy();
+    const bar = screen.getByRole('progressbar', { name: 'Normalizing the audio' });
+    expect(bar.getAttribute('aria-valuenow')).toBe('25');
+    await click('button', 'Cancel');
+    await waitFor(() => expect(callsOf('cancel_import')).toEqual([{ job: 'job-1' }]));
+  });
+
+  it('ready with a result shows the Loudness row with the text of each outcome', async () => {
+    await toEditPane();
+    const cases: [LoudnessResult, string][] = [
+      [loud('normalized', -14, 6), 'Normalized to -14.0 LUFS (gain +6.0 dB)'],
+      [loud('limited', -16.2, 3.1), 'Normalized to -16.2 LUFS (gain +3.1 dB, limited by the -1 dBTP peak ceiling)'],
+      [loud('at-target', -14, 0), 'Already at -14.0 LUFS; not changed'],
+      [loud('at-ceiling', -15.3, 0), 'Already at the -1 dBTP peak ceiling (-15.3 LUFS); not changed'],
+      [loud('too-quiet', null, 0), 'Too quiet or too short to normalize; imported as is'],
+    ];
+    for (const [loudness, text] of cases) {
+      await emit({ phase: 'ready', metadata: META, duration_s: 213, loudness });
+      expect(screen.getByTestId('import-loudness').textContent).toBe(text);
+      expect(screen.getByText('Loudness')).toBeTruthy();
+    }
+  });
+
   it('notes whether the original mix is kept, with a link to Settings', async () => {
     await toEditPane();
     await waitFor(() => expect(screen.getByText(/The original mix will not be kept/)).toBeTruthy());
@@ -574,8 +608,8 @@ describe('Import view: re-attach and footer', () => {
   describe('directory import', () => {
     const mk = (i: number, name: string, extra: object): ImportEvent =>
       ({ phase: 'batch-item', item: { index: i, name, ...extra } }) as ImportEvent;
-    const saved = (i: number, name: string, title: string, dropped: { name: string; audible_ms: number }[] = []) =>
-      mk(i, name, { result: 'saved', track: { ...stemTrack, id: i === 0 ? stemTrack.id : `t${i}`, title }, dropped });
+    const saved = (i: number, name: string, title: string, dropped: { name: string; audible_ms: number }[] = [], loudness?: LoudnessResult) =>
+      mk(i, name, { result: 'saved', track: { ...stemTrack, id: i === 0 ? stemTrack.id : `t${i}`, title }, dropped, loudness });
     const failed = mk(1, 'b.mp3', { result: 'failed', stage: 'prepare', message: 'Not an audio file' });
     const dirBox = async () => {
       await toSource();
@@ -616,15 +650,18 @@ describe('Import view: re-attach and footer', () => {
     it('batch events show the current file and the done list; Cancel calls cancel_import', async () => {
       await startBatch();
       expect((await screen.findByTestId('batch-current')).textContent).toBe('File 1 of 3: a.flac');
-      await emit(saved(0, 'a.flac', 'Song A', [{ name: 'piano', audible_ms: 0 }]));
+      await emit(saved(0, 'a.flac', 'Song A', [{ name: 'piano', audible_ms: 0 }], loud('normalized', -14, 6)));
       await emit({ phase: 'batch-file', index: 1, total: 3, name: 'b.mp3' });
+      await emit({ phase: 'normalizing', progress: 0.5 });
+      expect(screen.getByRole('progressbar', { name: 'Normalizing the audio' }).getAttribute('aria-valuenow')).toBe('50');
+      expect(screen.getAllByRole('button').filter((b) => !(b as HTMLButtonElement).disabled)).toHaveLength(1);
       await emit({ phase: 'working', progress: null });
       await emit(failed);
       await emit({ phase: 'batch-file', index: 2, total: 3, name: 'c.ogg' });
       expect(screen.getByTestId('batch-current').textContent).toBe('File 3 of 3: c.ogg');
       const done = within(screen.getByRole('list', { name: 'Files done' })).getAllByRole('listitem');
       expect(done.map((x) => x.textContent?.trim())).toEqual([
-        'a.flac: saved as Song A (dropped empty stems: piano)',
+        'a.flac: saved as Song A; Normalized to -14.0 LUFS (gain +6.0 dB) (dropped empty stems: piano)',
         'b.mp3: failed: Not an audio file',
       ]);
       await click('button', 'Cancel');
@@ -638,15 +675,15 @@ describe('Import view: re-attach and footer', () => {
       await emit(failed);
       await emit(saved(2, 'c.ogg', 'Song C'));
       const items = [
-        { index: 0, name: 'a.flac', result: 'saved', track: { ...stemTrack, id: stemTrack.id, title: 'Song A' }, dropped: [{ name: 'piano', audible_ms: 0 }, { name: 'other', audible_ms: 0 }] },
+        { index: 0, name: 'a.flac', result: 'saved', track: { ...stemTrack, id: stemTrack.id, title: 'Song A' }, dropped: [{ name: 'piano', audible_ms: 0 }, { name: 'other', audible_ms: 0 }], loudness: loud('normalized', -14, 6) },
         { index: 1, name: 'b.mp3', result: 'failed', stage: 'prepare', message: 'Not an audio file' },
-        { index: 2, name: 'c.ogg', result: 'saved', track: { ...stemTrack, id: 't2', title: 'Song C' }, dropped: [] },
+        { index: 2, name: 'c.ogg', result: 'saved', track: { ...stemTrack, id: 't2', title: 'Song C' }, dropped: [], loudness: loud('too-quiet', null, 0) },
       ] as never;
       await emit({ phase: 'finished', batch: { dir: '/music/album', files: ['a.flac', 'b.mp3', 'c.ogg'], current: null, items } });
       const sum = screen.getByRole('region', { name: 'Import finished' });
       expect(within(sum).getByRole('status').textContent?.trim()).toBe('Imported 2 of 3 files from /music/album.');
       expect(within(within(sum).getByRole('list', { name: 'Saved tracks' })).getAllByRole('listitem').map((x) => x.textContent?.trim()))
-        .toEqual(['Song A: dropped empty stems: piano, other', 'Song C']);
+        .toEqual(['Song A: Normalized to -14.0 LUFS (gain +6.0 dB); dropped empty stems: piano, other', 'Song C: Too quiet or too short to normalize; imported as is']);
       expect(within(sum).getByRole('list', { name: 'Failed files' }).textContent?.trim()).toBe('b.mp3: Not an audio file');
       expect(frontendLogs()).toContain('import batch finished saved=2 failed=1');
       expect(frontendLogs()).toContain(`import batch item=1 result=saved id=${stemTrack.id} dropped=piano,other`);

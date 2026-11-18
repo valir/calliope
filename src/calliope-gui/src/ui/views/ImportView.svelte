@@ -15,6 +15,7 @@
     showInLibrary,
     step,
   } from '$lib/import-state.svelte';
+  import { importLoudnessText } from '$lib/loudness-format';
 
   const current = $derived(step());
   const track = $derived(imp.job?.track ?? null);
@@ -62,7 +63,7 @@
             <ul aria-label="Saved tracks" class="list-disc pl-6">
               {#each batchSaved as it (it.index)}
                 <li>
-                  {it.track.title}{#if it.dropped.length > 0}: dropped empty stems: {it.dropped.map((s) => s.name).join(', ')}{/if}
+                  {it.track.title}{#if it.loudness}: {importLoudnessText(it.loudness)}{/if}{#if it.dropped.length > 0}{it.loudness ? ';' : ':'} dropped empty stems: {it.dropped.map((s) => s.name).join(', ')}{/if}
                 </li>
               {/each}
             </ul>

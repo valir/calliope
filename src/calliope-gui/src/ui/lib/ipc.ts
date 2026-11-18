@@ -156,7 +156,7 @@ export interface UrlPrep { status: UrlPrepStatus; message: string; partial_bytes
 export type ImportKind = 'audio' | 'video';
 export type PickKind = ImportKind | 'directory';
 export type JobPhase =
-  | 'downloading' | 'preparing' | 'ready' | 'uploading' | 'queued' | 'working'
+  | 'downloading' | 'preparing' | 'normalizing' | 'ready' | 'uploading' | 'queued' | 'working'
   | 'receiving' | 'saving' | 'saved' | 'failed' | 'cancelled' | 'finished';
 export type JobStage = 'download' | 'prepare' | 'server' | 'save';
 export interface JobSource { kind: 'url' | 'audio-file' | 'video-file' | 'directory'; label: string }
@@ -164,7 +164,7 @@ export interface JobError { stage: JobStage; message: string; http_status: numbe
 /** A stem the server returned but the import dropped as empty (audible < 15 s); `audible_ms` is its audible time. */
 export interface DroppedStem { name: string; audible_ms: number }
 export type BatchItem = { index: number; name: string } & (
-  | { result: 'saved'; track: TrackRecord; dropped: DroppedStem[] }
+  | { result: 'saved'; track: TrackRecord; dropped: DroppedStem[]; loudness?: LoudnessResult | null }
   | { result: 'failed'; stage: JobStage; message: string });
 export interface BatchSnapshot { dir: string; files: string[]; current: number | null; items: BatchItem[] }
 export interface JobSnapshot {
@@ -182,12 +182,15 @@ export interface JobSnapshot {
   error: JobError | null;
   track: TrackRecord | null;
   dropped: DroppedStem[];
+  /** What the normalizing step did to the mix (set with `ready`). */
+  loudness?: LoudnessResult | null;
   batch?: BatchSnapshot | null;
 }
 export type ImportEvent =
   | { phase: 'downloading'; downloaded: number; total: number | null }
   | { phase: 'preparing' }
-  | { phase: 'ready'; metadata: TrackEdits; duration_s: number | null }
+  | { phase: 'normalizing'; progress: number }
+  | { phase: 'ready'; metadata: TrackEdits; duration_s: number | null; loudness?: LoudnessResult | null }
   | { phase: 'uploading'; sent: number; total: number }
   | { phase: 'queued' }
   | { phase: 'working'; progress: number | null }

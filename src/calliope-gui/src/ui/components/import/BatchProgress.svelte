@@ -3,6 +3,7 @@
   import { Progress } from '$lib/components/ui/progress/index.js';
   import ExtractProgress from './ExtractProgress.svelte';
   import { cancelRunning, imp } from '$lib/import-state.svelte';
+  import { importLoudnessText } from '$lib/loudness-format';
 
   const job = $derived(imp.job);
   const batch = $derived(job?.batch ?? null);
@@ -10,6 +11,7 @@
   const total = $derived(batch?.files.length ?? 0);
   const name = $derived(batch && index !== null ? (batch.files[index] ?? '') : '');
   const preparing = $derived(job?.phase === 'preparing');
+  const normalizing = $derived(job?.phase === 'normalizing');
   const items = $derived(batch?.items ?? []);
 </script>
 
@@ -25,6 +27,11 @@
       <span>Preparing audio...</span>
       <Progress value={null} aria-label="Preparing audio" />
     </div>
+  {:else if normalizing}
+    <div class="flex flex-col gap-2" role="status">
+      <span>Normalizing the audio...</span>
+      <Progress value={(job?.progress ?? 0) * 100} aria-label="Normalizing the audio" />
+    </div>
   {:else}
     <ExtractProgress embedded />
   {/if}
@@ -37,7 +44,7 @@
       {#each items as it (it.index)}
         {#if it.result === 'saved'}
           <li>
-            {it.name}: saved as {it.track.title}{#if it.dropped.length > 0}{' '}(dropped empty stems: {it.dropped.map((s) => s.name).join(', ')}){/if}
+            {it.name}: saved as {it.track.title}{#if it.loudness}; {importLoudnessText(it.loudness)}{/if}{#if it.dropped.length > 0}{' '}(dropped empty stems: {it.dropped.map((s) => s.name).join(', ')}){/if}
           </li>
         {:else}
           <li class="text-amber-700 dark:text-primary">{it.name}: failed: {it.message}</li>

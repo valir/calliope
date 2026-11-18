@@ -13,6 +13,7 @@ import {
   type ImportKind,
   type PickKind,
   type JobSnapshot,
+  type LoudnessResult,
 } from './ipc';
 import { buildTree } from './library-tree';
 import { load, lib, selectTrack } from './library-state.svelte';
@@ -82,6 +83,7 @@ export function step(): Step {
   switch (j.phase) {
     case 'downloading':
     case 'preparing':
+    case 'normalizing':
     case 'cancelled':
       return 'source';
     case 'ready':
@@ -104,6 +106,7 @@ export function jobRunning(): boolean {
 const PHASE_TEXT: Record<string, string> = {
   downloading: 'Download in progress',
   preparing: 'Preparing audio...',
+  normalizing: 'Normalizing the audio...',
   ready: 'Import: edit the track details',
   uploading: 'Sending to the edge-AI server',
   queued: 'Waiting for the edge-AI server...',
@@ -131,13 +134,19 @@ function stubJob(): JobSnapshot {
   return {
     job: '', source: { kind: 'url', label: '' }, phase: 'downloading', downloaded: 0, total: null,
     sent: 0, stems_done: 0, stems_total: 0, progress: null, duration_s: null, metadata: null,
-    error: null, track: null, dropped: [], batch: null,
+    error: null, track: null, dropped: [], loudness: null, batch: null,
   };
 }
 
 /** `piano,other`, or `none`: the log form of a job's dropped stems. */
 function droppedNames(d: { name: string }[]): string {
   return d.length > 0 ? d.map((s) => s.name).join(',') : 'none';
+}
+
+/** The log line of a normalizing result. */
+function logLoudness(r: LoudnessResult | null | undefined): void {
+  if (!r) return;
+  log(`loudness outcome=${r.outcome} gain=${r.gain_db.toFixed(1)} lufs=${r.lufs === null ? 'none' : r.lufs.toFixed(1)}`);
 }
 
 function setDraftFrom(j: JobSnapshot): void {
@@ -162,8 +171,14 @@ export function applyEvent(e: ImportEvent): void {
     case 'preparing':
       j.phase = 'preparing';
       break;
+    case 'normalizing':
+      j.phase = 'normalizing';
+      j.progress = e.progress;
+      break;
     case 'ready':
       j.phase = 'ready';
+      j.loudness = e.loudness ?? null;
+      logLoudness(j.loudness);
       j.metadata = e.metadata;
       j.duration_s = e.duration_s;
       j.error = null;
@@ -216,6 +231,7 @@ export function applyEvent(e: ImportEvent): void {
       if (!j.batch) j.batch = { dir: '', files: Array<string>(e.total).fill(''), current: e.index, items: [] };
       j.batch.files[e.index] = e.name;
       j.batch.current = e.index;
+      j.loudness = null;
       log(`batch file=${e.index + 1}/${e.total} name=${e.name}`);
       break;
     case 'batch-item': {
@@ -224,6 +240,9 @@ export function applyEvent(e: ImportEvent): void {
       j.batch.items.push(it);
       if (it.result === 'saved') {
         log(`batch item=${it.index + 1} result=saved id=${it.track.id} dropped=${droppedNames(it.dropped)}`);
+        if (it.loudness) {
+          log(`batch loudness item=${it.index + 1} outcome=${it.loudness.outcome} gain=${it.loudness.gain_db.toFixed(1)}`);
+        }
         void load();
       } else {
         log(`batch item=${it.index + 1} result=failed stage=${it.stage} message=${it.message}`);
@@ -534,6 +553,7 @@ export async function attach(): Promise<void> {
       }
     }
     if (snap.phase === 'saved' || snap.phase === 'finished') void load();
+    logLoudness(snap.loudness);
     log(`attached phase=${snap.phase} job=${snap.job}`);
   } catch (err) {
     log(`error watch_import: ${String(err)}`);

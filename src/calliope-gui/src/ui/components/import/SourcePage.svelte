@@ -22,6 +22,7 @@
   const job = $derived(imp.job);
   const downloading = $derived(job?.phase === 'downloading');
   const preparing = $derived(job?.phase === 'preparing');
+  const normalizing = $derived(job?.phase === 'normalizing');
   const locked = $derived(imp.starting || job !== null || imp.prompt !== null);
 
   const percent = $derived(
@@ -175,6 +176,12 @@
     <div class="flex flex-col gap-2" role="status">
       <span>Preparing audio...</span>
       <Progress value={null} aria-label="Preparing audio" />
+      <div><Button variant="outline" size="sm" onclick={() => void cancelRunning()}>Cancel</Button></div>
+    </div>
+  {:else if normalizing}
+    <div class="flex flex-col gap-2" role="status">
+      <span>Normalizing the audio...</span>
+      <Progress value={(job?.progress ?? 0) * 100} aria-label="Normalizing the audio" />
       <div><Button variant="outline" size="sm" onclick={() => void cancelRunning()}>Cancel</Button></div>
     </div>
   {/if}

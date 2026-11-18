@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loudnessText } from './loudness-format';
+import { importLoudnessText, loudnessText } from './loudness-format';
 import type { LoudnessOutcome, LoudnessResult } from './ipc';
 
 const r = (outcome: LoudnessOutcome, lufs: number | null, gain_db: number, ceiling = -1): LoudnessResult => ({
@@ -35,5 +35,22 @@ describe('loudnessText', () => {
   it('shows the ceiling without decimals only when whole', () => {
     expect(loudnessText(r('limited', -15.6, -1, -1), 'save')).toContain('the -1 dBTP');
     expect(loudnessText(r('limited', -15.6, -1, -1.5), 'save')).toContain('the -1.5 dBTP');
+  });
+});
+
+describe('importLoudnessText', () => {
+  it('the five import texts', () => {
+    expect(importLoudnessText(r('normalized', -14, 6))).toBe('Normalized to -14.0 LUFS (gain +6.0 dB)');
+    expect(importLoudnessText(r('limited', -16.2, 3.14))).toBe(
+      'Normalized to -16.2 LUFS (gain +3.1 dB, limited by the -1 dBTP peak ceiling)');
+    expect(importLoudnessText(r('at-target', -14, 0))).toBe('Already at -14.0 LUFS; not changed');
+    expect(importLoudnessText(r('at-ceiling', -15.3, 0))).toBe(
+      'Already at the -1 dBTP peak ceiling (-15.3 LUFS); not changed');
+    expect(importLoudnessText(r('too-quiet', null, 0))).toBe('Too quiet or too short to normalize; imported as is');
+  });
+
+  it('never shows -0.0 and keeps a fractional ceiling', () => {
+    expect(importLoudnessText(r('normalized', -14, -0.04))).toBe('Normalized to -14.0 LUFS (gain +0.0 dB)');
+    expect(importLoudnessText(r('limited', -15, -1, -1.5))).toContain('the -1.5 dBTP');
   });
 });

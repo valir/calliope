@@ -6,6 +6,7 @@
   import { ui } from '$lib/app-state.svelte';
   import { discard, extract, imp, setDraftField } from '$lib/import-state.svelte';
   import { formatLength } from '$lib/format';
+  import { importLoudnessText } from '$lib/loudness-format';
   import { getSettings } from '$lib/ipc';
 
   let keepOriginal = $state<boolean | null>(null);
@@ -60,6 +61,10 @@
     {#if lengthText}
       <span id="import-length-label" class="pt-1.5 text-sm font-medium text-muted-foreground">Length</span>
       <p aria-labelledby="import-length-label" class="pt-1.5 text-sm">{lengthText}</p>
+    {/if}
+    {#if job?.loudness}
+      <span id="import-loudness-label" class="pt-1.5 text-sm font-medium text-muted-foreground">Loudness</span>
+      <p aria-labelledby="import-loudness-label" class="pt-1.5 text-sm" data-testid="import-loudness">{importLoudnessText(job.loudness)}</p>
     {/if}
   </TrackFields>
 

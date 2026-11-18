@@ -6,7 +6,7 @@ import {
 import { lib, resetLibrary } from './library-state.svelte';
 import { ui } from './app-state.svelte';
 import { FIXTURE_TRACKS } from './fixture-tracks';
-import type { BatchItem, ImportEvent, JobSnapshot } from './ipc';
+import type { BatchItem, ImportEvent, JobSnapshot, LoudnessResult } from './ipc';
 
 let calls: [string, Record<string, unknown>][] = [];
 let dirSnapshot: JobSnapshot | null = null;
@@ -15,6 +15,7 @@ const savedItem = (index: number, name: string, dropped: { name: string; audible
   ({ index, name, result: 'saved', track: { ...track, id: `trk-${index + 1}` }, dropped });
 const failedItem: BatchItem = { index: 1, name: 'b.mp3', result: 'failed', stage: 'prepare', message: 'bad file' };
 const logs = () => calls.filter((c) => c[0] === 'frontend_log').map((c) => c[1].message as string);
+const loud: LoudnessResult = { outcome: 'normalized', lufs: -14, true_peak: -3, gain_db: 10, target: -14, ceiling: -1 };
 const batchFile = (index: number, name: string): ImportEvent => ({ phase: 'batch-file', index, total: 3, name });
 
 beforeEach(() => {
@@ -32,6 +33,42 @@ beforeEach(() => {
   });
 });
 afterEach(() => clearMocks());
+
+describe('normalizing step state', () => {
+  const meta = { band: 'B', album: '', title: 'T', composers: [], year: null, source_url: null, copyright: null };
+  it('a single import stays on the source page; the footer and progress follow', () => {
+    applyEvent({ phase: 'preparing' });
+    applyEvent({ phase: 'normalizing', progress: 0.4 });
+    expect(step()).toBe('source');
+    expect(imp.job?.progress).toBe(0.4);
+    expect(footerText()).toBe('Normalizing the audio...');
+    expect(jobRunning()).toBe(true);
+  });
+
+  it('a batch stays on extract with the file number in the footer', () => {
+    applyEvent(batchFile(0, 'a'));
+    applyEvent({ phase: 'normalizing', progress: 0 });
+    expect(step()).toBe('extract');
+    expect(footerText()).toBe('File 1 of 3: Normalizing the audio...');
+  });
+
+  it('ready stores and logs the result; no result stores null; batch-file clears it', () => {
+    applyEvent({ phase: 'ready', metadata: meta, duration_s: 5, loudness: loud });
+    expect(imp.job?.loudness).toEqual(loud);
+    expect(logs()).toContain('import loudness outcome=normalized gain=10.0 lufs=-14.0');
+    applyEvent({ phase: 'ready', metadata: meta, duration_s: 5 });
+    expect(imp.job?.loudness).toBeNull();
+    applyEvent({ phase: 'ready', metadata: meta, duration_s: 5, loudness: loud });
+    applyEvent(batchFile(0, 'a'));
+    expect(imp.job?.loudness).toBeNull();
+  });
+
+  it('a saved batch item with a result logs it', () => {
+    applyEvent(batchFile(0, 'a'));
+    applyEvent({ phase: 'batch-item', item: { ...savedItem(0, 'a'), loudness: { ...loud, outcome: 'too-quiet', lufs: null, gain_db: 0 } } as BatchItem });
+    expect(logs()).toContain('import batch loudness item=1 outcome=too-quiet gain=0.0');
+  });
+});
 
 describe('directory import state', () => {
   it('batch-file on a stub job creates the batch; the steps go extract then done on finished', () => {

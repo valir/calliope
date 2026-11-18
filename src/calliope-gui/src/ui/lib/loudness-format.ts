@@ -37,3 +37,21 @@ export function loudnessText(r: LoudnessResult, job: JobKind): string {
   }
   return `${save ? 'Saved, normalized to' : 'Normalized to'} ${lufs || target} LUFS (gain ${gain} dB).`;
 }
+
+/** The result line of the import's normalizing step (no final full stop). */
+export function importLoudnessText(r: LoudnessResult): string {
+  const lufs = r.lufs === null ? '' : num(r.lufs);
+  const ceiling = whole(r.ceiling);
+  switch (r.outcome) {
+    case 'limited':
+      return `Normalized to ${lufs} LUFS (gain ${signed(r.gain_db)} dB, limited by the ${ceiling} dBTP peak ceiling)`;
+    case 'too-quiet':
+      return 'Too quiet or too short to normalize; imported as is';
+    case 'at-target':
+      return `Already at ${lufs || num(r.target)} LUFS; not changed`;
+    case 'at-ceiling':
+      return `Already at the ${ceiling} dBTP peak ceiling (${lufs} LUFS); not changed`;
+    default:
+      return `Normalized to ${lufs || num(r.target)} LUFS (gain ${signed(r.gain_db)} dB)`;
+  }
+}
