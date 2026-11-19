@@ -33,15 +33,17 @@
   });
   const hint = $derived(detectHint());
 
-  // The position slider is frozen (shows the drag value) while the user drags it.
+  // The slider also reports a change when it snaps the playing position to its 100 ms step
+  // (half-way positions snap down, e.g. 1250 -> 1200). Only a change made by the user (a drag, or
+  // a key on the slider) is a seek: a seek while playing mutes for the resume delay, so a stray
+  // one is heard as a break. The slider shows the drag value while the user drags it.
   let dragging = $state(false);
+  let keying = $state(false);
   let dragValue = $state(0);
   const sliderValue = $derived(dragging ? dragValue : ed.transport.position_ms);
 
   function onValue(v: number): void {
-    // While playing, the slider snaps the incoming position to its 100 ms step and reports that
-    // as a change; it is not the user moving it (it would seek on every transport event).
-    if (!dragging && v === Math.round(ed.transport.position_ms / 100) * 100) return;
+    if (!dragging && !keying) return;
     dragValue = v;
     seek(v);
   }
@@ -125,7 +127,13 @@
 
   <div class="flex items-center gap-3">
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="min-w-0 flex-1" onpointerdown={() => { dragging = true; dragValue = ed.transport.position_ms; }}>
+    <div
+      class="min-w-0 flex-1"
+      onpointerdowncapture={() => { dragging = true; dragValue = ed.transport.position_ms; }}
+      onkeydowncapture={() => { keying = true; }}
+      onkeyup={() => { keying = false; }}
+      onfocusout={() => { keying = false; }}
+    >
       <Slider
         value={sliderValue}
         onValueChange={onValue}

@@ -130,6 +130,22 @@ describe('controls', () => {
     expect(screen.getByTestId('clip-badge').textContent).toBe('CLIP');
   });
 
+  it('the moving position slider never seeks by itself, also at half-way positions; a key on it does', async () => {
+    await active();
+    // 1250 snaps down to 1200 in the slider: it used to be taken for a seek (a break while playing).
+    for (const p of [1250, 1337, 2050, 2450, 3530, 3849, 4950]) {
+      send({ kind: 'transport', id: stemTrack.id, ...idle, playing: true, position_ms: p });
+      await flush();
+    }
+    expect(names()).not.toContain('editor_seek');
+    const slider = thumb('Position');
+    slider.focus();
+    await fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    await fireEvent.keyUp(slider, { key: 'ArrowRight' });
+    await flush();
+    expect(names()).toContain('editor_seek');
+  });
+
   it('dB text shows Off at the bottom, +12.0 dB at the top, and resets on click', async () => {
     await active();
     const g = thumb('Volume Guitar');
