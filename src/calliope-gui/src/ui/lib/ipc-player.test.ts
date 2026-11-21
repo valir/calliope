@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import {
   closePlayer, getPlayer, openPlayer, playerLeave, playerLoop, playerNudge, playerPause,
-  playerPlay, playerSeek, playerSelectSource, playerSkip, playerTempo, watchPlayer,
+  playerJump, playerPlay, playerSeek, playerSelectSource, playerSkip, playerTempo, watchPlayer,
 } from './ipc';
 import type { PlayerEvent } from './ipc';
 import { PLAYER_FIXTURE_TRACKS } from './fixture-tracks';
@@ -23,6 +23,7 @@ describe('player ipc wrappers', () => {
     await playerSeek('t1', 1500);
     await playerNudge('t1', -100);
     await playerSkip('t1', 5000);
+    await playerJump('t1', 10200, true);
     await playerLeave('t1');
     await playerTempo('t1', { kind: 'set-bpm', bpm: 92.5 });
     await playerLoop('t1', { kind: 'set', edge: 'start', value: { tick: 32 } });
@@ -30,7 +31,7 @@ describe('player ipc wrappers', () => {
     await playerLoop('t1', { kind: 'training', on: true, start: 70, end: 100, step: 5, repeats: 2 });
     expect(calls.map((c) => c[0])).toEqual([
       'open_player', 'close_player', 'get_player', 'watch_player', 'player_select_source', 'player_play',
-      'player_pause', 'player_seek', 'player_nudge', 'player_skip', 'player_leave', 'player_tempo',
+      'player_pause', 'player_seek', 'player_nudge', 'player_skip', 'player_jump', 'player_leave', 'player_tempo',
       'player_loop', 'player_tempo', 'player_loop',
     ]);
     const { events: e0, ...open } = calls[0][1];
@@ -45,11 +46,12 @@ describe('player ipc wrappers', () => {
     expect(calls[7][1]).toEqual({ id: 't1', position: 1500 });
     expect(calls[8][1]).toEqual({ id: 't1', delta: -100 });
     expect(calls[9][1]).toEqual({ id: 't1', delta: 5000 });
-    expect(calls[10][1]).toEqual({ id: 't1' });
-    expect(calls[11][1]).toEqual({ id: 't1', action: { kind: 'set-bpm', bpm: 92.5 } });
-    expect(calls[12][1]).toEqual({ id: 't1', action: { kind: 'set', edge: 'start', value: { tick: 32 } } });
-    expect(calls[13][1]).toEqual({ id: 't1', action: { kind: 'speed-set', percent: 85 } });
-    expect(calls[14][1]).toEqual({ id: 't1', action: { kind: 'training', on: true, start: 70, end: 100, step: 5, repeats: 2 } });
+    expect(calls[10][1]).toEqual({ id: 't1', position: 10200, beat: true });
+    expect(calls[11][1]).toEqual({ id: 't1' });
+    expect(calls[12][1]).toEqual({ id: 't1', action: { kind: 'set-bpm', bpm: 92.5 } });
+    expect(calls[13][1]).toEqual({ id: 't1', action: { kind: 'set', edge: 'start', value: { tick: 32 } } });
+    expect(calls[14][1]).toEqual({ id: 't1', action: { kind: 'speed-set', percent: 85 } });
+    expect(calls[15][1]).toEqual({ id: 't1', action: { kind: 'training', on: true, start: 70, end: 100, step: 5, repeats: 2 } });
   });
 
   it('types the closed event of a released session', async () => {

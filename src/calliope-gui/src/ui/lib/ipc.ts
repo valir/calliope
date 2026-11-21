@@ -522,6 +522,8 @@ export const playerNudge = (id: string, delta: number): Promise<PlayerTransport>
   invoke<PlayerTransport>('player_nudge', { id, delta });
 export const playerSkip = (id: string, delta: number): Promise<PlayerTransport> =>
   invoke<PlayerTransport>('player_skip', { id, delta });
+export const playerJump = (id: string, position: number, beat: boolean): Promise<PlayerTransport> =>
+  invoke<PlayerTransport>('player_jump', { id, position, beat });
 export const playerLeave = (id: string): Promise<PlayerTransport> =>
   invoke<PlayerTransport>('player_leave', { id });
 export const playerTempo = (id: string, action: TempoAction): Promise<PlayerSnapshot> =>

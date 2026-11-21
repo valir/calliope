@@ -13,6 +13,7 @@ import {
   playerSeek,
   playerSelectSource,
   playerSkip,
+  playerJump,
   playerTempo,
   watchPlayer,
   type BpmDetectView,
@@ -424,6 +425,20 @@ export async function nudge(delta: number): Promise<void> {
 
 export async function skip(delta: number): Promise<void> {
   await transportCall('player_skip', (id) => playerSkip(id, delta), () => `player skip delta=${delta}`);
+}
+
+/** To start: the playback floor (0:00.0, or the set first beat). An instant jump. */
+export async function toStart(): Promise<void> {
+  await transportCall('player_jump', (id) => playerJump(id, 0, false), (t) => `player to-start position=${t.position_ms}`);
+}
+
+/** A waveform click: an instant jump to the beat nearest to `ms`. */
+export async function seekClick(ms: number): Promise<void> {
+  await transportCall(
+    'player_jump',
+    (id) => playerJump(id, ms, true),
+    (t) => `player jump position=${t.position_ms} requested=${Math.round(ms)}`,
+  );
 }
 
 export async function setBpm(bpm: number): Promise<void> {

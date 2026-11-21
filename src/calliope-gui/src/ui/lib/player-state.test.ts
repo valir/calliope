@@ -4,7 +4,7 @@ import type { Channel } from '@tauri-apps/api/core';
 import {
   loop, beginNameEdit, cancelSectionBpm, cancelSectionName, commitSectionBpm, commitSectionName, commitSectionOffset, beginOffsetEdit, cancelOffsetEdit, stepSection, jumpSection, findStart, detectBpm, cancelDetect, setSectionFlags, editSectionBpm, leavePlayer, moveChange, pl, removeChange, scaleSection,
   selectSection, startAdd, targetSection, playLabel, resetPlayer, seek, selectSource, syncSelection, togglePlay,
-  speedStep, speedReset, speedSet, setTraining, speedLocked, shownSpeed } from './player-state.svelte';
+  toStart, seekClick, speedStep, speedReset, speedSet, setTraining, speedLocked, shownSpeed } from './player-state.svelte';
 import { resetLibrary } from './library-state.svelte';
 import { PLAYER_FIXTURE_TRACKS } from './fixture-tracks';
 import type { BpmDetectView, BpmResult, PlayerEvent, PlayerSnapshot, PlayerTransport, TempoSegment } from './ipc';
@@ -175,6 +175,24 @@ describe('player state', () => {
     expect(names()).toContain('player_leave');
     expect(logs()).toContain('player leave pause');
     expect(pl.transport.playing).toBe(false);
+  });
+
+  it('toStart and seekClick jump, update the transport and log; both do nothing unless active', async () => {
+    await toStart();
+    await seekClick(10200);
+    expect(names()).not.toContain('player_jump');
+    syncSelection(practice);
+    await flush();
+    handlers.player_jump = (a) => ({ ...idle, position_ms: a.beat ? 10000 : 0 });
+    pl.transport.position_ms = 500;
+    await toStart();
+    expect(calls.filter((c) => c[0] === 'player_jump').map((c) => [c[1].position, c[1].beat])).toEqual([[0, false]]);
+    expect(pl.transport.position_ms).toBe(0);
+    await seekClick(10200);
+    expect(calls.filter((c) => c[0] === 'player_jump')[1][1]).toMatchObject({ id: practice.id, position: 10200, beat: true });
+    expect(pl.transport.position_ms).toBe(10000);
+    expect(logs()).toContain('player to-start position=0');
+    expect(logs()).toContain('player jump position=10000 requested=10200');
   });
 
   it('rapid seeks keep at most 2 in flight, last value last', async () => {
