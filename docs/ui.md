@@ -185,7 +185,8 @@
 - (gui-player-tempo-sections) Player sections are editable. Every change can be dragged (no read-only
   dimming in the Player); the waveform in the Player selects a section by a click (4 px bar, and the label
   underlined), and the selected section, else the one at the playhead, is the target of the Sections group.
-  A selection holds only until the playhead enters another section (playback crossing a boundary, a seek or a
+  A click outside markers and labels selects the section and moves the playhead to the nearest beat (no tempo: the
+  clicked position); while playing, playback goes on from there. A selection holds only until the playhead enters another section (playback crossing a boundary, a seek or a
   jump there); from then on the section under the playhead is the target.
   A change moves in 1/64-beat steps, at most 4 beats from where it was detected or added; edits made
   while playing never stop the audio, and the clicks follow from the next beat. Keys with the waveform
@@ -196,7 +197,7 @@
   300; otherwise "Enter a BPM between 20 and 300" shows in the group's message line and the field stays),
   Escape or clicking away cancels, so nothing is added by accident.
 - The Player's control bar (gui-player-tempo-sections, phase 3) has two rows. Row 1 holds Sections and Loops side by
-  side, row 2 is Playback at the full width (Rew, Play/Pause, FF, the time box and the position slider), at the
+  side, row 2 is Playback at the full width (To start, Rew, Play/Pause, FF, the time box and the position slider), at the
   bottom where Play is easy to find. There is no master metronome and no global Count In; the
   disabled -/+/Reset BPM placeholders are hidden until that feature exists. The Player has a section Detect BPM
   on the Start row (the whole-track detection stays in the Editor).
@@ -208,8 +209,8 @@
   ("Metronome in this section"), Count In ("Count-in into this section") and the status ("Section 2 of 3 · 93 BPM", or
   "No tempo"). Fourth row: "Start" [offset field] "/64" (`text-sm`, muted, tooltip "1/64 beat") the offset's time (`text-sm`), then the "Find start" button and the "Detect BPM" button (`w-[5.75rem]`, `text-sm`; it reads "Cancel" while a detection runs). The message line is an ordinary `min-h-5` span below (single line, `w-0 min-w-full truncate` so that a long text never widens the group, with the full text as tooltip; the priority is "Finding the start...", then the detecting text, then the error, then the note);
   the BPM note can change the height of the BPM group.
-- Section toggles: Click and Count In are filled amber when on. A new tempo map starts with Click on in every
-  section and Count In off. Count In is enabled for every section, the first included (a count-in before the
+- Section toggles: Click and Count In are filled amber when on. A new section starts with Click off (the first BPM, Autodetect, the BPM box, Add) and Count In off;
+  sections saved before keep their setting. Count In is enabled for every section, the first included (a count-in before the
   first section is the six count-in ticks at its tempo before the song starts); both are disabled when there is no BPM ("Type a
   BPM first"). Which beats click is decided by the section flags alone.
 - Play count-in: Play from paused or stopped counts in (six ticks over 4 beats at the tempo of the section under the
@@ -255,11 +256,13 @@
 - Layout, measured by the `player layout` log (overflow = scrollHeight - clientHeight of the pane): at 1280x800 with
   the tree folded the pane is 965 px wide, Sections (496 px) and Loops (424 px) share row 1, Playback is the bottom
   row (two lines since the Speed group), and nothing scrolls (overflow 0; target at most 14 px; log
-  `overflow=0 width=965 loops_beside=1 sections_w=496 loops_w=424`). Measured positions there (window coordinates):
+  `overflow=0 width=965 loops_beside=1 sections_w=496 loops_w=424 hscroll=0 playback_w=929`; `hscroll` is the pane's
+  `scrollWidth - clientWidth` and `playback_w` the Playback pane's width; at 1024x640 both tree states have hscroll 0 and playback_w <= width). Measured positions there (window coordinates):
   Sections/Loops top edge y 307, Loops lines y 350 / 418 / 485 (Play/Stop x 889, Loop On 981, Count-In 1090,
   Train... 1194; with the Start row of Sections, task gui-first-beat-tuning; Sections rows y 341 / 394 / 458 / 511, buttons
   `+ - x2 /2 Prev |< >| Next` at x 373 / 432 / 490 / 548 / 607 / 666 / 724 / 782, Start field x 432, Find start x 643, Detect BPM x 746),
-  Rew/Play/FF row y 628, Speed row y 695 (`-` x 451, box 528, `+` 633, Reset 713, readout from 763).
+  To start/Rew/Play/FF row y 629 (To start x 398, Rew 489, Play 585, FF 672), time box x 777 (y 628), position slider x 860 to 1247,
+  Speed row y 695 (`-` x 451, box 528, `+` 633, Reset 713, readout from 763).
   With the tree shown (668 px wide) Loops wraps below Sections and the pane scrolls by about 234 px; at 1024x640 it
   scrolls by about 349 px (tree folded) and 879 px (tree shown, 412 px wide, where the Sections row is clipped on
   the right: the name box and the last button are cut). The groups never overflow sideways except in that last case.

@@ -13,9 +13,9 @@ fn ready() -> bool {
     have_display() && have("xdotool") && have("i3-msg")
 }
 const BLANK: (i32, i32) = (356, 47);
-const PLAY: (i32, i32) = (477, 629);
+const PLAY: (i32, i32) = (585, 629);
 const BPM: (i32, i32) = (534, 341);
-const TIME: (i32, i32) = (669, 628);
+const TIME: (i32, i32) = (777, 628);
 const SEC_CLICK: (i32, i32) = (384, 458);
 const SEC_COUNT_IN: (i32, i32) = (481, 458);
 const LOOP_ADD: (i32, i32) = (1009, 350);

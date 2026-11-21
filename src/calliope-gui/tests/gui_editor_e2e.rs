@@ -27,7 +27,7 @@ const SLIDER_END_X: i32 = 1120;
 const MIX_PLAY: (i32, i32) = (834, 520);
 const TIME: (i32, i32) = (1178, 580);
 const SAVE: (i32, i32) = (704, 640);
-const PLAYER_PLAY: (i32, i32) = (477, 629); // Player Play/Pause, tree collapsed
+const PLAYER_PLAY: (i32, i32) = (585, 629); // Player Play/Pause, tree collapsed
 const NORMALIZE: (i32, i32) = (848, 640); // centre of the Normalize button, right of Save (measured)
 
 fn select(app: &mut App, wid: &str, query: &str, id: &str) {

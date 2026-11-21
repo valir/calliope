@@ -28,8 +28,10 @@ const TRIGGER: (i32, i32) = (555, 47);
 const ITEM_X: i32 = 500;
 const ITEM_Y: [i32; 4] = [113, 167, 221, 275]; // Backing, Original mix, Vocals, Guitar
 const BPM: (i32, i32) = (534, 341);
-const PLAY: (i32, i32) = (477, 629);
-const TIME: (i32, i32) = (669, 628);
+const PLAY: (i32, i32) = (585, 629);
+const TO_START: (i32, i32) = (398, 629);
+const FF: (i32, i32) = (672, 629);
+const TIME: (i32, i32) = (777, 628);
 // Speed group (the Playback pane's second line) and the Loops group's training button ("Train...").
 const SPEED_MINUS: (i32, i32) = (451, 696);
 const SPEED_BOX: (i32, i32) = (528, 696);
@@ -61,7 +63,7 @@ const WAVE_BAR: (i32, i32) = (729, 252);
 const WAVE_SECTION0: (i32, i32) = (450, 252);
 const WAVE_SECTION1: (i32, i32) = (1000, 252);
 const WAVE_LABEL0: (i32, i32) = (370, 286);
-const REW: (i32, i32) = (400, 629);
+const REW: (i32, i32) = (489, 629);
 const FIND_START: (i32, i32) = (643, 511);
 const SEC_DETECT: (i32, i32) = (746, 511);
 const SEC_HALVE: (i32, i32) = (549, 394);
@@ -288,7 +290,7 @@ fn play_and_change_source() {
     );
 
     // Clicking the position slider seeks (its middle is about 10 s of the 20 s).
-    app.click(&wid, 999, 628); // the position slider
+    app.click(&wid, 1053, 628); // the position slider
     let l = app.wait_contains("calliope-ui: player seek position=");
     assert!((8500..11500).contains(&position_of(&l)), "{l}");
     finish(&app);
@@ -328,12 +330,40 @@ fn tempo_metronome_count_in() {
         "{v}"
     );
 
-    // A new map clicks in every section (Click is on): clicks every 500 ms.
+    assert_eq!(
+        v["tempo"]["segments"][0]["metronome"].as_bool(),
+        Some(false),
+        "a new section starts with Click off: {v}"
+    );
+
+    // Click off: two seconds of playing from 1.2 s (a beat is at 1.5 s) have no click. The tone's own
+    // start shows as an onset in the first 50 ms.
+    enter(&app, &wid, TIME, "0:01.2");
+    app.wait_contains("player seek position=1200");
     let start = mark(&app, &cap);
     at(&app, &wid, PLAY);
     app.wait_contains("audio backend=capture");
     app.wait_contains("player play");
     let rate = rate_of(&app);
+    ms(2000);
+    at(&app, &wid, PLAY);
+    app.wait_contains("player pause");
+    let heard = since(&app, &cap, start);
+    let on: Vec<f64> = click_onsets_ms(&heard, rate)
+        .into_iter()
+        .filter(|t| *t > 50.0)
+        .collect();
+    assert!(on.is_empty(), "clicks with Click off: {on:?}");
+
+    // Click on: clicks every 500 ms.
+    at(&app, &wid, SEC_CLICK);
+    app.wait_contains("player section flags index=0 metronome=true count_in=false");
+    enter(&app, &wid, TIME, "0:01.0");
+    app.wait_line(|l| l.contains("player seek position=1000"), secs(10));
+    let start = mark(&app, &cap);
+    app.skip_seen();
+    at(&app, &wid, PLAY);
+    app.wait_contains("player play");
     ms(3000);
     shot("player-metronome");
     at(&app, &wid, PLAY);
@@ -348,7 +378,7 @@ fn tempo_metronome_count_in() {
         );
     }
 
-    // Count-in with the guitar: Click off and Count In on in section 1, so the only clicks are
+    // Count-in with the guitar: Click (on until now) off and Count In on in section 1, so the only clicks are
     // the six ticks (0, 500, 1000, 1250, 1500, 1750 ms), then the tone after 2000 ms.
     choose_source(&app, &wid, 3);
     app.wait_contains("player source key=stem:guitar");
@@ -2175,5 +2205,172 @@ fn player_section_bpm_detect() {
     // 11. Still fits.
     ms(1000);
     assert_tuning_layout(&app);
+    finish(&app);
+}
+
+const TRANSPORT_FIXTURE: &str = r#"{"schema_version":7,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":0,"bpm":120,"found_ms":0,"metronome":false},{"start_ms":15000,"bpm":100,"detected_ms":15000,"metronome":false}]}}"#;
+
+/// The window x of `at_ms` on the 20 s waveform at 1280x800 with the tree folded.
+fn wave_x(at_ms: i32) -> i32 {
+    let (x0, x1, _, _) = wave_box(1280, 800, true);
+    x0 + (x1 - x0) * at_ms / 20000
+}
+
+/// Waits for the frontend's line of a click on the waveform and returns (position, requested).
+fn clicked(app: &mut App) -> (i64, i64) {
+    let l = app.wait_contains("calliope-ui: player jump position=");
+    (position_of(&l), field(&l, "requested").parse().unwrap())
+}
+
+/// Player transport: the layout, To start while playing, Rew / FF at the ends, a click on the
+/// waveform (snapped to the beat, section selected, playing goes on), the bar and the label still
+/// work, no tempo, and 1024x640.
+#[test]
+#[ignore]
+fn player_transport() {
+    if !ready() {
+        return;
+    }
+    let dirs = player_dirs("player_transport");
+    std::fs::write(dirs.player_json(PL_TEMPO), TRANSPORT_FIXTURE).unwrap();
+    let (mut app, wid) = start_player(&dirs);
+    let mut collapsed = false;
+    pick(&mut app, &wid, &mut collapsed, "with tempo", PL_TEMPO);
+    let cap = dirs.capture();
+    let y = wave_box(1280, 800, true).2;
+
+    // 1. Layout: nothing overflows at 1280x800 with the tree folded.
+    ms(800);
+    let l = last_layout(&app);
+    let mut report = vec![format!("1280x800 tree=rail: {l}")];
+    assert_eq!(field(&l, "overflow"), "0", "{l}");
+    assert_eq!(field(&l, "hscroll"), "0", "{l}");
+    shot("player-transport-1280");
+
+    // 2. To start while playing: the jump is instant (no scrub gap) and the playback goes on.
+    enter(&app, &wid, TIME, "0:12.0");
+    app.wait_contains("player seek position=12000");
+    app.skip_seen();
+    at(&app, &wid, PLAY);
+    app.wait_contains("player play");
+    let rate = rate_of(&app);
+    ms(500);
+    let (stops, pauses) = (
+        app.count("calliope: player transport playing=false"),
+        app.count("player pause"),
+    );
+    let start = mark(&app, &cap);
+    at(&app, &wid, TO_START);
+    app.wait_contains("calliope-ui: player to-start position=0");
+    ms(800);
+    assert_eq!(app.count("player pause"), pauses, "To start paused");
+    assert_eq!(
+        app.count("calliope: player transport playing=false"),
+        stops,
+        "To start stopped the playback"
+    );
+    let heard = since(&app, &cap, start);
+    let w = (rate / 100.0) as usize;
+    let left: Vec<f32> = heard.chunks_exact(2).map(|c| c[0]).collect();
+    let rms: Vec<f32> = left[(rate / 50.0) as usize..left.len() - (rate / 50.0) as usize]
+        .chunks_exact(w)
+        .map(|c| (c.iter().map(|v| v * v).sum::<f32>() / w as f32).sqrt())
+        .collect();
+    let mut sorted = rms.clone();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let median = sorted[sorted.len() / 2];
+    assert!(median > 0.01, "no sound after To start (median {median})");
+    let low: Vec<usize> = (0..rms.len()).filter(|&i| rms[i] < 0.5 * median).collect();
+    assert!(low.is_empty(), "a gap after To start: windows {low:?}");
+    at(&app, &wid, PLAY);
+    let l = app.wait_contains("player pause position=");
+    assert!((300..3500).contains(&position_of(&l)), "{l}");
+
+    // 3. Rew from 2 s stops at 0; FF from 17 s stops at the end (20 s).
+    enter(&app, &wid, TIME, "0:02.0");
+    app.wait_contains("player seek position=2000");
+    at(&app, &wid, REW);
+    app.wait_contains("player skip delta=-5000");
+    wait_json(&dirs, PL_TEMPO, |v| v["position_ms"].as_i64() == Some(0));
+    enter(&app, &wid, TIME, "0:17.0");
+    app.wait_contains("player seek position=17000");
+    at(&app, &wid, FF);
+    app.wait_contains("player skip delta=5000");
+    wait_json(&dirs, PL_TEMPO, |v| {
+        v["position_ms"].as_i64() == Some(20000)
+    });
+
+    // 4. A click on the waveform: the nearest beat, the section under the click is the target.
+    app.skip_seen();
+    app.click(&wid, wave_x(10200), y);
+    let (p, req) = clicked(&mut app);
+    assert!((req - 10200).abs() <= 60 && p == 10000, "{p} {req}");
+    at(&app, &wid, SEC_CLICK);
+    app.wait_contains("player section flags index=0 metronome=true count_in=false");
+    app.skip_seen();
+    at(&app, &wid, PLAY);
+    app.wait_contains("player play");
+    ms(300);
+    let pauses = app.count("player pause");
+    app.click(&wid, wave_x(17300), y);
+    let (p, req) = clicked(&mut app);
+    assert!((req - 17300).abs() <= 60 && p == 17400, "{p} {req}");
+    ms(400);
+    assert_eq!(app.count("player pause"), pauses, "the click paused");
+    app.skip_seen();
+    at(&app, &wid, SEC_CLICK);
+    app.wait_contains("player section flags index=1 metronome=true count_in=false");
+    at(&app, &wid, PLAY);
+    app.wait_contains("player pause position=");
+
+    // 5. A bar drag and a label click are not seeks.
+    let jumps = app.count("player jump");
+    let seeks = app.count("player seek");
+    app.drag(&wid, wave_x(15000), wave_x(15000) + 20, y, || ());
+    moved(&mut app);
+    at(&app, &wid, WAVE_LABEL0);
+    ms(400);
+    shot("player-transport-overlay");
+    app.key(&wid, "Escape");
+    ms(200);
+    assert_eq!(
+        app.count("player jump"),
+        jumps,
+        "a bar or label click jumped"
+    );
+    assert_eq!(app.count("player seek"), seeks);
+
+    // 6. No tempo: the click goes to the clicked position.
+    pick(&mut app, &wid, &mut collapsed, "practice song", PL_PRACTICE);
+    app.skip_seen();
+    app.click(&wid, wave_x(10200), y);
+    let (p, req) = clicked(&mut app);
+    assert!(
+        (req - 10200).abs() <= 60 && (p - req).abs() <= 1,
+        "{p} {req}"
+    );
+
+    // 7. 1024x640, tree folded and shown: nothing clipped sideways.
+    size(&wid, 1024, 640);
+    for tree in ["rail", "shown"] {
+        if (tree == "shown") == collapsed {
+            app.key(&wid, "ctrl+l");
+            app.wait_line(|l| l.contains("player tree collapsed="), secs(5));
+            collapsed = !collapsed;
+        }
+        settle();
+        ms(700);
+        let l = last_layout(&app);
+        report.push(format!("1024x640 tree={tree}: {l}"));
+        let num = |k: &str| field(&l, k).parse::<i32>().unwrap();
+        assert!(num("playback_w") <= num("width"), "{l}");
+        assert_eq!(num("hscroll"), 0, "{l}");
+        shot(&format!("player-transport-1024-{tree}"));
+    }
+    std::fs::write(
+        repo().join("target/gui-shots/player-transport-layout.txt"),
+        report.join("\n") + "\n",
+    )
+    .unwrap();
     finish(&app);
 }
