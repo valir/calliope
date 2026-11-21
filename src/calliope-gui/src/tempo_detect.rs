@@ -619,7 +619,7 @@ pub(crate) fn detect(
         bpm: bpm0,
         detected_ms: None,
         on_beat: false,
-        meta: SectionMeta::default(),
+        meta: SectionMeta::new_section(),
         found_ms: None,
     }];
     for k in 1..q.len() {
@@ -636,7 +636,7 @@ pub(crate) fn detect(
             bpm,
             detected_ms: Some(start),
             on_beat: false,
-            meta: SectionMeta::default(),
+            meta: SectionMeta::new_section(),
             found_ms: None,
         });
     }

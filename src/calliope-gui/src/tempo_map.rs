@@ -50,7 +50,8 @@ pub struct SectionMeta {
     /// "" = no name; trimmed, no control characters, at most `MAX_SECTION_NAME` characters.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
-    /// Whether the section's beats click (default: they do, as in older maps).
+    /// Whether the section's beats click. A missing key means on (older files); new sections start
+    /// off (`SectionMeta::new_section`).
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub metronome: bool,
     /// Three clicks at this section's tempo just before it. On the first segment: only the Play count-in.
@@ -63,6 +64,19 @@ impl Default for SectionMeta {
         SectionMeta {
             name: String::new(),
             metronome: true,
+            count_in: false,
+        }
+    }
+}
+
+impl SectionMeta {
+    /// The settings of a section that is created now (first BPM, BPM-box split, Add, detection):
+    /// Click off, no name, no Count In. New sections must use this, not `default()` (which is the
+    /// meaning of a missing key: Click on).
+    pub fn new_section() -> Self {
+        SectionMeta {
+            name: String::new(),
+            metronome: false,
             count_in: false,
         }
     }
@@ -212,8 +226,9 @@ impl TempoMap {
         self.bases().into_iter().find(|&b| b > tick)
     }
 
-    /// This map with the play settings of `old` carried over (Autodetect): every section gets the
-    /// Click of `old`'s first section, the first one also its Count In. Names are not carried.
+    /// This map with the play settings of `old` carried over (Autodetect): every section starts with
+    /// Click off (new sections do), the first one gets the Count In of `old`'s first section. Names
+    /// are not carried.
     /// An empty `old` changes nothing.
     pub fn with_play_settings_of(&self, old: &TempoMap) -> TempoMap {
         let Some(first) = old.segments.first() else {
@@ -221,7 +236,7 @@ impl TempoMap {
         };
         let mut map = self.clone();
         for (i, s) in map.segments.iter_mut().enumerate() {
-            s.meta.metronome = first.meta.metronome;
+            s.meta.metronome = false;
             s.meta.count_in = i == 0 && first.meta.count_in;
         }
         map
@@ -317,7 +332,7 @@ impl TempoMap {
                     bpm,
                     detected_ms: None,
                     on_beat: false,
-                    meta: SectionMeta::default(),
+                    meta: SectionMeta::new_section(),
                     found_ms: None,
                 });
             }
@@ -352,12 +367,7 @@ impl TempoMap {
                     .iter()
                     .position(|s| s.start_ms > start_ms)
                     .unwrap_or(self.segments.len());
-                // the new section keeps the metronome flag of the one it splits
-                let metronome = self.segments[at.saturating_sub(1)].meta.metronome;
-                let meta = SectionMeta {
-                    metronome,
-                    ..SectionMeta::default()
-                };
+                let meta = SectionMeta::new_section();
                 self.segments.insert(
                     at,
                     Segment {
@@ -592,10 +602,7 @@ impl TempoMap {
             return Err("A tempo change needs at least one beat on each side".to_string());
         }
         let mut map = self.clone();
-        let meta = SectionMeta {
-            metronome: left.meta.metronome,
-            ..SectionMeta::default()
-        };
+        let meta = SectionMeta::new_section();
         map.segments.insert(
             k + 1,
             Segment {
@@ -774,14 +781,16 @@ mod tests {
                 bpm: 120.0,
                 detected_ms: None,
                 on_beat: false,
-                meta: SectionMeta::default(),
+                meta: SectionMeta::new_section(),
                 found_ms: None,
             }]
         );
 
         let mut m = map(&[(500.0, 120.0)]);
         m.set_bpm_at(10510.0, 90.0).unwrap();
-        assert_eq!(m, with_tempo());
+        let mut want = with_tempo();
+        want.segments[1].meta = SectionMeta::new_section();
+        assert_eq!(m, want);
     }
 
     #[test]
@@ -796,7 +805,7 @@ mod tests {
                 bpm: 100.0,
                 detected_ms: None,
                 on_beat: false,
-                meta: SectionMeta::default(),
+                meta: SectionMeta::new_section(),
                 found_ms: None,
             }
         );
@@ -1329,7 +1338,7 @@ mod tests {
 
     #[test]
     fn meta_carry_rules() {
-        // Add copies the split section's metronome flag, with no name and no count-in
+        // Add gives a new section with Click off, no name and no count-in
         for on in [true, false] {
             let m = flagged(1, on, true);
             let (n, k) = m.add_change(14500.0, 110.0, 40000.0).unwrap();
@@ -1339,7 +1348,7 @@ mod tests {
                 n.segments[2].meta,
                 SectionMeta {
                     name: String::new(),
-                    metronome: on,
+                    metronome: false,
                     count_in: false
                 }
             );
@@ -1369,8 +1378,8 @@ mod tests {
 
     #[test]
     fn set_bpm_at_meta() {
-        // insert: copies the metronome flag of the split section
-        let mut m = flagged(1, false, true);
+        // insert: the new section has Click off, the split section keeps its flag
+        let mut m = flagged(1, true, true);
         m.set_bpm_at(14500.0, 110.0).unwrap();
         assert_eq!(m.segments.len(), 4);
         assert_eq!(
@@ -1382,6 +1391,11 @@ mod tests {
             }
         );
         assert_eq!(m.segments[1].meta.name, "S1");
+        assert!(m.segments[1].meta.metronome);
+        // the first BPM on an empty map gives Click off
+        let mut e = TempoMap::default();
+        e.set_bpm_at(500.0, 120.0).unwrap();
+        assert!(!e.segments[0].meta.metronome);
         // retyping an existing change's BPM keeps its meta
         let mut m = flagged(1, false, true);
         m.set_bpm_at(8500.0, 95.0).unwrap();
@@ -1498,6 +1512,13 @@ mod tests {
             .segments
             .iter()
             .all(|s| !s.meta.metronome && s.meta.name.is_empty()));
+        // old Click on: still every section off
+        old.segments[0].meta.metronome = true;
+        assert!(new
+            .with_play_settings_of(&old)
+            .segments
+            .iter()
+            .all(|s| !s.meta.metronome));
         assert_eq!(
             n.segments
                 .iter()

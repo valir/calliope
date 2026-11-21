@@ -1260,7 +1260,8 @@ fn ac28_every_setting_is_on_disk_within_1s_and_restored() {
         "restored {}",
         s.transport.position_ms
     );
-    assert!(s.tempo.segments[0].meta.metronome && s.tempo.segments[0].meta.count_in);
+    // a section made by the first BPM starts with Click off
+    assert!(!s.tempo.segments[0].meta.metronome && s.tempo.segments[0].meta.count_in);
     assert_eq!(s.tempo.segments[0].bpm, 100.0);
     assert_eq!(s.loops.len(), 2);
     assert!(!s.loops[0].repeat && s.loops[0].count_in);
@@ -2096,6 +2097,7 @@ fn ts6_edits_while_playing_continue_and_follow_from_next_beat() {
         let e = make(&r);
         let s = r.edit(e);
         assert!(s.transport.playing, "{name}: still playing");
+        r.set_clicks(true); // a section added by the edit starts with Click off
         let new = r.map();
         assert_ne!(old, new, "{name}");
         let n1 = frames_of(1500.0);
@@ -3592,13 +3594,13 @@ fn qa_p2_edits_split_join_move_and_merge_with_names_and_flags() {
     assert_eq!(meta_of(&r, 1), ("C".into(), true, true));
     // C's count-in now replaces the last clicks of A (before it, 60 BPM beat = 1000)
     r.set_clicks(true);
-    // Add inside A (metronome on, named A): the new section is unnamed, clicking, no count-in; A and C keep theirs
+    // Add inside A (metronome on, named A): the new section is unnamed, Click off, no count-in; A and C keep theirs
     r.edit(SectionEdit::Add {
         position: 2000.0,
         bpm: 90.0,
     });
     assert_eq!(meta_of(&r, 0), ("A".into(), true, false));
-    assert_eq!(meta_of(&r, 1), (String::new(), true, false));
+    assert_eq!(meta_of(&r, 1), (String::new(), false, false));
     assert_eq!(meta_of(&r, 2), ("C".into(), true, true));
     // move C: the count-in moves with it
     let c_at = r.sections()[2].0;
@@ -3630,7 +3632,7 @@ fn qa_p2_edits_split_join_move_and_merge_with_names_and_flags() {
     assert_eq!(s.tempo.segments.len(), 2);
     assert_eq!(
         meta_of(&r, 1),
-        (String::new(), true, false),
+        (String::new(), false, false),
         "the section kept is the left one, with its settings"
     );
     // BPM 0 on the first section: the new first section never keeps a count-in
@@ -3643,12 +3645,19 @@ fn qa_p2_edits_split_join_move_and_merge_with_names_and_flags() {
 }
 
 #[test]
-fn qa_p2_typed_change_copies_the_split_sections_metronome_flag() {
-    let mut r = rig_with(PRACTICE, &segs3(r#","metronome":false"#, "", ""));
-    r.m.seek(&r.id(), 1900, r.t0).unwrap();
-    let s = r.m.set_bpm(&r.id(), 77.0, r.t0).unwrap();
-    assert_eq!(s.tempo.segments.len(), 4);
-    assert_eq!(meta_of(&r, 1), (String::new(), false, false));
+fn qa_p2_typed_change_makes_a_section_with_click_off() {
+    for first in [r#","metronome":false"#, ""] {
+        let mut r = rig_with(PRACTICE, &segs3(first, "", ""));
+        r.m.seek(&r.id(), 1900, r.t0).unwrap();
+        let s = r.m.set_bpm(&r.id(), 77.0, r.t0).unwrap();
+        assert_eq!(s.tempo.segments.len(), 4);
+        assert_eq!(meta_of(&r, 1), (String::new(), false, false));
+        assert_eq!(
+            meta_of(&r, 0).1,
+            first.is_empty(),
+            "the split one is unchanged"
+        );
+    }
 }
 
 #[test]
@@ -4778,7 +4787,7 @@ fn qa_p3_autodetect_carry_takes_only_section_1_click_and_count_in() {
             seg_of(12000.0, 95.0, true, false, ""),
         ]
     };
-    // Click on in section 1, off in section 2, section 2 Count In on: all new sections click, none but the first counts in
+    // Click on in section 1, off in section 2, section 2 Count In on: all new sections start with Click off, none but the first counts in
     let got = carried(
         vec![
             seg_of(0.0, 120.0, true, false, "A"),
@@ -4789,9 +4798,9 @@ fn qa_p3_autodetect_carry_takes_only_section_1_click_and_count_in() {
     assert_eq!(
         got,
         [
-            (true, false, "".into()),
-            (true, false, "".into()),
-            (true, false, "".into())
+            (false, false, "".into()),
+            (false, false, "".into()),
+            (false, false, "".into())
         ]
     );
     // Click off + Count In on in section 1

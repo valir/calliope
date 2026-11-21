@@ -623,6 +623,64 @@ fn click_off_in_every_section_leaves_the_source_untouched() {
     close(&got, &want);
 }
 
+#[test]
+fn the_first_bpm_on_a_track_starts_with_click_off_and_is_silent() {
+    let (_t, spec, mut m, b, _e) = opened(PRACTICE);
+    let t0 = Instant::now();
+    let s = m.set_bpm(&spec.id, 120.0, t0).unwrap();
+    assert_eq!(s.tempo.segments.len(), 1);
+    assert!(!s.tempo.segments[0].meta.metronome);
+    let pcm = decoded(&spec, &s.source);
+    m.seek(&spec.id, 0, t0).unwrap();
+    m.play(&spec.id, t0).unwrap();
+    let got = b.pull(2 * RATE);
+    let mut want = expected(&pcm, 0, 2 * RATE);
+    fade_in(&mut want, 0);
+    close(&got, &want);
+}
+
+#[test]
+fn new_sections_are_off_and_only_they_are_written_off() {
+    for by_add in [true, false] {
+        let (_t, spec, mut m, _b, _e, _pcm) = with_tempo();
+        let t0 = Instant::now();
+        let s = if by_add {
+            let e = SectionEdit::Add {
+                position: 3000.0,
+                bpm: 100.0,
+            };
+            m.edit_sections(&spec.id, e, t0).unwrap()
+        } else {
+            m.seek(&spec.id, 3000, t0).unwrap();
+            m.set_bpm(&spec.id, 100.0, t0).unwrap()
+        };
+        let on: Vec<bool> = s.tempo.segments.iter().map(|g| g.meta.metronome).collect();
+        assert_eq!(on, [true, false, true], "by_add {by_add}");
+        m.close();
+        let segs = disk(&spec).unwrap()["tempo"]["segments"].clone();
+        assert!(segs[0].get("metronome").is_none());
+        assert_eq!(segs[1]["metronome"], false);
+        assert!(segs[2].get("metronome").is_none());
+    }
+}
+
+#[test]
+fn old_sections_keep_their_flags_across_an_add_and_reopen() {
+    let (_t, spec, mut m, _b, _e, _pcm) = with_tempo();
+    let t0 = Instant::now();
+    flags(&mut m, &spec.id, 1, 10500.0, false, false, t0);
+    let e = SectionEdit::Add {
+        position: 3000.0,
+        bpm: 100.0,
+    };
+    m.edit_sections(&spec.id, e, t0).unwrap();
+    m.close();
+    let (mut m2, _b2, _e2) = manager();
+    let s = m2.open(&spec).unwrap();
+    let on: Vec<bool> = s.tempo.segments.iter().map(|g| g.meta.metronome).collect();
+    assert_eq!(on, [true, false, false]);
+}
+
 /// The six count-in tick frames for a beat of `b` frames (the export's pattern).
 fn tick_frames(b: usize) -> [usize; 6] {
     crate::metronome::TICK_BEATS.map(|k| (k * b as f64).round() as usize)
@@ -939,7 +997,14 @@ fn tempo_change_keeps_loops_in_time_and_keeps_speed() {
         .contains("100"));
 
     m.speed(&spec.id, SpeedAction::Reset, t0).unwrap(); // the audio below is compared at 100 %
-                                                        // the new grid is live: 100 BPM beats are 13230 frames apart from 3000 ms
+    let on = SectionEdit::Flags {
+        index: 1,
+        at: 3000.0,
+        metronome: true,
+        count_in: false,
+    };
+    m.edit_sections(&spec.id, on, t0).unwrap(); // the new section starts with Click off
+                                                // the new grid is live: 100 BPM beats are 13230 frames apart from 3000 ms
     m.seek(&spec.id, 3000, t0).unwrap();
     m.play(&spec.id, t0).unwrap();
     let got = b.pull(20000);
@@ -988,7 +1053,15 @@ fn section_edits_reach_the_engine_loops_and_disk() {
         .to_string()
         .contains("on_beat"));
 
-    // the new grid is live: 100 BPM beats from the placed change
+    // the new grid is live: 100 BPM beats from the placed change (a new section starts with Click off)
+    assert!(!s.tempo.segments[1].meta.metronome);
+    let on = SectionEdit::Flags {
+        index: 1,
+        at: 3000.0,
+        metronome: true,
+        count_in: false,
+    };
+    m.edit_sections(&spec.id, on, t0).unwrap();
     m.seek(&spec.id, 3000, t0).unwrap();
     m.play(&spec.id, t0).unwrap();
     let got = b.pull(20000);

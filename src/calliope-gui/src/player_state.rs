@@ -971,6 +971,34 @@ mod tests {
     }
 
     #[test]
+    fn click_flags_read_and_write_the_same_as_before() {
+        // missing key = on, false = off, true = on; written as no key / false / no key
+        let d = dir_with(
+            &json!({"schema_version": 7, "tempo": {"segments": [
+                {"start_ms": 500.0, "bpm": 120.0},
+                {"start_ms": 4000.0, "bpm": 90.0, "metronome": false},
+                {"start_ms": 8000.0, "bpm": 100.0, "metronome": true}]}})
+            .to_string(),
+        );
+        let (st, _, _) = load(d.path());
+        let on: Vec<bool> = st.tempo.segments.iter().map(|g| g.meta.metronome).collect();
+        assert_eq!(on, [true, false, true]);
+        save(d.path(), &st).unwrap();
+        let v: Value =
+            serde_json::from_slice(&std::fs::read(d.path().join(PLAYER_FILE)).unwrap()).unwrap();
+        assert_eq!(v["schema_version"], 7);
+        let g = &v["tempo"]["segments"];
+        assert!(g[0].get("metronome").is_none());
+        assert_eq!(g[1]["metronome"], false);
+        assert!(g[2].get("metronome").is_none());
+        assert!(!v["tempo"]["segments"]
+            .to_string()
+            .contains(r#""metronome":true"#));
+        let (back, _, _) = load(d.path());
+        assert_eq!(back.tempo, st.tempo);
+    }
+
+    #[test]
     fn found_ms_round_trips_on_the_first_segment_only() {
         let d = dir_with(
             &json!({"schema_version": 7, "tempo": {"segments": [
