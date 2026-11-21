@@ -7,3 +7,5 @@ task 4 | Frontend state: playerJump, toStart, seekClick | implementer | done
 task 5 | The To start button and the layout log fields | local | done
 task 6 | Click to seek in WaveformView, wired in the Player | implementer | done
 task 7 | GUI tests, coordinates and docs/ui.md | implementer | done
+tester | 6 acceptance tests, no defects | tester | done
+reviewer | APPROVED, 3 minors | reviewer | done

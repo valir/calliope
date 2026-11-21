@@ -6470,3 +6470,233 @@ fn fb_loops_that_start_before_the_first_beat_never_play_it() {
         }
     }
 }
+
+// =========================================================================================
+// QA gui-player-transport: edge cases for the metronome default, saved files and the jumps
+// =========================================================================================
+
+fn disk_clicks(r: &Rig) -> Vec<Option<Value>> {
+    r.disk().unwrap()["tempo"]["segments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.get("metronome").cloned())
+        .collect()
+}
+
+#[test]
+fn qa_pt_old_files_keep_on_and_off_through_edits_saves_and_a_reopen() {
+    // schema 5 (no master): section 0 on (no key), 1 off, 2 on (no key), 3 explicit true
+    let text = r#"{"schema_version":5,"tempo":{"beats_per_bar":4,"segments":[
+        {"start_ms":0,"bpm":120},
+        {"start_ms":4000,"bpm":100,"detected_ms":4000,"metronome":false},
+        {"start_ms":8000,"bpm":90,"detected_ms":8000},
+        {"start_ms":12000,"bpm":80,"detected_ms":12000,"metronome":true}]}}"#;
+    let mut r = rig_with(PRACTICE, text);
+    let want = [true, false, true, true];
+    let clicks_of = |r: &Rig| -> Vec<bool> {
+        r.snap()
+            .tempo
+            .segments
+            .iter()
+            .map(|s| s.meta.metronome)
+            .collect()
+    };
+    assert_eq!(clicks_of(&r), want);
+    // saves caused by edits that do not touch the flags
+    r.seek(2000);
+    r.edit(SectionEdit::Name {
+        index: 1,
+        at: 4000.0,
+        name: "B".into(),
+    });
+    r.edit(SectionEdit::Bpm {
+        index: 2,
+        at: 8000.0,
+        bpm: 95.0,
+    });
+    r.flush();
+    assert_eq!(clicks_of(&r), want);
+    assert_eq!(
+        disk_clicks(&r),
+        [None, Some(json!(false)), None, None],
+        "no key = on, false = off, never an explicit true"
+    );
+    // a new section made now is off and only it is written off
+    r.edit(SectionEdit::Add {
+        position: 10000.0,
+        bpm: 70.0,
+    });
+    r.flush();
+    assert_eq!(clicks_of(&r), [true, false, true, false, true]);
+    assert_eq!(
+        disk_clicks(&r),
+        [None, Some(json!(false)), None, Some(json!(false)), None]
+    );
+    r.reopen();
+    assert_eq!(clicks_of(&r), [true, false, true, false, true]);
+    // turning one on removes the key; the file stays readable the old way
+    let at = r.sections()[3].0;
+    r.edit(SectionEdit::Flags {
+        index: 3,
+        at,
+        metronome: true,
+        count_in: false,
+    });
+    r.flush();
+    assert_eq!(
+        disk_clicks(&r),
+        [None, Some(json!(false)), None, None, None]
+    );
+    assert_eq!(r.disk().unwrap()["schema_version"], 7);
+}
+
+#[test]
+fn qa_pt_a_typed_bpm_on_a_track_with_a_click_on_section_keeps_it_and_the_new_one_is_silent() {
+    let mut r = rig_with(
+        PRACTICE,
+        r#"{"schema_version":7,"tempo":{"beats_per_bar":4,"segments":[{"start_ms":0,"bpm":120,"found_ms":0}]}}"#,
+    );
+    r.seek(6000);
+    let s = r.m.set_bpm(&r.id(), 90.0, r.t0).unwrap();
+    assert_eq!(s.tempo.segments.len(), 2);
+    assert!(s.tempo.segments[0].meta.metronome);
+    assert!(!s.tempo.segments[1].meta.metronome);
+    // playing across the change: clicks only in the first section
+    r.seek(5000);
+    r.play();
+    let (c, _) = r.pull_clicks(2000.0);
+    assert!(
+        c.iter().any(|t| *t < 6000.0) && c.iter().all(|t| *t < 6000.0 + 5.0),
+        "{c:?}"
+    );
+}
+
+fn tempo_rig(first_start: f64, found: bool) -> Rig {
+    let f = if found { ",\"found_ms\":0" } else { "" };
+    let _ = f;
+    rig_with(
+        PRACTICE,
+        &format!(
+            r#"{{"schema_version":7,"tempo":{{"beats_per_bar":4,"segments":[{{"start_ms":{first_start},"bpm":120,"metronome":false}}]}}}}"#
+        ),
+    )
+}
+
+#[test]
+fn qa_pt_jump_ends_clamps_and_never_leaves_the_song() {
+    let mut r = tempo_rig(0.0, false);
+    let id = r.id();
+    let dur = r.snap().duration_ms as f64;
+    assert_eq!(dur, 20000.0);
+    // Rew at 2 s and FF 3 s before the end, paused
+    r.seek(2000);
+    assert_eq!(r.m.skip(&id, -5000, r.t0).unwrap().position_ms, 0);
+    r.seek(17000);
+    assert_eq!(r.m.skip(&id, 5000, r.t0).unwrap().position_ms, 20000);
+    // Rew at 0 and FF at the end stay put
+    assert_eq!(r.m.skip(&id, -5000, r.t0).unwrap().position_ms, 15000);
+    r.m.jump_to(&id, 0.0, false, r.t0).unwrap();
+    assert_eq!(r.m.skip(&id, -5000, r.t0).unwrap().position_ms, 0);
+    r.m.jump_to(&id, dur, false, r.t0).unwrap();
+    assert_eq!(r.m.skip(&id, 5000, r.t0).unwrap().position_ms, 20000);
+    // a beat click at or past the end never goes beyond it, before 0 never below
+    for (x, beat) in [
+        (19_999.9, true),
+        (20_000.0, true),
+        (1e12, true),
+        (-1e12, true),
+        (-0.1, true),
+        (1e300, false),
+        (f64::MIN, false),
+    ] {
+        let p = r.m.jump_to(&id, x, beat, r.t0).unwrap().position_ms as f64;
+        assert!((0.0..=dur).contains(&p), "{x} -> {p}");
+    }
+    for bad in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+        assert!(r.m.jump_to(&id, bad, true, r.t0).is_err());
+    }
+    // while playing, To start from 1:23.4 equivalent (here 15 s) keeps playing from 0
+    r.play();
+    r.seek(15000);
+    r.m.tick(r.after(400));
+    let t = r.m.jump_to(&id, 0.0, false, r.after(400)).unwrap();
+    assert!(t.playing && !t.resume_pending && t.position_ms == 0);
+    // FF past the end while playing stays inside the song
+    let t = r.m.skip(&id, 999_999, r.after(500)).unwrap();
+    assert!(t.position_ms <= 20000);
+}
+
+#[test]
+fn qa_pt_click_before_the_first_section_snaps_to_the_grid_extended_backwards() {
+    // first section at 700 ms: beats at ..., 200, 700, 1200 (500 ms apart)
+    let mut r = tempo_rig(700.0, false);
+    let id = r.id();
+    assert_eq!(r.m.jump_to(&id, 0.0, true, r.t0).unwrap().position_ms, 200);
+    assert_eq!(
+        r.m.jump_to(&id, 100.0, true, r.t0).unwrap().position_ms,
+        200
+    );
+    assert_eq!(
+        r.m.jump_to(&id, 600.0, true, r.t0).unwrap().position_ms,
+        700
+    );
+    // a real click grid has the same beats, so the click lands with the metronome
+    let map = r.map();
+    for x in [0.0, 150.0, 450.0, 650.0, 5000.0, 12_345.0] {
+        let p = r.m.jump_to(&id, x, true, r.t0).unwrap().position_ms as f64;
+        let near = map
+            .beats_in(0.0, 20000.0)
+            .iter()
+            .map(|b| b.0)
+            .any(|b| (b - p).abs() <= 1.0);
+        assert!(near, "{x} -> {p} is not on a beat");
+        assert!((p - x).abs() <= 250.0 + 1.0, "{x} -> {p}");
+    }
+}
+
+#[test]
+fn qa_pt_a_click_never_goes_before_the_set_first_beat_and_no_tempo_clicks_are_exact() {
+    let mut r = tempo_rig(0.0, false);
+    let id = r.id();
+    r.m.place_first_beat(&id, 1200.0, FirstBeatVia::Button, r.t0)
+        .unwrap();
+    for x in [0.0, 300.0, 1000.0, 1199.0] {
+        let p = r.m.jump_to(&id, x, true, r.t0).unwrap().position_ms;
+        assert!(p >= 1200, "{x} -> {p}");
+        assert_eq!(
+            r.m.jump_to(&id, x, false, r.t0).unwrap().position_ms,
+            1200,
+            "{x}"
+        );
+    }
+    // To start goes to the floor (the set first beat), a skip back too
+    r.m.jump_to(&id, 9000.0, false, r.t0).unwrap();
+    assert_eq!(r.m.skip(&id, -999_999, r.t0).unwrap().position_ms, 1200);
+    // no tempo at all: exact position, the beat flag changes nothing
+    let mut n = rig(PRACTICE);
+    let id = n.id();
+    for x in [0.0, 10_200.0, 10_200.4, 19_999.0] {
+        let a = n.m.jump_to(&id, x, true, n.t0).unwrap().position_ms;
+        let b = n.m.jump_to(&id, x, false, n.t0).unwrap().position_ms;
+        assert_eq!(a, b);
+        assert_eq!(a, x.round() as u64, "{x}");
+    }
+}
+
+#[test]
+fn qa_pt_a_jump_while_playing_with_a_section_count_in_keeps_playing_from_the_target() {
+    let text = r#"{"schema_version":7,"tempo":{"beats_per_bar":4,"segments":[
+        {"start_ms":0,"bpm":120,"found_ms":0,"count_in":true}]}}"#;
+    let mut r = rig_with(PRACTICE, text);
+    let id = r.id();
+    r.play();
+    let t = r.m.jump_to(&id, 10_200.0, true, r.t0).unwrap();
+    assert!(t.playing);
+    assert_eq!(t.position_ms, 10_000);
+    r.m.tick(r.after(4000));
+    r.b.pull(2000);
+    r.m.tick(r.after(4500));
+    assert!(r.pos() >= 10_000, "{}", r.pos());
+    assert!(r.snap().transport.playing);
+}
