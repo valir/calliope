@@ -31,6 +31,9 @@ const timestamps = (): PlayerSnapshot => ({
   transport: { ...idle },
 });
 
+// The waveform canvas measures 200 px, so a click maps to a position.
+Object.defineProperty(HTMLCanvasElement.prototype, 'clientWidth', { configurable: true, get: () => 200 });
+
 let calls: [string, Record<string, unknown>][];
 let channel: Channel<PlayerEvent>;
 let snap: PlayerSnapshot;
@@ -405,6 +408,20 @@ describe('playback', () => {
     await fireEvent.click(btn('Playback', 'FF'));
     await flush();
     expect(of('player_skip').map((c) => c.delta)).toEqual([-5000, 5000]);
+  });
+
+  it('the Playback buttons are To start, Rew, Play, FF; To start and a waveform click jump', async () => {
+    await open(withTempo());
+    expect(group('Playback').getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent?.trim())).toEqual(['To start', 'Rew', 'Play', 'FF', 'Slower', 'Faster', 'Reset']);
+    await fireEvent.click(btn('Playback', 'To start'));
+    await fireEvent.pointerDown(screen.getByTestId('player-waveform'), { clientX: 100, clientY: 30 });
+    await fireEvent.pointerUp(screen.getByTestId('player-waveform'));
+    await flush();
+    const jumps = of('player_jump');
+    expect(jumps).toHaveLength(2);
+    expect(jumps[0]).toMatchObject({ position: 0, beat: false });
+    expect(jumps[1]).toMatchObject({ beat: true });
+    expect(Math.abs((jumps[1].position as number) - (100 / 199) * 20000)).toBeLessThanOrEqual(1);
   });
 
   it('the moving position slider does not seek by itself; a key on it does', async () => {

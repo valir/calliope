@@ -3,7 +3,7 @@
   import { frontendLog } from '$lib/ipc';
   import { selectedTrack } from '$lib/library-state.svelte';
   import {
-    pl, selectSource, targetSection, selectSection, editSectionBpm, commitSectionBpm, cancelSectionBpm, startAdd, removeChange, moveChange,
+    pl, selectSource, targetSection, selectSection, editSectionBpm, commitSectionBpm, cancelSectionBpm, startAdd, removeChange, moveChange, seekClick,
   } from '$lib/player-state.svelte';
   import LoopsSection from './LoopsSection.svelte';
   import PlaybackSection from './PlaybackSection.svelte';
@@ -83,6 +83,7 @@
     onselect={selectSection}
     onmove={moveChange}
     onlabel={editSectionBpm}
+    onseek={seekClick}
     onremove={(i) => { if (i > 0) void removeChange(); }}
     onadd={startAdd}
     bpmEdit={pl.bpmEdit}

@@ -29,6 +29,8 @@
     onselect?: (index: number) => void;
     /** The label of section `index` was clicked, or Enter was pressed on it. */
     onlabel?: (index: number) => void;
+    /** Player mode: a click outside markers and labels; the ms under the pointer. */
+    onseek?: (ms: number) => void;
     onremove?: (index: number) => void;
     onadd?: () => void;
     /** The BPM overlay to show: over a section's label, or at a playhead position. */
@@ -40,7 +42,7 @@
   let {
     peaks, durationMs, positionMs, loops = [], currentLoop = null, segments = [], onmove, locked = false,
     testid, label = 'Waveform', class: cls = 'h-20',
-    freeMove = false, selected = null, onselect, onlabel, onremove, onadd,
+    freeMove = false, selected = null, onselect, onlabel, onseek, onremove, onadd,
     bpmEdit = null, oncommitbpm, oncancelbpm, oninvalidbpm,
   }: Props = $props();
 
@@ -328,6 +330,14 @@
     clearKeyShow();
     const x = localX(e);
     if (freeMove) {
+      if (!hasTempo) {
+        if (onseek) {
+          e.preventDefault();
+          canvas?.focus();
+          onseek(msAt(x));
+        }
+        return;
+      }
       if (!active) return;
       e.preventDefault();
       canvas?.focus();
@@ -340,6 +350,7 @@
       const b = barAt(x);
       if (b === null) {
         onselect?.(sectionAt(x));
+        onseek?.(msAt(x));
         return;
       }
       drag = { index: b, steps: offsetOf(b) };

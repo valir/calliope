@@ -346,7 +346,7 @@ describe('WaveformView Player mode (freeMove)', () => {
   const ps: TempoSegment[] = [seg(0, 120), seg(6508, 90, 6500), { start_ms: 10000, bpm: 100, on_beat: true }, seg(15000, 110)];
   let calls: Record<string, unknown[][]>;
   const mountP = (extra: Record<string, unknown> = {}) => {
-    calls = { move: [], select: [], label: [], remove: [], add: [], commit: [], invalid: [], cancel: [] };
+    calls = { seek: [], move: [], select: [], label: [], remove: [], add: [], commit: [], invalid: [], cancel: [] };
     render(WaveformView, {
       props: {
         ...base, segments: ps, freeMove: true, selected: 0,
@@ -419,6 +419,33 @@ describe('WaveformView Player mode (freeMove)', () => {
     await fireEvent.pointerUp(c);
     expect(calls.label.length).toBe(1);
     expect(calls.select).toEqual([[0], [2]]);
+    expect(calls.seek).toEqual([]);
+  });
+
+  it('a click away from bars and labels seeks; labels, bars, locked and the Editor do not', async () => {
+    const seeks: number[] = [];
+    const onseek = (ms: number) => seeks.push(ms);
+    let c = mountP({ onseek });
+    await tick();
+    await fireEvent.pointerDown(c, { clientX: px(1) + 20, clientY: 30 });
+    await fireEvent.pointerUp(c);
+    expect(calls.select).toEqual([[1]]);
+    expect(seeks.length).toBe(1);
+    expect(Math.abs(seeks[0] - (px(1) + 20) * pxMs)).toBeLessThanOrEqual(1);
+    await fireEvent.pointerDown(c, { clientX: px(1) + 12, clientY: 90 });
+    await fireEvent.pointerUp(c);
+    await fireEvent.pointerDown(c, { clientX: px(2) + 3, clientY: 30 });
+    await fireEvent.pointerMove(c, { clientX: px(2) + 20 });
+    await fireEvent.pointerUp(c);
+    expect(seeks.length).toBe(1);
+    expect(calls.move.length).toBe(1);
+    cleanup();
+    c = mountP({ onseek, locked: true });
+    await fireEvent.pointerDown(c, { clientX: 20, clientY: 30 });
+    cleanup();
+    render(WaveformView, { props: { ...base, segments: ps, onmove() {}, onseek } });
+    await fireEvent.pointerDown(screen.getByTestId('wf'), { clientX: 20, clientY: 30 });
+    expect(seeks.length).toBe(1);
   });
 
   it('draws the target with a 4 px bar and an underlined label', async () => {
@@ -461,6 +488,14 @@ describe('WaveformView Player mode (freeMove)', () => {
     expect(c.getAttribute('role')).toBe('img');
     await fireEvent.pointerDown(c, { clientX: 20, clientY: 30 });
     expect(calls.select).toEqual([]);
+    cleanup();
+    const seeks: number[] = [];
+    const c2 = mountP({ segments: [seg(0, 0)], onseek: (ms: number) => seeks.push(ms) });
+    await fireEvent.pointerDown(c2, { clientX: 20, clientY: 30 });
+    expect(seeks.length).toBe(1);
+    expect(Math.abs(seeks[0] - 20 * pxMs)).toBeLessThanOrEqual(1);
+    expect(calls.select).toEqual([]);
+    expect(calls.move).toEqual([]);
   });
 
   describe('BPM overlay', () => {
