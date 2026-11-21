@@ -728,6 +728,20 @@ pub(crate) async fn player_skip(
 }
 
 #[tauri::command]
+pub(crate) async fn player_jump(
+    app: tauri::AppHandle,
+    id: String,
+    position: f64,
+    beat: bool,
+) -> Result<PlayerTransport, String> {
+    blocking(move || {
+        app.state::<Arc<PlayerHost>>()
+            .with(|m| m.jump_to(&id, position, beat, Instant::now()))
+    })
+    .await
+}
+
+#[tauri::command]
 pub(crate) async fn player_leave(
     app: tauri::AppHandle,
     id: String,

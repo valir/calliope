@@ -322,6 +322,23 @@ impl TempoMap {
         out
     }
 
+    /// The beat of the `beats_in` grid (the metronome's) nearest to `ms`, within `0..end_ms`; the earlier
+    /// one on a tie. `None` without a tempo, without a finite `ms` / `end_ms`, or without a beat nearby.
+    pub fn nearest_beat_ms(&self, ms: f64, end_ms: f64) -> Option<f64> {
+        const W: f64 = 6000.0;
+        if self.segments.is_empty() || !ms.is_finite() || !end_ms.is_finite() {
+            return None;
+        }
+        let mut best: Option<(f64, f64)> = None;
+        for (b, _) in self.beats_in((ms - W).max(0.0), end_ms.min(ms + W)) {
+            let d = (b - ms).abs();
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((b, d));
+            }
+        }
+        best.map(|(b, _)| b)
+    }
+
     /// Type a BPM at a position (see plan 2.3). `bpm` must be valid (`validate_bpm`).
     pub fn set_bpm_at(&mut self, position_ms: f64, bpm: f64) -> Result<(), String> {
         let bpm = validate_bpm(bpm)?;
@@ -736,6 +753,42 @@ mod tests {
     }
     fn with_tempo() -> TempoMap {
         map(&[(500.0, 120.0), (10500.0, 90.0)])
+    }
+
+    #[test]
+    fn nearest_beat() {
+        let m = map(&[(0.0, 120.0)]);
+        assert_eq!(m.nearest_beat_ms(10200.0, 20000.0), Some(10000.0));
+        assert_eq!(m.nearest_beat_ms(10260.0, 20000.0), Some(10500.0));
+        assert_eq!(m.nearest_beat_ms(10250.0, 20000.0), Some(10000.0));
+        assert_eq!(m.nearest_beat_ms(0.0, 20000.0), Some(0.0));
+        assert!(m
+            .nearest_beat_ms(19990.0, 20000.0)
+            .is_none_or(|b| b <= 20000.0));
+        assert_eq!(map(&[]).nearest_beat_ms(100.0, 20000.0), None);
+        assert_eq!(m.nearest_beat_ms(f64::NAN, 20000.0), None);
+        let two = with_tempo();
+        let b = two.nearest_beat_ms(11200.0, 20000.0).unwrap();
+        assert!((b - (10500.0 + 2000.0 / 3.0)).abs() < 1e-6, "{b}");
+        // a first segment at 300 ms: the -200 ms beat is ignored
+        assert_eq!(
+            map(&[(300.0, 120.0)]).nearest_beat_ms(50.0, 20000.0),
+            Some(300.0)
+        );
+        // every result is a beat of the grid
+        for m in [
+            &two,
+            &map(&[(500.0, 120.0), (10500.0, 90.0), (11300.0, 100.0)]),
+        ] {
+            let beats = m.beats_in(0.0, 20000.0);
+            let mut x = 0.0;
+            while x < 20000.0 {
+                if let Some(r) = m.nearest_beat_ms(x, 20000.0) {
+                    assert!(beats.iter().any(|&(b, _)| b == r), "{x} -> {r}");
+                }
+                x += 37.0;
+            }
+        }
     }
 
     #[test]

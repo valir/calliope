@@ -224,6 +224,8 @@ fn seek_while_playing_is_silent_until_300ms_and_skip_clamps() {
     m.seek(&spec.id, 2000, t0).unwrap();
     assert_eq!(m.skip(&spec.id, -5000, t0).unwrap().position_ms, 0);
     assert_eq!(m.skip(&spec.id, 5000, t0).unwrap().position_ms, 5000);
+    m.seek(&spec.id, 17000, t0).unwrap();
+    assert_eq!(m.skip(&spec.id, 5000, t0).unwrap().position_ms, 20000);
     assert_eq!(m.skip(&spec.id, 60_000, t0).unwrap().position_ms, 20000);
     assert_eq!(m.nudge(&spec.id, -100, t0).unwrap().position_ms, 19900);
     assert_eq!(m.seek(&spec.id, 99_999, t0).unwrap().position_ms, 20000);
@@ -3474,4 +3476,72 @@ fn bpm_detect_shutdown_of_the_session_cancels_a_slow_run() {
     m.close();
     std::thread::sleep(ms(200));
     assert!(bpm_results(&e).is_empty());
+}
+
+#[test]
+fn jump_to_start_beat_snap_and_range() {
+    let (_t, spec, mut m, b, _e) = opened(PRACTICE);
+    let pcm = decoded(&spec, "backing:backing");
+    let t0 = Instant::now();
+    // playing: a jump to 0 is instant, no scrub silence
+    m.play(&spec.id, t0).unwrap();
+    b.pull(100);
+    m.seek(&spec.id, 15000, t0).unwrap();
+    m.tick(t0 + ms(300));
+    let st = m.jump_to(&spec.id, 0.0, false, t0 + ms(300)).unwrap();
+    assert!(st.playing && !st.resume_pending && st.position_ms == 0);
+    let got = b.pull(1000);
+    let want = expected(&pcm, 0, 1000);
+    let n = fade_frames();
+    assert_eq!(got[n * 2..], want[n * 2..]);
+
+    // no tempo: the beat flag changes nothing, the frame of 10200.4 ms
+    m.pause(&spec.id, t0).unwrap();
+    assert_eq!(
+        m.jump_to(&spec.id, 10200.4, true, t0).unwrap().position_ms,
+        10200
+    );
+    // range and bad input
+    assert_eq!(m.jump_to(&spec.id, -50.0, true, t0).unwrap().position_ms, 0);
+    assert_eq!(
+        m.jump_to(&spec.id, 99_999.0, false, t0)
+            .unwrap()
+            .position_ms,
+        20000
+    );
+    assert!(m.jump_to(&spec.id, f64::NAN, false, t0).is_err());
+
+    // 120 BPM at 0: snapped to the beat, on the exact frame
+    m.set_bpm(&spec.id, 120.0, t0).unwrap();
+    let st = m.jump_to(&spec.id, 10200.0, true, t0).unwrap();
+    assert_eq!(st.position_ms, 10000);
+    let pos = m
+        .session
+        .as_ref()
+        .unwrap()
+        .shared
+        .position
+        .load(Ordering::Acquire);
+    assert_eq!(pos, 10000 * RATE as u64 / 1000);
+    m.play(&spec.id, t0).unwrap();
+    m.tick(t0 + ms(400));
+    b.pull(100);
+    let st = m.jump_to(&spec.id, 10200.0, true, t0 + ms(400)).unwrap();
+    assert!(st.playing && !st.resume_pending);
+    let got = b.pull(1000);
+    let want = expected(&pcm, 10000 * RATE / 1000, 1000);
+    assert_eq!(got[n * 2..], want[n * 2..]);
+}
+
+#[test]
+fn jump_to_start_stops_at_the_set_first_beat() {
+    let (_t, spec, mut m, _b, _e) = opened(PRACTICE);
+    let t0 = Instant::now();
+    m.set_bpm(&spec.id, 120.0, t0).unwrap();
+    m.place_first_beat(&spec.id, 1200.0, FirstBeatVia::Button, t0)
+        .unwrap();
+    assert_eq!(
+        m.jump_to(&spec.id, 0.0, false, t0).unwrap().position_ms,
+        1200
+    );
 }

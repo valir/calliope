@@ -2314,6 +2314,35 @@ impl PlayerManager {
         Ok(publish(&sink, s, now))
     }
 
+    /// To start / a waveform click: an instant jump to `position_ms`, snapped to the nearest beat when
+    /// `beat` is set and there is a tempo. Clamped to the track and the playback floor.
+    pub fn jump_to(
+        &mut self,
+        id: &str,
+        position_ms: f64,
+        beat: bool,
+        now: Instant,
+    ) -> Result<PlayerTransport, String> {
+        if !position_ms.is_finite() {
+            return Err("bad position".into());
+        }
+        let sink = self.sink.clone();
+        let s = self.session(id)?;
+        let dur = s.pcm.frames as f64 * 1000.0 / f64::from(s.pcm.rate.max(1));
+        let target = if beat {
+            s.state
+                .tempo
+                .nearest_beat_ms(position_ms, dur)
+                .unwrap_or(position_ms)
+        } else {
+            position_ms
+        };
+        let f = s.set_pos(s.frame_of_ms_f(target.clamp(0.0, dur)));
+        s.send(Cmd::Jump(f));
+        s.mark_dirty(now);
+        Ok(publish(&sink, s, now))
+    }
+
     /// Leaving the view: pause, close the output, flush.
     pub fn leave(&mut self, id: &str, now: Instant) -> Result<PlayerTransport, String> {
         let sink = self.sink.clone();

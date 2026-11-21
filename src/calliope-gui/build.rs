@@ -67,6 +67,7 @@ const COMMANDS: &[&str] = &[
     "player_seek",
     "player_nudge",
     "player_skip",
+    "player_jump",
     "player_leave",
     "player_tempo",
     "player_detect_bpm",

@@ -167,6 +167,7 @@ pub fn run() {
             player_ipc::player_seek,
             player_ipc::player_nudge,
             player_ipc::player_skip,
+            player_ipc::player_jump,
             player_ipc::player_leave,
             player_ipc::player_tempo,
             player_ipc::player_detect_bpm,

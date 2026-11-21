@@ -51,6 +51,7 @@
     "allow-player-seek",
     "allow-player-nudge",
     "allow-player-skip",
+    "allow-player-jump",
     "allow-player-leave",
     "allow-player-tempo",
     "allow-player-detect-bpm",
