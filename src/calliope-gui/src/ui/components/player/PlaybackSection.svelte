@@ -4,7 +4,7 @@
   import SpeedControl from './SpeedControl.svelte';
   import TimeField from '../editor/TimeField.svelte';
   import { formatPosition } from '$lib/time-format';
-  import { nudge, pl, playLabel, seek, skip, togglePlay } from '$lib/player-state.svelte';
+  import { nudge, pl, playLabel, seek, skip, toStart, togglePlay } from '$lib/player-state.svelte';
 
   const active = $derived(pl.status === 'active');
   const duration = $derived(pl.snap?.duration_ms ?? 0);
@@ -30,6 +30,7 @@
 <svelte:window onpointerup={endDrag} onpointercancel={endDrag} />
 
 <div class="flex w-full flex-wrap items-center gap-2 rounded-lg border-2 border-border bg-card p-3" role="group" aria-label="Playback">
+  <Button variant="outline" class="h-[3.25rem] text-lg" disabled={!active} onclick={() => void toStart()}>To start</Button>
   <Button variant="outline" class="h-[3.25rem] text-lg" disabled={!active} onclick={() => void skip(-5000)}>Rew</Button>
   <Button class="h-[3.25rem] w-24 text-lg" disabled={!active} onclick={() => void togglePlay()}>{playLabel()}</Button>
   <Button variant="outline" class="h-[3.25rem] text-lg" disabled={!active} onclick={() => void skip(5000)}>FF</Button>

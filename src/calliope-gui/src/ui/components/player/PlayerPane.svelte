@@ -25,7 +25,7 @@
       const top = (name: string) => el.querySelector(`[role="group"][aria-label="${name}"]`)?.getBoundingClientRect().top;
       const wd = (name: string) => el.querySelector(`[role="group"][aria-label="${name}"]`)?.getBoundingClientRect().width ?? 0;
       const beside = top('Sections') !== undefined && top('Sections') === top('Loops');
-      void frontendLog(`player layout overflow=${el.scrollHeight - el.clientHeight} width=${el.clientWidth} loops_beside=${beside ? 1 : 0} sections_w=${Math.round(wd('Sections'))} loops_w=${Math.round(wd('Loops'))}`);
+      void frontendLog(`player layout overflow=${el.scrollHeight - el.clientHeight} width=${el.clientWidth} loops_beside=${beside ? 1 : 0} sections_w=${Math.round(wd('Sections'))} loops_w=${Math.round(wd('Loops'))} hscroll=${el.scrollWidth - el.clientWidth} playback_w=${Math.round(wd('Playback'))}`);
     };
     const ro = new ResizeObserver(() => {
       clearTimeout(timer);
